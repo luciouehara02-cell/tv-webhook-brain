@@ -1,13 +1,10 @@
-// server.js (Brain v2.2)
-// READY-gated execution engine + 3Commas forwarder
-// Sequence:
-// 1) YY9 sends { "action": "ready", "secret": ... }  -> READY ON
-// 2) RayAlgo sends { src:"ray", side:"BUY"/"SELL", symbol:"BINANCE:SOLUSDT", ... }
-// 3) Brain forwards to 3Commas webhook:
-//    BUY  -> action: "enter_long"
-//    SELL -> action: "exit_long"
-// 4) READY auto-OFF after exit
-// Optional: secret + TTL supported
+// server.js (Brain v2.4)
+// READY-gated engine + drift controls
+// ✅ Hard reset on drift block (Ray BUY)
+// ✅ Auto-expire READY when drift breached even without Ray BUY (needs "tick" webhooks)
+// ✅ Ignore READY while inPosition
+// ✅ READY auto-OFF after SELL
+// ✅ Optional secret + TTL supported
 
 import express from "express";
 
@@ -18,22 +15,21 @@ app.use(express.json({ limit: "1mb" }));
 // CONFIG (Railway Variables)
 // ====================
 const PORT = process.env.PORT || 3000;
-
-// TradingView -> Railway auth (your Brain secret)
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
-
-// READY TTL (minutes). If 0 or unset, no expiry.
 const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "30");
 
-// 3Commas forward config
-const THREECOMMAS_WEBHOOK_URL = process.env.THREECOMMAS_WEBHOOK_URL || "";
-const THREECOMMAS_BOT_UUID = process.env.THREECOMMAS_BOT_UUID || "";
-const THREECOMMAS_SECRET = process.env.THREECOMMAS_SECRET || "";
+// Entry drift gate (BUY must be within this % of READY price)
+const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
 
-// If you only ever trade one pair, set these (optional).
-// If unset, we derive from payload.symbol like "BINANCE:SOLUSDT".
-const DEFAULT_TV_EXCHANGE = process.env.DEFAULT_TV_EXCHANGE || "";
-const DEFAULT_TV_INSTRUMENT = process.env.DEFAULT_TV_INSTRUMENT || "";
+// Auto-expire drift gate (READY is cleared if drift exceeds this % without waiting for BUY)
+// If not set, defaults to READY_MAX_MOVE_PCT
+const READY_AUTOEXPIRE_PCT = Number(
+  process.env.READY_AUTOEXPIRE_PCT || String(READY_MAX_MOVE_PCT)
+);
+
+// Enable/disable auto-expire check
+const READY_AUTOEXPIRE_ENABLED =
+  String(process.env.READY_AUTOEXPIRE_ENABLED || "true").toLowerCase() === "true";
 
 // ====================
 // MEMORY (in-RAM)
@@ -43,10 +39,26 @@ let readyAtMs = 0;
 let inPosition = false;
 let lastAction = "none";
 
+// READY context
+let readyPrice = null; // number
+let readySymbol = ""; // e.g. "BINANCE:SOLUSDT"
+let readyTf = ""; // optional
+let readyMeta = {}; // optional
+
 // ====================
 // HELPERS
 // ====================
 const nowMs = () => Date.now();
+
+function clearReadyContext(reason = "cleared") {
+  readyOn = false;
+  readyAtMs = 0;
+  readyPrice = null;
+  readySymbol = "";
+  readyTf = "";
+  readyMeta = {};
+  console.log(`🧹 READY context cleared (${reason})`);
+}
 
 function ttlExpired() {
   if (!READY_TTL_MIN || READY_TTL_MIN <= 0) return false;
@@ -73,86 +85,134 @@ function logWebhook(payload) {
   console.log(payload);
 }
 
-function splitTvSymbol(symbol) {
-  const raw = String(symbol || "").trim();
-  if (!raw) return { ex: "", inst: "" };
-  if (raw.includes(":")) {
-    const [ex, inst] = raw.split(":");
-    return { ex: (ex || "").trim(), inst: (inst || "").trim() };
+function toNum(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function getSymbolFromPayload(payload) {
+  // Ray uses payload.symbol like "BINANCE:SOLUSDT"
+  if (payload?.symbol) return String(payload.symbol);
+
+  // 3Commas-style fields
+  if (payload?.tv_exchange && payload?.tv_instrument) {
+    return `${payload.tv_exchange}:${payload.tv_instrument}`;
   }
-  // if someone sends "SOLUSDT" only:
-  return { ex: "", inst: raw };
+
+  // TradingView placeholders sometimes use exchange/ticker
+  if (payload?.exchange && payload?.ticker) {
+    return `${payload.exchange}:${payload.ticker}`;
+  }
+
+  if (payload?.tv_instrument) return String(payload.tv_instrument);
+  if (payload?.ticker) return String(payload.ticker);
+
+  return "";
 }
 
-function missing3cConfig() {
-  return !THREECOMMAS_WEBHOOK_URL || !THREECOMMAS_BOT_UUID || !THREECOMMAS_SECRET;
+function getReadyPrice(payload) {
+  return (
+    toNum(payload?.trigger_price) ??
+    toNum(payload?.price) ??
+    toNum(payload?.close) ??
+    null
+  );
 }
 
-async function sendTo3Commas(action, payload) {
-  if (missing3cConfig()) {
+function getRayPrice(payload) {
+  return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
+}
+
+function getTickPrice(payload) {
+  // tick payload can use price or close
+  return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
+}
+
+function pctDiff(a, b) {
+  if (!Number.isFinite(a) || a === 0) return null;
+  return (Math.abs(b - a) / Math.abs(a)) * 100.0;
+}
+
+// Auto-expire READY when drift breached (tick-based)
+function maybeAutoExpireReady(currentPrice, currentSymbol) {
+  if (!READY_AUTOEXPIRE_ENABLED) return false;
+  if (!readyOn) return false;
+  if (inPosition) return false; // we ignore READY management while in trade
+  if (readyPrice == null || currentPrice == null) return false;
+
+  // optional symbol match
+  if (readySymbol && currentSymbol && readySymbol !== currentSymbol) {
+    // don't auto-expire based on other symbol ticks
+    return false;
+  }
+
+  const dPct = pctDiff(readyPrice, currentPrice);
+  if (dPct == null) return false;
+
+  if (dPct > READY_AUTOEXPIRE_PCT) {
     console.log(
-      "⛔ 3Commas not configured. Missing one of: THREECOMMAS_WEBHOOK_URL / THREECOMMAS_BOT_UUID / THREECOMMAS_SECRET"
+      `🟠 AUTO-EXPIRE READY: drift ${dPct.toFixed(3)}% > ${READY_AUTOEXPIRE_PCT}%`,
+      { readyPrice, currentPrice }
     );
-    return { ok: false, error: "3commas_not_configured" };
+    clearReadyContext("auto_expire_drift");
+    lastAction = "ready_autoexpired_drift";
+    return true;
   }
-
-  // Determine exchange/instrument from Ray payload symbol OR defaults
-  const { ex, inst } = splitTvSymbol(payload?.symbol);
-  const tv_exchange = DEFAULT_TV_EXCHANGE || ex || "BINANCE";
-  const tv_instrument = DEFAULT_TV_INSTRUMENT || inst || "SOLUSDT";
-
-  const body = {
-    secret: THREECOMMAS_SECRET,
-    bot_uuid: THREECOMMAS_BOT_UUID,
-    action, // "enter_long" or "exit_long"
-    max_lag: "300",
-    timestamp: payload?.time || payload?.timestamp || "{{timenow}}",
-    trigger_price: String(payload?.price ?? payload?.trigger_price ?? ""),
-    tv_exchange,
-    tv_instrument
-  };
-
-  try {
-    const r = await fetch(THREECOMMAS_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-
-    const text = await r.text();
-    console.log(`📨 3Commas POST -> ${action} | status=${r.status} | resp=${text}`);
-
-    return { ok: r.ok, status: r.status, resp: text, sent: body };
-  } catch (e) {
-    console.log("⛔ 3Commas request failed:", e?.message || e);
-    return { ok: false, error: "3commas_request_failed", message: e?.message || String(e) };
-  }
+  return false;
 }
 
 // ====================
 // ROUTES
 // ====================
 app.get("/", (req, res) => {
-  res.send(
-    `Brain v2.2 | readyOn=${readyOn} | inPosition=${inPosition} | lastAction=${lastAction}`
-  );
+  res.json({
+    brain: "v2.4",
+    readyOn,
+    inPosition,
+    lastAction,
+    READY_TTL_MIN,
+    READY_MAX_MOVE_PCT,
+    READY_AUTOEXPIRE_ENABLED,
+    READY_AUTOEXPIRE_PCT,
+    readyPrice,
+    readySymbol,
+    readyTf,
+  });
 });
 
 app.post("/webhook", async (req, res) => {
   const payload = req.body || {};
   logWebhook(payload);
 
-  // READY TTL expiry
+  // TTL expiry
   if (ttlExpired()) {
-    readyOn = false;
-    readyAtMs = 0;
-    console.log("🟠 READY expired (TTL)");
+    clearReadyContext("ttl_expired");
+    lastAction = "ready_ttl_expired";
   }
 
-  // Security (TV -> Railway)
+  // Security
   if (!checkSecret(payload)) {
     console.log("⛔ Secret mismatch - blocked");
     return res.status(401).json({ ok: false, error: "secret_mismatch" });
+  }
+
+  // ====================
+  // TICK PAYLOAD (auto-expire READY)
+  // ====================
+  // Send from TradingView every bar (or while READY is on), example below.
+  if (payload?.src === "tick" || normalizeAction(payload) === "tick") {
+    const tickPx = getTickPrice(payload);
+    const tickSym = getSymbolFromPayload(payload);
+
+    const expired = maybeAutoExpireReady(tickPx, tickSym);
+    return res.json({
+      ok: true,
+      tick: true,
+      expired,
+      readyOn,
+      readyPrice,
+      readySymbol,
+    });
   }
 
   // ====================
@@ -160,7 +220,10 @@ app.post("/webhook", async (req, res) => {
   // ====================
   if (payload?.src === "ray") {
     const side = String(payload.side || "").toUpperCase();
-    console.log("Ray side:", side);
+    const rayPx = getRayPrice(payload);
+    const raySym = getSymbolFromPayload(payload);
+
+    console.log("Ray side:", side, "| symbol:", raySym, "| price:", rayPx);
 
     // -------- RAY BUY --------
     if (side === "BUY") {
@@ -175,24 +238,75 @@ app.post("/webhook", async (req, res) => {
         return res.json({ ok: false, blocked: "already_in_position" });
       }
 
-      // Approve + forward to 3Commas
-      inPosition = true;
-      lastAction = "ray_enter_long";
-      console.log("🚀 RAY BUY → ENTER LONG");
-
-      const out = await sendTo3Commas("enter_long", payload);
-      if (!out.ok) {
-        // If 3Commas failed, revert inPosition so next BUY can retry
-        inPosition = false;
-        lastAction = "ray_enter_long_failed_3c";
-        console.log("⛔ enter_long failed -> reverted inPosition=false");
+      // Symbol consistency check
+      if (readySymbol && raySym && readySymbol !== raySym) {
+        console.log("⛔ Ray BUY blocked (symbol_mismatch)", {
+          readySymbol,
+          raySym,
+        });
+        lastAction = "ray_buy_blocked_symbol_mismatch";
+        return res.json({
+          ok: false,
+          blocked: "symbol_mismatch",
+          readySymbol,
+          raySym,
+        });
       }
 
+      // Price-distance gate
+      if (readyPrice == null) {
+        console.log("⛔ Ray BUY blocked (missing readyPrice)");
+        lastAction = "ray_buy_blocked_missing_ready_price";
+        return res.json({ ok: false, blocked: "missing_ready_price" });
+      }
+      if (rayPx == null) {
+        console.log("⛔ Ray BUY blocked (missing ray price)");
+        lastAction = "ray_buy_blocked_missing_ray_price";
+        return res.json({ ok: false, blocked: "missing_ray_price" });
+      }
+
+      const dPct = pctDiff(readyPrice, rayPx);
+      if (dPct == null) {
+        console.log("⛔ Ray BUY blocked (bad price diff calc)");
+        lastAction = "ray_buy_blocked_bad_price_diff";
+        return res.json({ ok: false, blocked: "bad_price_diff" });
+      }
+
+      // ✅ HARD RESET ON DRIFT BLOCK
+      if (dPct > READY_MAX_MOVE_PCT) {
+        console.log(
+          `⛔ Ray BUY blocked (price drift ${dPct.toFixed(
+            3
+          )}% > ${READY_MAX_MOVE_PCT}%) — HARD RESET READY`,
+          { readyPrice, rayPx }
+        );
+
+        clearReadyContext("hard_reset_price_drift");
+        lastAction = "ray_buy_blocked_price_drift_reset";
+
+        return res.json({
+          ok: false,
+          blocked: "price_drift_reset",
+          drift_pct: dPct,
+          limit_pct: READY_MAX_MOVE_PCT,
+          readyPrice_before_reset: readyPrice,
+          rayPrice: rayPx,
+        });
+      }
+
+      // Approve entry
+      inPosition = true;
+      lastAction = "ray_enter_long";
+      console.log(
+        `🚀 RAY BUY → ENTER LONG | drift=${dPct.toFixed(3)}% (<= ${READY_MAX_MOVE_PCT}%)`
+      );
+
+      // NOTE: If you forward to 3Commas in your deployment, keep that code here.
       return res.json({
-        ok: out.ok,
+        ok: true,
         action: "enter_long",
         source: "ray",
-        forwarded: out
+        drift_pct: dPct,
       });
     }
 
@@ -204,35 +318,16 @@ app.post("/webhook", async (req, res) => {
         return res.json({ ok: false, blocked: "no_position" });
       }
 
-      // Forward exit first
+      inPosition = false;
+
+      // After exit: READY OFF + clear context
+      clearReadyContext("exit_sell");
       lastAction = "ray_exit_long";
-      console.log("✅ RAY SELL → EXIT LONG | READY OFF after success");
-
-      const out = await sendTo3Commas("exit_long", payload);
-
-      if (out.ok) {
-        inPosition = false;
-        readyOn = false;
-        readyAtMs = 0;
-        console.log("✅ EXIT confirmed by 3Commas | READY OFF");
-      } else {
-        // If 3Commas failed, keep state so you can retry SELL
-        lastAction = "ray_exit_long_failed_3c";
-        console.log("⛔ exit_long failed -> keeping inPosition=true and READY unchanged");
-      }
-
-      return res.json({
-        ok: out.ok,
-        action: "exit_long",
-        source: "ray",
-        forwarded: out,
-        readyOn,
-        inPosition
-      });
+      console.log("✅ RAY SELL → EXIT LONG | READY OFF (context cleared)");
+      return res.json({ ok: true, action: "exit_long", source: "ray" });
     }
 
     console.log("⚠️ Ray unknown side");
-    lastAction = "ray_unknown_side";
     return res.json({ ok: true, note: "ray_unknown_side" });
   }
 
@@ -241,40 +336,62 @@ app.post("/webhook", async (req, res) => {
   // ====================
   const action = normalizeAction(payload);
 
-  // READY
+  // READY (IGNORE if already in trade)
   if (action === "ready") {
+    if (inPosition) {
+      console.log("🟡 READY ignored (already in position)");
+      lastAction = "ready_ignored_in_position";
+      return res.json({ ok: true, ignored: "in_position" });
+    }
+
     readyOn = true;
     readyAtMs = nowMs();
+
+    readyPrice = getReadyPrice(payload);
+    readySymbol = getSymbolFromPayload(payload);
+    readyTf = payload?.tf ? String(payload.tf) : "";
+    readyMeta = {
+      timestamp: payload?.timestamp ?? payload?.time ?? null,
+      tv_exchange: payload?.tv_exchange ?? payload?.exchange ?? null,
+      tv_instrument: payload?.tv_instrument ?? payload?.ticker ?? null,
+    };
+
     lastAction = "ready";
-    console.log("🟢 READY ON");
-    return res.json({ ok: true, readyOn });
+    console.log("🟢 READY ON", {
+      readyPrice,
+      readySymbol,
+      readyTf,
+      READY_MAX_MOVE_PCT,
+      READY_AUTOEXPIRE_ENABLED,
+      READY_AUTOEXPIRE_PCT,
+    });
+
+    return res.json({ ok: true, readyOn, readyPrice, readySymbol, readyTf });
   }
 
   // OPTIONAL: allow manual TV execution (fallback)
-  // NOTE: This does NOT forward to 3Commas unless you want it to.
   if (action === "enter_long") {
     if (!readyOn || inPosition) {
       console.log("⛔ TV BUY blocked");
-      lastAction = "tv_buy_blocked";
       return res.json({ ok: false, blocked: true });
     }
     inPosition = true;
     lastAction = "tv_enter_long";
-    console.log("🚀 TV ENTER LONG (local only)");
+    console.log("🚀 TV ENTER LONG");
     return res.json({ ok: true });
   }
 
   if (action === "exit_long") {
     if (!inPosition) {
       console.log("⛔ TV SELL blocked");
-      lastAction = "tv_sell_blocked";
       return res.json({ ok: false, blocked: true });
     }
+
     inPosition = false;
-    readyOn = false;
-    readyAtMs = 0;
+    clearReadyContext("tv_exit_long");
+
     lastAction = "tv_exit_long";
-    console.log("✅ TV EXIT LONG | READY OFF (local only)");
+    console.log("✅ TV EXIT LONG | READY OFF (context cleared)");
     return res.json({ ok: true });
   }
 
@@ -287,13 +404,10 @@ app.post("/webhook", async (req, res) => {
 // START
 // ====================
 app.listen(PORT, () => {
-  console.log(`✅ Brain v2.2 listening on port ${PORT}`);
+  console.log(`✅ Brain v2.4 listening on port ${PORT}`);
   console.log(
-    `Config: READY_TTL_MIN=${READY_TTL_MIN} | WEBHOOK_SECRET=${WEBHOOK_SECRET ? "(set)" : "(not set)"}`
-  );
-  console.log(
-    `3Commas: URL=${THREECOMMAS_WEBHOOK_URL ? "(set)" : "(not set)"} | BOT_UUID=${
-      THREECOMMAS_BOT_UUID ? "(set)" : "(not set)"
-    } | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(not set)"}`
+    `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | WEBHOOK_SECRET=${
+      WEBHOOK_SECRET ? "(set)" : "(not set)"
+    }`
   );
 });
