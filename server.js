@@ -1,7 +1,33 @@
+/**
+ * Brain v2.7 — READY + RayAlgo gatekeeper + 3Commas forwarder
+ * ----------------------------------------------------------
+ * What’s in v2.7 (and what this file does):
+ * 1) READY context (price/symbol/tf) is stored on YY9 READY webhook
+ * 2) Ray BUY is allowed ONLY if:
+ *    - not in cooldown
+ *    - heartbeat is fresh (optional)
+ *    - READY is ON
+ *    - drift between READY price and Ray BUY price <= READY_MAX_MOVE_PCT
+ *    - symbol matches
+ *    - otherwise HARD RESET READY when drift breached
+ * 3) READY can auto-expire on tick drift (READY_AUTOEXPIRE_*)
+ * 4) Cooldown after any exit (EXIT_COOLDOWN_MIN)
+ * 5) Profit lock protection (optional):
+ *    - arms after PROFIT_LOCK_ARM_PCT profit
+ *    - exits if price gives back PROFIT_LOCK_GIVEBACK_PCT from peak
+ * 6) 3Commas forward with timeout
+ *
+ * Patch included (important):
+ * ✅ Stores ENTRY meta (exchange/instrument) on entry so Profit-Lock exit sends correct pair to 3Commas,
+ *    even if READY context is later cleared/changed.
+ */
+
 import express from "express";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+
+const BRAIN_VERSION = "v2.7";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -86,6 +112,9 @@ let entrySymbol = "";
 let peakPrice = null;
 let profitLockArmed = false;
 
+// ✅ NEW: store entry meta so exits (profit lock) still know the correct tv_exchange/tv_instrument
+let entryMeta = { tv_exchange: null, tv_instrument: null };
+
 // ====================
 // HELPERS
 // ====================
@@ -142,6 +171,7 @@ function clearPositionContext(reason = "pos_cleared") {
   entrySymbol = "";
   peakPrice = null;
   profitLockArmed = false;
+  entryMeta = { tv_exchange: null, tv_instrument: null };
   console.log(`🧽 POSITION context cleared (${reason})`);
 }
 
@@ -224,34 +254,37 @@ async function postTo3Commas(action, payload) {
     return { skipped: true };
   }
 
+  // ✅ Prefer payload meta -> entryMeta -> readyMeta -> env fallbacks
   const tv_exchange =
     payload?.tv_exchange ??
     payload?.exchange ??
-    (readyMeta?.tv_exchange ?? null) ??
+    entryMeta?.tv_exchange ??
+    readyMeta?.tv_exchange ??
     THREECOMMAS_TV_EXCHANGE ??
-    null;
+    "";
 
   const tv_instrument =
     payload?.tv_instrument ??
     payload?.ticker ??
-    (readyMeta?.tv_instrument ?? null) ??
+    entryMeta?.tv_instrument ??
+    readyMeta?.tv_instrument ??
     THREECOMMAS_TV_INSTRUMENT ??
-    null;
+    "";
 
   const trigger_price =
     toNum(payload?.trigger_price) ??
     toNum(payload?.price) ??
     toNum(payload?.close) ??
     readyPrice ??
-    null;
+    "";
 
   const body = {
     secret: THREECOMMAS_SECRET,
     max_lag: THREECOMMAS_MAX_LAG,
     timestamp: payload?.timestamp ?? payload?.time ?? new Date().toISOString(),
-    trigger_price: trigger_price != null ? String(trigger_price) : "",
-    tv_exchange: tv_exchange != null ? String(tv_exchange) : "",
-    tv_instrument: tv_instrument != null ? String(tv_instrument) : "",
+    trigger_price: trigger_price !== "" ? String(trigger_price) : "",
+    tv_exchange: String(tv_exchange || ""),
+    tv_instrument: String(tv_instrument || ""),
     action,
     bot_uuid: THREECOMMAS_BOT_UUID,
   };
@@ -272,7 +305,10 @@ async function postTo3Commas(action, payload) {
     );
     return { ok: resp.ok, status: resp.status, resp: text };
   } catch (e) {
-    console.log("⛔ 3Commas POST failed:", e?.name === "AbortError" ? "timeout" : (e?.message || e));
+    console.log(
+      "⛔ 3Commas POST failed:",
+      e?.name === "AbortError" ? "timeout" : (e?.message || e)
+    );
     return { ok: false, error: String(e?.message || e) };
   } finally {
     clearTimeout(t);
@@ -307,13 +343,14 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
       `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | giveback=${PROFIT_LOCK_GIVEBACK_PCT}%`
     );
 
-    // Exit long immediately (no Ray SELL required)
     lastAction = "profit_lock_exit_long";
+
+    // ✅ uses entryMeta for correct pair
     const fwd = await postTo3Commas("exit_long", {
       time: new Date().toISOString(),
       trigger_price: currentPrice,
-      tv_exchange: readyMeta?.tv_exchange,
-      tv_instrument: readyMeta?.tv_instrument,
+      tv_exchange: entryMeta?.tv_exchange,
+      tv_instrument: entryMeta?.tv_instrument,
     });
 
     clearReadyContext("profit_lock_exit");
@@ -330,7 +367,7 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
 // ====================
 app.get("/", (req, res) => {
   res.json({
-    brain: "v2.7",
+    brain: BRAIN_VERSION,
     readyOn,
     inPosition,
     lastAction,
@@ -349,6 +386,7 @@ app.get("/", (req, res) => {
     PROFIT_LOCK_ENABLED,
     PROFIT_LOCK_ARM_PCT,
     PROFIT_LOCK_GIVEBACK_PCT,
+    PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT,
     readyPrice,
     readySymbol,
     readyTf,
@@ -356,6 +394,7 @@ app.get("/", (req, res) => {
     entrySymbol,
     peakPrice,
     profitLockArmed,
+    entryMeta,
     threecommas_configured: Boolean(THREECOMMAS_BOT_UUID && THREECOMMAS_SECRET),
   });
 });
@@ -395,7 +434,14 @@ app.post("/webhook", async (req, res) => {
     // Profit lock check (may auto exit)
     const pl = await maybeProfitLockExit(tickPx, tickSym);
 
-    return res.json({ ok: true, tick: true, expired, profit_lock: pl || null, readyOn, inPosition });
+    return res.json({
+      ok: true,
+      tick: true,
+      expired,
+      profit_lock: pl || null,
+      readyOn,
+      inPosition,
+    });
   }
 
   // ---- RAYALGO
@@ -456,17 +502,31 @@ app.post("/webhook", async (req, res) => {
       peakPrice = rayPx;
       profitLockArmed = false;
 
+      // ✅ Capture entry meta NOW (so exits later are correct)
+      entryMeta = {
+        tv_exchange: readyMeta?.tv_exchange ?? payload?.tv_exchange ?? payload?.exchange ?? null,
+        tv_instrument: readyMeta?.tv_instrument ?? payload?.tv_instrument ?? payload?.ticker ?? null,
+      };
+
       lastAction = "ray_enter_long";
-      console.log(`🚀 RAY BUY → ENTER LONG | drift=${dPct.toFixed(3)}% (<= ${READY_MAX_MOVE_PCT}%)`);
+      console.log(
+        `🚀 RAY BUY → ENTER LONG | drift=${dPct.toFixed(3)}% (<= ${READY_MAX_MOVE_PCT}%)`
+      );
 
       const fwd = await postTo3Commas("enter_long", {
         ...payload,
         trigger_price: payload?.price ?? payload?.close ?? readyPrice,
-        tv_exchange: readyMeta?.tv_exchange,
-        tv_instrument: readyMeta?.tv_instrument,
+        tv_exchange: entryMeta?.tv_exchange,
+        tv_instrument: entryMeta?.tv_instrument,
       });
 
-      return res.json({ ok: true, action: "enter_long", source: "ray", drift_pct: dPct, threecommas: fwd });
+      return res.json({
+        ok: true,
+        action: "enter_long",
+        source: "ray",
+        drift_pct: dPct,
+        threecommas: fwd,
+      });
     }
 
     if (side === "SELL") {
@@ -493,8 +553,8 @@ app.post("/webhook", async (req, res) => {
       const fwd = await postTo3Commas("exit_long", {
         ...payload,
         trigger_price: payload?.price ?? payload?.close ?? "",
-        tv_exchange: readyMeta?.tv_exchange,
-        tv_instrument: readyMeta?.tv_instrument,
+        tv_exchange: entryMeta?.tv_exchange,
+        tv_instrument: entryMeta?.tv_instrument,
       });
 
       clearReadyContext("exit_sell");
@@ -564,7 +624,7 @@ app.post("/webhook", async (req, res) => {
 // START
 // ====================
 app.listen(PORT, () => {
-  console.log(`✅ Brain v2.7 listening on port ${PORT}`);
+  console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
   console.log(
     `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
   );
