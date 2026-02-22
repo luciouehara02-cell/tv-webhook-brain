@@ -456,13 +456,14 @@ async function executeEnterShort(evt) {
   if (!ENV.ENABLE_POST_3C) return { ok: true, demo: true, posted: false };
 
   // LIVE: correct 3Commas custom signal payload
-  const payload = build3CommasCustomSignal("enter_short", evt);
-  log("3COMMAS_POST", { action: "enter_short", url: ENV.C3_WEBHOOK_URL, payload: mask3c(payload) });
-  const resp = await postTo3Commas(payload);
-  log("3COMMAS_RESP", { action: "enter_short", resp });
+   const payload = build3CommasCustomSignal("exit_short", evt);
+  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
 
-  return { ok: true, demo: false, posted: true, resp };
-}
+  const resp = await postTo3Commas(payload);
+
+  log("3COMMAS_RESP", { action: "exit_short", resp });
+
+  return { ok: resp.ok, demo: false, posted: true, resp };
 
 async function executeExitShort(evt, reason) {
   // Close internal position state
@@ -479,19 +480,15 @@ async function executeExitShort(evt, reason) {
 }
 
 // ---- 3Commas custom format builder (FIX) ----
-function build3CommasCustomSignal(action, evt) {
-  return {
-    secret: ENV.C3_SIGNAL_SECRET,
-    max_lag: ENV.C3_MAX_LAG_SEC,
-    timestamp: new Date(evt.ts).toISOString(),
-    trigger_price: String(evt.price),
-    tv_exchange: evt.exchange || "BINANCE",
-    tv_instrument: evt.instrument, // e.g. SOLUSDT
-    action, // enter_short / exit_short
-    bot_uuid: ENV.C3_BOT_UUID,
-  };
-}
+  const payload = build3CommasCustomSignal("enter_short", evt);
+  log("3COMMAS_POST", { action: "enter_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
 
+  const resp = await postTo3Commas(payload);
+
+  // IMPORTANT: always log response even if ok=false
+  log("3COMMAS_RESP", { action: "enter_short", resp });
+
+  return { ok: resp.ok, demo: false, posted: true, resp };
 function mask3c(p) {
   return { ...p, secret: "***" };
 }
