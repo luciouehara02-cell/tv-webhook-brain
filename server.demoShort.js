@@ -592,3 +592,21 @@ function log(tag, obj = {}) {
 app.listen(ENV.PORT, () => {
   console.log(`🚀 Listening on :${ENV.PORT} path=${ENV.WEBHOOK_PATH}`);
 });
+
+// Heartbeat / health (for monitors)
+app.get("/heartbeat", (_req, res) => {
+  const now = Date.now();
+  res.status(200).json({
+    ok: true,
+    service: "Brain SHORT DEMO",
+    now,
+    uptimeSec: Math.floor(process.uptime()),
+    ready: !!STATE.READY_SHORT,
+    positionOpen: !!STATE.POSITION_SHORT?.isOpen,
+    cooldownActive: now < STATE.ACT_SHORT.cooldownUntil,
+    pumpCooldownActive: now < STATE.ACT_SHORT.pumpCooldownUntil,
+  });
+});
+
+app.get("/health", (_req, res) => res.status(200).send("OK"));
+
