@@ -1,14 +1,14 @@
 /**
- * Brain v2.8 — READY + Ray gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
- * ----------------------------------------------------------------------------------------------------
- * Adds (1) Auto Regime Switching (TREND/RANGE) derived from ticks (slope + volatility) with hysteresis
- *      (2) Volatility-adaptive Profit Lock (ATR%-scaled) by regime
- *      (3) Crash Protection (1m/5m dump lock) blocks READY & BUY for cooldown
- *      (4) Equity Stabilizer (loss streak) adds cooldown + conservative mode gates
+ * Brain v2.8.1 — READY + Ray gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * ------------------------------------------------------------------------------------------------------
+ * v2.8.1 PATCH (Trend-holder):
+ * ✅ Adds Profit Lock clamp floors/caps to prevent microscopic arm/giveback in low ATR conditions.
+ *    New env vars:
+ *      PL_MIN_ARM_PCT, PL_MIN_GIVEBACK_PCT, PL_MAX_ARM_PCT, PL_MAX_GIVEBACK_PCT
  *
  * Notes:
  * - No Pine changes required. Uses /tick heartbeat stream.
- * - All new logic is toggleable via env vars; defaults keep v2.7 behavior.
+ * - All logic toggleable via env vars; defaults are safe.
  */
 
 import express from "express";
@@ -16,7 +16,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.8";
+const BRAIN_VERSION = "v2.8.1";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -53,7 +53,7 @@ const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240")
 const PROFIT_LOCK_ENABLED =
   String(process.env.PROFIT_LOCK_ENABLED || "true").toLowerCase() === "true";
 
-// Fixed Profit Lock (v2.7)
+// Fixed Profit Lock (fallback)
 const PROFIT_LOCK_ARM_PCT = Number(process.env.PROFIT_LOCK_ARM_PCT || "0.6");
 const PROFIT_LOCK_GIVEBACK_PCT = Number(process.env.PROFIT_LOCK_GIVEBACK_PCT || "0.35");
 
@@ -66,6 +66,13 @@ const PL_GIVEBACK_ATR_MULT_TREND = Number(process.env.PL_GIVEBACK_ATR_MULT_TREND
 const PL_START_ATR_MULT_RANGE = Number(process.env.PL_START_ATR_MULT_RANGE || "1.2");
 const PL_GIVEBACK_ATR_MULT_RANGE = Number(process.env.PL_GIVEBACK_ATR_MULT_RANGE || "0.7");
 
+// ✅ NEW (v2.8.1): Profit Lock clamps (trend-holder floors / optional caps)
+// 0 disables each clamp
+const PL_MIN_ARM_PCT = Number(process.env.PL_MIN_ARM_PCT || "0");
+const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
+const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
+const PL_MAX_GIVEBACK_PCT = Number(process.env.PL_MAX_GIVEBACK_PCT || "0");
+
 // Optional: ignore Ray SELL unless profit >= this % (0 disables)
 const PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT = Number(
   process.env.PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT || "0"
@@ -76,9 +83,9 @@ const REGIME_ENABLED =
   String(process.env.REGIME_ENABLED || "true").toLowerCase() === "true";
 
 // windows used for regime + ATR estimation
-const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300"); // 5m
-const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300");     // 5m
-const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800");  // 30m
+const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300"); // default 5m
+const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300");     // default 5m
+const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800");  // default 30m
 const REGIME_MIN_TICKS = Number(process.env.REGIME_MIN_TICKS || "10");
 
 // hysteresis thresholds (slope is absolute pct move over window)
@@ -102,7 +109,7 @@ const EQUITY_STABILIZER_ENABLED =
   String(process.env.EQUITY_STABILIZER_ENABLED || "true").toLowerCase() === "true";
 const ES_LOSS_STREAK_2_COOLDOWN_MIN = Number(process.env.ES_LOSS_STREAK_2_COOLDOWN_MIN || "15");
 const ES_LOSS_STREAK_3_COOLDOWN_MIN = Number(process.env.ES_LOSS_STREAK_3_COOLDOWN_MIN || "45");
-const ES_CONSERVATIVE_MIN = Number(process.env.ES_CONSERVATIVE_MIN || "45"); // conservative mode duration
+const ES_CONSERVATIVE_MIN = Number(process.env.ES_CONSERVATIVE_MIN || "45"); // conservative duration
 
 // 3Commas
 const THREECOMMAS_WEBHOOK_URL =
@@ -327,7 +334,6 @@ function pushTick(symbol, price, tMs) {
 function priceAtOrBefore(symbol, targetMs) {
   const arr = tickHistory.get(symbol);
   if (!arr || arr.length === 0) return null;
-  // scan from end
   for (let i = arr.length - 1; i >= 0; i--) {
     if (arr[i].t <= targetMs) return arr[i].p;
   }
@@ -341,7 +347,7 @@ function atrPctFromTicks(symbol, windowSec) {
 
   const now = nowMs();
   const cutoff = now - windowSec * 1000;
-  const sub = arr.filter(x => x.t >= cutoff);
+  const sub = arr.filter((x) => x.t >= cutoff);
   if (sub.length < 3) return null;
 
   let sumTR = 0;
@@ -357,7 +363,7 @@ function atrPctFromTicks(symbol, windowSec) {
   return (atr / last) * 100.0;
 }
 
-// slope: absolute pct move over SLOPE_WINDOW_SEC
+// slope: pct move over SLOPE_WINDOW_SEC
 function slopePct(symbol, windowSec) {
   const now = nowMs();
   const pNow = priceAtOrBefore(symbol, now);
@@ -380,27 +386,18 @@ function updateRegime(symbol) {
 
   let next = prev.regime;
 
-  // Hysteresis:
-  // - Engage TREND if absSlope >= TREND_ON and atrPct >= volMin
-  // - Disengage TREND if absSlope <= TREND_OFF
-  // - Engage RANGE if absSlope <= RANGE_ON
-  // - Disengage RANGE if absSlope >= RANGE_OFF
   if (prev.regime === "RANGE") {
     if (absSlope >= REGIME_TREND_SLOPE_ON_PCT && atrP >= REGIME_VOL_MIN_ATR_PCT) {
       next = "TREND";
     }
   } else {
-    // TREND
     if (absSlope <= REGIME_TREND_SLOPE_OFF_PCT) {
       next = "RANGE";
     }
   }
 
-  // extra clamp: if very low slope, force RANGE
   if (absSlope <= REGIME_RANGE_SLOPE_ON_PCT) next = "RANGE";
-  // if strong again, allow TREND
   if (absSlope >= REGIME_RANGE_SLOPE_OFF_PCT && atrP >= REGIME_VOL_MIN_ATR_PCT) {
-    // only flip to TREND if also past TREND_ON
     if (absSlope >= REGIME_TREND_SLOPE_ON_PCT) next = "TREND";
   }
 
@@ -413,7 +410,9 @@ function updateRegime(symbol) {
   regimeState.set(symbol, st);
 
   if (prev.regime !== next) {
-    console.log(`🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(3)}% | atr=${atrP.toFixed(3)}%`);
+    console.log(
+      `🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(3)}% | atr=${atrP.toFixed(3)}%`
+    );
   }
   return st;
 }
@@ -431,7 +430,7 @@ function effectiveReadyMaxMovePct(symbol) {
   return READY_MAX_MOVE_PCT;
 }
 
-// Crash detection using price change over 1m and 5m
+// Crash detection using price change over 1m and 5m (server-time based)
 function maybeCrashLock(symbol) {
   if (!CRASH_PROTECT_ENABLED) return false;
   if (!symbol) return false;
@@ -452,7 +451,6 @@ function maybeCrashLock(symbol) {
   if (dump1m != null && dump1m <= -CRASH_DUMP_1M_PCT) {
     startCrashLock(`dump_1m_${dump1m.toFixed(2)}%`);
     lastAction = "crash_lock_dump_1m";
-    // also clear READY to prevent stale entry
     clearReadyContext("crash_lock_dump_1m");
     return { triggered: true, window: "1m", dumpPct: dump1m };
   }
@@ -520,9 +518,7 @@ async function postTo3Commas(action, payload) {
       signal: ac.signal,
     });
     const text = await resp.text();
-    console.log(
-      `📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`
-    );
+    console.log(`📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`);
     return { ok: resp.ok, status: resp.status, resp: text };
   } catch (e) {
     console.log(
@@ -540,11 +536,8 @@ function noteExitForEquity(exitPrice) {
   const p = pctProfit(entryPrice, exitPrice);
   if (p == null) return;
 
-  if (p < 0) {
-    lossStreak += 1;
-  } else {
-    lossStreak = 0;
-  }
+  if (p < 0) lossStreak += 1;
+  else lossStreak = 0;
 
   console.log(`📉 Equity: exitPnL=${p.toFixed(3)}% | lossStreak=${lossStreak}`);
 
@@ -586,7 +579,6 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
       givebackPct = giveMult * atrP;
     }
   } else if (PL_ADAPTIVE_ENABLED && !REGIME_ENABLED) {
-    // adaptive even without regime: use TREND multipliers as default
     const atrP = atrPctFromTicks(currentSymbol, ATR_WINDOW_SEC);
     if (atrP != null) {
       armPct = PL_START_ATR_MULT_TREND * atrP;
@@ -594,12 +586,17 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
     }
   }
 
+  // ✅ v2.8.1: clamp floors/caps to avoid tiny exits and optionally limit extremes
+  if (PL_MIN_ARM_PCT > 0) armPct = Math.max(armPct, PL_MIN_ARM_PCT);
+  if (PL_MIN_GIVEBACK_PCT > 0) givebackPct = Math.max(givebackPct, PL_MIN_GIVEBACK_PCT);
+  if (PL_MAX_ARM_PCT > 0) armPct = Math.min(armPct, PL_MAX_ARM_PCT);
+  if (PL_MAX_GIVEBACK_PCT > 0) givebackPct = Math.min(givebackPct, PL_MAX_GIVEBACK_PCT);
+
   // arm lock
   if (!profitLockArmed && p >= armPct) {
     profitLockArmed = true;
     console.log(`🔒 PROFIT LOCK ARMED at +${p.toFixed(3)}% (>= ${armPct.toFixed(3)}%)`);
   }
-
   if (!profitLockArmed) return false;
 
   // trailing floor from peak
@@ -618,7 +615,6 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
       tv_instrument: entryMeta?.tv_instrument,
     });
 
-    // equity update BEFORE clearing
     noteExitForEquity(currentPrice);
 
     clearReadyContext("profit_lock_exit");
@@ -663,10 +659,17 @@ app.get("/", (req, res) => {
     PL_GIVEBACK_ATR_MULT_TREND,
     PL_START_ATR_MULT_RANGE,
     PL_GIVEBACK_ATR_MULT_RANGE,
+    // clamps
+    PL_MIN_ARM_PCT,
+    PL_MIN_GIVEBACK_PCT,
+    PL_MAX_ARM_PCT,
+    PL_MAX_GIVEBACK_PCT,
     PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT,
     REGIME_ENABLED,
     SLOPE_WINDOW_SEC,
     ATR_WINDOW_SEC,
+    TICK_BUFFER_SEC,
+    REGIME_MIN_TICKS,
     REGIME_TREND_SLOPE_ON_PCT,
     REGIME_TREND_SLOPE_OFF_PCT,
     REGIME_VOL_MIN_ATR_PCT,
@@ -686,7 +689,7 @@ app.get("/", (req, res) => {
     peakPrice,
     profitLockArmed,
     entryMeta,
-    regime: lastTickSymbol ? (regimeState.get(lastTickSymbol) || null) : null,
+    regime: lastTickSymbol ? regimeState.get(lastTickSymbol) || null : null,
     threecommas_configured: Boolean(THREECOMMAS_BOT_UUID && THREECOMMAS_SECRET),
   });
 });
@@ -738,7 +741,7 @@ app.post("/webhook", async (req, res) => {
     return res.json({
       ok: true,
       tick: true,
-      regime: r || (regimeState.get(tickSym) || null),
+      regime: r || regimeState.get(tickSym) || null,
       crash: crash || null,
       expired,
       profit_lock: pl || null,
@@ -782,7 +785,6 @@ app.post("/webhook", async (req, res) => {
       }
 
       if (conservativeModeActive()) {
-        // simple conservative rule: only allow TREND entries during conservative mode
         const reg = raySym ? getRegime(raySym) : "RANGE";
         if (reg !== "TREND") {
           lastAction = "ray_buy_blocked_conservative_range";
@@ -848,7 +850,7 @@ app.post("/webhook", async (req, res) => {
         source: "ray",
         drift_pct: dPct,
         maxMove,
-        regime: entrySymbol ? (regimeState.get(entrySymbol) || null) : null,
+        regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
         threecommas: fwd,
       });
     }
@@ -926,7 +928,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (conservativeModeActive()) {
-      // conservative: allow READY but it will likely block BUY later unless TREND
       console.log("🟠 READY received during conservative mode (will restrict buys)");
     }
 
@@ -953,7 +954,14 @@ app.post("/webhook", async (req, res) => {
       regime: readySymbol ? getRegime(readySymbol) : null,
     });
 
-    return res.json({ ok: true, readyOn, readyPrice, readySymbol, readyTf, regime: readySymbol ? (regimeState.get(readySymbol) || null) : null });
+    return res.json({
+      ok: true,
+      readyOn,
+      readyPrice,
+      readySymbol,
+      readyTf,
+      regime: readySymbol ? regimeState.get(readySymbol) || null : null,
+    });
   }
 
   lastAction = "unknown";
@@ -982,6 +990,9 @@ app.listen(PORT, () => {
   );
   console.log(
     `ProfitLock: ENABLED=${PROFIT_LOCK_ENABLED} | ADAPTIVE=${PL_ADAPTIVE_ENABLED} | fixedArm=${PROFIT_LOCK_ARM_PCT}% | fixedGive=${PROFIT_LOCK_GIVEBACK_PCT}% | TREND(start=${PL_START_ATR_MULT_TREND}x give=${PL_GIVEBACK_ATR_MULT_TREND}x) | RANGE(start=${PL_START_ATR_MULT_RANGE}x give=${PL_GIVEBACK_ATR_MULT_RANGE}x)`
+  );
+  console.log(
+    `ProfitLockClamps: MIN_ARM=${PL_MIN_ARM_PCT}% | MIN_GIVE=${PL_MIN_GIVEBACK_PCT}% | MAX_ARM=${PL_MAX_ARM_PCT}% | MAX_GIVE=${PL_MAX_GIVEBACK_PCT}%`
   );
   console.log(
     `3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${
