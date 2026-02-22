@@ -1,28 +1,30 @@
 /**
- * demoShort.js — Railway Brain (SHORT) — v2.8.1-style (FULL) + 3Commas Custom Signal FIX
+ * demoShort.js — Railway Brain (SHORT) — v2.8.1-style architecture
  *
  * ✅ Accepts TradingView payloads:
  *   New style:
- *     { secret, src: "tick"|"enter_short"|"exit_short", symbol:"BINANCE:SOLUSDT", price:"83.2", time:"{{timenow}}" }
- *   Old style (optional):
- *     { secret, action:"enter_short", tv_exchange:"BINANCE", tv_instrument:"SOLUSDT", trigger_price:"83.2", timestamp:"{{timenow}}" }
+ *     { secret, src: tick|enter_short|exit_short, symbol:"BINANCE:SOLUSDT", price:"83.2", time:"{{timenow}}" }
+ *   Old style (optional compatibility):
+ *     { secret, action:"enter_short", tv_exchange, tv_instrument, trigger_price, timestamp }
  *
  * ✅ Tick refreshes heartbeat automatically
  * ✅ READY_SHORT / POSITION_SHORT / ACT_SHORT (v2.8.1 style)
  * ✅ Mirror Profit Lock (trough-based trailing) + auto-exit on tick
- * ✅ Pump protection, HTF bearish bias, Regime gate (optional fields)
+ * ✅ Pump protection (optional ind fields)
+ * ✅ HTF bearish bias (optional htf fields)
+ * ✅ Regime gate (optional reg fields)
  *
- * ✅ 3Commas CUSTOM SIGNAL format (this is what your bot expects):
+ * ✅ 3Commas Custom Signal payload (THIS is the critical fix):
  *   POST https://api.3commas.io/signal_bots/webhooks
  *   {
- *     "secret": "<C3_SIGNAL_SECRET (JWT-like)>",
+ *     "secret": "<3commas signal source secret (JWT-like)>",
  *     "max_lag": "300",
  *     "timestamp": "<ISO>",
  *     "trigger_price": "<string>",
  *     "tv_exchange": "BINANCE",
  *     "tv_instrument": "SOLUSDT",
  *     "action": "enter_short" | "exit_short",
- *     "bot_uuid": "<C3_BOT_UUID>"
+ *     "bot_uuid": "<signal bot uuid>"
  *   }
  *
  * Railway Start Command:
@@ -31,60 +33,6 @@
 
 import express from "express";
 import crypto from "crypto";
-
-// -------------------------
-// Crash-proofing (prevents silent container exits)
-// -------------------------
-process.on("unhandledRejection", (err) => {
-  console.error("[FATAL] unhandledRejection:", err);
-});
-process.on("uncaughtException", (err) => {
-  console.error("[FATAL] uncaughtException:", err);
-});
-
-// -------------------------
-// ENV helpers
-// -------------------------
-function safeStr(x) {
-  if (x === null || x === undefined) return "";
-  return String(x);
-}
-function bool(v, d = false) {
-  if (v === undefined || v === null) return d;
-  if (typeof v === "boolean") return v;
-  const s = String(v).toLowerCase().trim();
-  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
-  if (["0", "false", "no", "n", "off"].includes(s)) return false;
-  return d;
-}
-function num(v, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
-}
-function int(v, d = 0) {
-  const n = parseInt(String(v), 10);
-  return Number.isFinite(n) ? n : d;
-}
-function toMs(iso) {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : null;
-}
-function msMin(m) {
-  return Math.floor(m * 60 * 1000);
-}
-function round(x, dp = 4) {
-  if (!Number.isFinite(x)) return x;
-  const m = 10 ** dp;
-  return Math.round(x * m) / m;
-}
-function pctDiff(a, b) {
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return Infinity;
-  return Math.abs((a - b) / b) * 100;
-}
-function uid() {
-  return crypto.randomBytes(8).toString("hex");
-}
 
 // -------------------------
 // ENV
@@ -96,21 +44,21 @@ const ENV = {
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
   WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
 
-  // Execution
+  // DEMO-first toggle
   ENABLE_POST_3C: bool(process.env.ENABLE_POST_3C, false),
 
   // Heartbeat gate
   REQUIRE_FRESH_HEARTBEAT: bool(process.env.REQUIRE_FRESH_HEARTBEAT, true),
   HEARTBEAT_MAX_AGE_SEC: num(process.env.HEARTBEAT_MAX_AGE_SEC, 240),
 
-  // READY/COOLDOWN
+  // READY/ACT
   READY_TTL_MIN: num(process.env.READY_TTL_MIN, 20),
   READY_MAX_MOVE_PCT: num(process.env.READY_MAX_MOVE_PCT, 0.6),
   COOLDOWN_MIN: num(process.env.COOLDOWN_MIN, 3),
 
-  // Profit lock
-  PROFIT_LOCK_TRIGGER_PCT: num(process.env.PROFIT_LOCK_TRIGGER_PCT, 0.6),
-  PROFIT_LOCK_GIVEBACK_PCT: num(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.3),
+  // Profit lock (mirror)
+  PROFIT_LOCK_TRIGGER_PCT: num(process.env.PROFIT_LOCK_TRIGGER_PCT, 0.60),
+  PROFIT_LOCK_GIVEBACK_PCT: num(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.30),
 
   // Pump protection
   ENABLE_PUMP_PROTECT: bool(process.env.ENABLE_PUMP_PROTECT, true),
@@ -121,46 +69,33 @@ const ENV = {
   // Regime / HTF (optional fields)
   ENABLE_REGIME_GATE: bool(process.env.ENABLE_REGIME_GATE, true),
   REG_ADX_MIN: num(process.env.REG_ADX_MIN, 18),
-  REG_SLOPE_MIN: num(process.env.REG_SLOPE_MIN, 0.08),
+  REG_SLOPE_MIN: num(process.env.REG_SLOPE_MIN, 0.08), // requires slopePctPerBar <= -min
 
   ENABLE_HTF_BIAS: bool(process.env.ENABLE_HTF_BIAS, true),
 
   // 3Commas Custom Signal
   C3_WEBHOOK_URL: process.env.C3_WEBHOOK_URL || "https://api.3commas.io/signal_bots/webhooks",
   C3_BOT_UUID: process.env.C3_BOT_UUID || "",
-  C3_SIGNAL_SECRET: process.env.C3_SIGNAL_SECRET || "", // JWT-like secret from 3Commas signal source
+C3_SIGNAL_SECRET:
+  process.env.C3_SIGNAL_SECRET ||
+  process.env.C3_WEBHOOK_SECRET || "", // <-- 3Commas "secret" (JWT-like)
   C3_MAX_LAG_SEC: String(process.env.C3_MAX_LAG_SEC || "300"),
   C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
 
   // Logging
-  LOG_JSON: bool(process.env.LOG_JSON, true),
+  LOG_JSON: bool(process.env.LOG_JSON, false),
 };
 
-// -------------------------
-// Logging (single-line JSON is easiest to read + avoids “broken” multiline logs)
-// -------------------------
-function log(tag, obj = {}) {
-  const payload = { tag, t: new Date().toISOString(), ...obj };
-  if (ENV.LOG_JSON) console.log(JSON.stringify(payload));
-  else console.log(`[${payload.t}] ${tag}`, obj);
-}
+console.log(
+  `✅ Brain SHORT v2.8.1-style listening. PORT=${ENV.PORT} | ENABLE_POST_3C=${ENV.ENABLE_POST_3C}\n` +
+    `Config: READY_TTL_MIN=${ENV.READY_TTL_MIN} | READY_MAX_MOVE_PCT=${ENV.READY_MAX_MOVE_PCT} | COOLDOWN_MIN=${ENV.COOLDOWN_MIN}\n` +
+    `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${ENV.REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${ENV.HEARTBEAT_MAX_AGE_SEC}\n` +
+    `ProfitLock: trigger=${ENV.PROFIT_LOCK_TRIGGER_PCT}% giveback=${ENV.PROFIT_LOCK_GIVEBACK_PCT}%\n` +
+    `3Commas: URL=${ENV.C3_WEBHOOK_URL} | BOT_UUID=${ENV.C3_BOT_UUID ? "(set)" : "(missing)"} | SIGNAL_SECRET=${ENV.C3_SIGNAL_SECRET ? "(set)" : "(missing)"} | max_lag=${ENV.C3_MAX_LAG_SEC}s`
+);
 
 // -------------------------
-// Secret check (safe, never throws)
-// -------------------------
-function verifySecret(got, expected) {
-  const a = Buffer.from(String(got || ""));
-  const b = Buffer.from(String(expected || ""));
-  if (a.length !== b.length) return false;
-  try {
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
-
-// -------------------------
-// STATE (v2.8.1 style)
+// STATE
 // -------------------------
 const STATE = {
   READY_SHORT: null,
@@ -174,7 +109,7 @@ const STATE = {
 };
 
 // -------------------------
-// Express app
+// APP
 // -------------------------
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -190,43 +125,59 @@ app.get("/heartbeat", (_req, res) => {
     lastHeartbeatAgeSec: STATE.ACT_SHORT.lastHeartbeatTs
       ? Math.floor((now - STATE.ACT_SHORT.lastHeartbeatTs) / 1000)
       : null,
-    ready: STATE.READY_SHORT,
-    position: STATE.POSITION_SHORT,
-    act: STATE.ACT_SHORT,
+    positionOpen: !!STATE.POSITION_SHORT?.isOpen,
+    ready: !!STATE.READY_SHORT,
+    cooldownActive: now < STATE.ACT_SHORT.cooldownUntil,
+    pumpCooldownActive: now < STATE.ACT_SHORT.pumpCooldownUntil,
   });
 });
 
 app.get("/status", (_req, res) => {
   const p = STATE.POSITION_SHORT;
-  const floor = p?.isOpen
-    ? p.trough * (1 + ENV.PROFIT_LOCK_GIVEBACK_PCT / 100)
-    : null;
+  const now = Date.now();
+  const floor = p?.isOpen ? p.trough * (1 + ENV.PROFIT_LOCK_GIVEBACK_PCT / 100) : null;
 
   res.json({
     ok: true,
-    now: Date.now(),
+    now,
     ready: STATE.READY_SHORT,
-    position: p ? { ...p, floor } : null,
+    position: p
+      ? {
+          isOpen: p.isOpen,
+          pair: p.pair,
+          exchange: p.exchange,
+          instrument: p.instrument,
+          entryPrice: p.entryPrice,
+          entryTs: p.entryTs,
+          trough: p.trough,
+          lastPrice: p.lastPrice,
+          profitLockArmed: p.profitLockArmed,
+          floor,
+          lastUpdateTs: p.lastUpdateTs,
+        }
+      : null,
     act: STATE.ACT_SHORT,
   });
 });
 
-app.get("/ready", (_req, res) => res.json({ ok: true, ready: STATE.READY_SHORT }));
+app.get("/ready", (_req, res) => {
+  res.json({ ok: true, ready: STATE.READY_SHORT });
+});
 
 // -------------------------
-// Webhook handler
+// WEBHOOK
 // -------------------------
 app.post(ENV.WEBHOOK_PATH, async (req, res) => {
   try {
-    const body = req.body || {};
+    const payload = req.body || {};
 
-    // Auth
-    if (!verifySecret(body.secret, ENV.WEBHOOK_SECRET)) {
-      log("UNAUTHORIZED", { hasSecret: !!body.secret });
+    // Brain secret auth
+    if (!verifySecret(payload?.secret, ENV.WEBHOOK_SECRET)) {
+      log("UNAUTHORIZED", { gotSecret: !!payload?.secret });
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
-    const evt = normalizeWebhook(body);
+    const evt = normalizeWebhook(payload);
 
     log("WEBHOOK_IN", {
       intent: evt.intent,
@@ -244,17 +195,17 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
     }
     if (evt.eventId) STATE.ACT_SHORT.lastEventId = evt.eventId;
 
-    // Heartbeat refresh
+    // Refresh heartbeat on tick/heartbeat
     if (evt.intent === "tick" || evt.intent === "heartbeat") {
       STATE.ACT_SHORT.lastHeartbeatTs = evt.ts;
     }
 
-    // Update position on any price
-    if (STATE.POSITION_SHORT?.isOpen && Number.isFinite(evt.price)) {
+    // Update position on any priced event
+    if (STATE.POSITION_SHORT?.isOpen && isFinite(evt.price)) {
       updateShortPositionOnTick(evt.price, evt.ts);
     }
 
-    // Heartbeat
+    // Heartbeat response
     if (evt.intent === "heartbeat") {
       return res.status(200).json({ ok: true, action: "heartbeat" });
     }
@@ -271,7 +222,7 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       return res.status(200).json({ ok: true, action: "tick" });
     }
 
-    // Enter
+    // Enter short
     if (evt.intent === "enter_short") {
       const decision = evaluateEnterShort(evt);
 
@@ -302,13 +253,14 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
         blocked: false,
         expiresAt: evt.ts + msMin(ENV.READY_TTL_MIN),
       };
+
       log("READY_SHORT_SET", STATE.READY_SHORT);
 
       const exec = await executeEnterShort(evt);
       return res.status(200).json({ ok: true, action: "enter_short", exec });
     }
 
-    // Exit
+    // Exit short
     if (evt.intent === "exit_short") {
       const decision = evaluateExitShort(evt);
       if (!decision.allow) {
@@ -322,13 +274,13 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
 
     return res.status(400).json({ ok: false, error: "unknown_intent", got: evt.intent });
   } catch (e) {
-    console.error("ERROR in /webhook:", e);
+    console.error("ERROR", e);
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 
 // -------------------------
-// Gating
+// GATING
 // -------------------------
 function evaluateEnterShort(evt) {
   const now = evt.ts;
@@ -344,10 +296,10 @@ function evaluateEnterShort(evt) {
   if (now < STATE.ACT_SHORT.cooldownUntil) return { allow: false, reason: "cooldown_active" };
   if (now < STATE.ACT_SHORT.pumpCooldownUntil) return { allow: false, reason: "pump_cooldown_active" };
 
-  // One direction at a time
+  // One position at a time
   if (STATE.POSITION_SHORT?.isOpen) return { allow: false, reason: "short_already_open" };
 
-  // Pump protection (optional fields)
+  // Pump protection (optional)
   if (ENV.ENABLE_PUMP_PROTECT) {
     const pump = detectPump(evt);
     if (pump.isPump) {
@@ -359,13 +311,13 @@ function evaluateEnterShort(evt) {
     }
   }
 
-  // HTF bearish bias (optional fields)
+  // HTF bearish bias (optional)
   if (ENV.ENABLE_HTF_BIAS) {
     const bias = htfBearishBiasOk(evt);
     if (!bias.ok) return { allow: false, reason: `htf_bias_block:${bias.reason}` };
   }
 
-  // Regime gate (optional fields)
+  // Regime gate (optional)
   if (ENV.ENABLE_REGIME_GATE) {
     const reg = regimeBearOk(evt);
     if (!reg.ok) return { allow: false, reason: `regime_block:${reg.reason}` };
@@ -376,6 +328,7 @@ function evaluateEnterShort(evt) {
 
 function evaluateExitShort(evt) {
   if (!STATE.POSITION_SHORT?.isOpen) return { allow: false, reason: "no_open_short" };
+
   if (evt.exitReason === "ray_exit") return { allow: true, reason: "ray_exit" };
 
   const pl = profitLockExitCheck(evt.price);
@@ -385,7 +338,7 @@ function evaluateExitShort(evt) {
 }
 
 // -------------------------
-// Profit lock (mirror trough trailing)
+// PROFIT LOCK (mirror)
 // -------------------------
 function updateShortPositionOnTick(price, ts) {
   const p = STATE.POSITION_SHORT;
@@ -397,6 +350,7 @@ function updateShortPositionOnTick(price, ts) {
 
   const triggerAbs = (p.entryPrice * ENV.PROFIT_LOCK_TRIGGER_PCT) / 100;
   const moveInFavor = p.entryPrice - p.trough;
+
   if (!p.profitLockArmed && moveInFavor >= triggerAbs) {
     p.profitLockArmed = true;
     log("PROFIT_LOCK_ARMED", {
@@ -412,17 +366,20 @@ function profitLockExitCheck(currentPrice) {
   const p = STATE.POSITION_SHORT;
   if (!p?.isOpen) return { shouldExit: false, detail: "no_position" };
   if (!p.profitLockArmed) return { shouldExit: false, detail: "not_armed" };
-  if (!Number.isFinite(currentPrice)) return { shouldExit: false, detail: "no_price" };
+  if (!isFinite(currentPrice)) return { shouldExit: false, detail: "no_price" };
 
   const floor = p.trough * (1 + ENV.PROFIT_LOCK_GIVEBACK_PCT / 100);
   if (currentPrice >= floor) {
-    return { shouldExit: true, detail: `price=${round(currentPrice)}>=floor=${round(floor)} trough=${round(p.trough)}` };
+    return {
+      shouldExit: true,
+      detail: `price=${round(currentPrice)} >= floor=${round(floor)} | trough=${round(p.trough)}`,
+    };
   }
   return { shouldExit: false, detail: "hold" };
 }
 
 // -------------------------
-// Optional protections (only if fields provided)
+// OPTIONAL PROTECTIONS (only active if fields provided)
 // -------------------------
 function detectPump(evt) {
   const ind = evt.ind || {};
@@ -430,11 +387,16 @@ function detectPump(evt) {
   const range = num(ind.candleRange, NaN);
   const rocPct = num(ind.rocPct, NaN);
 
-  if (!Number.isFinite(atr) || !Number.isFinite(range) || !Number.isFinite(rocPct)) {
+  if (!isFinite(atr) || !isFinite(range) || !isFinite(rocPct)) {
     return { isPump: false, reason: "no_indicators" };
   }
-  if (range >= atr * ENV.PUMP_ATR_MULT) return { isPump: true, reason: "range_gt_atr_mult" };
-  if (rocPct >= ENV.PUMP_ROC_PCT) return { isPump: true, reason: "roc_gt_threshold" };
+
+  if (range >= atr * ENV.PUMP_ATR_MULT) {
+    return { isPump: true, reason: `range_gt_atr_mult(range=${range},atr=${atr})` };
+  }
+  if (rocPct >= ENV.PUMP_ROC_PCT) {
+    return { isPump: true, reason: `roc_gt_threshold(rocPct=${rocPct})` };
+  }
   return { isPump: false, reason: "ok" };
 }
 
@@ -459,24 +421,25 @@ function htfBearishBiasOk(evt) {
 function regimeBearOk(evt) {
   const reg = evt.reg || {};
   const hasAny = reg.adx !== undefined || reg.slopePctPerBar !== undefined;
+
   if (!hasAny) return { ok: true, reason: "no_regime_fields" };
 
   const adx = num(reg.adx, NaN);
   const slope = num(reg.slopePctPerBar, NaN);
-  if (!Number.isFinite(adx) || !Number.isFinite(slope)) return { ok: true, reason: "bad_regime_fields_allow" };
 
-  if (adx < ENV.REG_ADX_MIN) return { ok: false, reason: `adx_low(${adx})` };
-  if (slope > -ENV.REG_SLOPE_MIN) return { ok: false, reason: `slope_not_bear(${slope})` };
+  if (!isFinite(adx) || !isFinite(slope)) return { ok: true, reason: "bad_regime_fields_allow" };
+
+  if (adx < ENV.REG_ADX_MIN) return { ok: false, reason: `adx_low(${adx}<${ENV.REG_ADX_MIN})` };
+  if (slope > -ENV.REG_SLOPE_MIN) return { ok: false, reason: `slope_not_bear(${slope} > -${ENV.REG_SLOPE_MIN})` };
   return { ok: true, reason: "ok" };
 }
 
 // -------------------------
-// Execution (DEMO + LIVE 3Commas custom signal)
+// EXECUTION (DEMO + LIVE 3Commas custom format)
 // -------------------------
 async function executeEnterShort(evt) {
   const ready = STATE.READY_SHORT;
   if (!ready || ready.blocked) return { ok: false, reason: "no_ready" };
-
   if (evt.ts > ready.expiresAt) {
     clearReady("ready_expired");
     return { ok: false, reason: "ready_expired" };
@@ -489,54 +452,57 @@ async function executeEnterShort(evt) {
     return { ok: false, reason: `ready_max_move_exceeded(movePct=${round(movePct)}%)` };
   }
 
+  // Open internal position state
   openShortPosition(evt);
 
   if (!ENV.ENABLE_POST_3C) return { ok: true, demo: true, posted: false };
 
-  const payload = build3CommasCustomSignal("enter_short", evt);
-  log("3COMMAS_POST", { action: "enter_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
+  // LIVE: correct 3Commas custom signal payload
+   const payload = build3CommasCustomSignal("exit_short", evt);
+  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
 
   const resp = await postTo3Commas(payload);
-  log("3COMMAS_RESP", { action: "enter_short", resp });
 
-  return { ok: !!resp.ok, posted: true, resp };
-}
+  log("3COMMAS_RESP", { action: "exit_short", resp });
+
+  return { ok: resp.ok, demo: false, posted: true, resp };
 
 async function executeExitShort(evt, reason) {
+  // Close internal position state
   closeShortPosition(reason, evt.ts);
 
   if (!ENV.ENABLE_POST_3C) return { ok: true, demo: true, posted: false, reason };
 
   const payload = build3CommasCustomSignal("exit_short", evt);
-  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
-
+  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: mask3c(payload) });
   const resp = await postTo3Commas(payload);
   log("3COMMAS_RESP", { action: "exit_short", resp });
 
-  return { ok: !!resp.ok, posted: true, resp, reason };
+  return { ok: true, demo: false, posted: true, resp };
 }
 
-function build3CommasCustomSignal(action, evt) {
-  return {
-    secret: ENV.C3_SIGNAL_SECRET,
-    max_lag: ENV.C3_MAX_LAG_SEC,
-    timestamp: new Date(evt.ts).toISOString(),
-    trigger_price: String(evt.price),
-    tv_exchange: evt.exchange || "BINANCE",
-    tv_instrument: evt.instrument, // SOLUSDT
-    action, // enter_short / exit_short
-    bot_uuid: ENV.C3_BOT_UUID,
-  };
+// ---- 3Commas custom format builder (FIX) ----
+  const payload = build3CommasCustomSignal("enter_short", evt);
+  log("3COMMAS_POST", { action: "enter_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
+
+  const resp = await postTo3Commas(payload);
+
+  // IMPORTANT: always log response even if ok=false
+  log("3COMMAS_RESP", { action: "enter_short", resp });
+
+  return { ok: resp.ok, demo: false, posted: true, resp };
+function mask3c(p) {
+  return { ...p, secret: "***" };
 }
 
 async function postTo3Commas(payload) {
-  // IMPORTANT: do NOT crash — return error
   if (!ENV.C3_BOT_UUID || !ENV.C3_SIGNAL_SECRET) {
     return { ok: false, error: "missing_C3_BOT_UUID_or_C3_SIGNAL_SECRET" };
   }
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), ENV.C3_TIMEOUT_MS);
+  const t0 = Date.now();
 
   try {
     const r = await fetch(ENV.C3_WEBHOOK_URL, {
@@ -547,7 +513,7 @@ async function postTo3Commas(payload) {
     });
 
     const body = await r.text().catch(() => "");
-    return { ok: r.ok, status: r.status, body };
+    return { ok: r.ok, status: r.status, body, dtMs: Date.now() - t0 };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
   } finally {
@@ -556,7 +522,7 @@ async function postTo3Commas(payload) {
 }
 
 // -------------------------
-// READY / POSITION helpers
+// POSITION / READY helpers
 // -------------------------
 function openShortPosition(evt) {
   STATE.POSITION_SHORT = {
@@ -573,6 +539,7 @@ function openShortPosition(evt) {
   };
   clearReady("entered_short");
   log("POSITION_SHORT_OPEN", {
+    isOpen: true,
     pair: evt.pair,
     exchange: evt.exchange,
     instrument: evt.instrument,
@@ -584,15 +551,7 @@ function openShortPosition(evt) {
 function closeShortPosition(reason, ts) {
   const p = STATE.POSITION_SHORT;
   if (!p?.isOpen) return;
-
-  log("POSITION_SHORT_CLOSE", {
-    reason,
-    pair: p.pair,
-    entryPrice: p.entryPrice,
-    exitPrice: p.lastPrice,
-    trough: p.trough,
-  });
-
+  log("POSITION_SHORT_CLOSE", { reason, pair: p.pair, entry: p.entryPrice, exit: p.lastPrice, trough: p.trough });
   STATE.POSITION_SHORT = null;
   STATE.ACT_SHORT.cooldownUntil = Math.max(STATE.ACT_SHORT.cooldownUntil, ts + msMin(ENV.COOLDOWN_MIN));
 }
@@ -603,31 +562,35 @@ function clearReady(reason) {
 }
 
 // -------------------------
-// Normalization (supports BOTH formats)
+// NORMALIZE (supports both formats)
 // -------------------------
 function normalizeWebhook(p) {
   const ts = toMs(p.time || p.timestamp) ?? Date.now();
 
-  // New style: symbol="BINANCE:SOLUSDT"
+  // New style
   const rawSymbol = safeStr(p.symbol || "");
-  const exchangeFromSymbol = rawSymbol.includes(":") ? rawSymbol.split(":")[0] : "";
-  const instrumentFromSymbol = rawSymbol.includes(":") ? rawSymbol.split(":")[1] : rawSymbol;
+  const symNoEx = rawSymbol.includes(":") ? rawSymbol.split(":")[1] : rawSymbol;
 
-  // Old style: tv_exchange / tv_instrument
-  const exchange = safeStr(p.tv_exchange || exchangeFromSymbol || "BINANCE");
-  const instrument = safeStr(p.tv_instrument || instrumentFromSymbol || "UNKNOWN");
+  // Old style
+  const tvExchange = safeStr(p.tv_exchange || "");
+  const tvInstrument = safeStr(p.tv_instrument || "");
 
-  const pair = toBotPair(instrument); // internal format
+  const exchange = tvExchange || (rawSymbol.includes(":") ? rawSymbol.split(":")[0] : "BINANCE");
+  const instrument = tvInstrument || symNoEx || "UNKNOWN";
+
+  // Pair for internal logging (optional)
+  const pair = toBotPair(instrument);
+
   const price = num(p.price ?? p.trigger_price, NaN);
 
   return {
     eventId: safeStr(p.eventId || ""),
     ts,
-    exchange,
+    price,
+    exchange: exchange || "BINANCE",
     instrument,
     pair,
-    price,
-    intent: normalizeIntent(p),
+    intent: normalizeIntent(p.intent, p),
     exitReason: safeStr(p.exitReason || ""),
     ind: p.ind || p.indicators || {},
     htf: p.htf || {},
@@ -635,15 +598,17 @@ function normalizeWebhook(p) {
   };
 }
 
-function normalizeIntent(p) {
+function normalizeIntent(intent, p) {
+  const i = safeStr(intent || "").toLowerCase();
+  if (["enter_short", "exit_short", "tick", "heartbeat"].includes(i)) return i;
+
+  // New style field
   const src = safeStr(p.src || "").toLowerCase();
   if (src) return src;
 
+  // Old style field
   const action = safeStr(p.action || "").toLowerCase();
   if (action) return action;
-
-  const intent = safeStr(p.intent || "").toLowerCase();
-  if (intent) return intent;
 
   return "unknown";
 }
@@ -663,16 +628,72 @@ function toBotPair(symNoEx) {
 }
 
 // -------------------------
-// Start
+// UTIL
+// -------------------------
+function verifySecret(got, expected) {
+  const a = Buffer.from(String(got || ""));
+  const b = Buffer.from(String(expected || ""));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function uid() {
+  return crypto.randomBytes(8).toString("hex");
+}
+
+function msMin(m) {
+  return Math.floor(m * 60 * 1000);
+}
+
+function pctDiff(a, b) {
+  if (!isFinite(a) || !isFinite(b) || b === 0) return Infinity;
+  return Math.abs((a - b) / b) * 100;
+}
+
+function toMs(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
+}
+
+function safeStr(x) {
+  if (x === null || x === undefined) return "";
+  return String(x);
+}
+
+function bool(v, d = false) {
+  if (v === undefined || v === null) return d;
+  if (typeof v === "boolean") return v;
+  const s = String(v).toLowerCase().trim();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return d;
+}
+
+function num(v, d = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
+function int(v, d = 0) {
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : d;
+}
+
+function round(x, dp = 4) {
+  if (!isFinite(x)) return x;
+  const m = Math.pow(10, dp);
+  return Math.round(x * m) / m;
+}
+
+function log(tag, obj = {}) {
+  if (ENV.LOG_JSON) console.log(JSON.stringify({ tag, ts: new Date().toISOString(), ...obj }));
+  else console.log(`[${new Date().toISOString()}] ${tag}`, obj);
+}
+
+// -------------------------
+// START
 // -------------------------
 app.listen(ENV.PORT, () => {
-  log("START", {
-    port: ENV.PORT,
-    path: ENV.WEBHOOK_PATH,
-    enablePost3c: ENV.ENABLE_POST_3C,
-    c3_url: ENV.C3_WEBHOOK_URL,
-    c3_bot_uuid_set: !!ENV.C3_BOT_UUID,
-    c3_signal_secret_set: !!ENV.C3_SIGNAL_SECRET,
-    c3_max_lag: ENV.C3_MAX_LAG_SEC,
-  });
+  console.log(`🚀 Listening on :${ENV.PORT} path=${ENV.WEBHOOK_PATH}`);
 });
