@@ -1,28 +1,28 @@
 /**
  * demoShort.js — Railway Brain (SHORT) — DEMO-first (v2.8.1-style state blocks)
  *
- * ✅ Works with your TradingView payload format:
+ * ✅ Supports your TradingView payload format:
  *    {
- *      "secret": "...",
+ *      "secret": "...",                    // YOUR brain secret (Railway WEBHOOK_SECRET)
  *      "src": "tick" | "heartbeat" | "enter_short" | "exit_short",
  *      "symbol": "BINANCE:SOLUSDT",
  *      "price": "83.60",
- *      "time": "2026-02-22T17:01:03Z"
+ *      "time": "2026-02-22T17:01:03Z",
+ *      "exitReason": "ray_exit"            // optional for exit_short
  *    }
  *
- * ✅ Treats TICK as HEARTBEAT refresh (so “not reaching heartbeat” is solved)
- * ✅ Optional heartbeat requirement gate for entries
+ * ✅ Tick refreshes heartbeat automatically (no separate heartbeat alert needed)
  * ✅ Mirror profit lock (trough-based trailing)
- * ✅ Pump protection (needs optional ind fields from TV)
- * ✅ HTF bearish bias gate (needs optional htf fields from TV)
- * ✅ Regime gate (needs optional reg fields from TV)
- * ✅ Clean 3Commas mapping (stubbed, DEMO by default)
+ * ✅ Pump protection (optional ind fields)
+ * ✅ HTF bearish bias filter (optional htf fields)
+ * ✅ Regime gate (optional reg fields)
  *
- * Start:
+ * ✅ LIVE 3Commas Signal Bot Webhook POST (no API key signing):
+ *    POST https://api.3commas.io/signal_bots/webhooks
+ *    { bot_uuid, secret, action: "start_deal" | "close_deal" }
+ *
+ * Railway Start Command:
  *   node demoShort.js
- *
- * Railway:
- *   Start Command: node demoShort.js
  */
 
 import express from "express";
@@ -34,7 +34,7 @@ import crypto from "crypto";
 const ENV = {
   PORT: int(process.env.PORT, 8080),
 
-  // Webhook
+  // Brain webhook
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
   WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
 
@@ -60,18 +60,18 @@ const ENV = {
   PUMP_ROC_PCT: num(process.env.PUMP_ROC_PCT, 0.45),
   PUMP_COOLDOWN_MIN: num(process.env.PUMP_COOLDOWN_MIN, 5),
 
-  // Regime + HTF gates (placeholders: you can feed from TV)
+  // Regime + HTF gates (optional)
   ENABLE_REGIME_GATE: bool(process.env.ENABLE_REGIME_GATE, true),
   REG_ADX_MIN: num(process.env.REG_ADX_MIN, 18),
   REG_SLOPE_MIN: num(process.env.REG_SLOPE_MIN, 0.08), // bear requires slopePctPerBar <= -min
 
   ENABLE_HTF_BIAS: bool(process.env.ENABLE_HTF_BIAS, true),
 
-  // 3Commas (optional in DEMO)
-  C3_API_BASE: process.env.C3_API_BASE || "https://api.3commas.io/public/api",
-  C3_BOT_ID: process.env.C3_BOT_ID || "",
-  C3_API_KEY: process.env.C3_API_KEY || "",
-  C3_API_SECRET: process.env.C3_API_SECRET || "",
+  // 3Commas Signal Bot Webhook (LIVE)
+  C3_WEBHOOK_URL: process.env.C3_WEBHOOK_URL || "https://api.3commas.io/signal_bots/webhooks",
+  C3_BOT_UUID: process.env.C3_BOT_UUID || "",
+  C3_WEBHOOK_SECRET: process.env.C3_WEBHOOK_SECRET || "",
+  C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
 
   // Logging
   LOG_JSON: bool(process.env.LOG_JSON, false),
@@ -81,7 +81,8 @@ console.log(
   `✅ Brain SHORT DEMO listening. PORT=${ENV.PORT} | ENABLE_POST_3C=${ENV.ENABLE_POST_3C}\n` +
     `Config: READY_TTL_MIN=${ENV.READY_TTL_MIN} | READY_MAX_MOVE_PCT=${ENV.READY_MAX_MOVE_PCT} | COOLDOWN_MIN=${ENV.COOLDOWN_MIN}\n` +
     `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${ENV.REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${ENV.HEARTBEAT_MAX_AGE_SEC}\n` +
-    `ProfitLock: trigger=${ENV.PROFIT_LOCK_TRIGGER_PCT}% giveback=${ENV.PROFIT_LOCK_GIVEBACK_PCT}% | PumpProtect=${ENV.ENABLE_PUMP_PROTECT}`
+    `ProfitLock: trigger=${ENV.PROFIT_LOCK_TRIGGER_PCT}% giveback=${ENV.PROFIT_LOCK_GIVEBACK_PCT}% | PumpProtect=${ENV.ENABLE_PUMP_PROTECT}\n` +
+    `3Commas: URL=${ENV.C3_WEBHOOK_URL} | BOT_UUID=${ENV.C3_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${ENV.C3_WEBHOOK_SECRET ? "(set)" : "(missing)"} | TIMEOUT_MS=${ENV.C3_TIMEOUT_MS}`
 );
 
 // -------------------------
@@ -106,7 +107,6 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/", (_req, res) => res.status(200).send("OK: Brain SHORT DEMO"));
 
-// Optional: monitoring endpoint
 app.get("/heartbeat", (_req, res) => {
   const now = Date.now();
   res.status(200).json({
@@ -124,11 +124,43 @@ app.get("/heartbeat", (_req, res) => {
   });
 });
 
+app.get("/status", (_req, res) => {
+  const p = STATE.POSITION_SHORT;
+  const now = Date.now();
+  const floor = p?.isOpen
+    ? p.trough * (1 + ENV.PROFIT_LOCK_GIVEBACK_PCT / 100)
+    : null;
+
+  res.status(200).json({
+    ok: true,
+    now,
+    lastHeartbeatAgeSec: STATE.ACT_SHORT.lastHeartbeatTs
+      ? Math.floor((now - STATE.ACT_SHORT.lastHeartbeatTs) / 1000)
+      : null,
+    ready: STATE.READY_SHORT,
+    position: p
+      ? {
+          isOpen: p.isOpen,
+          pair: p.pair,
+          entryPrice: p.entryPrice,
+          entryTs: p.entryTs,
+          trough: p.trough,
+          lastPrice: p.lastPrice,
+          profitLockArmed: p.profitLockArmed,
+          floor: floor,
+          lastUpdateTs: p.lastUpdateTs,
+        }
+      : null,
+    cooldownUntil: STATE.ACT_SHORT.cooldownUntil,
+    pumpCooldownUntil: STATE.ACT_SHORT.pumpCooldownUntil,
+  });
+});
+
 app.post(ENV.WEBHOOK_PATH, async (req, res) => {
   try {
     const payload = req.body || {};
 
-    // 1) Auth
+    // 1) Auth (Brain secret)
     if (!verifySecret(payload?.secret, ENV.WEBHOOK_SECRET)) {
       log("UNAUTHORIZED", { gotSecret: !!payload?.secret });
       return res.status(401).json({ ok: false, error: "unauthorized" });
@@ -136,8 +168,6 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
 
     // 2) Normalize event (supports your src/symbol/time payload)
     const evt = normalizeWebhook(payload);
-
-    // Basic debug
     log("WEBHOOK_IN", { intent: evt.intent, pair: evt.pair, price: evt.price, ts: evt.ts });
 
     // Dedup (optional)
@@ -148,12 +178,12 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
     if (evt.eventId) STATE.ACT_SHORT.lastEventId = evt.eventId;
 
     // 3) Heartbeat refresh:
-    // Treat ANY tick as a heartbeat refresh (recommended so you don't need separate heartbeat alert)
+    // Treat ANY tick as a heartbeat refresh (so you don't need separate heartbeat alert)
     if (evt.intent === "tick" || evt.intent === "heartbeat") {
       STATE.ACT_SHORT.lastHeartbeatTs = evt.ts;
     }
 
-    // 4) If position open, update trough/profit-lock on tick/any event with price
+    // 4) If position open, update trough/profit-lock on any event with price
     if (STATE.POSITION_SHORT?.isOpen && isFinite(evt.price)) {
       updateShortPositionOnTick(evt.price, evt.ts);
     }
@@ -165,7 +195,20 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
     }
 
     if (evt.intent === "tick") {
-      // No trade action; it's used to update position + refresh heartbeat
+      // Auto-exit on profit lock when armed
+      if (STATE.POSITION_SHORT?.isOpen) {
+        const pl = profitLockExitCheck(evt.price);
+        if (pl.shouldExit) {
+          const exec = await executeExitShort(evt, `profit_lock_exit:${pl.detail}`);
+          return res.status(200).json({
+            ok: true,
+            action: "exit_short",
+            auto: true,
+            demo: !ENV.ENABLE_POST_3C,
+            exec,
+          });
+        }
+      }
       return res.status(200).json({ ok: true, action: "tick" });
     }
 
@@ -237,7 +280,7 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
 function evaluateEnterShort(evt) {
   const now = evt.ts;
 
-  // A) Heartbeat gate (optional)
+  // Heartbeat gate (optional)
   if (ENV.REQUIRE_FRESH_HEARTBEAT) {
     if (!STATE.ACT_SHORT.lastHeartbeatTs) {
       return { allow: false, reason: "no_heartbeat_seen", cooldownMin: 0 };
@@ -248,7 +291,7 @@ function evaluateEnterShort(evt) {
     }
   }
 
-  // B) Cooldowns
+  // Cooldowns
   if (now < STATE.ACT_SHORT.cooldownUntil) {
     return { allow: false, reason: "cooldown_active", cooldownMin: 0 };
   }
@@ -256,12 +299,12 @@ function evaluateEnterShort(evt) {
     return { allow: false, reason: "pump_cooldown_active", cooldownMin: 0 };
   }
 
-  // C) If already in a short, ignore
+  // If already in a short, ignore
   if (STATE.POSITION_SHORT?.isOpen) {
     return { allow: false, reason: "short_already_open", cooldownMin: 0 };
   }
 
-  // D) Pump protection (requires optional indicators from TV)
+  // Pump protection (optional indicators)
   if (ENV.ENABLE_PUMP_PROTECT) {
     const pump = detectPump(evt);
     if (pump.isPump) {
@@ -273,7 +316,7 @@ function evaluateEnterShort(evt) {
     }
   }
 
-  // E) HTF bearish bias gate (requires optional HTF fields from TV)
+  // HTF bearish bias gate (optional)
   if (ENV.ENABLE_HTF_BIAS) {
     const bias = htfBearishBiasOk(evt);
     if (!bias.ok) {
@@ -281,7 +324,7 @@ function evaluateEnterShort(evt) {
     }
   }
 
-  // F) Regime gate (requires optional ADX + slope fields from TV)
+  // Regime gate (optional)
   if (ENV.ENABLE_REGIME_GATE) {
     const reg = regimeBearOk(evt);
     if (!reg.ok) {
@@ -297,12 +340,12 @@ function evaluateExitShort(evt) {
     return { allow: false, reason: "no_open_short" };
   }
 
-  // Exit can be requested explicitly by RayAlgo (or your webhook)
+  // Explicit exit from signal
   if (evt.exitReason === "ray_exit") {
     return { allow: true, reason: "ray_exit" };
   }
 
-  // Or exit via mirror profit lock
+  // Profit-lock exit
   const pl = profitLockExitCheck(evt.price);
   if (pl.shouldExit) {
     return { allow: true, reason: `profit_lock_exit:${pl.detail}` };
@@ -321,14 +364,14 @@ function updateShortPositionOnTick(price, ts) {
   p.lastPrice = price;
   p.lastUpdateTs = ts;
 
-  // trough is lowest price since entry (best profit for short)
+  // trough is lowest price since entry
   if (typeof p.trough !== "number") p.trough = price;
   p.trough = Math.min(p.trough, price);
 
-  // arm profit lock after trigger achieved:
-  // triggerAbs = entryPrice * triggerPct
+  // arm profit lock after trigger achieved
   const triggerAbs = (p.entryPrice * ENV.PROFIT_LOCK_TRIGGER_PCT) / 100;
-  const moveInFavor = p.entryPrice - p.trough; // positive if price dropped
+  const moveInFavor = p.entryPrice - p.trough;
+
   if (!p.profitLockArmed && moveInFavor >= triggerAbs) {
     p.profitLockArmed = true;
     log("PROFIT_LOCK_ARMED", {
@@ -347,7 +390,6 @@ function profitLockExitCheck(currentPrice) {
   if (!p.profitLockArmed) return { shouldExit: false, detail: "not_armed" };
   if (!isFinite(currentPrice)) return { shouldExit: false, detail: "no_price" };
 
-  // Mirror trailing for shorts:
   // floor = trough * (1 + givebackPct)
   const floor = p.trough * (1 + ENV.PROFIT_LOCK_GIVEBACK_PCT / 100);
 
@@ -361,10 +403,9 @@ function profitLockExitCheck(currentPrice) {
 }
 
 // -------------------------
-// Pump protection (anti squeeze)
-// Supports optional fields:
+// Pump protection (optional)
+// Provide ind fields if you want it active:
 //   ind.atr, ind.candleRange, ind.rocPct
-// If missing -> no pump block (DEMO-friendly)
 // -------------------------
 function detectPump(evt) {
   const ind = evt.ind || {};
@@ -386,11 +427,11 @@ function detectPump(evt) {
 }
 
 // -------------------------
-// HTF bearish bias gate (placeholder)
-// Provide these from TV if you want the gate to actually block:
+// HTF bearish bias gate (optional)
+// Provide htf fields if you want it active:
 //   htf.closeBelowEma200 (bool)
 //   htf.ema50BelowEma200 (bool) OR htf.rsiBelow50 (bool)
-// If fields missing -> allow (DEMO-friendly)
+// If missing -> allow
 // -------------------------
 function htfBearishBiasOk(evt) {
   const htf = evt.htf || {};
@@ -411,11 +452,11 @@ function htfBearishBiasOk(evt) {
 }
 
 // -------------------------
-// Regime gate (placeholder)
-// Provide these from TV if you want the gate to actually block:
+// Regime gate (optional)
+// Provide reg fields if you want it active:
 //   reg.adx (number)
-//   reg.slopePctPerBar (number) // negative for downtrend
-// If missing -> allow (DEMO-friendly)
+//   reg.slopePctPerBar (number) negative for downtrend
+// If missing -> allow
 // -------------------------
 function regimeBearOk(evt) {
   const reg = evt.reg || {};
@@ -436,7 +477,7 @@ function regimeBearOk(evt) {
 }
 
 // -------------------------
-// Execution (DEMO/LIVE)
+// Execution (DEMO/LIVE) + REAL 3Commas webhook POST
 // -------------------------
 async function executeEnterShort(evt) {
   const ready = STATE.READY_SHORT;
@@ -447,7 +488,7 @@ async function executeEnterShort(evt) {
     return { ok: false, reason: "ready_expired" };
   }
 
-  // READY_MAX_MOVE_PCT guard (prevents late entries)
+  // READY_MAX_MOVE_PCT guard
   const movePct = pctDiff(evt.price, ready.signalPrice);
   if (movePct > ENV.READY_MAX_MOVE_PCT) {
     clearReady("ready_max_move_exceeded");
@@ -455,53 +496,83 @@ async function executeEnterShort(evt) {
     return { ok: false, reason: `ready_max_move_exceeded(movePct=${round(movePct)}%)` };
   }
 
-  // DEMO: simulate open position
+  // Open local DEMO position state
   openShortPosition(evt.pair, evt.price, evt.ts);
 
+  // DEMO
   if (!ENV.ENABLE_POST_3C) {
     return { ok: true, demo: true, posted: false, pair: evt.pair, price: evt.price };
   }
 
-  // LIVE: wire into your existing v2.8.1 3Commas client
+  // LIVE: 3Commas Signal Bot webhook
   const payload = build3CommasPayload("enter_short", evt);
+  log("3COMMAS_POST", { action: "enter_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
   const resp = await postTo3Commas(payload);
+  log("3COMMAS_RESP", { action: "enter_short", resp });
+
   return { ok: true, demo: false, posted: true, resp };
 }
 
 async function executeExitShort(evt, reason) {
-  // DEMO: close position
+  // Close local DEMO position state
   closeShortPosition(reason, evt.ts);
 
+  // DEMO
   if (!ENV.ENABLE_POST_3C) {
     return { ok: true, demo: true, posted: false, reason };
   }
 
-  const payload = build3CommasPayload("exit_short", evt, reason);
+  // LIVE: 3Commas Signal Bot webhook
+  const payload = build3CommasPayload("exit_short", evt);
+  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
   const resp = await postTo3Commas(payload);
+  log("3COMMAS_RESP", { action: "exit_short", resp });
+
   return { ok: true, demo: false, posted: true, resp };
 }
 
-// -------------------------
-// 3Commas mapping (stub)
-// Keep “clean mapping”: action + bot_id + pair.
-// -------------------------
-function build3CommasPayload(action, evt, reason = "") {
+function build3CommasPayload(action, evt) {
+  // Map to 3Commas signal bot actions
+  const mappedAction =
+    action === "enter_short" ? "start_deal" :
+    action === "exit_short"  ? "close_deal" :
+    action;
+
   return {
-    action, // "enter_short" | "exit_short"
-    bot_id: ENV.C3_BOT_ID,
-    pair: evt.pair, // e.g. "SOL_USDT"
+    bot_uuid: ENV.C3_BOT_UUID,
+    secret: ENV.C3_WEBHOOK_SECRET,
+    action: mappedAction,
+
+    // Optional extras (safe; may be ignored)
+    pair: evt.pair,
     price: evt.price,
-    reason,
-    ts: evt.ts,
+    time: new Date(evt.ts).toISOString(),
   };
 }
 
 async function postTo3Commas(payload) {
-  // Placeholder: plug your working v2.8.1 signing + endpoint here
-  if (!ENV.C3_API_KEY || !ENV.C3_API_SECRET) {
-    return { status: "skipped", error: "missing_3c_keys", payload };
+  if (!ENV.C3_BOT_UUID || !ENV.C3_WEBHOOK_SECRET) {
+    return { ok: false, error: "missing_C3_BOT_UUID_or_C3_WEBHOOK_SECRET" };
   }
-  return { status: "todo", note: "wire to your v2.8.1 3Commas client", payload };
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ENV.C3_TIMEOUT_MS);
+
+  try {
+    const r = await fetch(ENV.C3_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const text = await r.text().catch(() => "");
+    return { ok: r.ok, status: r.status, body: text };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // -------------------------
@@ -518,8 +589,14 @@ function openShortPosition(pair, entryPrice, ts) {
     profitLockArmed: false,
     lastUpdateTs: ts,
   };
+
   clearReady("entered_short");
-  log("POSITION_SHORT_OPEN", STATE.POSITION_SHORT);
+  log("POSITION_SHORT_OPEN", {
+    isOpen: true,
+    pair,
+    entryPrice,
+    entryTs: ts,
+  });
 }
 
 function closeShortPosition(reason, ts) {
@@ -532,7 +609,7 @@ function closeShortPosition(reason, ts) {
   log("POSITION_SHORT_CLOSE", {
     pair: p.pair,
     entry: p.entryPrice,
-    exit: exitPrice,
+    exit: isFinite(exitPrice) ? exitPrice : null,
     trough: p.trough,
     pnlAbs: isFinite(pnlAbs) ? round(pnlAbs) : null,
     reason,
@@ -550,21 +627,23 @@ function clearReady(reason) {
 }
 
 // -------------------------
-// Normalization (supports your TV payload)
+// Normalization (supports your TradingView payload)
 // -------------------------
 function normalizeWebhook(p) {
   const ts = toMs(p.time || p.timestamp) ?? Date.now();
 
-  // "BINANCE:SOLUSDT" -> symNoEx = "SOLUSDT"
-  const rawSymbol = safeStr(p.symbol || p.pair || p.instrument || "UNKNOWN");
+  // "BINANCE:SOLUSDT" -> "SOLUSDT"
+  const rawSymbol = safeStr(p.symbol || p.pair || p.instrument || p.tv_instrument || "UNKNOWN");
   const symNoEx = rawSymbol.includes(":") ? rawSymbol.split(":")[1] : rawSymbol;
+
   const pair = toBotPair(symNoEx);
+  const price = num(p.price ?? p.trigger_price, NaN);
 
   return {
     eventId: safeStr(p.eventId || ""),
     ts,
     pair,
-    price: num(p.price, NaN),
+    price,
 
     intent: normalizeIntent(p.intent, p),
     exitReason: safeStr(p.exitReason || ""),
@@ -578,11 +657,17 @@ function normalizeIntent(intent, p) {
   const i = safeStr(intent || "").toLowerCase();
   if (["enter_short", "exit_short", "tick", "heartbeat"].includes(i)) return i;
 
+  // your field: src
   const src = safeStr(p.src || "").toLowerCase();
   if (src === "tick") return "tick";
   if (src === "heartbeat") return "heartbeat";
   if (src === "enter_short" || src === "short") return "enter_short";
   if (src === "exit_short" || src === "close_short") return "exit_short";
+
+  // optional back-compat with your old format
+  const action = safeStr(p.action || "").toLowerCase();
+  if (action === "ready") return "enter_short";
+  if (action === "exit") return "exit_short";
 
   return "unknown";
 }
@@ -591,7 +676,6 @@ function toBotPair(symNoEx) {
   if (!symNoEx) return "UNKNOWN_PAIR";
   if (symNoEx.includes("_")) return symNoEx;
 
-  // Common quotes; converts SOLUSDT -> SOL_USDT etc
   const quotes = ["USDT", "USD", "BUSD", "USDC", "BTC", "ETH"];
   for (const q of quotes) {
     if (symNoEx.endsWith(q) && symNoEx.length > q.length) {
