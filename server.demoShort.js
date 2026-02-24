@@ -1,10 +1,10 @@
 /**
- * demoShort.js — Railway Brain (SHORT) — v2.8.1-minimal + (CrashProtect + EquityStab + Adaptive ProfitLock)
+ * Brain v2.9-SHORT — READY_SHORT + enter/exit gatekeeper + 3Commas + (CrashProtect + EquityStab + Adaptive ProfitLock)
  *
  * INPUT (TradingView -> Brain):
  *  {
  *    "secret": "...",                    // WEBHOOK_SECRET
- *    "src": "tick" | "enter_short" | "exit_short",
+ *    "src"|"action"|"intent": "tick" | "ready_short" | "enter_short" | "exit_short",
  *    "symbol": "BINANCE:SOLUSDT",
  *    "price": "83.60",
  *    "time": "2026-02-22T17:01:03Z",
@@ -63,6 +63,18 @@ const ENV = {
   // Cooldown
   COOLDOWN_MIN: num(process.env.COOLDOWN_MIN, 3),
 
+  // ✅ READY gate (SHORT)
+  READY_ENABLED: bool(process.env.READY_ENABLED, true),
+  READY_TTL_MIN: num(process.env.READY_TTL_MIN, 20),
+  READY_MAX_MOVE_PCT: num(process.env.READY_MAX_MOVE_PCT, 0.6),
+  READY_AUTOEXPIRE_ENABLED: bool(process.env.READY_AUTOEXPIRE_ENABLED, true),
+  READY_AUTOEXPIRE_PCT: num(process.env.READY_AUTOEXPIRE_PCT, 0.6),
+  READY_ACCEPT_LEGACY_READY: bool(process.env.READY_ACCEPT_LEGACY_READY, false),
+
+  // Optional: accept legacy Ray format for SHORT
+  // If enabled: src:"ray", side:"SELL" => enter_short; side:"BUY" => exit_short
+  ACCEPT_RAY_SIDE_FOR_SHORT: bool(process.env.ACCEPT_RAY_SIDE_FOR_SHORT, true),
+
   // ProfitLock base (will be adapted)
   PROFIT_LOCK_ENABLED: bool(process.env.PROFIT_LOCK_ENABLED, true),
   PROFIT_LOCK_TRIGGER_PCT: num(process.env.PROFIT_LOCK_TRIGGER_PCT, 0.6),   // base arm %
@@ -96,7 +108,7 @@ const ENV = {
   // 3Commas
   C3_WEBHOOK_URL: process.env.C3_WEBHOOK_URL || "https://api.3commas.io/signal_bots/webhooks",
   C3_BOT_UUID: process.env.C3_BOT_UUID || "",
-  // accept either name to avoid future confusion
+  // accept either name to avoid confusion
   C3_SIGNAL_SECRET: process.env.C3_SIGNAL_SECRET || process.env.C3_WEBHOOK_SECRET || "",
   C3_MAX_LAG_SEC: String(process.env.C3_MAX_LAG_SEC || "300"),
   C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
@@ -111,11 +123,13 @@ function log(tag, obj={}) {
 }
 
 log("STARTUP_CONFIG", {
+  brain: "v2.9-SHORT",
   port: ENV.PORT,
   path: ENV.WEBHOOK_PATH,
   enablePost3c: ENV.ENABLE_POST_3C,
   c3_bot_uuid_set: !!ENV.C3_BOT_UUID,
   c3_signal_secret_set: !!ENV.C3_SIGNAL_SECRET,
+  readyEnabled: ENV.READY_ENABLED,
   crashProtect: ENV.CRASH_PROTECT_ENABLED,
   equityStab: ENV.EQUITY_STAB_ENABLED,
   profitLock: ENV.PROFIT_LOCK_ENABLED,
@@ -130,9 +144,10 @@ function verifySecret(got, expected) {
   try { return crypto.timingSafeEqual(a, b); } catch { return false; }
 }
 
-/* ------------------------- STATE (minimal v2.8.1 style) ------------------------- */
+/* ------------------------- STATE ------------------------- */
 const STATE = {
   POSITION_SHORT: null, // { isOpen, exchange, instrument, pair, entryPrice, entryTs, trough, lastPrice, profitLockArmed, lastUpdateTs, plArmPct, plGivePct }
+  READY_SHORT: null,    // { on, id, ts, pair, exchange, instrument, signalPrice, expiresAt }
   ACT: {
     lastHeartbeatTs: 0,
     cooldownUntil: 0,
@@ -141,7 +156,7 @@ const STATE = {
     lossesInRow: 0,
     lastTradePnlPct: null,
   },
-  // tick ring buffers for 1m/5m dump detection + simple regime inference
+  // ticks for 1m/5m dump detection + simple regime inference
   TICKS: [], // { ts, price }
 };
 
@@ -153,7 +168,7 @@ function build3CommasCustomSignal(action, evt) {
     timestamp: new Date(evt.ts).toISOString(),
     trigger_price: String(evt.price),
     tv_exchange: evt.exchange || "BINANCE",
-    tv_instrument: evt.instrument, // SOLUSDT
+    tv_instrument: evt.instrument,
     action, // enter_short / exit_short
     bot_uuid: ENV.C3_BOT_UUID,
   };
@@ -197,9 +212,17 @@ function toBotPair(symNoEx) {
   return symNoEx;
 }
 
+function normalizeIntent(p) {
+  // prefer action > intent > src
+  const a = safeStr(p.action).toLowerCase().trim();
+  const i = safeStr(p.intent).toLowerCase().trim();
+  const s = safeStr(p.src).toLowerCase().trim();
+  return a || i || s;
+}
+
 function normalizeWebhook(p) {
   const ts = toMs(p.time || p.timestamp) ?? Date.now();
-  const src = safeStr(p.src || p.action || p.intent || "").toLowerCase();
+  const intent = normalizeIntent(p);
 
   const rawSymbol = safeStr(p.symbol || "");
   const exchangeFromSymbol = rawSymbol.includes(":") ? rawSymbol.split(":")[0] : "";
@@ -213,13 +236,114 @@ function normalizeWebhook(p) {
 
   return {
     ts,
-    intent: src,
+    intent,
     exchange,
     instrument,
     pair,
     price,
     exitReason: safeStr(p.exitReason || ""),
+    side: safeStr(p.side || "").toUpperCase(),
   };
+}
+
+/* ------------------------- READY helpers ------------------------- */
+function readyIsOn() {
+  return !!(STATE.READY_SHORT && STATE.READY_SHORT.on);
+}
+
+function clearReady(reason) {
+  if (!STATE.READY_SHORT) return;
+  log("READY_SHORT_CLEARED", { reason, ready: STATE.READY_SHORT });
+  STATE.READY_SHORT = null;
+}
+
+function setReady(evt) {
+  const ttlMs = ENV.READY_TTL_MIN > 0 ? msMin(ENV.READY_TTL_MIN) : 0;
+  const expiresAt = ttlMs > 0 ? (evt.ts + ttlMs) : 0;
+
+  STATE.READY_SHORT = {
+    on: true,
+    id: uid(),
+    ts: evt.ts,
+    pair: evt.pair,
+    exchange: evt.exchange,
+    instrument: evt.instrument,
+    signalPrice: evt.price,
+    expiresAt,
+  };
+
+  log("READY_SHORT_SET", {
+    id: STATE.READY_SHORT.id,
+    ts: STATE.READY_SHORT.ts,
+    pair: STATE.READY_SHORT.pair,
+    exchange: STATE.READY_SHORT.exchange,
+    instrument: STATE.READY_SHORT.instrument,
+    signalPrice: STATE.READY_SHORT.signalPrice,
+    expiresAt: STATE.READY_SHORT.expiresAt || null,
+  });
+}
+
+function readyTTLExpireCheck(nowTs) {
+  if (!ENV.READY_ENABLED) return;
+  if (!STATE.READY_SHORT?.on) return;
+  if (!STATE.READY_SHORT.expiresAt) return;
+  if (nowTs >= STATE.READY_SHORT.expiresAt) clearReady("ttl_expired");
+}
+
+function pctDiff(a, b) {
+  if (!Number.isFinite(a) || a === 0 || !Number.isFinite(b)) return NaN;
+  return (Math.abs(b - a) / Math.abs(a)) * 100.0;
+}
+
+function maybeAutoExpireReadyOnTick(evt) {
+  if (!ENV.READY_ENABLED) return;
+  if (!ENV.READY_AUTOEXPIRE_ENABLED) return;
+  if (!STATE.READY_SHORT?.on) return;
+  if (STATE.POSITION_SHORT?.isOpen) return; // don’t expire while in position
+  if (!Number.isFinite(evt.price)) return;
+
+  // symbol check
+  if (STATE.READY_SHORT.instrument !== evt.instrument) return;
+
+  const d = pctDiff(STATE.READY_SHORT.signalPrice, evt.price);
+  if (!Number.isFinite(d)) return;
+
+  if (d > ENV.READY_AUTOEXPIRE_PCT) {
+    clearReady(`autoexpire_drift_${round(d,3)}%`);
+  }
+}
+
+function gateEnterByReady(evt) {
+  if (!ENV.READY_ENABLED) return { ok: true, reason: "ready_disabled" };
+  if (!STATE.READY_SHORT?.on) return { ok: false, reason: "not_ready_short" };
+
+  // heartbeat must be fresh too (so READY alone can’t fire without ticks)
+  if (ENV.REQUIRE_FRESH_HEARTBEAT) {
+    if (!STATE.ACT.lastHeartbeatTs) return { ok: false, reason: "no_heartbeat_seen" };
+    const ageMs = evt.ts - STATE.ACT.lastHeartbeatTs;
+    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) return { ok: false, reason: "heartbeat_stale" };
+  }
+
+  // symbol must match
+  if (STATE.READY_SHORT.instrument !== evt.instrument) {
+    return { ok: false, reason: "ready_symbol_mismatch" };
+  }
+
+  // drift gate
+  if (!Number.isFinite(STATE.READY_SHORT.signalPrice) || !Number.isFinite(evt.price)) {
+    return { ok: false, reason: "missing_prices_for_drift" };
+  }
+
+  const d = pctDiff(STATE.READY_SHORT.signalPrice, evt.price);
+  if (!Number.isFinite(d)) return { ok: false, reason: "bad_drift_calc" };
+
+  if (d > ENV.READY_MAX_MOVE_PCT) {
+    // HARD reset on drift (same philosophy as long)
+    clearReady(`hard_reset_drift_${round(d,3)}%`);
+    return { ok: false, reason: `ready_drift_reset_${round(d,3)}%` };
+  }
+
+  return { ok: true, reason: "ready_ok", driftPct: d };
 }
 
 /* ------------------------- Tick storage + CrashProtect ------------------------- */
@@ -238,7 +362,6 @@ function pctChange(from, to) {
 }
 
 function findPriceAtOrBefore(targetTs) {
-  // nearest tick at or before targetTs
   for (let i = STATE.TICKS.length - 1; i >= 0; i--) {
     if (STATE.TICKS[i].ts <= targetTs) return STATE.TICKS[i].price;
   }
@@ -254,37 +377,32 @@ function crashProtectCheck(ts, currentPrice) {
   const ch1 = p1 == null ? NaN : pctChange(p1, currentPrice);
   const ch5 = p5 == null ? NaN : pctChange(p5, currentPrice);
 
-  // "dump" means price dropped (negative %). For short entries we want to AVOID entering after a violent dump.
-  if (Number.isFinite(ch1) && ch1 <= -ENV.DUMP_1M_PCT) {
-    return { block: true, reason: `dump1m(${round(ch1,2)}%)` };
-  }
-  if (Number.isFinite(ch5) && ch5 <= -ENV.DUMP_5M_PCT) {
-    return { block: true, reason: `dump5m(${round(ch5,2)}%)` };
-  }
+  // "dump" means price dropped (negative %). For short entries we avoid entering after violent dump.
+  if (Number.isFinite(ch1) && ch1 <= -ENV.DUMP_1M_PCT) return { block: true, reason: `dump1m(${round(ch1,2)}%)` };
+  if (Number.isFinite(ch5) && ch5 <= -ENV.DUMP_5M_PCT) return { block: true, reason: `dump5m(${round(ch5,2)}%)` };
   return { block: false, reason: "ok" };
 }
 
 /* ------------------------- Simple regime inference (ticks only) ------------------------- */
 function inferRegime(ts, currentPrice) {
-  // slope over last 3 minutes + volatility over last 3 minutes
   const p3 = findPriceAtOrBefore(ts - 3 * 60 * 1000);
   if (p3 == null) return { regime: "unknown", slopePct: 0, volPct: 0 };
 
-  const slopePct = pctChange(p3, currentPrice); // over 3m
-  // vol as max-min over last 3m
+  const slopePct = pctChange(p3, currentPrice);
   const cutoff = ts - 3 * 60 * 1000;
   let minP = Infinity, maxP = -Infinity;
+
   for (const x of STATE.TICKS) {
     if (x.ts >= cutoff) {
       minP = Math.min(minP, x.price);
       maxP = Math.max(maxP, x.price);
     }
   }
+
   const volPct = (Number.isFinite(minP) && Number.isFinite(maxP) && minP > 0)
     ? ((maxP - minP) / minP) * 100
     : 0;
 
-  // crude: trend if slope dominates vol
   const absSlope = Math.abs(slopePct);
   const regime = absSlope >= Math.max(0.15, volPct * 0.6) ? "trend" : "range";
   return { regime, slopePct, volPct };
@@ -357,18 +475,15 @@ function profitLockExitCheck(currentPrice) {
 
 /* ------------------------- EquityStab ------------------------- */
 function computeShortPnlPct(entry, exit) {
-  // short PnL % approximated by (entry - exit)/entry * 100
   if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(exit)) return NaN;
   return ((entry - exit) / entry) * 100;
 }
 
 function equityStabOnClose(ts, pnlPct) {
   if (!ENV.EQUITY_STAB_ENABLED) return;
-
   if (!Number.isFinite(pnlPct)) return;
 
   STATE.ACT.lastTradePnlPct = pnlPct;
-
   if (pnlPct < 0) STATE.ACT.lossesInRow += 1;
   else STATE.ACT.lossesInRow = 0;
 
@@ -391,11 +506,8 @@ function canEnter(ts) {
   }
 
   if (STATE.POSITION_SHORT?.isOpen) return { ok: false, reason: "short_already_open" };
-
   if (ts < STATE.ACT.cooldownUntil) return { ok: false, reason: "cooldown_active" };
   if (ts < STATE.ACT.crashCooldownUntil) return { ok: false, reason: "crash_cooldown_active" };
-
-  // conservative mode blocks entries too (optional)
   if (ts < STATE.ACT.conservativeUntil) return { ok: false, reason: "conservative_mode" };
 
   return { ok: true, reason: "ok" };
@@ -456,11 +568,32 @@ function closeShortPosition(ts, reason, exitPrice) {
   equityStabOnClose(ts, pnlPct);
 }
 
+/* ------------------------- Exit helper ------------------------- */
+async function doExit(evt, reason) {
+  if (!STATE.POSITION_SHORT?.isOpen) {
+    log("EXIT_IGNORED", { reason: "no_open_short", wanted: reason });
+    return { ok: true, ignored: true, reason: "no_open_short" };
+  }
+
+  // close internal first
+  closeShortPosition(evt.ts, reason, evt.price);
+
+  if (!ENV.ENABLE_POST_3C) return { ok: true, posted: false };
+
+  const payload = build3CommasCustomSignal("exit_short", evt);
+  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
+
+  const resp = await postTo3Commas(payload);
+  log("3COMMAS_RESP", { action: "exit_short", resp });
+
+  return resp;
+}
+
 /* ------------------------- Express app ------------------------- */
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/", (_req, res) => res.status(200).send("OK: Brain SHORT (simple+v2.8.1 blocks)"));
+app.get("/", (_req, res) => res.status(200).send("OK: Brain SHORT v2.9 (READY_SHORT gate + v2.8.1 blocks)"));
 
 app.get("/status", (_req, res) => {
   const now = Date.now();
@@ -469,9 +602,17 @@ app.get("/status", (_req, res) => {
   res.json({
     ok: true,
     now,
+    ready: STATE.READY_SHORT || null,
     position: p ? { ...p, floor } : null,
     act: STATE.ACT,
     ticks: { count: STATE.TICKS.length, oldestTs: STATE.TICKS[0]?.ts ?? null, newestTs: STATE.TICKS.at(-1)?.ts ?? null },
+    env: {
+      READY_ENABLED: ENV.READY_ENABLED,
+      READY_TTL_MIN: ENV.READY_TTL_MIN,
+      READY_MAX_MOVE_PCT: ENV.READY_MAX_MOVE_PCT,
+      READY_AUTOEXPIRE_ENABLED: ENV.READY_AUTOEXPIRE_ENABLED,
+      READY_AUTOEXPIRE_PCT: ENV.READY_AUTOEXPIRE_PCT,
+    }
   });
 });
 
@@ -485,6 +626,16 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
 
     const evt = normalizeWebhook(body);
 
+    // expire READY by TTL before processing
+    readyTTLExpireCheck(evt.ts);
+
+    // Optional: map legacy Ray short side format
+    // SELL => enter_short, BUY => exit_short
+    if (ENV.ACCEPT_RAY_SIDE_FOR_SHORT && evt.intent === "ray" && evt.side) {
+      if (evt.side === "SELL") evt.intent = "enter_short";
+      if (evt.side === "BUY") evt.intent = "exit_short";
+    }
+
     log("WEBHOOK_IN", {
       intent: evt.intent,
       exchange: evt.exchange,
@@ -494,16 +645,18 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       ts: evt.ts,
     });
 
-    // tick buffer + heartbeat refresh
+    // ---------------- tick ----------------
     if (evt.intent === "tick" && Number.isFinite(evt.price)) {
       STATE.ACT.lastHeartbeatTs = evt.ts;
       pushTick(evt.ts, evt.price);
+
+      // ready autoexpire drift (only when not in position)
+      maybeAutoExpireReadyOnTick(evt);
 
       if (STATE.POSITION_SHORT?.isOpen) {
         updateShortPositionOnTick(evt.price, evt.ts);
         const pl = profitLockExitCheck(evt.price);
         if (pl.shouldExit) {
-          // exit via profit lock
           const resp = await doExit(evt, `profit_lock_exit:${pl.detail}`);
           return res.json({ ok: true, action: "exit_short", auto: true, resp });
         }
@@ -512,9 +665,36 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       return res.json({ ok: true, action: "tick" });
     }
 
-    // enter_short
+    // ---------------- READY_SHORT ----------------
+    if (evt.intent === "ready_short" || (ENV.READY_ACCEPT_LEGACY_READY && evt.intent === "ready")) {
+      if (!ENV.READY_ENABLED) return res.json({ ok: true, action: "ready_short_ignored", reason: "ready_disabled" });
+
+      // require fresh heartbeat (avoid READY without live ticks)
+      if (ENV.REQUIRE_FRESH_HEARTBEAT) {
+        if (!STATE.ACT.lastHeartbeatTs) {
+          log("READY_SHORT_IGNORED", { reason: "no_heartbeat_seen" });
+          return res.json({ ok: true, action: "ready_short_ignored", reason: "no_heartbeat_seen" });
+        }
+        const ageMs = evt.ts - STATE.ACT.lastHeartbeatTs;
+        if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) {
+          log("READY_SHORT_IGNORED", { reason: "heartbeat_stale" });
+          return res.json({ ok: true, action: "ready_short_ignored", reason: "heartbeat_stale" });
+        }
+      }
+
+      // block ready while in position (same as long philosophy)
+      if (STATE.POSITION_SHORT?.isOpen) {
+        log("READY_SHORT_IGNORED", { reason: "in_position" });
+        return res.json({ ok: true, action: "ready_short_ignored", reason: "in_position" });
+      }
+
+      setReady(evt);
+      return res.json({ ok: true, action: "ready_short", ready: STATE.READY_SHORT });
+    }
+
+    // ---------------- enter_short ----------------
     if (evt.intent === "enter_short") {
-      // crash protect check (using tick history)
+      // Crash protect check
       const crash = crashProtectCheck(evt.ts, evt.price);
       if (crash.block) {
         STATE.ACT.crashCooldownUntil = Math.max(
@@ -525,11 +705,22 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
         return res.json({ ok: true, action: "blocked", reason: `crash_protect:${crash.reason}` });
       }
 
+      // Core gates
       const gate = canEnter(evt.ts);
       if (!gate.ok) {
         log("ENTER_BLOCKED", { reason: gate.reason });
         return res.json({ ok: true, action: "blocked", reason: gate.reason });
       }
+
+      // ✅ READY gate
+      const rGate = gateEnterByReady(evt);
+      if (!rGate.ok) {
+        log("ENTER_BLOCKED_READY", { reason: rGate.reason });
+        return res.json({ ok: true, action: "blocked", reason: rGate.reason });
+      }
+
+      // consume READY on accepted entry
+      clearReady("entered_short");
 
       openShortPosition(evt);
 
@@ -554,7 +745,7 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       return res.json({ ok: true, action: "enter_short", resp });
     }
 
-    // exit_short
+    // ---------------- exit_short ----------------
     if (evt.intent === "exit_short") {
       const resp = await doExit(evt, evt.exitReason || "signal_exit");
       return res.json({ ok: true, action: "exit_short", resp });
@@ -567,27 +758,7 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-async function doExit(evt, reason) {
-  if (!STATE.POSITION_SHORT?.isOpen) {
-    log("EXIT_IGNORED", { reason: "no_open_short", wanted: reason });
-    return { ok: true, ignored: true, reason: "no_open_short" };
-  }
-
-  // close internal first (so even if 3Commas hangs, state is safe)
-  closeShortPosition(evt.ts, reason, evt.price);
-
-  if (!ENV.ENABLE_POST_3C) return { ok: true, posted: false };
-
-  const payload = build3CommasCustomSignal("exit_short", evt);
-  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
-
-  const resp = await postTo3Commas(payload);
-  log("3COMMAS_RESP", { action: "exit_short", resp });
-
-  return resp;
-}
-
 /* ------------------------- START ------------------------- */
 app.listen(ENV.PORT, () => {
-  log("LISTENING", { port: ENV.PORT, path: ENV.WEBHOOK_PATH });
+  log("LISTENING", { port: ENV.PORT, path: ENV.WEBHOOK_PATH, brain: "v2.9-SHORT" });
 });
