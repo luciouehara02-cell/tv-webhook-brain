@@ -1,14 +1,10 @@
 /**
- * Brain v2.8.1 — READY + Ray gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * Brain v2.9 (LONG) — READY_LONG + Ray enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * ------------------------------------------------------------------------------------------------------
- * v2.8.1 PATCH (Trend-holder):
- * ✅ Adds Profit Lock clamp floors/caps to prevent microscopic arm/giveback in low ATR conditions.
- *    New env vars:
- *      PL_MIN_ARM_PCT, PL_MIN_GIVEBACK_PCT, PL_MAX_ARM_PCT, PL_MAX_GIVEBACK_PCT
- *
- * Notes:
- * - No Pine changes required. Uses /tick heartbeat stream.
- * - All logic toggleable via env vars; defaults are safe.
+ * v2.9:
+ * ✅ Accepts Pine v9.4 READY_LONG (action: ready_long)
+ * ✅ Gates enter_long from RayAlgo unless READY_LONG is active + fresh
+ * ✅ Backward compatible with legacy action: "ready" and src:"ray" side:"BUY/SELL"
  */
 
 import express from "express";
@@ -16,7 +12,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.8.1";
+const BRAIN_VERSION = "v2.9-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -26,6 +22,10 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
 // READY TTL (minutes). 0 = disabled
 const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
+
+// accept legacy action:"ready" in addition to ready_long
+const READY_ACCEPT_LEGACY_READY =
+  String(process.env.READY_ACCEPT_LEGACY_READY || "true").toLowerCase() === "true";
 
 // Base Entry drift gate (Ray BUY must be within this % of latest READY price)
 const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
@@ -66,8 +66,7 @@ const PL_GIVEBACK_ATR_MULT_TREND = Number(process.env.PL_GIVEBACK_ATR_MULT_TREND
 const PL_START_ATR_MULT_RANGE = Number(process.env.PL_START_ATR_MULT_RANGE || "1.2");
 const PL_GIVEBACK_ATR_MULT_RANGE = Number(process.env.PL_GIVEBACK_ATR_MULT_RANGE || "0.7");
 
-// ✅ NEW (v2.8.1): Profit Lock clamps (trend-holder floors / optional caps)
-// 0 disables each clamp
+// Profit Lock clamps
 const PL_MIN_ARM_PCT = Number(process.env.PL_MIN_ARM_PCT || "0");
 const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
 const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
@@ -156,7 +155,7 @@ let lastTickPrice = null;
 const tickHistory = new Map();
 
 // Regime state per symbol (default RANGE)
-const regimeState = new Map(); // symbol -> { regime: "TREND"|"RANGE", updatedMs, slopePct, atrPct }
+const regimeState = new Map(); // symbol -> { regime, updatedMs, slopePct, atrPct }
 
 // Trade tracking for profit lock
 let entryPrice = null;
@@ -199,8 +198,15 @@ function checkSecret(payload) {
   return String(s) === String(WEBHOOK_SECRET);
 }
 
-function normalizeAction(payload) {
-  return payload?.action ? String(payload.action).toLowerCase() : "";
+function normalizeIntent(payload) {
+  // Accept src/intents from multiple formats
+  const a = payload?.action ? String(payload.action).toLowerCase() : "";
+  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
+  const s = payload?.src ? String(payload.src).toLowerCase() : "";
+  if (a) return a;
+  if (i) return i;
+  if (s && s !== "ray") return s; // tick/heartbeat etc
+  return "";
 }
 
 function pctDiff(a, b) {
@@ -291,7 +297,7 @@ function getReadyPrice(payload) {
 }
 
 function getRayPrice(payload) {
-  return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
+  return toNum(payload?.price) ?? toNum(payload?.close) ?? toNum(payload?.trigger_price) ?? null;
 }
 
 function getTickPrice(payload) {
@@ -472,7 +478,6 @@ async function postTo3Commas(action, payload) {
     return { skipped: true };
   }
 
-  // Prefer payload meta -> entryMeta -> readyMeta -> env fallbacks
   const tv_exchange =
     payload?.tv_exchange ??
     payload?.exchange ??
@@ -586,7 +591,7 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
     }
   }
 
-  // ✅ v2.8.1: clamp floors/caps to avoid tiny exits and optionally limit extremes
+  // clamp floors/caps
   if (PL_MIN_ARM_PCT > 0) armPct = Math.max(armPct, PL_MIN_ARM_PCT);
   if (PL_MIN_GIVEBACK_PCT > 0) givebackPct = Math.max(givebackPct, PL_MIN_GIVEBACK_PCT);
   if (PL_MAX_ARM_PCT > 0) armPct = Math.min(armPct, PL_MAX_ARM_PCT);
@@ -627,6 +632,151 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
 }
 
 // ====================
+// ENTRY/EXIT handlers (v2.9 unified)
+// ====================
+async function handleEnterLong(payload, res, sourceTag) {
+  const rayPx = getRayPrice(payload);
+  const raySym = getSymbolFromPayload(payload);
+
+  if (crashLockActive()) {
+    lastAction = "enter_long_blocked_crash_lock";
+    return res.json({ ok: false, blocked: "crash_lock_active" });
+  }
+
+  if (cooldownActive()) {
+    lastAction = "enter_long_blocked_cooldown";
+    return res.json({ ok: false, blocked: "cooldown_active" });
+  }
+
+  if (!isHeartbeatFresh()) {
+    lastAction = "enter_long_blocked_stale_heartbeat";
+    return res.json({ ok: false, blocked: "stale_heartbeat" });
+  }
+
+  if (!readyOn) {
+    lastAction = "enter_long_blocked_not_ready";
+    return res.json({ ok: false, blocked: "not_ready" });
+  }
+
+  if (inPosition) {
+    lastAction = "enter_long_blocked_in_position";
+    return res.json({ ok: false, blocked: "already_in_position" });
+  }
+
+  if (conservativeModeActive()) {
+    const reg = raySym ? getRegime(raySym) : "RANGE";
+    if (reg !== "TREND") {
+      lastAction = "enter_long_blocked_conservative_range";
+      return res.json({ ok: false, blocked: "conservative_blocks_range", regime: reg });
+    }
+  }
+
+  if (readySymbol && raySym && readySymbol !== raySym) {
+    lastAction = "enter_long_blocked_symbol_mismatch";
+    return res.json({ ok: false, blocked: "symbol_mismatch", readySymbol, raySym });
+  }
+
+  if (readyPrice == null || rayPx == null) {
+    lastAction = "enter_long_blocked_missing_prices";
+    return res.json({ ok: false, blocked: "missing_prices" });
+  }
+
+  const dPct = pctDiff(readyPrice, rayPx);
+  if (dPct == null) {
+    lastAction = "enter_long_blocked_bad_price_diff";
+    return res.json({ ok: false, blocked: "bad_price_diff" });
+  }
+
+  const maxMove = effectiveReadyMaxMovePct(raySym || readySymbol);
+
+  // HARD RESET ON DRIFT BLOCK
+  if (dPct > maxMove) {
+    console.log(
+      `⛔ ENTER LONG blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`
+    );
+    clearReadyContext("hard_reset_price_drift");
+    lastAction = "enter_long_blocked_price_drift_reset";
+    return res.json({ ok: false, blocked: "price_drift_reset", drift_pct: dPct, maxMove });
+  }
+
+  // Approve entry + forward to 3Commas
+  inPosition = true;
+  entryPrice = rayPx;
+  entrySymbol = raySym || readySymbol || "";
+  peakPrice = rayPx;
+  profitLockArmed = false;
+
+  entryMeta = {
+    tv_exchange: readyMeta?.tv_exchange ?? payload?.tv_exchange ?? payload?.exchange ?? null,
+    tv_instrument: readyMeta?.tv_instrument ?? payload?.tv_instrument ?? payload?.ticker ?? null,
+  };
+
+  lastAction = "enter_long";
+  console.log(
+    `🚀 ENTER LONG (${sourceTag}) | drift=${dPct.toFixed(3)}% (<= ${maxMove}%) | regime=${getRegime(entrySymbol)}`
+  );
+
+  const fwd = await postTo3Commas("enter_long", {
+    ...payload,
+    trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? readyPrice,
+    tv_exchange: entryMeta?.tv_exchange,
+    tv_instrument: entryMeta?.tv_instrument,
+  });
+
+  return res.json({
+    ok: true,
+    action: "enter_long",
+    source: sourceTag,
+    drift_pct: dPct,
+    maxMove,
+    regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
+    threecommas: fwd,
+  });
+}
+
+async function handleExitLong(payload, res, sourceTag) {
+  const rayPx = getRayPrice(payload);
+
+  if (!inPosition) {
+    lastAction = "exit_long_no_position";
+    return res.json({ ok: false, blocked: "no_position" });
+  }
+
+  // Optional: ignore exit unless profit >= threshold
+  if (PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT > 0) {
+    const px = rayPx ?? lastTickPrice;
+    const p = pctProfit(entryPrice, px);
+    if (p != null && p < PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT) {
+      lastAction = "exit_long_blocked_profit_filter";
+      console.log(
+        `⛔ EXIT LONG ignored: profit ${p.toFixed(3)}% < ${PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT}%`
+      );
+      return res.json({ ok: false, blocked: "profit_filter", profit_pct: p });
+    }
+  }
+
+  lastAction = "exit_long";
+
+  const exitPx = rayPx ?? lastTickPrice ?? null;
+
+  const fwd = await postTo3Commas("exit_long", {
+    ...payload,
+    trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? "",
+    tv_exchange: entryMeta?.tv_exchange,
+    tv_instrument: entryMeta?.tv_instrument,
+  });
+
+  if (exitPx != null) noteExitForEquity(exitPx);
+
+  clearReadyContext("exit_long");
+  clearPositionContext("exit_long");
+  startCooldown(sourceTag);
+
+  console.log(`✅ EXIT LONG (${sourceTag})`);
+  return res.json({ ok: true, action: "exit_long", source: sourceTag, threecommas: fwd });
+}
+
+// ====================
 // ROUTES
 // ====================
 app.get("/", (req, res) => {
@@ -659,7 +809,6 @@ app.get("/", (req, res) => {
     PL_GIVEBACK_ATR_MULT_TREND,
     PL_START_ATR_MULT_RANGE,
     PL_GIVEBACK_ATR_MULT_RANGE,
-    // clamps
     PL_MIN_ARM_PCT,
     PL_MIN_GIVEBACK_PCT,
     PL_MAX_ARM_PCT,
@@ -691,6 +840,7 @@ app.get("/", (req, res) => {
     entryMeta,
     regime: lastTickSymbol ? regimeState.get(lastTickSymbol) || null : null,
     threecommas_configured: Boolean(THREECOMMAS_BOT_UUID && THREECOMMAS_SECRET),
+    READY_ACCEPT_LEGACY_READY,
   });
 });
 
@@ -708,8 +858,10 @@ app.post("/webhook", async (req, res) => {
     return res.status(401).json({ ok: false, error: "secret_mismatch" });
   }
 
+  const intent = normalizeIntent(payload);
+
   // ---- TICK (heartbeat + regime + crash + auto-expire + profit lock)
-  if (payload?.src === "tick" || normalizeAction(payload) === "tick") {
+  if (intent === "tick") {
     const tickPx = getTickPrice(payload);
     const tickSym = getSymbolFromPayload(payload);
 
@@ -718,24 +870,15 @@ app.post("/webhook", async (req, res) => {
       return res.json({ ok: true, tick: true, ignored: "missing_fields" });
     }
 
-    // Update heartbeat cache
     lastTickMs = nowMs();
     lastTickSymbol = tickSym;
     lastTickPrice = tickPx;
 
-    // Buffer tick
     pushTick(tickSym, tickPx, lastTickMs);
 
-    // Update regime from ticks
     const r = updateRegime(tickSym);
-
-    // Crash protection check (may clear READY + lock)
     const crash = maybeCrashLock(tickSym);
-
-    // Auto-expire READY if drift too large
     const expired = maybeAutoExpireReady(tickPx, tickSym);
-
-    // Profit lock check (may auto exit)
     const pl = await maybeProfitLockExit(tickPx, tickSym);
 
     return res.json({
@@ -752,183 +895,34 @@ app.post("/webhook", async (req, res) => {
     });
   }
 
-  // ---- RAYALGO
-  if (payload?.src === "ray") {
-    const side = String(payload.side || "").toUpperCase();
-    const rayPx = getRayPrice(payload);
-    const raySym = getSymbolFromPayload(payload);
-    console.log("Ray side:", side, "| symbol:", raySym, "| price:", rayPx);
-
-    if (side === "BUY") {
-      if (crashLockActive()) {
-        lastAction = "ray_buy_blocked_crash_lock";
-        return res.json({ ok: false, blocked: "crash_lock_active" });
-      }
-
-      if (cooldownActive()) {
-        lastAction = "ray_buy_blocked_cooldown";
-        return res.json({ ok: false, blocked: "cooldown_active" });
-      }
-
-      if (!isHeartbeatFresh()) {
-        lastAction = "ray_buy_blocked_stale_heartbeat";
-        return res.json({ ok: false, blocked: "stale_heartbeat" });
-      }
-
-      if (!readyOn) {
-        lastAction = "ray_buy_blocked_not_ready";
-        return res.json({ ok: false, blocked: "not_ready" });
-      }
-      if (inPosition) {
-        lastAction = "ray_buy_blocked_in_position";
-        return res.json({ ok: false, blocked: "already_in_position" });
-      }
-
-      if (conservativeModeActive()) {
-        const reg = raySym ? getRegime(raySym) : "RANGE";
-        if (reg !== "TREND") {
-          lastAction = "ray_buy_blocked_conservative_range";
-          return res.json({ ok: false, blocked: "conservative_blocks_range", regime: reg });
-        }
-      }
-
-      if (readySymbol && raySym && readySymbol !== raySym) {
-        lastAction = "ray_buy_blocked_symbol_mismatch";
-        return res.json({ ok: false, blocked: "symbol_mismatch", readySymbol, raySym });
-      }
-      if (readyPrice == null || rayPx == null) {
-        lastAction = "ray_buy_blocked_missing_prices";
-        return res.json({ ok: false, blocked: "missing_prices" });
-      }
-
-      const dPct = pctDiff(readyPrice, rayPx);
-      if (dPct == null) {
-        lastAction = "ray_buy_blocked_bad_price_diff";
-        return res.json({ ok: false, blocked: "bad_price_diff" });
-      }
-
-      const maxMove = effectiveReadyMaxMovePct(raySym || readySymbol);
-
-      // HARD RESET ON DRIFT BLOCK
-      if (dPct > maxMove) {
-        console.log(
-          `⛔ Ray BUY blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`
-        );
-        clearReadyContext("hard_reset_price_drift");
-        lastAction = "ray_buy_blocked_price_drift_reset";
-        return res.json({ ok: false, blocked: "price_drift_reset", drift_pct: dPct, maxMove });
-      }
-
-      // Approve entry + forward to 3Commas
-      inPosition = true;
-      entryPrice = rayPx;
-      entrySymbol = raySym || readySymbol || "";
-      peakPrice = rayPx;
-      profitLockArmed = false;
-
-      // Capture entry meta NOW
-      entryMeta = {
-        tv_exchange: readyMeta?.tv_exchange ?? payload?.tv_exchange ?? payload?.exchange ?? null,
-        tv_instrument: readyMeta?.tv_instrument ?? payload?.tv_instrument ?? payload?.ticker ?? null,
-      };
-
-      lastAction = "ray_enter_long";
-      console.log(
-        `🚀 RAY BUY → ENTER LONG | drift=${dPct.toFixed(3)}% (<= ${maxMove}%) | regime=${getRegime(entrySymbol)}`
-      );
-
-      const fwd = await postTo3Commas("enter_long", {
-        ...payload,
-        trigger_price: payload?.price ?? payload?.close ?? readyPrice,
-        tv_exchange: entryMeta?.tv_exchange,
-        tv_instrument: entryMeta?.tv_instrument,
-      });
-
-      return res.json({
-        ok: true,
-        action: "enter_long",
-        source: "ray",
-        drift_pct: dPct,
-        maxMove,
-        regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
-        threecommas: fwd,
-      });
-    }
-
-    if (side === "SELL") {
-      if (!inPosition) {
-        lastAction = "ray_sell_no_position";
-        return res.json({ ok: false, blocked: "no_position" });
-      }
-
-      // Optional: ignore Ray SELL unless profit >= threshold
-      if (PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT > 0) {
-        const px = rayPx ?? lastTickPrice;
-        const p = pctProfit(entryPrice, px);
-        if (p != null && p < PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT) {
-          lastAction = "ray_sell_blocked_profit_filter";
-          console.log(
-            `⛔ Ray SELL ignored: profit ${p.toFixed(3)}% < ${PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT}%`
-          );
-          return res.json({ ok: false, blocked: "profit_filter", profit_pct: p });
-        }
-      }
-
-      lastAction = "ray_exit_long";
-
-      const exitPx = rayPx ?? lastTickPrice ?? null;
-
-      const fwd = await postTo3Commas("exit_long", {
-        ...payload,
-        trigger_price: payload?.price ?? payload?.close ?? "",
-        tv_exchange: entryMeta?.tv_exchange,
-        tv_instrument: entryMeta?.tv_instrument,
-      });
-
-      if (exitPx != null) noteExitForEquity(exitPx);
-
-      clearReadyContext("exit_sell");
-      clearPositionContext("exit_sell");
-      startCooldown("ray_sell");
-
-      console.log("✅ RAY SELL → EXIT LONG | READY OFF (context cleared)");
-      return res.json({ ok: true, action: "exit_long", source: "ray", threecommas: fwd });
-    }
-
-    lastAction = "ray_unknown_side";
-    return res.json({ ok: true, note: "ray_unknown_side" });
-  }
-
-  // ---- YY9 READY
-  const action = normalizeAction(payload);
-
-  if (action === "ready") {
+  // ---- READY_LONG (Pine v9.4)
+  if (intent === "ready_long" || (READY_ACCEPT_LEGACY_READY && intent === "ready")) {
     if (crashLockActive()) {
-      console.log("🟡 READY ignored (crash lock active)");
-      lastAction = "ready_ignored_crash_lock";
+      console.log("🟡 READY_LONG ignored (crash lock active)");
+      lastAction = "ready_long_ignored_crash_lock";
       return res.json({ ok: true, ignored: "crash_lock_active" });
     }
 
     if (cooldownActive()) {
-      console.log("🟡 READY ignored (cooldown active)");
-      lastAction = "ready_ignored_cooldown";
+      console.log("🟡 READY_LONG ignored (cooldown active)");
+      lastAction = "ready_long_ignored_cooldown";
       return res.json({ ok: true, ignored: "cooldown_active" });
     }
 
     if (!isHeartbeatFresh()) {
-      console.log("🟡 READY ignored (stale heartbeat)");
-      lastAction = "ready_ignored_stale_heartbeat";
+      console.log("🟡 READY_LONG ignored (stale heartbeat)");
+      lastAction = "ready_long_ignored_stale_heartbeat";
       return res.json({ ok: true, ignored: "stale_heartbeat" });
     }
 
     if (inPosition) {
-      console.log("🟡 READY ignored (already in position)");
-      lastAction = "ready_ignored_in_position";
+      console.log("🟡 READY_LONG ignored (already in position)");
+      lastAction = "ready_long_ignored_in_position";
       return res.json({ ok: true, ignored: "in_position" });
     }
 
     if (conservativeModeActive()) {
-      console.log("🟠 READY received during conservative mode (will restrict buys)");
+      console.log("🟠 READY_LONG received during conservative mode (will restrict buys)");
     }
 
     readyOn = true;
@@ -937,14 +931,15 @@ app.post("/webhook", async (req, res) => {
     readyPrice = getReadyPrice(payload);
     readySymbol = getSymbolFromPayload(payload);
     readyTf = payload?.tf ? String(payload.tf) : "";
+
     readyMeta = {
       timestamp: payload?.timestamp ?? payload?.time ?? null,
       tv_exchange: payload?.tv_exchange ?? payload?.exchange ?? null,
       tv_instrument: payload?.tv_instrument ?? payload?.ticker ?? null,
     };
 
-    lastAction = "ready";
-    console.log("🟢 READY ON", {
+    lastAction = "ready_long_set";
+    console.log("🟢 READY_LONG ON", {
       readyPrice,
       readySymbol,
       readyTf,
@@ -957,11 +952,25 @@ app.post("/webhook", async (req, res) => {
     return res.json({
       ok: true,
       readyOn,
+      action: "ready_long",
       readyPrice,
       readySymbol,
       readyTf,
       regime: readySymbol ? regimeState.get(readySymbol) || null : null,
     });
+  }
+
+  // ---- ENTER/EXIT (preferred v2.9 intents)
+  if (intent === "enter_long") return handleEnterLong(payload, res, "intent_enter_long");
+  if (intent === "exit_long") return handleExitLong(payload, res, "intent_exit_long");
+
+  // ---- Backward compatible Ray format: { src:"ray", side:"BUY"/"SELL" }
+  if (String(payload?.src || "").toLowerCase() === "ray") {
+    const side = String(payload.side || "").toUpperCase();
+    if (side === "BUY") return handleEnterLong(payload, res, "ray_side_buy");
+    if (side === "SELL") return handleExitLong(payload, res, "ray_side_sell");
+    lastAction = "ray_unknown_side";
+    return res.json({ ok: true, note: "ray_unknown_side" });
   }
 
   lastAction = "unknown";
