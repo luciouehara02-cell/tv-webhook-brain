@@ -752,6 +752,7 @@ async function handleEnterLong(payload, res, sourceTag) {
 
   const reentryCandidate =
     REENTRY_ENABLED &&
+     !inPosition &&
     reentryTimeOk() &&
     reentryTriesLeft() &&
     (!REENTRY_REQUIRE_READY && !readyOn);
