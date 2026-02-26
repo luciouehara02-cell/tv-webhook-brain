@@ -1,14 +1,12 @@
 /**
- * Brain v2.9.1a (LONG) — READY_LONG + Ray enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
- * ------------------------------------------------------------------------------------------------------
- * v2.9.1a:
- * ✅ Re-entry window (time + tight price guards) after exits
- * ✅ Cooldown bypass ONLY for valid re-entry candidate (so you don't miss continuation)
+ * Brain v2.9.1b (LONG) — READY_LONG + Ray enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer + ReEntry
+ * -------------------------------------------------------------------------------------------------------------------------------
+ * v2.9.1b FIX:
+ * ✅ Re-entry BUY after exit now forwards correct tv_exchange/tv_instrument even when READY is cleared
+ *    by inferring meta from symbol format "EXCHANGE:INSTRUMENT" (e.g., "BINANCE:SOLUSDT").
+ * ✅ Cooldown bypass ONLY for valid re-entry candidates (Option B)
  *
- * Recommended fixed-tight (SOL 3m):
- *   REENTRY_WINDOW_MIN=30
- *   REENTRY_MAX_FALL_PCT=0.6
- *   REENTRY_MAX_RISE_PCT=0.9
+ * Balanced DEMO defaults assumed via env vars (see your Railway variables).
  */
 
 import express from "express";
@@ -16,7 +14,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.1a-LONG";
+const BRAIN_VERSION = "v2.9.1b-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -54,7 +52,7 @@ const REQUIRE_FRESH_HEARTBEAT =
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
 
 // --------------------
-// RE-ENTRY (v2.9.1a)
+// RE-ENTRY (v2.9.1b)
 // --------------------
 const REENTRY_ENABLED =
   String(process.env.REENTRY_ENABLED || "true").toLowerCase() === "true";
@@ -64,7 +62,7 @@ const REENTRY_MAX_FALL_PCT = Number(process.env.REENTRY_MAX_FALL_PCT || "0.6");
 const REENTRY_MAX_RISE_PCT = Number(process.env.REENTRY_MAX_RISE_PCT || "0.9");
 
 const REENTRY_REQUIRE_TREND =
-  String(process.env.REENTRY_REQUIRE_TREND || "true").toLowerCase() === "true";
+  String(process.env.REENTRY_REQUIRE_TREND || "false").toLowerCase() === "true";
 
 const REENTRY_REQUIRE_READY =
   String(process.env.REENTRY_REQUIRE_READY || "false").toLowerCase() === "true";
@@ -237,6 +235,13 @@ function pctDiff(a, b) {
 function pctProfit(entry, current) {
   if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(current)) return null;
   return ((current - entry) / entry) * 100.0;
+}
+
+function inferTvMetaFromSymbol(sym) {
+  if (!sym || typeof sym !== "string") return { tv_exchange: null, tv_instrument: null };
+  const m = sym.match(/^([^:]+):(.+)$/);
+  if (!m) return { tv_exchange: null, tv_instrument: null };
+  return { tv_exchange: m[1], tv_instrument: m[2] };
 }
 
 function clearReadyContext(reason = "cleared") {
@@ -537,18 +542,24 @@ function maybeCrashLock(symbol) {
   return false;
 }
 
-// ---- 3Commas forwarder
+// ---- 3Commas forwarder (with robust meta inference)
 async function postTo3Commas(action, payload) {
   if (!THREECOMMAS_BOT_UUID || !THREECOMMAS_SECRET) {
     console.log("⚠️ 3Commas not configured (missing BOT_UUID/SECRET) — skipping");
     return { skipped: true };
   }
 
+  // FIX: infer meta from symbol if missing
+  const sym =
+    getSymbolFromPayload(payload) || entrySymbol || readySymbol || lastTickSymbol || "";
+  const inferred = inferTvMetaFromSymbol(sym);
+
   const tv_exchange =
     payload?.tv_exchange ??
     payload?.exchange ??
     entryMeta?.tv_exchange ??
     readyMeta?.tv_exchange ??
+    inferred.tv_exchange ??
     THREECOMMAS_TV_EXCHANGE ??
     "";
 
@@ -557,6 +568,7 @@ async function postTo3Commas(action, payload) {
     payload?.ticker ??
     entryMeta?.tv_instrument ??
     readyMeta?.tv_instrument ??
+    inferred.tv_instrument ??
     THREECOMMAS_TV_INSTRUMENT ??
     "";
 
@@ -565,6 +577,7 @@ async function postTo3Commas(action, payload) {
     toNum(payload?.price) ??
     toNum(payload?.close) ??
     readyPrice ??
+    lastTickPrice ??
     "";
 
   const body = {
@@ -590,7 +603,7 @@ async function postTo3Commas(action, payload) {
     });
     const text = await resp.text();
     console.log(`📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`);
-    return { ok: resp.ok, status: resp.status, resp: text };
+    return { ok: resp.ok, status: resp.status, resp: text, sent: body };
   } catch (e) {
     console.log(
       "⛔ 3Commas POST failed:",
@@ -679,8 +692,7 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
     const fwd = await postTo3Commas("exit_long", {
       time: new Date().toISOString(),
       trigger_price: currentPrice,
-      tv_exchange: entryMeta?.tv_exchange,
-      tv_instrument: entryMeta?.tv_instrument,
+      symbol: currentSymbol,
     });
 
     noteExitForEquity(currentPrice);
@@ -708,7 +720,6 @@ async function handleEnterLong(payload, res, sourceTag) {
   const rayPx = getRayPrice(payload);
   const raySym = getSymbolFromPayload(payload);
 
-  // ✅ v2.9.1a: re-entry candidate used to bypass cooldown only when valid
   const reentryCandidate =
     REENTRY_ENABLED &&
     !readyOn &&
@@ -721,7 +732,6 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "crash_lock_active" });
   }
 
-  // ✅ Cooldown blocks normal entries, but re-entry candidates can bypass it
   if (cooldownActive() && !reentryCandidate) {
     lastAction = "enter_long_blocked_cooldown";
     return res.json({ ok: false, blocked: "cooldown_active" });
@@ -835,18 +845,33 @@ async function handleEnterLong(payload, res, sourceTag) {
   peakPrice = rayPx;
   profitLockArmed = false;
 
+  // FIX: ensure entryMeta always has tv_exchange/tv_instrument even if READY is cleared
+  const inferred = inferTvMetaFromSymbol(entrySymbol);
   entryMeta = {
-    tv_exchange: readyMeta?.tv_exchange ?? payload?.tv_exchange ?? payload?.exchange ?? null,
-    tv_instrument: readyMeta?.tv_instrument ?? payload?.tv_instrument ?? payload?.ticker ?? null,
+    tv_exchange:
+      readyMeta?.tv_exchange ??
+      payload?.tv_exchange ??
+      payload?.exchange ??
+      inferred.tv_exchange ??
+      null,
+    tv_instrument:
+      readyMeta?.tv_instrument ??
+      payload?.tv_instrument ??
+      payload?.ticker ??
+      inferred.tv_instrument ??
+      null,
   };
 
   if (usingReentry) clearReentry("used");
 
   lastAction = "enter_long";
-  console.log(`🚀 ENTER LONG (${sourceTag}${usingReentry ? "+reentry" : ""}) | regime=${getRegime(entrySymbol)}`);
+  console.log(
+    `🚀 ENTER LONG (${sourceTag}${usingReentry ? "+reentry" : ""}) | regime=${getRegime(entrySymbol)}`
+  );
 
   const fwd = await postTo3Commas("enter_long", {
     ...payload,
+    symbol: entrySymbol,
     trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? readyPrice ?? rayPx,
     tv_exchange: entryMeta?.tv_exchange,
     tv_instrument: entryMeta?.tv_instrument,
@@ -857,7 +882,6 @@ async function handleEnterLong(payload, res, sourceTag) {
     action: "enter_long",
     source: sourceTag,
     usingReentry,
-    regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
     threecommas: fwd,
   });
 }
@@ -889,9 +913,8 @@ async function handleExitLong(payload, res, sourceTag) {
 
   const fwd = await postTo3Commas("exit_long", {
     ...payload,
+    symbol: entrySymbol || raySym || "",
     trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? "",
-    tv_exchange: entryMeta?.tv_exchange,
-    tv_instrument: entryMeta?.tv_instrument,
   });
 
   if (exitPx != null) noteExitForEquity(exitPx);
@@ -942,7 +965,6 @@ app.get("/", (req, res) => {
     lastTickSymbol,
     lastTickPrice,
 
-    // Re-entry status
     REENTRY_ENABLED,
     REENTRY_WINDOW_MIN,
     REENTRY_MAX_FALL_PCT,
