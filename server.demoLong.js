@@ -1,10 +1,16 @@
 /**
- * Brain v2.9 (LONG) — READY_LONG + Ray enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * Brain v2.9.1 (LONG) — READY_LONG + Ray enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * ------------------------------------------------------------------------------------------------------
- * v2.9:
- * ✅ Accepts Pine v9.4 READY_LONG (action: ready_long)
- * ✅ Gates enter_long from RayAlgo unless READY_LONG is active + fresh
- * ✅ Backward compatible with legacy action: "ready" and src:"ray" side:"BUY/SELL"
+ * v2.9.1:
+ * ✅ Adds RE-ENTRY window (time + tight price guards) so bot can re-enter continuation without needing a new READY_LONG
+ *    - Only applies when READY_LONG is OFF
+ *    - Blocks re-entry if price deviates too much from last EXIT reference price
+ *    - Optional: require TREND for re-entry
+ *
+ * Fixed-tight (recommended for SOL 3m):
+ *   REENTRY_WINDOW_MIN=30
+ *   REENTRY_MAX_FALL_PCT=0.6
+ *   REENTRY_MAX_RISE_PCT=0.9
  */
 
 import express from "express";
@@ -12,7 +18,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9-LONG";
+const BRAIN_VERSION = "v2.9.1-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -48,6 +54,31 @@ const EXIT_COOLDOWN_MIN = Number(process.env.EXIT_COOLDOWN_MIN || "0");
 const REQUIRE_FRESH_HEARTBEAT =
   String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
+
+// --------------------
+// RE-ENTRY (v2.9.1)
+// --------------------
+const REENTRY_ENABLED =
+  String(process.env.REENTRY_ENABLED || "true").toLowerCase() === "true";
+
+// ✅ you requested 30
+const REENTRY_WINDOW_MIN = Number(process.env.REENTRY_WINDOW_MIN || "30");
+
+// Tight price guards (fixed)
+const REENTRY_MAX_FALL_PCT = Number(process.env.REENTRY_MAX_FALL_PCT || "0.6");
+const REENTRY_MAX_RISE_PCT = Number(process.env.REENTRY_MAX_RISE_PCT || "0.9");
+
+// Require TREND for re-entry (recommended)
+const REENTRY_REQUIRE_TREND =
+  String(process.env.REENTRY_REQUIRE_TREND || "true").toLowerCase() === "true";
+
+// If true, when READY is OFF we can still re-enter via Ray if re-entry window is valid
+const REENTRY_REQUIRE_READY =
+  String(process.env.REENTRY_REQUIRE_READY || "false").toLowerCase() === "true";
+
+// If price breaches once, cancel re-entry context immediately
+const REENTRY_CANCEL_ON_BREACH =
+  String(process.env.REENTRY_CANCEL_ON_BREACH || "true").toLowerCase() === "true";
 
 // Profit Lock (trailing) protection
 const PROFIT_LOCK_ENABLED =
@@ -165,6 +196,16 @@ let profitLockArmed = false;
 
 // store entry meta so exits know correct pair
 let entryMeta = { tv_exchange: null, tv_instrument: null };
+
+// --------------------
+// RE-ENTRY state (v2.9.1)
+// --------------------
+let reentryActive = false;
+let reentryUntilMs = 0;
+let reentryPrice = null;
+let reentrySymbol = "";
+let reentryRegimeAtExit = "RANGE";
+let reentryReason = "";
 
 // ====================
 // HELPERS
@@ -304,6 +345,53 @@ function getTickPrice(payload) {
   return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
 }
 
+// --------------------
+// RE-ENTRY helpers (v2.9.1)
+// --------------------
+function startReentryWindow(exitPrice, symbol, regime, reason) {
+  if (!REENTRY_ENABLED) return;
+  if (!Number.isFinite(exitPrice)) return;
+
+  reentryActive = true;
+  reentryUntilMs = nowMs() + REENTRY_WINDOW_MIN * 60 * 1000;
+  reentryPrice = exitPrice;
+  reentrySymbol = symbol || "";
+  reentryRegimeAtExit = regime || "RANGE";
+  reentryReason = reason || "exit";
+
+  console.log(
+    `🟣 REENTRY window started (${REENTRY_WINDOW_MIN}m) ref=${reentryPrice} fall<=${REENTRY_MAX_FALL_PCT}% rise<=${REENTRY_MAX_RISE_PCT}% regimeAtExit=${reentryRegimeAtExit} reason=${reentryReason}`
+  );
+}
+
+function clearReentry(reason = "cleared") {
+  if (!reentryActive) return;
+  reentryActive = false;
+  reentryUntilMs = 0;
+  reentryPrice = null;
+  reentrySymbol = "";
+  reentryRegimeAtExit = "RANGE";
+  reentryReason = "";
+  console.log(`🧼 REENTRY cleared (${reason})`);
+}
+
+function reentryTimeOk() {
+  return reentryActive && nowMs() <= reentryUntilMs;
+}
+
+function reentryPriceCheck(currentPrice) {
+  if (!Number.isFinite(reentryPrice) || !Number.isFinite(currentPrice)) {
+    return { ok: false, why: "missing_price" };
+  }
+  const fallPct = ((reentryPrice - currentPrice) / reentryPrice) * 100;
+  const risePct = ((currentPrice - reentryPrice) / reentryPrice) * 100;
+
+  if (fallPct > REENTRY_MAX_FALL_PCT) return { ok: false, why: "fall_breach", fallPct, risePct };
+  if (risePct > REENTRY_MAX_RISE_PCT) return { ok: false, why: "rise_breach", fallPct, risePct };
+
+  return { ok: true, fallPct, risePct };
+}
+
 function maybeAutoExpireReady(currentPrice, currentSymbol) {
   if (!READY_AUTOEXPIRE_ENABLED) return false;
   if (!readyOn) return false;
@@ -342,7 +430,7 @@ function priceAtOrBefore(symbol, targetMs) {
   if (!arr || arr.length === 0) return null;
   for (let i = arr.length - 1; i >= 0; i--) {
     if (arr[i].t <= targetMs) return arr[i].p;
-  }
+    }
   return arr[0]?.p ?? null;
 }
 
@@ -458,6 +546,7 @@ function maybeCrashLock(symbol) {
     startCrashLock(`dump_1m_${dump1m.toFixed(2)}%`);
     lastAction = "crash_lock_dump_1m";
     clearReadyContext("crash_lock_dump_1m");
+    clearReentry("crash_lock_dump_1m");
     return { triggered: true, window: "1m", dumpPct: dump1m };
   }
 
@@ -465,6 +554,7 @@ function maybeCrashLock(symbol) {
     startCrashLock(`dump_5m_${dump5m.toFixed(2)}%`);
     lastAction = "crash_lock_dump_5m";
     clearReadyContext("crash_lock_dump_5m");
+    clearReentry("crash_lock_dump_5m");
     return { triggered: true, window: "5m", dumpPct: dump5m };
   }
 
@@ -622,6 +712,14 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
 
     noteExitForEquity(currentPrice);
 
+    // ✅ Start re-entry window BEFORE clearing state
+    startReentryWindow(
+      currentPrice,
+      entrySymbol || currentSymbol || "",
+      (currentSymbol ? getRegime(currentSymbol) : "RANGE"),
+      "profit_lock_exit"
+    );
+
     clearReadyContext("profit_lock_exit");
     clearPositionContext("profit_lock_exit");
     startCooldown("profit_lock_exit");
@@ -653,16 +751,12 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "stale_heartbeat" });
   }
 
-  if (!readyOn) {
-    lastAction = "enter_long_blocked_not_ready";
-    return res.json({ ok: false, blocked: "not_ready" });
-  }
-
   if (inPosition) {
     lastAction = "enter_long_blocked_in_position";
     return res.json({ ok: false, blocked: "already_in_position" });
   }
 
+  // Conservative mode restriction (keep)
   if (conservativeModeActive()) {
     const reg = raySym ? getRegime(raySym) : "RANGE";
     if (reg !== "TREND") {
@@ -671,38 +765,97 @@ async function handleEnterLong(payload, res, sourceTag) {
     }
   }
 
-  if (readySymbol && raySym && readySymbol !== raySym) {
-    lastAction = "enter_long_blocked_symbol_mismatch";
-    return res.json({ ok: false, blocked: "symbol_mismatch", readySymbol, raySym });
+  // --------------------------
+  // READY requirement vs RE-ENTRY (v2.9.1)
+  // --------------------------
+  let usingReentry = false;
+
+  if (!readyOn) {
+    if (REENTRY_REQUIRE_READY) {
+      lastAction = "enter_long_blocked_not_ready";
+      return res.json({ ok: false, blocked: "not_ready" });
+    }
+
+    // If READY is off, try re-entry window
+    if (!REENTRY_ENABLED || !reentryTimeOk()) {
+      lastAction = "enter_long_blocked_not_ready";
+      return res.json({ ok: false, blocked: "not_ready" });
+    }
+
+    // Symbol guard
+    if (reentrySymbol && raySym && reentrySymbol !== raySym) {
+      if (REENTRY_CANCEL_ON_BREACH) clearReentry("symbol_mismatch");
+      lastAction = "enter_long_blocked_reentry_symbol_mismatch";
+      return res.json({ ok: false, blocked: "reentry_symbol_mismatch", reentrySymbol, raySym });
+    }
+
+    // Optional: require TREND
+    const curReg = raySym ? getRegime(raySym) : "RANGE";
+    if (REENTRY_REQUIRE_TREND && curReg !== "TREND") {
+      lastAction = "enter_long_blocked_reentry_not_trend";
+      return res.json({ ok: false, blocked: "reentry_not_trend", regime: curReg });
+    }
+
+    // Price guard (tight)
+    const pxNow = rayPx ?? lastTickPrice;
+    const chk = reentryPriceCheck(pxNow);
+    if (!chk.ok) {
+      if (REENTRY_CANCEL_ON_BREACH) clearReentry(`price_${chk.why}`);
+      lastAction = "enter_long_blocked_reentry_price_guard";
+      return res.json({
+        ok: false,
+        blocked: "reentry_price_guard",
+        why: chk.why,
+        fallPct: chk.fallPct,
+        risePct: chk.risePct,
+        ref: reentryPrice,
+      });
+    }
+
+    usingReentry = true;
+    console.log(
+      `🟣 REENTRY allowed (${sourceTag}) fall=${chk.fallPct.toFixed(3)}% rise=${chk.risePct.toFixed(3)}% ref=${reentryPrice} regime=${curReg}`
+    );
+  } else {
+    // READY ON path: enforce symbol + drift gates
+    if (readySymbol && raySym && readySymbol !== raySym) {
+      lastAction = "enter_long_blocked_symbol_mismatch";
+      return res.json({ ok: false, blocked: "symbol_mismatch", readySymbol, raySym });
+    }
+
+    if (readyPrice == null || rayPx == null) {
+      lastAction = "enter_long_blocked_missing_prices";
+      return res.json({ ok: false, blocked: "missing_prices" });
+    }
+
+    const dPct = pctDiff(readyPrice, rayPx);
+    if (dPct == null) {
+      lastAction = "enter_long_blocked_bad_price_diff";
+      return res.json({ ok: false, blocked: "bad_price_diff" });
+    }
+
+    const maxMove = effectiveReadyMaxMovePct(raySym || readySymbol);
+
+    // HARD RESET ON DRIFT BLOCK
+    if (dPct > maxMove) {
+      console.log(
+        `⛔ ENTER LONG blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`
+      );
+      clearReadyContext("hard_reset_price_drift");
+      lastAction = "enter_long_blocked_price_drift_reset";
+      return res.json({ ok: false, blocked: "price_drift_reset", drift_pct: dPct, maxMove });
+    }
   }
 
-  if (readyPrice == null || rayPx == null) {
+  // Approve entry + forward to 3Commas
+  if (rayPx == null) {
     lastAction = "enter_long_blocked_missing_prices";
     return res.json({ ok: false, blocked: "missing_prices" });
   }
 
-  const dPct = pctDiff(readyPrice, rayPx);
-  if (dPct == null) {
-    lastAction = "enter_long_blocked_bad_price_diff";
-    return res.json({ ok: false, blocked: "bad_price_diff" });
-  }
-
-  const maxMove = effectiveReadyMaxMovePct(raySym || readySymbol);
-
-  // HARD RESET ON DRIFT BLOCK
-  if (dPct > maxMove) {
-    console.log(
-      `⛔ ENTER LONG blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`
-    );
-    clearReadyContext("hard_reset_price_drift");
-    lastAction = "enter_long_blocked_price_drift_reset";
-    return res.json({ ok: false, blocked: "price_drift_reset", drift_pct: dPct, maxMove });
-  }
-
-  // Approve entry + forward to 3Commas
   inPosition = true;
   entryPrice = rayPx;
-  entrySymbol = raySym || readySymbol || "";
+  entrySymbol = raySym || readySymbol || reentrySymbol || "";
   peakPrice = rayPx;
   profitLockArmed = false;
 
@@ -711,14 +864,17 @@ async function handleEnterLong(payload, res, sourceTag) {
     tv_instrument: readyMeta?.tv_instrument ?? payload?.tv_instrument ?? payload?.ticker ?? null,
   };
 
+  // If we entered via re-entry, consume it
+  if (usingReentry) clearReentry("used");
+
   lastAction = "enter_long";
   console.log(
-    `🚀 ENTER LONG (${sourceTag}) | drift=${dPct.toFixed(3)}% (<= ${maxMove}%) | regime=${getRegime(entrySymbol)}`
+    `🚀 ENTER LONG (${sourceTag}${usingReentry ? "+reentry" : ""}) | regime=${getRegime(entrySymbol)}`
   );
 
   const fwd = await postTo3Commas("enter_long", {
     ...payload,
-    trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? readyPrice,
+    trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? readyPrice ?? rayPx,
     tv_exchange: entryMeta?.tv_exchange,
     tv_instrument: entryMeta?.tv_instrument,
   });
@@ -727,8 +883,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     ok: true,
     action: "enter_long",
     source: sourceTag,
-    drift_pct: dPct,
-    maxMove,
+    usingReentry,
     regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
     threecommas: fwd,
   });
@@ -736,6 +891,7 @@ async function handleEnterLong(payload, res, sourceTag) {
 
 async function handleExitLong(payload, res, sourceTag) {
   const rayPx = getRayPrice(payload);
+  const raySym = getSymbolFromPayload(payload);
 
   if (!inPosition) {
     lastAction = "exit_long_no_position";
@@ -768,6 +924,14 @@ async function handleExitLong(payload, res, sourceTag) {
 
   if (exitPx != null) noteExitForEquity(exitPx);
 
+  // ✅ Start re-entry window BEFORE clearing state
+  startReentryWindow(
+    exitPx,
+    entrySymbol || raySym || "",
+    ((entrySymbol || raySym) ? getRegime(entrySymbol || raySym) : "RANGE"),
+    `exit_${sourceTag}`
+  );
+
   clearReadyContext("exit_long");
   clearPositionContext("exit_long");
   startCooldown(sourceTag);
@@ -782,9 +946,11 @@ async function handleExitLong(payload, res, sourceTag) {
 app.get("/", (req, res) => {
   res.json({
     brain: BRAIN_VERSION,
+
     readyOn,
     inPosition,
     lastAction,
+
     READY_TTL_MIN,
     READY_MAX_MOVE_PCT,
     READY_MAX_MOVE_PCT_TREND,
@@ -792,15 +958,34 @@ app.get("/", (req, res) => {
     READY_AUTOEXPIRE_ENABLED,
     READY_AUTOEXPIRE_PCT,
     EXIT_COOLDOWN_MIN,
+
     cooldownActive: cooldownActive(),
     cooldownUntilMs,
+
     crashLockActive: crashLockActive(),
     crashLockUntilMs,
+
     REQUIRE_FRESH_HEARTBEAT,
     HEARTBEAT_MAX_AGE_SEC,
     lastTickMs,
     lastTickSymbol,
     lastTickPrice,
+
+    // Re-entry status
+    REENTRY_ENABLED,
+    REENTRY_WINDOW_MIN,
+    REENTRY_MAX_FALL_PCT,
+    REENTRY_MAX_RISE_PCT,
+    REENTRY_REQUIRE_TREND,
+    REENTRY_REQUIRE_READY,
+    REENTRY_CANCEL_ON_BREACH,
+    reentryActive,
+    reentryUntilMs,
+    reentryPrice,
+    reentrySymbol,
+    reentryRegimeAtExit,
+    reentryReason,
+
     PROFIT_LOCK_ENABLED,
     PL_ADAPTIVE_ENABLED,
     PROFIT_LOCK_ARM_PCT,
@@ -814,6 +999,7 @@ app.get("/", (req, res) => {
     PL_MAX_ARM_PCT,
     PL_MAX_GIVEBACK_PCT,
     PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT,
+
     REGIME_ENABLED,
     SLOPE_WINDOW_SEC,
     ATR_WINDOW_SEC,
@@ -822,14 +1008,17 @@ app.get("/", (req, res) => {
     REGIME_TREND_SLOPE_ON_PCT,
     REGIME_TREND_SLOPE_OFF_PCT,
     REGIME_VOL_MIN_ATR_PCT,
+
     CRASH_PROTECT_ENABLED,
     CRASH_DUMP_1M_PCT,
     CRASH_DUMP_5M_PCT,
     CRASH_COOLDOWN_MIN,
+
     EQUITY_STABILIZER_ENABLED,
     lossStreak,
     conservativeModeActive: conservativeModeActive(),
     conservativeUntilMs,
+
     readyPrice,
     readySymbol,
     readyTf,
@@ -838,6 +1027,7 @@ app.get("/", (req, res) => {
     peakPrice,
     profitLockArmed,
     entryMeta,
+
     regime: lastTickSymbol ? regimeState.get(lastTickSymbol) || null : null,
     threecommas_configured: Boolean(THREECOMMAS_BOT_UUID && THREECOMMAS_SECRET),
     READY_ACCEPT_LEGACY_READY,
@@ -881,6 +1071,9 @@ app.post("/webhook", async (req, res) => {
     const expired = maybeAutoExpireReady(tickPx, tickSym);
     const pl = await maybeProfitLockExit(tickPx, tickSym);
 
+    // If re-entry window expired, clear it
+    if (reentryActive && !reentryTimeOk()) clearReentry("window_expired");
+
     return res.json({
       ok: true,
       tick: true,
@@ -892,6 +1085,7 @@ app.post("/webhook", async (req, res) => {
       inPosition,
       crashLockActive: crashLockActive(),
       conservativeModeActive: conservativeModeActive(),
+      reentryActive,
     });
   }
 
@@ -937,6 +1131,9 @@ app.post("/webhook", async (req, res) => {
       tv_exchange: payload?.tv_exchange ?? payload?.exchange ?? null,
       tv_instrument: payload?.tv_instrument ?? payload?.ticker ?? null,
     };
+
+    // Optional: if a new READY_LONG arrives, we refresh cycle and clear any old re-entry context
+    clearReentry("ready_long_refresh");
 
     lastAction = "ready_long_set";
     console.log("🟢 READY_LONG ON", {
@@ -984,6 +1181,9 @@ app.listen(PORT, () => {
   console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
   console.log(
     `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
+  );
+  console.log(
+    `ReEntry: ENABLED=${REENTRY_ENABLED} | window=${REENTRY_WINDOW_MIN}m | fall<=${REENTRY_MAX_FALL_PCT}% | rise<=${REENTRY_MAX_RISE_PCT}% | reqTrend=${REENTRY_REQUIRE_TREND} | reqReady=${REENTRY_REQUIRE_READY} | cancelOnBreach=${REENTRY_CANCEL_ON_BREACH}`
   );
   console.log(
     `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`
