@@ -3,10 +3,12 @@
  * + Pending BUY buffer (pink fix)
  * + Re-entry window (yellow fix) with loop protection
  *
- * Key fixes:
- * - Re-entry window is NOT restarted on every exit (Rule A) if already active for same symbol
- * - Re-entry window is NOT started when the exited trade was itself a re-entry trade (prevents infinite loops)
- * - Re-entry attempts are capped by REENTRY_MAX_TRIES within the active window
+ * Key fixes (this revision):
+ * ✅ PendingBUY bugfix: snapshot pendingBuy fields BEFORE pendingClear(), so price/symbol/payload are not lost.
+ * ✅ PendingBUY reset: pendingClear() now resets whole object to defaults (no partial stale fields).
+ * ✅ PendingBUY expiry hygiene: on every tick, expire pendingBuy if window elapsed.
+ *
+ * NOTE: Logic otherwise kept as-is from your pasted v2.9.3.
  */
 
 import express from "express";
@@ -29,7 +31,7 @@ const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
 const READY_ACCEPT_LEGACY_READY =
   String(process.env.READY_ACCEPT_LEGACY_READY || "true").toLowerCase() === "true";
 
-// Base Entry drift gate (Ray BUY must be within this % of latest READY price)
+// Base Entry drift gate (BUY must be within this % of latest READY price)
 const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
 
 // Optional per-regime drift overrides (if set, used when REGIME_ENABLED)
@@ -131,7 +133,9 @@ const REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT = Number(
 const PENDING_BUY_ENABLED =
   String(process.env.PENDING_BUY_ENABLED || "true").toLowerCase() === "true";
 const PENDING_BUY_WINDOW_SEC = Number(process.env.PENDING_BUY_WINDOW_SEC || "120");
-const PENDING_BUY_MAX_READY_DRIFT_PCT = Number(process.env.PENDING_BUY_MAX_READY_DRIFT_PCT || "0.3");
+const PENDING_BUY_MAX_READY_DRIFT_PCT = Number(
+  process.env.PENDING_BUY_MAX_READY_DRIFT_PCT || "0.3"
+);
 
 // 3Commas
 const THREECOMMAS_WEBHOOK_URL =
@@ -204,14 +208,17 @@ let reentry = {
 // Key loop-prevention flag: was the CURRENT position opened via re-entry?
 let positionWasReentry = false;
 
-// Pending BUY state
-let pendingBuy = {
-  active: false,
-  untilMs: 0,
-  symbol: "",
-  price: null,
-  payload: null,
-};
+// Pending BUY state (FIXED: resettable factory)
+function emptyPendingBuy() {
+  return {
+    active: false,
+    untilMs: 0,
+    symbol: "",
+    price: null,
+    payload: null,
+  };
+}
+let pendingBuy = emptyPendingBuy();
 
 // ====================
 // HELPERS
@@ -449,7 +456,9 @@ function updateRegime(symbol) {
 
   if (prev.regime !== next) {
     console.log(
-      `🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(3)}% | atr=${atrP.toFixed(3)}%`
+      `🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(
+        3
+      )}% | atr=${atrP.toFixed(3)}%`
     );
   }
   return st;
@@ -560,7 +569,7 @@ async function postTo3Commas(action, payload) {
   } catch (e) {
     console.log(
       "⛔ 3Commas POST failed:",
-      e?.name === "AbortError" ? "timeout" : (e?.message || e)
+      e?.name === "AbortError" ? "timeout" : e?.message || e
     );
     return { ok: false, error: String(e?.message || e) };
   } finally {
@@ -629,7 +638,9 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
   const floor = peakPrice * (1 - givebackPct / 100);
   if (currentPrice <= floor) {
     console.log(
-      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
+      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(
+        4
+      )} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
     );
 
     lastAction = "profit_lock_exit_long";
@@ -682,7 +693,6 @@ function reentryClear(reason = "cleared") {
 function reentryFallRiseFromRef(ref, current) {
   if (!Number.isFinite(ref) || ref === 0 || !Number.isFinite(current)) return null;
   const pct = ((current - ref) / ref) * 100.0;
-  // fall: negative move (below ref), rise: positive move (above ref)
   return { pct };
 }
 
@@ -712,7 +722,7 @@ function maybeStartOrKeepReentryWindow(symbol, exitPrice, reason, exitPnlPct) {
     console.log(
       `🟣 REENTRY window kept (no reset) | until=${new Date(reentry.untilMs).toISOString()} | ref=${exitPrice} tries=${reentry.triesUsed}/${reentry.triesMax} reason=${reason}`
     );
-    // You may update ref to latest exit price (recommended)
+    // update ref to latest exit price
     reentry.ref = exitPrice;
     reentry.regimeAtExit = regAtExit;
     reentry.reason = reason;
@@ -737,19 +747,17 @@ function maybeStartOrKeepReentryWindow(symbol, exitPrice, reason, exitPnlPct) {
 }
 
 // ====================
-// Pending BUY helpers
+// Pending BUY helpers (FIXED)
 // ====================
 function pendingActive() {
   return pendingBuy.active && nowMs() < pendingBuy.untilMs;
 }
+
 function pendingClear(reason = "cleared") {
-  pendingBuy.active = false;
-  pendingBuy.untilMs = 0;
-  pendingBuy.symbol = "";
-  pendingBuy.price = null;
-  pendingBuy.payload = null;
+  pendingBuy = emptyPendingBuy();
   if (reason) console.log(`🩷 PendingBUY cleared (${reason})`);
 }
+
 function pendingStore(symbol, price, payload) {
   if (!PENDING_BUY_ENABLED) return;
   pendingBuy = {
@@ -761,6 +769,7 @@ function pendingStore(symbol, price, payload) {
   };
   console.log(`🩷 PendingBUY stored (${PENDING_BUY_WINDOW_SEC}s) symbol=${symbol} price=${price}`);
 }
+
 function pendingCanConsumeWithReady(readySym, readyPx) {
   if (!pendingActive()) return false;
   if (!readySym || pendingBuy.symbol !== readySym) return false;
@@ -795,7 +804,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     reentryTriesLeft() &&
     (!REENTRY_REQUIRE_READY && !readyOn);
 
-  // Cooldown handling: allow re-entry to bypass the normal exit cooldown (but equity cooldown still applies via loss streak)
+  // Cooldown handling: allow re-entry to bypass the normal exit cooldown
   if (cooldownActive() && !reentryCandidate) {
     lastAction = "enter_long_blocked_cooldown";
     return res.json({ ok: false, blocked: "cooldown_active" });
@@ -830,7 +839,12 @@ async function handleEnterLong(payload, res, sourceTag) {
     // Re-entry requires symbol match with reentry state
     if (reentry.symbol && sym && reentry.symbol !== sym) {
       lastAction = "enter_long_blocked_reentry_symbol_mismatch";
-      return res.json({ ok: false, blocked: "reentry_symbol_mismatch", reentrySymbol: reentry.symbol, sym });
+      return res.json({
+        ok: false,
+        blocked: "reentry_symbol_mismatch",
+        reentrySymbol: reentry.symbol,
+        sym,
+      });
     }
 
     // Optional: require trend on re-entry
@@ -865,8 +879,6 @@ async function handleEnterLong(payload, res, sourceTag) {
     );
 
     if (reentry.triesUsed >= reentry.triesMax) {
-      // stop further re-entries; note: we clear so it cannot restart unless a fresh READY trade happens,
-      // and we also prevent restarts by "positionWasReentry" in exit handler.
       reentryClear("max_tries_reached");
     }
   }
@@ -900,9 +912,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     const maxMove = effectiveReadyMaxMovePct(sym);
 
     if (dPct > maxMove) {
-      console.log(
-        `⛔ ENTER LONG blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`
-      );
+      console.log(`⛔ ENTER LONG blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`);
       clearReadyContext("hard_reset_price_drift");
       lastAction = "enter_long_blocked_price_drift_reset";
       return res.json({ ok: false, blocked: "price_drift_reset", drift_pct: dPct, maxMove });
@@ -985,7 +995,12 @@ async function handleExitLong(payload, res, sourceTag) {
 
   // re-entry window management (loop-safe)
   if (exitPx != null) {
-    maybeStartOrKeepReentryWindow(entrySymbol || getSymbolFromPayload(payload), exitPx, `exit_${sourceTag}`, pnlPct);
+    maybeStartOrKeepReentryWindow(
+      entrySymbol || getSymbolFromPayload(payload),
+      exitPx,
+      `exit_${sourceTag}`,
+      pnlPct
+    );
   }
 
   clearReadyContext("exit_long");
@@ -1075,7 +1090,12 @@ app.get("/", (req, res) => {
     PENDING_BUY_ENABLED,
     PENDING_BUY_WINDOW_SEC,
     PENDING_BUY_MAX_READY_DRIFT_PCT,
-    pendingBuy: { active: pendingActive(), untilMs: pendingBuy.untilMs, symbol: pendingBuy.symbol, price: pendingBuy.price },
+    pendingBuy: {
+      active: pendingActive(),
+      untilMs: pendingBuy.untilMs,
+      symbol: pendingBuy.symbol,
+      price: pendingBuy.price,
+    },
 
     readyPrice,
     readySymbol,
@@ -1110,7 +1130,7 @@ app.post("/webhook", async (req, res) => {
 
   const intent = normalizeIntent(payload);
 
-  // ---- TICK (heartbeat + regime + crash + auto-expire + profit lock)
+  // ---- TICK (heartbeat + regime + crash + auto-expire + profit lock + pending expiry)
   if (intent === "tick") {
     const tickPx = getTickPrice(payload);
     const tickSym = getSymbolFromPayload(payload);
@@ -1125,6 +1145,11 @@ app.post("/webhook", async (req, res) => {
     lastTickPrice = tickPx;
 
     pushTick(tickSym, tickPx, lastTickMs);
+
+    // ✅ PendingBUY expiry hygiene
+    if (pendingBuy.active && nowMs() > pendingBuy.untilMs) {
+      pendingClear("expired");
+    }
 
     const r = updateRegime(tickSym);
     const crash = maybeCrashLock(tickSym);
@@ -1195,22 +1220,26 @@ app.post("/webhook", async (req, res) => {
       regime: readySymbol ? getRegime(readySymbol) : null,
     });
 
-    // Pink fix: if there is a pending BUY that matches this READY, consume it immediately
+    // ✅ Pink fix (FIXED): snapshot pending fields BEFORE clearing
     if (PENDING_BUY_ENABLED && pendingCanConsumeWithReady(readySymbol, readyPrice)) {
       console.log(
         `🩷 PendingBUY consuming -> ENTER LONG (pending) drift<=${PENDING_BUY_MAX_READY_DRIFT_PCT}%`
       );
+
       const pendingPayload = pendingBuy.payload || {};
+      const pendingPrice = pendingBuy.price;
+      const pendingSym = pendingBuy.symbol;
+
       pendingClear("consumed");
 
-      // enter using pending payload
       return handleEnterLong(
         {
           ...pendingPayload,
           intent: "enter_long",
           tv_exchange: readyMeta?.tv_exchange ?? pendingPayload?.tv_exchange,
           tv_instrument: readyMeta?.tv_instrument ?? pendingPayload?.tv_instrument,
-          price: pendingBuy.price ?? pendingPayload?.price,
+          symbol: pendingPayload?.symbol ?? pendingSym,
+          price: pendingPayload?.price ?? pendingPrice,
           time: pendingPayload?.time ?? new Date().toISOString(),
         },
         res,
