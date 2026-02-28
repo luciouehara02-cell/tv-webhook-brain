@@ -1,5 +1,5 @@
 /**
- * Brain v2.9.3 (LONG) — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * Brain v2.9.4 (LONG) — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * + Pending BUY buffer (pink fix)
  * + Re-entry window (yellow fix) with loop protection
  *
