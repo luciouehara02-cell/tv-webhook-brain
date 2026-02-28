@@ -296,8 +296,12 @@ function clearPositionContext(reason = "pos_cleared") {
 function startCooldown(reason = "exit", minutesOverride = null) {
   const mins = minutesOverride != null ? minutesOverride : EXIT_COOLDOWN_MIN;
   if (!mins || mins <= 0) return;
-  cooldownUntilMs = nowMs() + mins * 60 * 1000;
-  console.log(`⏳ Cooldown started (${mins} min) reason=${reason}`);
+  const until = nowMs() + mins * 60 * 1000;
+
+  // IMPORTANT: never shorten an existing cooldown
+  cooldownUntilMs = Math.max(cooldownUntilMs || 0, until);
+
+  console.log(`⏳ Cooldown active until ${new Date(cooldownUntilMs).toISOString()} reason=${reason}`);
 }
 
 function startCrashLock(reason = "crash", minutesOverride = null) {
