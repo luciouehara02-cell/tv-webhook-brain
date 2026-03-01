@@ -757,26 +757,7 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-function secretFor(url) {
-  const u = url.toLowerCase();
-  if (u.includes("brainact")) return process.env.BRAIN_SECRET_ACT || process.env.BRAIN_SECRET || "";
-  if (u.includes("satisfied-mercy")) return process.env.BRAIN_SECRET_DEMOLONG || process.env.BRAIN_SECRET || "";
-  if (u.includes("braindemoshort")) return process.env.BRAIN_SECRET_DEMOSHORT || process.env.BRAIN_SECRET || "";
-  return process.env.BRAIN_SECRET || "";
-}
 
-const results = await Promise.all(
-  BRAIN_URLS.map((u) => {
-    const out = { ...inbound };
-    const s = secretFor(u);
-
-    // Debug (safe): show which secret is used
-    console.log(`🔐 -> ${u} uses secret suffix=${String(s).slice(-6)}`);
-
-    if (s) out.secret = s;
-    return forwardToBrain(u, out, FORWARD_TIMEOUT_MS);
-  })
-);
 
 /* ------------------------- START ------------------------- */
 app.listen(ENV.PORT, () => {
