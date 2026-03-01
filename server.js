@@ -146,3 +146,28 @@ app.listen(PORT, () => {
   console.log(`Inbound secret check: ${WEBHOOK_SECRET ? "ON" : "OFF"}`);
   console.log(`Brain secret rewrite: ${BRAIN_SECRET ? "ON" : "OFF"}`);
 });
+
+function secretFor(url) {
+  const u = String(url).toLowerCase();
+
+  // match by domain (what you actually have in BRAIN_URLS)
+  if (u.includes("brainact-production")) return process.env.BRAIN_SECRET_ACTLONG || process.env.BRAIN_SECRET || "";
+  if (u.includes("satisfied-mercy-production")) return process.env.BRAIN_SECRET_DEMOLONG || process.env.BRAIN_SECRET || "";
+  if (u.includes("braindemoshort-production")) return process.env.BRAIN_SECRET_DEMOSHORT || process.env.BRAIN_SECRET || "";
+
+  return process.env.BRAIN_SECRET || "";
+}
+
+// in your forwarding loop:
+const results = await Promise.all(
+  BRAIN_URLS.map((u) => {
+    const out = { ...inbound };
+    const s = secretFor(u);
+    if (s) out.secret = s;
+
+    // debug (safe): log suffix only
+    console.log(`🔐 -> ${u} secret suffix=${String(out.secret || "").slice(-6)}`);
+
+    return forwardToBrain(u, out, FORWARD_TIMEOUT_MS);
+  })
+);
