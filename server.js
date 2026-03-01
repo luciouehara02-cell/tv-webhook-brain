@@ -1,19 +1,27 @@
 /**
- * tick-router — fixed
+ * TickRouter — server.js (Complete)
  *
  * TradingView -> TickRouter:
- *   - validates WEBHOOK_SECRET (optional)
+ *   - validate WEBHOOK_SECRET (optional but recommended)
  *
  * TickRouter -> Brain(s):
- *   - rewrites payload.secret = BRAIN_SECRET (optional but recommended)
- *   - forwards to all BRAIN_URLS in parallel
+ *   - forward to BRAIN_URLS (comma-separated)
+ *   - rewrite payload.secret per-destination using:
+ *       BRAIN_SECRET_ACTLONG
+ *       BRAIN_SECRET_DEMOLONG
+ *       BRAIN_SECRET_DEMOSHORT
+ *     fallback to BRAIN_SECRET (default) if specific not set
  *
- * ENV:
+ * ENV (Railway Variables):
  *   PORT=8080
- *   WEBHOOK_SECRET=TickRouter_...        (secret used by TradingView to call TickRouter) [optional]
- *   BRAIN_SECRET=ACT_...                 (secret Brain expects) [recommended]
- *   BRAIN_URLS="https://brain1.../webhook,https://brain2.../webhook"
- *   FORWARD_TIMEOUT_MS=4000              (optional)
+ *   WEBHOOK_SECRET=TickRouter_xxx                      (secret used by TradingView)
+ *   BRAIN_URLS="https://brainact.../webhook,https://satisfied-mercy.../webhook,https://braindemoshort.../webhook"
+ *   FORWARD_TIMEOUT_MS=4000
+ *
+ *   BRAIN_SECRET=ACT_xxx                               (default fallback)
+ *   BRAIN_SECRET_ACTLONG=ACT_xxx
+ *   BRAIN_SECRET_DEMOLONG=ACT_xxx or DEMO_LONG_xxx
+ *   BRAIN_SECRET_DEMOSHORT=DEMO_SHORT_xxx
  */
 
 import express from "express";
@@ -22,20 +30,14 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
-
-// TradingView -> TickRouter secret (optional)
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
-
-// TickRouter -> Brain secret (recommended)
 const BRAIN_SECRET = String(process.env.BRAIN_SECRET || "");
+const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 
-// Comma-separated list of Brain webhook URLs
 const BRAIN_URLS = String(process.env.BRAIN_URLS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-
-const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 
 function extractSecret(payload) {
   return String(
@@ -48,9 +50,30 @@ function extractSecret(payload) {
 }
 
 function inboundSecretOk(payload) {
-  // if WEBHOOK_SECRET is not set, accept all (not recommended for prod)
+  // If WEBHOOK_SECRET not set, accept all (not recommended for prod)
   if (!WEBHOOK_SECRET) return true;
   return extractSecret(payload) === WEBHOOK_SECRET;
+}
+
+/**
+ * Decide which Brain secret to use based on destination URL.
+ * This matches your actual domains shown in Railway.
+ */
+function secretFor(url) {
+  const u = String(url).toLowerCase();
+
+  if (u.includes("brainact-production")) {
+    return String(process.env.BRAIN_SECRET_ACTLONG || BRAIN_SECRET || "");
+  }
+  if (u.includes("satisfied-mercy-production")) {
+    return String(process.env.BRAIN_SECRET_DEMOLONG || BRAIN_SECRET || "");
+  }
+  if (u.includes("braindemoshort-production")) {
+    return String(process.env.BRAIN_SECRET_DEMOSHORT || BRAIN_SECRET || "");
+  }
+
+  // fallback for any other brain you add
+  return String(BRAIN_SECRET || "");
 }
 
 async function forwardToBrain(url, payload, timeoutMs) {
@@ -70,7 +93,7 @@ async function forwardToBrain(url, payload, timeoutMs) {
       url,
       ok: resp.ok,
       status: resp.status,
-      resp: text?.slice(0, 500) || "",
+      resp: (text || "").slice(0, 400),
     };
   } catch (e) {
     return {
@@ -89,15 +112,20 @@ app.get("/", (req, res) => {
     service: "tick-router",
     brains: BRAIN_URLS,
     hasInboundSecret: Boolean(WEBHOOK_SECRET),
-    hasBrainSecret: Boolean(BRAIN_SECRET),
     forwardTimeoutMs: FORWARD_TIMEOUT_MS,
+    perBrainSecrets: {
+      hasDefault: Boolean(BRAIN_SECRET),
+      hasAct: Boolean(process.env.BRAIN_SECRET_ACTLONG),
+      hasDemoLong: Boolean(process.env.BRAIN_SECRET_DEMOLONG),
+      hasDemoShort: Boolean(process.env.BRAIN_SECRET_DEMOSHORT),
+    },
   });
 });
 
 app.post("/webhook", async (req, res) => {
   const inbound = req.body || {};
 
-  // 1) Validate inbound secret (TV -> TickRouter)
+  // 1) Validate inbound secret (TradingView -> TickRouter)
   if (!inboundSecretOk(inbound)) {
     return res.status(401).json({ ok: false, error: "secret_mismatch" });
   }
@@ -106,24 +134,29 @@ app.post("/webhook", async (req, res) => {
     return res.status(500).json({ ok: false, error: "BRAIN_URLS_not_set" });
   }
 
-  // 2) ACK TradingView immediately (fast 200)
+  // 2) ACK TradingView immediately
   res.status(200).json({ ok: true });
 
-  // 3) Prepare outbound payload (TickRouter -> Brain)
-  const outbound = { ...inbound };
-
-  // Rewrite secret so Brain accepts it
-  // If BRAIN_SECRET is empty, keep whatever came in (not recommended)
-  if (BRAIN_SECRET) outbound.secret = BRAIN_SECRET;
-
-  // 4) Forward async (do not block TradingView)
+  // 3) Forward async to all brains
   const results = await Promise.all(
-    BRAIN_URLS.map((u) => forwardToBrain(u, outbound, FORWARD_TIMEOUT_MS))
+    BRAIN_URLS.map((u) => {
+      const out = { ...inbound };
+
+      // rewrite secret for this destination
+      const s = secretFor(u);
+      if (s) out.secret = s;
+
+      // safe debug: suffix only (no full secret)
+      const suffix = String(out.secret || "").slice(-6);
+      console.log(`🔐 -> ${u} secretSuffix=${suffix} src=${String(inbound?.src || "")}`);
+
+      return forwardToBrain(u, out, FORWARD_TIMEOUT_MS);
+    })
   );
 
   const anyOk = results.some((r) => r.ok);
 
-  // Logs (very important)
+  // 4) Log results
   for (const r of results) {
     if (r.ok) {
       console.log(`✅ Forward OK -> ${r.url} | status=${r.status}`);
@@ -132,7 +165,6 @@ app.post("/webhook", async (req, res) => {
     }
   }
 
-  // Optional: summary line
   console.log(
     `➡️ TickRouter forwarded src=${String(inbound?.src || "")} symbol=${String(
       inbound?.symbol || ""
@@ -144,30 +176,10 @@ app.listen(PORT, () => {
   console.log(`✅ tick-router listening on port ${PORT}`);
   console.log(`Brains: ${BRAIN_URLS.join(", ") || "(none)"}`);
   console.log(`Inbound secret check: ${WEBHOOK_SECRET ? "ON" : "OFF"}`);
-  console.log(`Brain secret rewrite: ${BRAIN_SECRET ? "ON" : "OFF"}`);
+  console.log(`Default brain secret set: ${BRAIN_SECRET ? "YES" : "NO"}`);
+  console.log(
+    `Per-brain secrets set: ACT=${process.env.BRAIN_SECRET_ACTLONG ? "YES" : "NO"}, ` +
+      `DEMO_LONG=${process.env.BRAIN_SECRET_DEMOLONG ? "YES" : "NO"}, ` +
+      `DEMO_SHORT=${process.env.BRAIN_SECRET_DEMOSHORT ? "YES" : "NO"}`
+  );
 });
-
-function secretFor(url) {
-  const u = String(url).toLowerCase();
-
-  // match by domain (what you actually have in BRAIN_URLS)
-  if (u.includes("brainact-production")) return process.env.BRAIN_SECRET_ACTLONG || process.env.BRAIN_SECRET || "";
-  if (u.includes("satisfied-mercy-production")) return process.env.BRAIN_SECRET_DEMOLONG || process.env.BRAIN_SECRET || "";
-  if (u.includes("braindemoshort-production")) return process.env.BRAIN_SECRET_DEMOSHORT || process.env.BRAIN_SECRET || "";
-
-  return process.env.BRAIN_SECRET || "";
-}
-
-// in your forwarding loop:
-const results = await Promise.all(
-  BRAIN_URLS.map((u) => {
-    const out = { ...inbound };
-    const s = secretFor(u);
-    if (s) out.secret = s;
-
-    // debug (safe): log suffix only
-    console.log(`🔐 -> ${u} secret suffix=${String(out.secret || "").slice(-6)}`);
-
-    return forwardToBrain(u, out, FORWARD_TIMEOUT_MS);
-  })
-);
