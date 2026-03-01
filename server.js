@@ -65,6 +65,40 @@ app.post("/webhook", async (req, res) => {
   const anyOk = results.some((r) => r.ok);
   res.json({ ok: anyOk, forwarded: results });
 });
+// TickRouter POST /webhook
+app.post("/webhook", async (req, res) => {
+  const brainUrl = process.env.BRAIN_WEBHOOK_URL;
+  const timeoutMs = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
+
+  // Always ACK TradingView fast
+  res.status(200).json({ ok: true });
+
+  if (!brainUrl) {
+    console.error("❌ Missing env BRAIN_WEBHOOK_URL");
+    return;
+  }
+
+  const payload = req.body ?? {};
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const r = await fetch(brainUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+
+    const text = await r.text().catch(() => "");
+    console.log(`➡️ Forwarded to Brain: ${r.status} ${r.statusText} | ${brainUrl}`);
+    if (text) console.log(`🧾 Brain response: ${text.slice(0, 500)}`);
+  } catch (e) {
+    console.error(`❌ Forward to Brain failed (${brainUrl}):`, e?.name || e, e?.message || "");
+  } finally {
+    clearTimeout(t);
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`✅ tick-router listening on port ${PORT}`);
