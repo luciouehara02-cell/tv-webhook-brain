@@ -945,13 +945,26 @@ async function handleEnterLong(payload, res, sourceTag) {
     `🚀 ENTER LONG (${sourceTag}${reentryCandidate ? "+reentry" : ""}) | regime=${getRegime(entrySymbol)}`
   );
 
-  const fwd = await postTo3Commas("enter_long", {
-    ...payload,
-    trigger_price: payload?.price ?? payload?.close ?? payload?.trigger_price ?? readyPrice ?? px,
-    tv_exchange: entryMeta?.tv_exchange,
-    tv_instrument: entryMeta?.tv_instrument,
-  });
+const symbol = String(payload?.symbol || payload?.tv_symbol || "");
+const exFromSymbol = symbol.includes(":") ? symbol.split(":")[0] : "";
+const instFromSymbol = symbol.includes(":") ? symbol.split(":")[1] : symbol;
 
+const tv_exchange = entryMeta?.tv_exchange || payload?.tv_exchange || exFromSymbol || "BINANCE";
+const tv_instrument = entryMeta?.tv_instrument || payload?.tv_instrument || instFromSymbol || "";
+
+const trigger_price =
+  payload?.price ?? payload?.close ?? payload?.trigger_price ?? readyPrice ?? px;
+
+const out = {
+  ...payload,
+  trigger_price: String(trigger_price),
+  tv_exchange: String(tv_exchange),
+  tv_instrument: String(tv_instrument),
+};
+
+console.log("🧾 3Commas OUT enter_long:", { ...out, secret: "***" });
+
+const fwd = await postTo3Commas("enter_long", out);
   return res.json({
     ok: true,
     action: "enter_long",
