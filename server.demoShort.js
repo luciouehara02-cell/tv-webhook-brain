@@ -28,38 +28,57 @@
 import express from "express";
 import crypto from "crypto";
 
-process.on("unhandledRejection", (err) => console.error("[FATAL] unhandledRejection:", err));
-process.on("uncaughtException", (err) => console.error("[FATAL] uncaughtException:", err));
+process.on("unhandledRejection", (err) =>
+  console.error("[FATAL] unhandledRejection:", err)
+);
+process.on("uncaughtException", (err) =>
+  console.error("[FATAL] uncaughtException:", err)
+);
 
 /* ------------------------- ENV helpers ------------------------- */
-function safeStr(x) { return x == null ? "" : String(x); }
-function bool(v, d=false) {
+function safeStr(x) {
+  return x == null ? "" : String(x);
+}
+function bool(v, d = false) {
   if (v == null) return d;
   if (typeof v === "boolean") return v;
   const s = String(v).toLowerCase().trim();
-  if (["1","true","yes","y","on"].includes(s)) return true;
-  if (["0","false","no","n","off"].includes(s)) return false;
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
   return d;
 }
-function num(v, d=0) { const n = Number(v); return Number.isFinite(n) ? n : d; }
-function int(v, d=0) { const n = parseInt(String(v), 10); return Number.isFinite(n) ? n : d; }
-function toMs(iso) { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : null; }
-function msMin(m) { return Math.floor(m * 60 * 1000); }
-function round(x, dp=4) { if (!Number.isFinite(x)) return x; const m=10**dp; return Math.round(x*m)/m; }
-function uid() { return crypto.randomBytes(8).toString("hex"); }
+function num(v, d = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+function int(v, d = 0) {
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : d;
+}
+function toMs(iso) {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+function msMin(m) {
+  return Math.floor(m * 60 * 1000);
+}
+function round(x, dp = 4) {
+  if (!Number.isFinite(x)) return x;
+  const m = 10 ** dp;
+  return Math.round(x * m) / m;
+}
+function uid() {
+  return crypto.randomBytes(8).toString("hex");
+}
 
 /* ------------------------- ENV ------------------------- */
 const ENV = {
   PORT: int(process.env.PORT, 8080),
-  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
+  WEBHOOK_SECRET:
+    process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
   WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
 
   ENABLE_POST_3C: bool(process.env.ENABLE_POST_3C, false),
-  const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
-
-console.log(
-  `[BOOT] WEBHOOK_SECRET suffix=${WEBHOOK_SECRET.slice(-6)} len=${WEBHOOK_SECRET.length}`
-);
 
   // Heartbeat
   REQUIRE_FRESH_HEARTBEAT: bool(process.env.REQUIRE_FRESH_HEARTBEAT, true),
@@ -77,12 +96,14 @@ console.log(
   READY_ACCEPT_LEGACY_READY: bool(process.env.READY_ACCEPT_LEGACY_READY, false),
 
   // Optional: accept legacy Ray format for SHORT
-  // If enabled: src:"ray", side:"SELL" => enter_short; side:"BUY" => exit_short
-  ACCEPT_RAY_SIDE_FOR_SHORT: bool(process.env.ACCEPT_RAY_SIDE_FOR_SHORT, true),
+  ACCEPT_RAY_SIDE_FOR_SHORT: bool(
+    process.env.ACCEPT_RAY_SIDE_FOR_SHORT,
+    true
+  ),
 
   // ProfitLock base (will be adapted)
   PROFIT_LOCK_ENABLED: bool(process.env.PROFIT_LOCK_ENABLED, true),
-  PROFIT_LOCK_TRIGGER_PCT: num(process.env.PROFIT_LOCK_TRIGGER_PCT, 0.6),   // base arm %
+  PROFIT_LOCK_TRIGGER_PCT: num(process.env.PROFIT_LOCK_TRIGGER_PCT, 0.6), // base arm %
   PROFIT_LOCK_GIVEBACK_PCT: num(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.3), // base give %
   PROFIT_LOCK_ADAPTIVE: bool(process.env.PROFIT_LOCK_ADAPTIVE, true),
 
@@ -108,20 +129,33 @@ console.log(
   EQUITY_STAB_ENABLED: bool(process.env.EQUITY_STAB_ENABLED, true),
   LOSS2_COOLDOWN_MIN: num(process.env.LOSS2_COOLDOWN_MIN, 15),
   LOSS3_COOLDOWN_MIN: num(process.env.LOSS3_COOLDOWN_MIN, 45),
-  CONSERVATIVE_COOLDOWN_MIN: num(process.env.CONSERVATIVE_COOLDOWN_MIN, 45),
+  CONSERVATIVE_COOLDOWN_MIN: num(
+    process.env.CONSERVATIVE_COOLDOWN_MIN,
+    45
+  ),
 
   // 3Commas
-  C3_WEBHOOK_URL: process.env.C3_WEBHOOK_URL || "https://api.3commas.io/signal_bots/webhooks",
+  C3_WEBHOOK_URL:
+    process.env.C3_WEBHOOK_URL ||
+    "https://api.3commas.io/signal_bots/webhooks",
   C3_BOT_UUID: process.env.C3_BOT_UUID || "",
   // accept either name to avoid confusion
-  C3_SIGNAL_SECRET: process.env.C3_SIGNAL_SECRET || process.env.C3_WEBHOOK_SECRET || "",
+  C3_SIGNAL_SECRET:
+    process.env.C3_SIGNAL_SECRET || process.env.C3_WEBHOOK_SECRET || "",
   C3_MAX_LAG_SEC: String(process.env.C3_MAX_LAG_SEC || "300"),
   C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
 
   LOG_JSON: bool(process.env.LOG_JSON, true),
 };
 
-function log(tag, obj={}) {
+// ✅ BOOT log (outside ENV object; no crash)
+console.log(
+  `[BOOT] WEBHOOK_SECRET suffix=${String(ENV.WEBHOOK_SECRET || "").slice(
+    -6
+  )} len=${String(ENV.WEBHOOK_SECRET || "").length}`
+);
+
+function log(tag, obj = {}) {
   const payload = { tag, t: new Date().toISOString(), ...obj };
   if (ENV.LOG_JSON) console.log(JSON.stringify(payload));
   else console.log(`[${payload.t}] ${tag}`, obj);
@@ -146,13 +180,28 @@ function verifySecret(got, expected) {
   const a = Buffer.from(String(got || ""));
   const b = Buffer.from(String(expected || ""));
   if (a.length !== b.length) return false;
-  try { return crypto.timingSafeEqual(a, b); } catch { return false; }
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// ✅ robust extraction (works with secret/tv_secret/passphrase/token)
+function extractSecret(payload) {
+  return (
+    payload?.secret ??
+    payload?.tv_secret ??
+    payload?.passphrase ??
+    payload?.token ??
+    ""
+  );
 }
 
 /* ------------------------- STATE ------------------------- */
 const STATE = {
-  POSITION_SHORT: null, // { isOpen, exchange, instrument, pair, entryPrice, entryTs, trough, lastPrice, profitLockArmed, lastUpdateTs, plArmPct, plGivePct }
-  READY_SHORT: null,    // { on, id, ts, pair, exchange, instrument, signalPrice, expiresAt }
+  POSITION_SHORT: null,
+  READY_SHORT: null,
   ACT: {
     lastHeartbeatTs: 0,
     cooldownUntil: 0,
@@ -161,8 +210,7 @@ const STATE = {
     lossesInRow: 0,
     lastTradePnlPct: null,
   },
-  // ticks for 1m/5m dump detection + simple regime inference
-  TICKS: [], // { ts, price }
+  TICKS: [],
 };
 
 /* ------------------------- 3Commas payload ------------------------- */
@@ -174,7 +222,7 @@ function build3CommasCustomSignal(action, evt) {
     trigger_price: String(evt.price),
     tv_exchange: evt.exchange || "BINANCE",
     tv_instrument: evt.instrument,
-    action, // enter_short / exit_short
+    action,
     bot_uuid: ENV.C3_BOT_UUID,
   };
 }
@@ -207,7 +255,7 @@ async function postTo3Commas(payload) {
 function toBotPair(symNoEx) {
   if (!symNoEx) return "UNKNOWN_PAIR";
   if (symNoEx.includes("_")) return symNoEx;
-  const quotes = ["USDT","USD","BUSD","USDC","BTC","ETH"];
+  const quotes = ["USDT", "USD", "BUSD", "USDC", "BTC", "ETH"];
   for (const q of quotes) {
     if (symNoEx.endsWith(q) && symNoEx.length > q.length) {
       const base = symNoEx.slice(0, -q.length);
@@ -218,7 +266,6 @@ function toBotPair(symNoEx) {
 }
 
 function normalizeIntent(p) {
-  // prefer action > intent > src
   const a = safeStr(p.action).toLowerCase().trim();
   const i = safeStr(p.intent).toLowerCase().trim();
   const s = safeStr(p.src).toLowerCase().trim();
@@ -230,11 +277,17 @@ function normalizeWebhook(p) {
   const intent = normalizeIntent(p);
 
   const rawSymbol = safeStr(p.symbol || "");
-  const exchangeFromSymbol = rawSymbol.includes(":") ? rawSymbol.split(":")[0] : "";
-  const instrumentFromSymbol = rawSymbol.includes(":") ? rawSymbol.split(":")[1] : rawSymbol;
+  const exchangeFromSymbol = rawSymbol.includes(":")
+    ? rawSymbol.split(":")[0]
+    : "";
+  const instrumentFromSymbol = rawSymbol.includes(":")
+    ? rawSymbol.split(":")[1]
+    : rawSymbol;
 
   const exchange = safeStr(p.tv_exchange || exchangeFromSymbol || "BINANCE");
-  const instrument = safeStr(p.tv_instrument || instrumentFromSymbol || "UNKNOWN");
+  const instrument = safeStr(
+    p.tv_instrument || instrumentFromSymbol || "UNKNOWN"
+  );
   const pair = toBotPair(instrument);
 
   const price = num(p.price ?? p.trigger_price, NaN);
@@ -264,7 +317,7 @@ function clearReady(reason) {
 
 function setReady(evt) {
   const ttlMs = ENV.READY_TTL_MIN > 0 ? msMin(ENV.READY_TTL_MIN) : 0;
-  const expiresAt = ttlMs > 0 ? (evt.ts + ttlMs) : 0;
+  const expiresAt = ttlMs > 0 ? evt.ts + ttlMs : 0;
 
   STATE.READY_SHORT = {
     on: true,
@@ -304,17 +357,15 @@ function maybeAutoExpireReadyOnTick(evt) {
   if (!ENV.READY_ENABLED) return;
   if (!ENV.READY_AUTOEXPIRE_ENABLED) return;
   if (!STATE.READY_SHORT?.on) return;
-  if (STATE.POSITION_SHORT?.isOpen) return; // don’t expire while in position
+  if (STATE.POSITION_SHORT?.isOpen) return;
   if (!Number.isFinite(evt.price)) return;
-
-  // symbol check
   if (STATE.READY_SHORT.instrument !== evt.instrument) return;
 
   const d = pctDiff(STATE.READY_SHORT.signalPrice, evt.price);
   if (!Number.isFinite(d)) return;
 
   if (d > ENV.READY_AUTOEXPIRE_PCT) {
-    clearReady(`autoexpire_drift_${round(d,3)}%`);
+    clearReady(`autoexpire_drift_${round(d, 3)}%`);
   }
 }
 
@@ -322,20 +373,22 @@ function gateEnterByReady(evt) {
   if (!ENV.READY_ENABLED) return { ok: true, reason: "ready_disabled" };
   if (!STATE.READY_SHORT?.on) return { ok: false, reason: "not_ready_short" };
 
-  // heartbeat must be fresh too (so READY alone can’t fire without ticks)
   if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-    if (!STATE.ACT.lastHeartbeatTs) return { ok: false, reason: "no_heartbeat_seen" };
+    if (!STATE.ACT.lastHeartbeatTs)
+      return { ok: false, reason: "no_heartbeat_seen" };
     const ageMs = evt.ts - STATE.ACT.lastHeartbeatTs;
-    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) return { ok: false, reason: "heartbeat_stale" };
+    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000)
+      return { ok: false, reason: "heartbeat_stale" };
   }
 
-  // symbol must match
   if (STATE.READY_SHORT.instrument !== evt.instrument) {
     return { ok: false, reason: "ready_symbol_mismatch" };
   }
 
-  // drift gate
-  if (!Number.isFinite(STATE.READY_SHORT.signalPrice) || !Number.isFinite(evt.price)) {
+  if (
+    !Number.isFinite(STATE.READY_SHORT.signalPrice) ||
+    !Number.isFinite(evt.price)
+  ) {
     return { ok: false, reason: "missing_prices_for_drift" };
   }
 
@@ -343,9 +396,8 @@ function gateEnterByReady(evt) {
   if (!Number.isFinite(d)) return { ok: false, reason: "bad_drift_calc" };
 
   if (d > ENV.READY_MAX_MOVE_PCT) {
-    // HARD reset on drift (same philosophy as long)
-    clearReady(`hard_reset_drift_${round(d,3)}%`);
-    return { ok: false, reason: `ready_drift_reset_${round(d,3)}%` };
+    clearReady(`hard_reset_drift_${round(d, 3)}%`);
+    return { ok: false, reason: `ready_drift_reset_${round(d, 3)}%` };
   }
 
   return { ok: true, reason: "ready_ok", driftPct: d };
@@ -356,7 +408,6 @@ function pushTick(ts, price) {
   if (!Number.isFinite(price)) return;
   STATE.TICKS.push({ ts, price });
 
-  // keep last 6 minutes
   const cutoff = ts - 6 * 60 * 1000;
   while (STATE.TICKS.length && STATE.TICKS[0].ts < cutoff) STATE.TICKS.shift();
 }
@@ -382,9 +433,10 @@ function crashProtectCheck(ts, currentPrice) {
   const ch1 = p1 == null ? NaN : pctChange(p1, currentPrice);
   const ch5 = p5 == null ? NaN : pctChange(p5, currentPrice);
 
-  // "dump" means price dropped (negative %). For short entries we avoid entering after violent dump.
-  if (Number.isFinite(ch1) && ch1 <= -ENV.DUMP_1M_PCT) return { block: true, reason: `dump1m(${round(ch1,2)}%)` };
-  if (Number.isFinite(ch5) && ch5 <= -ENV.DUMP_5M_PCT) return { block: true, reason: `dump5m(${round(ch5,2)}%)` };
+  if (Number.isFinite(ch1) && ch1 <= -ENV.DUMP_1M_PCT)
+    return { block: true, reason: `dump1m(${round(ch1, 2)}%)` };
+  if (Number.isFinite(ch5) && ch5 <= -ENV.DUMP_5M_PCT)
+    return { block: true, reason: `dump5m(${round(ch5, 2)}%)` };
   return { block: false, reason: "ok" };
 }
 
@@ -395,7 +447,8 @@ function inferRegime(ts, currentPrice) {
 
   const slopePct = pctChange(p3, currentPrice);
   const cutoff = ts - 3 * 60 * 1000;
-  let minP = Infinity, maxP = -Infinity;
+  let minP = Infinity,
+    maxP = -Infinity;
 
   for (const x of STATE.TICKS) {
     if (x.ts >= cutoff) {
@@ -404,16 +457,19 @@ function inferRegime(ts, currentPrice) {
     }
   }
 
-  const volPct = (Number.isFinite(minP) && Number.isFinite(maxP) && minP > 0)
-    ? ((maxP - minP) / minP) * 100
-    : 0;
+  const volPct =
+    Number.isFinite(minP) && Number.isFinite(maxP) && minP > 0
+      ? ((maxP - minP) / minP) * 100
+      : 0;
 
   const absSlope = Math.abs(slopePct);
   const regime = absSlope >= Math.max(0.15, volPct * 0.6) ? "trend" : "range";
   return { regime, slopePct, volPct };
 }
 
-function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
+}
 
 function computeAdaptiveProfitLock(ts, currentPrice) {
   const baseArm = ENV.PROFIT_LOCK_TRIGGER_PCT;
@@ -429,7 +485,8 @@ function computeAdaptiveProfitLock(ts, currentPrice) {
 
   const { regime } = inferRegime(ts, currentPrice);
   const multArm = regime === "trend" ? ENV.TREND_MULT_ARM : ENV.RANGE_MULT_ARM;
-  const multGive = regime === "trend" ? ENV.TREND_MULT_GIVE : ENV.RANGE_MULT_GIVE;
+  const multGive =
+    regime === "trend" ? ENV.TREND_MULT_GIVE : ENV.RANGE_MULT_GIVE;
 
   const armPct = clamp(baseArm * multArm, ENV.PL_MIN_ARM, ENV.PL_MAX_ARM);
   const givePct = clamp(baseGive * multGive, ENV.PL_MIN_GIVE, ENV.PL_MAX_GIVE);
@@ -469,18 +526,26 @@ function profitLockExitCheck(currentPrice) {
   if (!p?.isOpen) return { shouldExit: false, detail: "no_position" };
   if (!ENV.PROFIT_LOCK_ENABLED) return { shouldExit: false, detail: "disabled" };
   if (!p.profitLockArmed) return { shouldExit: false, detail: "not_armed" };
-  if (!Number.isFinite(currentPrice)) return { shouldExit: false, detail: "no_price" };
+  if (!Number.isFinite(currentPrice))
+    return { shouldExit: false, detail: "no_price" };
 
   const floor = p.trough * (1 + p.plGivePct / 100);
   if (currentPrice >= floor) {
-    return { shouldExit: true, detail: `price=${round(currentPrice,4)}>=floor=${round(floor,4)} trough=${round(p.trough,4)}` };
+    return {
+      shouldExit: true,
+      detail: `price=${round(currentPrice, 4)}>=floor=${round(
+        floor,
+        4
+      )} trough=${round(p.trough, 4)}`,
+    };
   }
   return { shouldExit: false, detail: "hold" };
 }
 
 /* ------------------------- EquityStab ------------------------- */
 function computeShortPnlPct(entry, exit) {
-  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(exit)) return NaN;
+  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(exit))
+    return NaN;
   return ((entry - exit) / entry) * 100;
 }
 
@@ -493,27 +558,50 @@ function equityStabOnClose(ts, pnlPct) {
   else STATE.ACT.lossesInRow = 0;
 
   if (STATE.ACT.lossesInRow >= 3) {
-    STATE.ACT.conservativeUntil = Math.max(STATE.ACT.conservativeUntil, ts + msMin(ENV.CONSERVATIVE_COOLDOWN_MIN));
-    STATE.ACT.cooldownUntil = Math.max(STATE.ACT.cooldownUntil, ts + msMin(ENV.LOSS3_COOLDOWN_MIN));
-    log("EQUITY_STAB", { lossesInRow: STATE.ACT.lossesInRow, action: "loss3_cooldown", cooldownMin: ENV.LOSS3_COOLDOWN_MIN });
+    STATE.ACT.conservativeUntil = Math.max(
+      STATE.ACT.conservativeUntil,
+      ts + msMin(ENV.CONSERVATIVE_COOLDOWN_MIN)
+    );
+    STATE.ACT.cooldownUntil = Math.max(
+      STATE.ACT.cooldownUntil,
+      ts + msMin(ENV.LOSS3_COOLDOWN_MIN)
+    );
+    log("EQUITY_STAB", {
+      lossesInRow: STATE.ACT.lossesInRow,
+      action: "loss3_cooldown",
+      cooldownMin: ENV.LOSS3_COOLDOWN_MIN,
+    });
   } else if (STATE.ACT.lossesInRow === 2) {
-    STATE.ACT.cooldownUntil = Math.max(STATE.ACT.cooldownUntil, ts + msMin(ENV.LOSS2_COOLDOWN_MIN));
-    log("EQUITY_STAB", { lossesInRow: STATE.ACT.lossesInRow, action: "loss2_cooldown", cooldownMin: ENV.LOSS2_COOLDOWN_MIN });
+    STATE.ACT.cooldownUntil = Math.max(
+      STATE.ACT.cooldownUntil,
+      ts + msMin(ENV.LOSS2_COOLDOWN_MIN)
+    );
+    log("EQUITY_STAB", {
+      lossesInRow: STATE.ACT.lossesInRow,
+      action: "loss2_cooldown",
+      cooldownMin: ENV.LOSS2_COOLDOWN_MIN,
+    });
   }
 }
 
 /* ------------------------- Core gates ------------------------- */
 function canEnter(ts) {
   if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-    if (!STATE.ACT.lastHeartbeatTs) return { ok: false, reason: "no_heartbeat_seen" };
+    if (!STATE.ACT.lastHeartbeatTs)
+      return { ok: false, reason: "no_heartbeat_seen" };
     const ageMs = ts - STATE.ACT.lastHeartbeatTs;
-    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) return { ok: false, reason: "heartbeat_stale" };
+    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000)
+      return { ok: false, reason: "heartbeat_stale" };
   }
 
-  if (STATE.POSITION_SHORT?.isOpen) return { ok: false, reason: "short_already_open" };
-  if (ts < STATE.ACT.cooldownUntil) return { ok: false, reason: "cooldown_active" };
-  if (ts < STATE.ACT.crashCooldownUntil) return { ok: false, reason: "crash_cooldown_active" };
-  if (ts < STATE.ACT.conservativeUntil) return { ok: false, reason: "conservative_mode" };
+  if (STATE.POSITION_SHORT?.isOpen)
+    return { ok: false, reason: "short_already_open" };
+  if (ts < STATE.ACT.cooldownUntil)
+    return { ok: false, reason: "cooldown_active" };
+  if (ts < STATE.ACT.crashCooldownUntil)
+    return { ok: false, reason: "crash_cooldown_active" };
+  if (ts < STATE.ACT.conservativeUntil)
+    return { ok: false, reason: "conservative_mode" };
 
   return { ok: true, reason: "ok" };
 }
@@ -566,10 +654,11 @@ function closeShortPosition(ts, reason, exitPrice) {
 
   STATE.POSITION_SHORT = null;
 
-  // base cooldown
-  STATE.ACT.cooldownUntil = Math.max(STATE.ACT.cooldownUntil, ts + msMin(ENV.COOLDOWN_MIN));
+  STATE.ACT.cooldownUntil = Math.max(
+    STATE.ACT.cooldownUntil,
+    ts + msMin(ENV.COOLDOWN_MIN)
+  );
 
-  // equity stabilization
   equityStabOnClose(ts, pnlPct);
 }
 
@@ -580,13 +669,16 @@ async function doExit(evt, reason) {
     return { ok: true, ignored: true, reason: "no_open_short" };
   }
 
-  // close internal first
   closeShortPosition(evt.ts, reason, evt.price);
 
   if (!ENV.ENABLE_POST_3C) return { ok: true, posted: false };
 
   const payload = build3CommasCustomSignal("exit_short", evt);
-  log("3COMMAS_POST", { action: "exit_short", url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
+  log("3COMMAS_POST", {
+    action: "exit_short",
+    url: ENV.C3_WEBHOOK_URL,
+    payload: { ...payload, secret: "***" },
+  });
 
   const resp = await postTo3Commas(payload);
   log("3COMMAS_RESP", { action: "exit_short", resp });
@@ -598,44 +690,53 @@ async function doExit(evt, reason) {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/", (_req, res) => res.status(200).send("OK: Brain SHORT v2.9 (READY_SHORT gate + v2.8.1 blocks)"));
+app.get("/", (_req, res) =>
+  res.status(200).send("OK: Brain SHORT v2.9 (READY_SHORT gate + v2.8.1 blocks)")
+);
 
 app.get("/status", (_req, res) => {
   const now = Date.now();
   const p = STATE.POSITION_SHORT;
-  const floor = p?.isOpen ? p.trough * (1 + (p.plGivePct ?? ENV.PROFIT_LOCK_GIVEBACK_PCT) / 100) : null;
+  const floor = p?.isOpen
+    ? p.trough *
+      (1 + (p.plGivePct ?? ENV.PROFIT_LOCK_GIVEBACK_PCT) / 100)
+    : null;
   res.json({
     ok: true,
     now,
     ready: STATE.READY_SHORT || null,
     position: p ? { ...p, floor } : null,
     act: STATE.ACT,
-    ticks: { count: STATE.TICKS.length, oldestTs: STATE.TICKS[0]?.ts ?? null, newestTs: STATE.TICKS.at(-1)?.ts ?? null },
+    ticks: {
+      count: STATE.TICKS.length,
+      oldestTs: STATE.TICKS[0]?.ts ?? null,
+      newestTs: STATE.TICKS.at(-1)?.ts ?? null,
+    },
     env: {
       READY_ENABLED: ENV.READY_ENABLED,
       READY_TTL_MIN: ENV.READY_TTL_MIN,
       READY_MAX_MOVE_PCT: ENV.READY_MAX_MOVE_PCT,
       READY_AUTOEXPIRE_ENABLED: ENV.READY_AUTOEXPIRE_ENABLED,
       READY_AUTOEXPIRE_PCT: ENV.READY_AUTOEXPIRE_PCT,
-    }
+    },
   });
 });
 
 app.post(ENV.WEBHOOK_PATH, async (req, res) => {
   try {
     const body = req.body || {};
-    if (!verifySecret(body.secret, ENV.WEBHOOK_SECRET)) {
-      log("UNAUTHORIZED", { hasSecret: !!body.secret });
+
+    // ✅ robust secret validation
+    const gotSecret = extractSecret(body);
+    if (!verifySecret(gotSecret, ENV.WEBHOOK_SECRET)) {
+      log("UNAUTHORIZED", { hasSecret: !!gotSecret });
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
     const evt = normalizeWebhook(body);
 
-    // expire READY by TTL before processing
     readyTTLExpireCheck(evt.ts);
 
-    // Optional: map legacy Ray short side format
-    // SELL => enter_short, BUY => exit_short
     if (ENV.ACCEPT_RAY_SIDE_FOR_SHORT && evt.intent === "ray" && evt.side) {
       if (evt.side === "SELL") evt.intent = "enter_short";
       if (evt.side === "BUY") evt.intent = "exit_short";
@@ -650,12 +751,11 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       ts: evt.ts,
     });
 
-    // ---------------- tick ----------------
+    // tick
     if (evt.intent === "tick" && Number.isFinite(evt.price)) {
       STATE.ACT.lastHeartbeatTs = evt.ts;
       pushTick(evt.ts, evt.price);
 
-      // ready autoexpire drift (only when not in position)
       maybeAutoExpireReadyOnTick(evt);
 
       if (STATE.POSITION_SHORT?.isOpen) {
@@ -670,66 +770,87 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       return res.json({ ok: true, action: "tick" });
     }
 
-    // ---------------- READY_SHORT ----------------
-    if (evt.intent === "ready_short" || (ENV.READY_ACCEPT_LEGACY_READY && evt.intent === "ready")) {
-      if (!ENV.READY_ENABLED) return res.json({ ok: true, action: "ready_short_ignored", reason: "ready_disabled" });
+    // ready_short
+    if (
+      evt.intent === "ready_short" ||
+      (ENV.READY_ACCEPT_LEGACY_READY && evt.intent === "ready")
+    ) {
+      if (!ENV.READY_ENABLED)
+        return res.json({
+          ok: true,
+          action: "ready_short_ignored",
+          reason: "ready_disabled",
+        });
 
-      // require fresh heartbeat (avoid READY without live ticks)
       if (ENV.REQUIRE_FRESH_HEARTBEAT) {
         if (!STATE.ACT.lastHeartbeatTs) {
           log("READY_SHORT_IGNORED", { reason: "no_heartbeat_seen" });
-          return res.json({ ok: true, action: "ready_short_ignored", reason: "no_heartbeat_seen" });
+          return res.json({
+            ok: true,
+            action: "ready_short_ignored",
+            reason: "no_heartbeat_seen",
+          });
         }
         const ageMs = evt.ts - STATE.ACT.lastHeartbeatTs;
         if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) {
           log("READY_SHORT_IGNORED", { reason: "heartbeat_stale" });
-          return res.json({ ok: true, action: "ready_short_ignored", reason: "heartbeat_stale" });
+          return res.json({
+            ok: true,
+            action: "ready_short_ignored",
+            reason: "heartbeat_stale",
+          });
         }
       }
 
-      // block ready while in position (same as long philosophy)
       if (STATE.POSITION_SHORT?.isOpen) {
         log("READY_SHORT_IGNORED", { reason: "in_position" });
-        return res.json({ ok: true, action: "ready_short_ignored", reason: "in_position" });
+        return res.json({
+          ok: true,
+          action: "ready_short_ignored",
+          reason: "in_position",
+        });
       }
 
       setReady(evt);
       return res.json({ ok: true, action: "ready_short", ready: STATE.READY_SHORT });
     }
 
-    // ---------------- enter_short ----------------
+    // enter_short
     if (evt.intent === "enter_short") {
-      // Crash protect check
       const crash = crashProtectCheck(evt.ts, evt.price);
       if (crash.block) {
         STATE.ACT.crashCooldownUntil = Math.max(
           STATE.ACT.crashCooldownUntil,
           evt.ts + msMin(ENV.CRASH_COOLDOWN_MIN)
         );
-        log("CRASH_PROTECT_BLOCK", { reason: crash.reason, crashCooldownMin: ENV.CRASH_COOLDOWN_MIN });
-        return res.json({ ok: true, action: "blocked", reason: `crash_protect:${crash.reason}` });
+        log("CRASH_PROTECT_BLOCK", {
+          reason: crash.reason,
+          crashCooldownMin: ENV.CRASH_COOLDOWN_MIN,
+        });
+        return res.json({
+          ok: true,
+          action: "blocked",
+          reason: `crash_protect:${crash.reason}`,
+        });
       }
 
-      // Core gates
       const gate = canEnter(evt.ts);
       if (!gate.ok) {
         log("ENTER_BLOCKED", { reason: gate.reason });
         return res.json({ ok: true, action: "blocked", reason: gate.reason });
       }
 
-      // ✅ READY gate
       const rGate = gateEnterByReady(evt);
       if (!rGate.ok) {
         log("ENTER_BLOCKED_READY", { reason: rGate.reason });
         return res.json({ ok: true, action: "blocked", reason: rGate.reason });
       }
 
-      // consume READY on accepted entry
       clearReady("entered_short");
-
       openShortPosition(evt);
 
-      if (!ENV.ENABLE_POST_3C) return res.json({ ok: true, action: "enter_short", posted: false });
+      if (!ENV.ENABLE_POST_3C)
+        return res.json({ ok: true, action: "enter_short", posted: false });
 
       const payload = build3CommasCustomSignal("enter_short", evt);
       log("3COMMAS_POST", {
@@ -741,7 +862,6 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       const resp = await postTo3Commas(payload);
       log("3COMMAS_RESP", { action: "enter_short", resp });
 
-      // if 3Commas failed, close internal position (prevents desync)
       if (!resp.ok) {
         closeShortPosition(evt.ts, "3commas_post_failed", evt.price);
         return res.json({ ok: false, action: "enter_short_failed", resp });
@@ -750,19 +870,23 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
       return res.json({ ok: true, action: "enter_short", resp });
     }
 
-    // ---------------- exit_short ----------------
+    // exit_short
     if (evt.intent === "exit_short") {
       const resp = await doExit(evt, evt.exitReason || "signal_exit");
       return res.json({ ok: true, action: "exit_short", resp });
     }
 
-    return res.status(200).json({ ok: true, action: "ignored", reason: "unknown_intent", got: evt.intent });
+    return res.status(200).json({
+      ok: true,
+      action: "ignored",
+      reason: "unknown_intent",
+      got: evt.intent,
+    });
   } catch (e) {
     console.error("ERROR in /webhook:", e);
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-
 
 /* ------------------------- START ------------------------- */
 app.listen(ENV.PORT, () => {
