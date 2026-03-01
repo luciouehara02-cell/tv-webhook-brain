@@ -55,6 +55,11 @@ const ENV = {
   WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
 
   ENABLE_POST_3C: bool(process.env.ENABLE_POST_3C, false),
+  const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
+
+console.log(
+  `[BOOT] WEBHOOK_SECRET suffix=${WEBHOOK_SECRET.slice(-6)} len=${WEBHOOK_SECRET.length}`
+);
 
   // Heartbeat
   REQUIRE_FRESH_HEARTBEAT: bool(process.env.REQUIRE_FRESH_HEARTBEAT, true),
