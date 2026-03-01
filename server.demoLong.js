@@ -523,6 +523,8 @@ async function postTo3Commas(action, payload) {
     return { skipped: true };
   }
 
+  console.log("🧾 3Commas payload (no secret):", { ...payload, secret: "***" });
+
   const tv_exchange =
     payload?.tv_exchange ??
     payload?.exchange ??
