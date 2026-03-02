@@ -1,34 +1,27 @@
 /**
- * Brain v2.9.5-LONG (DEMO/ACT compatible)
- * - Handles: tick | ready (ready_long) | enter_long | exit_long
- * - READY gate + drift/TTL + auto-expire
- * - Emergency-friendly: if enter_long arrives with price=0, uses lastTickPrice (no “PendingBUY” delay)
- * - If no tick seen yet, stores PendingBUY for 120s and executes on next tick
- * - 3Commas payload FIXED to match the working format:
- *   { secret, bot_uuid, action, tv_exchange, tv_instrument, trigger_price, timestamp, max_lag }
+ * Brain v2.9.6-LONG — READY + PendingBUY + ReEntry fix + 3Commas (working payload)
  *
- * ENV (minimum):
- *  PORT=8080
- *  WEBHOOK_SECRET=...                 // this Brain’s inbound secret
- *  ENABLE_POST_3C=true
- *  C3_BOT_UUID=...
- *  C3_SIGNAL_SECRET=...               // 3Commas signal secret
+ * INPUT (TickRouter/TradingView -> Brain):
+ *  {
+ *    "secret": "...",
+ *    "src"|"action"|"intent": "tick" | "ready" | "ready_long" | "enter_long" | "exit_long",
+ *    "symbol": "BINANCE:SOLUSDT",
+ *    "price": "83.60" | "0",
+ *    "time": "2026-03-01T21:25:42Z",
+ *    "exitReason": "emergency" // optional
+ *  }
  *
- * Optional ENV:
- *  WEBHOOK_PATH=/webhook
- *  REQUIRE_FRESH_HEARTBEAT=true
- *  HEARTBEAT_MAX_AGE_SEC=240
- *  READY_ENABLED=true
- *  READY_TTL_MIN=30
- *  READY_MAX_MOVE_PCT=1.2
- *  READY_AUTOEXPIRE_ENABLED=true
- *  READY_AUTOEXPIRE_PCT=1.2
- *  READY_ACCEPT_LEGACY_READY=true     // accept src:"ready" as ready_long
- *  PENDING_TTL_SEC=120
- *  COOLDOWN_MIN=3
- *  LOG_JSON=true
- *  C3_MAX_LAG_SEC=300
- *  C3_TIMEOUT_MS=8000
+ * OUTPUT (Brain -> 3Commas Signal Bot Webhook) EXACT format:
+ *  {
+ *    "secret": "...",
+ *    "bot_uuid": "...",
+ *    "action": "enter_long" | "exit_long",
+ *    "tv_exchange": "BINANCE",
+ *    "tv_instrument": "SOLUSDT",
+ *    "trigger_price": "82.75",
+ *    "timestamp": "2026-03-01T21:25:42Z",
+ *    "max_lag": "300"
+ *  }
  */
 
 import express from "express";
@@ -54,16 +47,92 @@ function msMin(m) { return Math.floor(m * 60 * 1000); }
 function round(x, dp=4) { if (!Number.isFinite(x)) return x; const m=10**dp; return Math.round(x*m)/m; }
 function uid() { return crypto.randomBytes(8).toString("hex"); }
 
+function log(tag, obj={}) {
+  const payload = { tag, t: new Date().toISOString(), ...obj };
+  if (ENV.LOG_JSON) console.log(JSON.stringify(payload));
+  else console.log(`[${payload.t}] ${tag}`, obj);
+}
+
+/* ------------------------- ENV ------------------------- */
+const ENV = {
+  PORT: int(process.env.PORT, 8080),
+  WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
+  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
+
+  LOG_JSON: bool(process.env.LOG_JSON, true),
+
+  // Heartbeat
+  REQUIRE_FRESH_HEARTBEAT: bool(process.env.REQUIRE_FRESH_HEARTBEAT, true),
+  HEARTBEAT_MAX_AGE_SEC: num(process.env.HEARTBEAT_MAX_AGE_SEC, 240),
+
+  // READY
+  READY_TTL_MIN: num(process.env.READY_TTL_MIN, 30),
+  READY_MAX_MOVE_PCT: num(process.env.READY_MAX_MOVE_PCT, 1.2),
+  READY_AUTOEXPIRE_ENABLED: bool(process.env.READY_AUTOEXPIRE_ENABLED, true),
+  READY_AUTOEXPIRE_PCT: num(process.env.READY_AUTOEXPIRE_PCT, 1.2),
+  READY_ACCEPT_LEGACY_READY: bool(process.env.READY_ACCEPT_LEGACY_READY, true), // accept action/src "ready"
+
+  // Cooldown
+  EXIT_COOLDOWN_MIN: num(process.env.EXIT_COOLDOWN_MIN, 3),
+
+  // PendingBUY
+  PENDING_BUY_ENABLED: bool(process.env.PENDING_BUY_ENABLED, true),
+  PENDING_BUY_WINDOW_SEC: num(process.env.PENDING_BUY_WINDOW_SEC, 120),
+  PENDING_BUY_MAX_READY_DRIFT_PCT: num(process.env.PENDING_BUY_MAX_READY_DRIFT_PCT, 0.30),
+
+  // ReEntry (restore v2.9.4 behavior)
+  REENTRY_ENABLED: bool(process.env.REENTRY_ENABLED, true),
+  REENTRY_WINDOW_MIN: num(process.env.REENTRY_WINDOW_MIN, 30),
+  REENTRY_MAX_TRIES: int(process.env.REENTRY_MAX_TRIES, 1),
+  REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT: num(process.env.REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT, -0.35),
+  REENTRY_CANCEL_ON_BREACH: bool(process.env.REENTRY_CANCEL_ON_BREACH, true),
+  REENTRY_REQUIRE_READY: bool(process.env.REENTRY_REQUIRE_READY, false),
+
+  // 3Commas enable
+  ENABLE_POST_3C: bool(process.env.ENABLE_POST_3C, false),
+  // accept BOTH naming styles:
+  C3_WEBHOOK_URL: process.env.C3_WEBHOOK_URL
+    || process.env.THREECOMMAS_WEBHOOK_URL
+    || "https://api.3commas.io/signal_bots/webhooks",
+  C3_BOT_UUID: process.env.C3_BOT_UUID
+    || process.env.THREECOMMAS_BOT_UUID
+    || "",
+  C3_SIGNAL_SECRET: process.env.C3_SIGNAL_SECRET
+    || process.env.C3_WEBHOOK_SECRET
+    || process.env.THREECOMMAS_SECRET
+    || "",
+  C3_MAX_LAG_SEC: String(process.env.C3_MAX_LAG_SEC || "300"),
+  C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
+};
+
+/* ------------------------- secret check ------------------------- */
 function verifySecret(got, expected) {
   const a = Buffer.from(String(got || ""));
   const b = Buffer.from(String(expected || ""));
   if (a.length !== b.length) return false;
   try { return crypto.timingSafeEqual(a, b); } catch { return false; }
 }
-function extractSecret(payload) {
-  return String(payload?.secret ?? payload?.tv_secret ?? payload?.passphrase ?? payload?.token ?? "");
-}
 
+/* ------------------------- state ------------------------- */
+const STATE = {
+  lastTickTs: 0,
+  lastTickPrice: NaN,
+  lastSymbol: "",
+
+  READY_LONG: null, // {on,id,ts,symbol,readyPrice,expiresAt}
+  POSITION_LONG: null, // {isOpen, entryPrice, entryTs, peak, lastPrice, lastUpdateTs}
+
+  // pending entry when price=0 and no ticks yet
+  PENDING_BUY: null, // {id, ts, expiresAt, symbol, src, action, requestedPrice, exitReason}
+
+  // cooldown + reentry context
+  cooldownUntil: 0,
+
+  lastExit: null, // {ts, symbol, pnlPct, price}
+  reentryTriesUsed: 0,
+};
+
+/* ------------------------- normalize incoming ------------------------- */
 function normalizeIntent(p) {
   const a = safeStr(p.action).toLowerCase().trim();
   const i = safeStr(p.intent).toLowerCase().trim();
@@ -71,137 +140,64 @@ function normalizeIntent(p) {
   return a || i || s;
 }
 
-// returns { ex:"BINANCE", inst:"SOLUSDT" } for "BINANCE:SOLUSDT" or {ex:"BINANCE",inst:"SOLUSDT"} for "SOLUSDT"
-function splitSymbol(sym) {
-  const s = String(sym || "");
-  if (s.includes(":")) {
-    const [ex, inst] = s.split(":");
-    return { ex: ex || "BINANCE", inst: inst || "" };
-  }
-  return { ex: "BINANCE", inst: s };
+function parseSymbol(symbol) {
+  const raw = safeStr(symbol || "");
+  const parts = raw.includes(":") ? raw.split(":") : ["", raw];
+  const tv_exchange = (parts[0] || "BINANCE").toUpperCase();
+  const tv_instrument = (parts[1] || "UNKNOWN").toUpperCase();
+  return { tv_exchange, tv_instrument };
 }
 
 function normalizeWebhook(p) {
   const ts = toMs(p.time || p.timestamp) ?? Date.now();
   const intent = normalizeIntent(p);
 
-  const rawSymbol = safeStr(p.symbol || "");
-  const { ex, inst } = splitSymbol(rawSymbol);
+  const symbol = safeStr(p.symbol || "");
+  const { tv_exchange, tv_instrument } = parseSymbol(symbol);
 
-  const exchange = safeStr(p.tv_exchange || ex || "BINANCE");
-  const instrument = safeStr(p.tv_instrument || inst || "SOLUSDT");
-
-  // keep original "BINANCE:SOLUSDT" for logging
-  const symbol = rawSymbol || `${exchange}:${instrument}`;
-
-  const price = num(p.price ?? p.trigger_price ?? p.close, NaN);
+  let price = num(p.price ?? p.trigger_price ?? p.close, NaN);
+  // Treat 0 or negative as "not a real price"
+  if (!Number.isFinite(price) || price <= 0) price = 0;
 
   return {
     ts,
     intent,
     symbol,
-    exchange,
-    instrument,
+    tv_exchange,
+    tv_instrument,
     price,
-    exitReason: safeStr(p.exitReason || ""),
+    exitReason: safeStr(p.exitReason || p.reason || ""),
   };
 }
 
-/* ------------------------- ENV ------------------------- */
-const ENV = {
-  PORT: int(process.env.PORT, 8080),
-  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
-  WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
-
-  LOG_JSON: bool(process.env.LOG_JSON, true),
-
-  REQUIRE_FRESH_HEARTBEAT: bool(process.env.REQUIRE_FRESH_HEARTBEAT, true),
-  HEARTBEAT_MAX_AGE_SEC: num(process.env.HEARTBEAT_MAX_AGE_SEC, 240),
-
-  COOLDOWN_MIN: num(process.env.COOLDOWN_MIN, 3),
-
-  READY_ENABLED: bool(process.env.READY_ENABLED, true),
-  READY_TTL_MIN: num(process.env.READY_TTL_MIN, 30),
-  READY_MAX_MOVE_PCT: num(process.env.READY_MAX_MOVE_PCT, 1.2),
-  READY_AUTOEXPIRE_ENABLED: bool(process.env.READY_AUTOEXPIRE_ENABLED, true),
-  READY_AUTOEXPIRE_PCT: num(process.env.READY_AUTOEXPIRE_PCT, 1.2),
-  READY_ACCEPT_LEGACY_READY: bool(process.env.READY_ACCEPT_LEGACY_READY, true),
-
-  PENDING_TTL_SEC: num(process.env.PENDING_TTL_SEC, 120),
-
-  ENABLE_POST_3C: bool(process.env.ENABLE_POST_3C, false),
-  C3_WEBHOOK_URL: process.env.C3_WEBHOOK_URL || "https://api.3commas.io/signal_bots/webhooks",
-  C3_BOT_UUID: process.env.C3_BOT_UUID || "",
-  C3_SIGNAL_SECRET: process.env.C3_SIGNAL_SECRET || process.env.C3_WEBHOOK_SECRET || "",
-  C3_MAX_LAG_SEC: String(process.env.C3_MAX_LAG_SEC || "300"),
-  C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
-};
-
-// BOOT log (safe suffix only)
-console.log(
-  `[BOOT] LONG brain listening soon | WEBHOOK_SECRET suffix=${String(ENV.WEBHOOK_SECRET || "").slice(-6)} len=${String(ENV.WEBHOOK_SECRET || "").length}`
-);
-
-function log(tag, obj = {}) {
-  const payload = { tag, t: new Date().toISOString(), ...obj };
-  if (ENV.LOG_JSON) console.log(JSON.stringify(payload));
-  else console.log(`[${payload.t}] ${tag}`, obj);
+/* ------------------------- READY helpers ------------------------- */
+function clearReady(reason) {
+  if (!STATE.READY_LONG) return;
+  log("READY_LONG_CLEARED", { reason, ready: STATE.READY_LONG });
+  STATE.READY_LONG = null;
 }
 
-log("STARTUP_CONFIG", {
-  brain: "v2.9.5-LONG",
-  port: ENV.PORT,
-  path: ENV.WEBHOOK_PATH,
-  enablePost3c: ENV.ENABLE_POST_3C,
-  c3_bot_uuid_set: !!ENV.C3_BOT_UUID,
-  c3_signal_secret_set: !!ENV.C3_SIGNAL_SECRET,
-  readyEnabled: ENV.READY_ENABLED,
-});
-
-/* ------------------------- STATE ------------------------- */
-const STATE = {
-  lastTickMs: 0,
-  lastTickPrice: NaN,
-  lastTickSymbol: "",
-
-  READY_LONG: null, // { on,id,ts,symbol,price,expiresAt }
-  POSITION_LONG: null, // { isOpen, symbol, entryPrice, entryTs }
-  cooldownUntil: 0,
-
-  // pending enter when price is missing/0 AND we have no lastTickPrice
-  PENDING_BUY: null, // { id, symbol, ts, expiresAt }
-};
-
-/* ------------------------- READY ------------------------- */
-function setReadyLong(evt) {
+function setReady(evt, readyPrice) {
   const ttlMs = ENV.READY_TTL_MIN > 0 ? msMin(ENV.READY_TTL_MIN) : 0;
-  const expiresAt = ttlMs > 0 ? evt.ts + ttlMs : 0;
+  const expiresAt = ttlMs > 0 ? (evt.ts + ttlMs) : 0;
   STATE.READY_LONG = {
     on: true,
     id: uid(),
     ts: evt.ts,
     symbol: evt.symbol,
-    price: evt.price,
+    readyPrice,
     expiresAt,
   };
   log("READY_LONG_ON", {
-    readyPrice: evt.price,
+    readyPrice,
     readySymbol: evt.symbol,
     READY_MAX_MOVE_PCT: ENV.READY_MAX_MOVE_PCT,
     READY_AUTOEXPIRE_ENABLED: ENV.READY_AUTOEXPIRE_ENABLED,
     READY_AUTOEXPIRE_PCT: ENV.READY_AUTOEXPIRE_PCT,
-    expiresAt: expiresAt || null,
   });
 }
 
-function clearReady(reason) {
-  if (!STATE.READY_LONG) return;
-  log("READY_LONG_OFF", { reason, ready: STATE.READY_LONG });
-  STATE.READY_LONG = null;
-}
-
 function readyTTLExpireCheck(nowTs) {
-  if (!ENV.READY_ENABLED) return;
   if (!STATE.READY_LONG?.on) return;
   if (!STATE.READY_LONG.expiresAt) return;
   if (nowTs >= STATE.READY_LONG.expiresAt) clearReady("ttl_expired");
@@ -213,41 +209,24 @@ function pctDiff(a, b) {
 }
 
 function maybeAutoExpireReadyOnTick(evt) {
-  if (!ENV.READY_ENABLED) return;
   if (!ENV.READY_AUTOEXPIRE_ENABLED) return;
   if (!STATE.READY_LONG?.on) return;
   if (STATE.POSITION_LONG?.isOpen) return;
-  if (!Number.isFinite(evt.price)) return;
-
   if (STATE.READY_LONG.symbol !== evt.symbol) return;
+  if (!Number.isFinite(evt.price) || evt.price <= 0) return;
 
-  const d = pctDiff(STATE.READY_LONG.price, evt.price);
-  if (!Number.isFinite(d)) return;
-
-  if (d > ENV.READY_AUTOEXPIRE_PCT) clearReady(`autoexpire_drift_${round(d, 3)}%`);
+  const d = pctDiff(STATE.READY_LONG.readyPrice, evt.price);
+  if (Number.isFinite(d) && d > ENV.READY_AUTOEXPIRE_PCT) {
+    clearReady(`autoexpire_drift_${round(d,3)}%`);
+  }
 }
 
-function gateEnterByReady(evt) {
-  if (!ENV.READY_ENABLED) return { ok: true, reason: "ready_disabled" };
+function gateEnterByReady(evt, px) {
   if (!STATE.READY_LONG?.on) return { ok: false, reason: "not_ready_long" };
-
-  // heartbeat freshness
-  if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-    if (!STATE.lastTickMs) return { ok: false, reason: "no_tick_seen" };
-    const ageMs = evt.ts - STATE.lastTickMs;
-    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) return { ok: false, reason: "tick_stale" };
-  }
-
-  // symbol match
   if (STATE.READY_LONG.symbol !== evt.symbol) return { ok: false, reason: "ready_symbol_mismatch" };
 
-  // drift gate (requires READY price to be non-zero)
-  if (!Number.isFinite(STATE.READY_LONG.price) || STATE.READY_LONG.price <= 0 || !Number.isFinite(evt.price)) {
-    return { ok: true, reason: "skip_drift_no_ready_price" };
-  }
-
-  const d = pctDiff(STATE.READY_LONG.price, evt.price);
-  if (!Number.isFinite(d)) return { ok: true, reason: "skip_drift_bad_calc" };
+  const d = pctDiff(STATE.READY_LONG.readyPrice, px);
+  if (!Number.isFinite(d)) return { ok: false, reason: "bad_drift_calc" };
 
   if (d > ENV.READY_MAX_MOVE_PCT) {
     clearReady(`hard_reset_drift_${round(d,3)}%`);
@@ -256,8 +235,108 @@ function gateEnterByReady(evt) {
   return { ok: true, reason: "ready_ok", driftPct: d };
 }
 
+/* ------------------------- position + PnL ------------------------- */
+function computeLongPnlPct(entry, exit) {
+  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(exit)) return NaN;
+  return ((exit - entry) / entry) * 100;
+}
+
+function openLong(evt, px) {
+  STATE.POSITION_LONG = {
+    isOpen: true,
+    symbol: evt.symbol,
+    entryPrice: px,
+    entryTs: evt.ts,
+    peak: px,
+    lastPrice: px,
+    lastUpdateTs: evt.ts,
+  };
+  log("ENTER_LONG", { symbol: evt.symbol, entryPrice: px, ts: evt.ts });
+}
+
+function closeLong(evt, reason, px) {
+  const p = STATE.POSITION_LONG;
+  if (!p?.isOpen) return;
+
+  const exitPx = Number.isFinite(px) && px > 0 ? px : p.lastPrice;
+  const pnlPct = computeLongPnlPct(p.entryPrice, exitPx);
+
+  log("EXIT_LONG", {
+    reason,
+    symbol: p.symbol,
+    entryPrice: p.entryPrice,
+    exitPrice: exitPx,
+    peak: p.peak,
+    pnlPct: round(pnlPct, 4),
+  });
+
+  // record last exit for reentry logic
+  STATE.lastExit = { ts: evt.ts, symbol: p.symbol, pnlPct, price: exitPx };
+  STATE.reentryTriesUsed = 0;
+
+  STATE.POSITION_LONG = null;
+
+  // cooldown starts after exit
+  STATE.cooldownUntil = Math.max(STATE.cooldownUntil, evt.ts + msMin(ENV.EXIT_COOLDOWN_MIN));
+}
+
+/* ------------------------- reentry classifier (fix) ------------------------- */
+function classifyEntry(evt) {
+  if (!ENV.REENTRY_ENABLED) return { isReentry: false, reason: "reentry_disabled" };
+  if (!STATE.lastExit) return { isReentry: false, reason: "no_last_exit" };
+  if (STATE.lastExit.symbol !== evt.symbol) return { isReentry: false, reason: "last_exit_symbol_mismatch" };
+
+  const winMs = msMin(ENV.REENTRY_WINDOW_MIN);
+  if (evt.ts > STATE.lastExit.ts + winMs) return { isReentry: false, reason: "reentry_window_passed" };
+
+  if (STATE.reentryTriesUsed >= ENV.REENTRY_MAX_TRIES) return { isReentry: false, reason: "reentry_max_tries" };
+
+  // optional skip if last exit was too negative
+  if (Number.isFinite(STATE.lastExit.pnlPct) && STATE.lastExit.pnlPct <= ENV.REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT) {
+    return { isReentry: false, reason: "reentry_skipped_bad_exit" };
+  }
+
+  return { isReentry: true, reason: "reentry_ok" };
+}
+
+/* ------------------------- canEnter (cooldown bypass for reentry) ------------------------- */
+function canEnter(evt, { isReentry } = { isReentry: false }) {
+  // heartbeat freshness = based on tick
+  if (ENV.REQUIRE_FRESH_HEARTBEAT) {
+    if (!STATE.lastTickTs) return { ok: false, reason: "no_tick_seen" };
+    const ageMs = evt.ts - STATE.lastTickTs;
+    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) return { ok: false, reason: "tick_stale" };
+  }
+
+  if (STATE.POSITION_LONG?.isOpen) return { ok: false, reason: "already_in_position" };
+
+  // ✅ KEY FIX: cooldown blocks normal entries, but not reentry
+  if (!isReentry && evt.ts < STATE.cooldownUntil) return { ok: false, reason: "cooldown_active" };
+
+  // if you want: still block reentry when cooldown is huge? keep as-is (bypass)
+  return { ok: true, reason: "ok" };
+}
+
 /* ------------------------- 3Commas ------------------------- */
-async function postTo3Commas(payload) {
+async function postTo3Commas(action, evt, px) {
+  if (!ENV.ENABLE_POST_3C) return { ok: true, skipped: true, reason: "post3c_disabled" };
+  if (!ENV.C3_BOT_UUID || !ENV.C3_SIGNAL_SECRET) {
+    return { ok: false, status: 0, body: "missing_C3_BOT_UUID_or_C3_SIGNAL_SECRET" };
+  }
+
+  const payload = {
+    secret: ENV.C3_SIGNAL_SECRET,
+    bot_uuid: ENV.C3_BOT_UUID,
+    action,
+    tv_exchange: evt.tv_exchange,
+    tv_instrument: evt.tv_instrument,
+    trigger_price: String(px),
+    timestamp: new Date(evt.ts).toISOString(),
+    max_lag: ENV.C3_MAX_LAG_SEC,
+  };
+
+  log("3COMMAS_POST", { action, url: ENV.C3_WEBHOOK_URL, payload: { ...payload, secret: "***" } });
+
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), ENV.C3_TIMEOUT_MS);
 
@@ -269,161 +348,145 @@ async function postTo3Commas(payload) {
       signal: controller.signal,
     });
     const body = await r.text().catch(() => "");
-    return { ok: r.ok, status: r.status, body };
+    const resp = { ok: r.ok, status: r.status, body };
+    log("3COMMAS_RESP", { action, resp });
+    return resp;
   } catch (e) {
-    return { ok: false, status: 0, error: String(e?.message || e) };
+    const resp = { ok: false, status: 0, body: String(e?.message || e) };
+    log("3COMMAS_RESP", { action, resp });
+    return resp;
   } finally {
     clearTimeout(t);
   }
 }
 
-// Build payload EXACTLY like your working PowerShell example
-function build3CommasSignal(action, evt) {
-  const { ex, inst } = splitSymbol(evt.symbol || `${evt.exchange}:${evt.instrument}`);
-  return {
-    secret: ENV.C3_SIGNAL_SECRET,
-    bot_uuid: ENV.C3_BOT_UUID,
-    action, // enter_long | exit_long
-    tv_exchange: String(ex || "BINANCE"),
-    tv_instrument: String(inst || evt.instrument || "SOLUSDT"),
-    trigger_price: String(evt.price),
-    timestamp: new Date(evt.ts).toISOString(),
-    max_lag: ENV.C3_MAX_LAG_SEC,
-  };
-}
-
-/* ------------------------- core actions ------------------------- */
-function canEnter(ts) {
-  if (STATE.POSITION_LONG?.isOpen) return { ok: false, reason: "already_in_long" };
-  if (ts < STATE.cooldownUntil) return { ok: false, reason: "cooldown_active" };
-  return { ok: true, reason: "ok" };
-}
-
-function openLong(evt) {
-  STATE.POSITION_LONG = {
-    isOpen: true,
+/* ------------------------- PendingBUY ------------------------- */
+function storePendingBuy(evt, requestedPrice) {
+  const expiresAt = evt.ts + (ENV.PENDING_BUY_WINDOW_SEC * 1000);
+  STATE.PENDING_BUY = {
+    id: uid(),
+    ts: evt.ts,
+    expiresAt,
     symbol: evt.symbol,
-    entryPrice: evt.price,
-    entryTs: evt.ts,
+    tv_exchange: evt.tv_exchange,
+    tv_instrument: evt.tv_instrument,
+    requestedPrice,
+    exitReason: evt.exitReason || "pending_buy",
   };
-  log("POSITION_LONG_OPEN", { symbol: evt.symbol, entryPrice: evt.price, entryTs: evt.ts });
+  console.log(`🩷 PendingBUY stored (${ENV.PENDING_BUY_WINDOW_SEC}s) symbol=${evt.symbol} price=${requestedPrice}`);
 }
 
-function closeLong(ts, reason, exitPrice) {
-  const p = STATE.POSITION_LONG;
-  if (!p?.isOpen) return;
-  log("POSITION_LONG_CLOSE", {
-    reason,
-    symbol: p.symbol,
-    entryPrice: p.entryPrice,
-    exitPrice: exitPrice,
-    pnlPct: (Number.isFinite(exitPrice) && Number.isFinite(p.entryPrice) && p.entryPrice !== 0)
-      ? round(((exitPrice - p.entryPrice) / p.entryPrice) * 100, 4)
-      : null,
-  });
-  STATE.POSITION_LONG = null;
-  STATE.cooldownUntil = Math.max(STATE.cooldownUntil, ts + msMin(ENV.COOLDOWN_MIN));
+function clearPendingBuy(reason) {
+  if (!STATE.PENDING_BUY) return;
+  log("PENDING_BUY_CLEARED", { reason, pending: STATE.PENDING_BUY });
+  STATE.PENDING_BUY = null;
 }
 
-function storePendingBuy(evt) {
-  const expiresAt = evt.ts + ENV.PENDING_TTL_SEC * 1000;
-  STATE.PENDING_BUY = { id: uid(), symbol: evt.symbol, ts: evt.ts, expiresAt };
-  log("PENDING_BUY_STORED", { ttlSec: ENV.PENDING_TTL_SEC, symbol: evt.symbol, expiresAt });
+async function maybeExecutePendingBuyOnTick(evt) {
+  if (!ENV.PENDING_BUY_ENABLED) return;
+  const pb = STATE.PENDING_BUY;
+  if (!pb) return;
+
+  if (evt.ts > pb.expiresAt) {
+    clearPendingBuy("expired");
+    return;
+  }
+  if (pb.symbol !== evt.symbol) return;
+  if (!Number.isFinite(evt.price) || evt.price <= 0) return;
+
+  // If READY exists, ensure drift isn't insane (optional safety)
+  if (STATE.READY_LONG?.on && STATE.READY_LONG.symbol === evt.symbol) {
+    const d = pctDiff(STATE.READY_LONG.readyPrice, evt.price);
+    if (Number.isFinite(d) && d > ENV.PENDING_BUY_MAX_READY_DRIFT_PCT) {
+      clearPendingBuy(`ready_drift_too_high_${round(d,3)}%`);
+      return;
+    }
+  }
+
+  // Treat this as an entry attempt using tick price
+  const entryEvt = { ...evt, intent: "enter_long" };
+  clearPendingBuy("executed_on_tick");
+  await handleEnterLong(entryEvt, evt.price, { fromPending: true });
 }
 
-async function executeEnterLong(evt, why="manual") {
-  // READY gate first
-  readyTTLExpireCheck(evt.ts);
-
-  const gateCore = canEnter(evt.ts);
-  if (!gateCore.ok) {
-    log("ENTER_BLOCKED", { reason: gateCore.reason });
-    return { ok: true, action: "blocked", reason: gateCore.reason };
+/* ------------------------- ENTER/LONG handler ------------------------- */
+async function handleEnterLong(evt, px, { fromPending = false } = {}) {
+  // Require READY? (configurable)
+  if (ENV.REENTRY_REQUIRE_READY === false && ENV.REENTRY_REQUIRE_READY !== true) {
+    // no-op (just for clarity)
   }
 
-  const gateReady = gateEnterByReady(evt);
-  if (!gateReady.ok) {
-    log("ENTER_BLOCKED_READY", { reason: gateReady.reason });
-    return { ok: true, action: "blocked", reason: gateReady.reason };
+  // classify entry (reentry or not)
+  const cls = classifyEntry(evt);
+  const isReentry = cls.isReentry;
+
+  const gate = canEnter(evt, { isReentry });
+  if (!gate.ok) {
+    log("ENTER_BLOCKED", { reason: gate.reason, isReentry, cls: cls.reason, fromPending });
+    return { ok: true, action: "blocked", reason: gate.reason, isReentry };
   }
 
-  // consume ready when entering
-  clearReady("entered_long");
-
-  openLong(evt);
-
-  if (!ENV.ENABLE_POST_3C) return { ok: true, action: "enter_long", posted: false };
-
-  if (!ENV.C3_BOT_UUID || !ENV.C3_SIGNAL_SECRET) {
-    log("3COMMAS_MISSING_ENV", { bot_uuid_set: !!ENV.C3_BOT_UUID, secret_set: !!ENV.C3_SIGNAL_SECRET });
-    // avoid desync: close internal position if cannot post
-    closeLong(evt.ts, "missing_3commas_env", evt.price);
-    return { ok: false, action: "enter_long_failed", reason: "missing_3commas_env" };
+  // READY gate for normal entries, and optionally for reentry
+  if (ENV.REENTRY_REQUIRE_READY || !isReentry) {
+    const rg = gateEnterByReady(evt, px);
+    if (!rg.ok) {
+      log("ENTER_BLOCKED_READY", { reason: rg.reason, isReentry, fromPending });
+      return { ok: true, action: "blocked", reason: rg.reason, isReentry };
+    }
   }
 
-  const out = build3CommasSignal("enter_long", evt);
-  console.log("🧾 3Commas OUT enter_long:", { ...out, secret: "***" });
+  // consume READY on accepted entry
+  if (STATE.READY_LONG?.on) clearReady(isReentry ? "reentry_entered" : "entered_long");
 
-  const resp = await postTo3Commas(out);
-  log("3COMMAS_RESP", { action: "enter_long", resp });
+  // open internal position
+  openLong(evt, px);
 
+  // count try if this was reentry
+  if (isReentry) STATE.reentryTriesUsed += 1;
+
+  // send to 3Commas
+  const resp = await postTo3Commas("enter_long", evt, px);
+
+  // if 3Commas failed, close internal to avoid desync
   if (!resp.ok) {
-    closeLong(evt.ts, "3commas_post_failed", evt.price);
+    closeLong(evt, "3commas_enter_failed", px);
     return { ok: false, action: "enter_long_failed", resp };
   }
-  return { ok: true, action: "enter_long", resp };
-}
 
-async function executeExitLong(evt, reason="manual") {
-  if (!STATE.POSITION_LONG?.isOpen) {
-    log("EXIT_IGNORED", { reason: "no_open_long", wanted: reason });
-    return { ok: true, ignored: true };
-  }
-
-  closeLong(evt.ts, reason, evt.price);
-
-  if (!ENV.ENABLE_POST_3C) return { ok: true, action: "exit_long", posted: false };
-
-  if (!ENV.C3_BOT_UUID || !ENV.C3_SIGNAL_SECRET) {
-    log("3COMMAS_MISSING_ENV", { bot_uuid_set: !!ENV.C3_BOT_UUID, secret_set: !!ENV.C3_SIGNAL_SECRET });
-    return { ok: false, action: "exit_long_failed", reason: "missing_3commas_env" };
-  }
-
-  const out = build3CommasSignal("exit_long", evt);
-  console.log("🧾 3Commas OUT exit_long:", { ...out, secret: "***" });
-
-  const resp = await postTo3Commas(out);
-  log("3COMMAS_RESP", { action: "exit_long", resp });
-
-  return { ok: true, action: "exit_long", resp };
+  return { ok: true, action: "enter_long", isReentry, resp };
 }
 
 /* ------------------------- Express ------------------------- */
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/", (_req, res) => res.status(200).send("OK: Brain LONG v2.9.5"));
+app.get("/", (_req, res) => res.status(200).send("OK: Brain LONG v2.9.6 (PendingBUY + READY + ReEntry fix)"));
+
 app.get("/status", (_req, res) => {
   res.json({
     ok: true,
+    brain: "v2.9.6-LONG",
     now: Date.now(),
-    lastTickMs: STATE.lastTickMs,
-    lastTickPrice: STATE.lastTickPrice,
-    lastTickSymbol: STATE.lastTickSymbol,
-    readyLong: STATE.READY_LONG,
-    positionLong: STATE.POSITION_LONG,
-    cooldownUntil: STATE.cooldownUntil,
-    pendingBuy: STATE.PENDING_BUY,
+    lastTick: { ts: STATE.lastTickTs || null, price: Number.isFinite(STATE.lastTickPrice) ? STATE.lastTickPrice : null, symbol: STATE.lastSymbol || null },
+    ready: STATE.READY_LONG || null,
+    pendingBuy: STATE.PENDING_BUY || null,
+    position: STATE.POSITION_LONG || null,
+    cooldownUntil: STATE.cooldownUntil || 0,
+    lastExit: STATE.lastExit || null,
+    reentryTriesUsed: STATE.reentryTriesUsed,
     env: {
-      READY_ENABLED: ENV.READY_ENABLED,
-      READY_TTL_MIN: ENV.READY_TTL_MIN,
-      READY_MAX_MOVE_PCT: ENV.READY_MAX_MOVE_PCT,
-      READY_AUTOEXPIRE_ENABLED: ENV.READY_AUTOEXPIRE_ENABLED,
-      READY_AUTOEXPIRE_PCT: ENV.READY_AUTOEXPIRE_PCT,
       ENABLE_POST_3C: ENV.ENABLE_POST_3C,
       C3_BOT_UUID_set: !!ENV.C3_BOT_UUID,
       C3_SIGNAL_SECRET_set: !!ENV.C3_SIGNAL_SECRET,
-    },
+      READY_TTL_MIN: ENV.READY_TTL_MIN,
+      READY_MAX_MOVE_PCT: ENV.READY_MAX_MOVE_PCT,
+      EXIT_COOLDOWN_MIN: ENV.EXIT_COOLDOWN_MIN,
+      REENTRY_ENABLED: ENV.REENTRY_ENABLED,
+      REENTRY_WINDOW_MIN: ENV.REENTRY_WINDOW_MIN,
+      REENTRY_MAX_TRIES: ENV.REENTRY_MAX_TRIES,
+      PENDING_BUY_ENABLED: ENV.PENDING_BUY_ENABLED,
+      PENDING_BUY_WINDOW_SEC: ENV.PENDING_BUY_WINDOW_SEC,
+    }
   });
 });
 
@@ -431,113 +494,99 @@ app.post(ENV.WEBHOOK_PATH, async (req, res) => {
   try {
     const body = req.body || {};
 
-    const gotSecret = extractSecret(body);
-    if (!verifySecret(gotSecret, ENV.WEBHOOK_SECRET)) {
-      log("UNAUTHORIZED", { hasSecret: !!gotSecret });
+    if (!verifySecret(body.secret, ENV.WEBHOOK_SECRET)) {
+      log("UNAUTHORIZED", { hasSecret: !!body.secret });
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
     const evt = normalizeWebhook(body);
+    readyTTLExpireCheck(evt.ts);
 
-    log("WEBHOOK_IN", {
-      intent: evt.intent,
-      symbol: evt.symbol,
-      price: evt.price,
-      ts: evt.ts,
-    });
+    log("WEBHOOK_IN", { intent: evt.intent, symbol: evt.symbol, price: evt.price, ts: evt.ts });
 
-    // ---- tick (heartbeat) ----
+    // ---- tick ----
     if (evt.intent === "tick") {
-      if (Number.isFinite(evt.price)) {
-        STATE.lastTickMs = evt.ts;
-        STATE.lastTickPrice = evt.price;
-        STATE.lastTickSymbol = evt.symbol;
+      if (evt.symbol) STATE.lastSymbol = evt.symbol;
+      if (Number.isFinite(evt.price) && evt.price > 0) STATE.lastTickPrice = evt.price;
+      STATE.lastTickTs = evt.ts;
 
-        // READY autoexpire based on drift
-        maybeAutoExpireReadyOnTick(evt);
+      maybeAutoExpireReadyOnTick(evt);
 
-        // if pending buy exists and matches symbol and not expired => execute now
-        if (STATE.PENDING_BUY?.symbol === evt.symbol) {
-          if (evt.ts <= STATE.PENDING_BUY.expiresAt) {
-            const pendingId = STATE.PENDING_BUY.id;
-            STATE.PENDING_BUY = null;
+      // pending buy executes on first tick after stored
+      await maybeExecutePendingBuyOnTick(evt);
 
-            // fabricate an enter_long using tick price
-            const enterEvt = { ...evt, intent: "enter_long", price: evt.price };
-            log("PENDING_BUY_EXECUTE_ON_TICK", { pendingId, price: evt.price, symbol: evt.symbol });
-
-            const resp = await executeEnterLong(enterEvt, "pending_buy_on_tick");
-            return res.json({ ok: true, action: "tick+pending_enter_long", resp });
-          } else {
-            log("PENDING_BUY_EXPIRED", { pending: STATE.PENDING_BUY });
-            STATE.PENDING_BUY = null;
-          }
-        }
+      // update position peak
+      if (STATE.POSITION_LONG?.isOpen && STATE.POSITION_LONG.symbol === evt.symbol && Number.isFinite(evt.price) && evt.price > 0) {
+        STATE.POSITION_LONG.lastPrice = evt.price;
+        STATE.POSITION_LONG.lastUpdateTs = evt.ts;
+        STATE.POSITION_LONG.peak = Math.max(STATE.POSITION_LONG.peak, evt.price);
       }
+
       return res.json({ ok: true, action: "tick" });
     }
 
-    // ---- ready (legacy) / ready_long ----
-    if (
-      evt.intent === "ready_long" ||
-      (ENV.READY_ACCEPT_LEGACY_READY && evt.intent === "ready")
-    ) {
-      if (!ENV.READY_ENABLED) return res.json({ ok: true, action: "ready_ignored", reason: "ready_disabled" });
+    // ---- ready / ready_long ----
+    if (evt.intent === "ready_long" || (ENV.READY_ACCEPT_LEGACY_READY && evt.intent === "ready")) {
+      // choose best ready price: if incoming price==0, use lastTickPrice
+      const px = (evt.price > 0) ? evt.price : (Number.isFinite(STATE.lastTickPrice) ? STATE.lastTickPrice : 0);
 
-      // require fresh tick (optional)
-      if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-        if (!STATE.lastTickMs) {
-          log("READY_IGNORED", { reason: "no_tick_seen" });
-          return res.json({ ok: true, action: "ready_ignored", reason: "no_tick_seen" });
-        }
-        const ageMs = evt.ts - STATE.lastTickMs;
-        if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) {
-          log("READY_IGNORED", { reason: "tick_stale" });
-          return res.json({ ok: true, action: "ready_ignored", reason: "tick_stale" });
-        }
-      }
-
-      setReadyLong(evt);
+      setReady(evt, px);
       return res.json({ ok: true, action: "ready_long", ready: STATE.READY_LONG });
-    }
-
-    // ---- enter_long ----
-    if (evt.intent === "enter_long") {
-      // IMPORTANT: emergency-friendly price handling
-      // If price is missing/0, use lastTickPrice immediately (prevents “PendingBUY” unless no tick yet)
-      const px =
-        (Number.isFinite(evt.price) && evt.price > 0) ? evt.price :
-        (Number.isFinite(STATE.lastTickPrice) ? STATE.lastTickPrice : NaN);
-
-      if (!Number.isFinite(px) || px <= 0) {
-        // no tick seen yet → pending
-        storePendingBuy(evt);
-        return res.json({ ok: true, action: "pending_enter_long", ttlSec: ENV.PENDING_TTL_SEC });
-      }
-
-      const enterEvt = { ...evt, price: px };
-      const resp = await executeEnterLong(enterEvt, evt.exitReason || "signal_enter");
-      return res.json(resp);
     }
 
     // ---- exit_long ----
     if (evt.intent === "exit_long") {
-      const px =
-        (Number.isFinite(evt.price) && evt.price > 0) ? evt.price :
-        (Number.isFinite(STATE.lastTickPrice) ? STATE.lastTickPrice : NaN);
+      // choose best exit price: if incoming price==0, use lastTickPrice
+      const px = (evt.price > 0) ? evt.price : (Number.isFinite(STATE.lastTickPrice) ? STATE.lastTickPrice : 0);
 
-      const exitEvt = { ...evt, price: Number.isFinite(px) ? px : evt.price };
-      const resp = await executeExitLong(exitEvt, evt.exitReason || "signal_exit");
-      return res.json(resp);
+      closeLong(evt, evt.exitReason || "signal_exit", px);
+
+      // send to 3Commas even if position was not open (idempotent)
+      const resp = await postTo3Commas("exit_long", evt, px > 0 ? px : (STATE.lastTickPrice || 0));
+
+      return res.json({ ok: true, action: "exit_long", resp });
+    }
+
+    // ---- enter_long ----
+    if (evt.intent === "enter_long") {
+      // if provided price is 0 -> use lastTickPrice if available
+      const px = (evt.price > 0) ? evt.price : (Number.isFinite(STATE.lastTickPrice) ? STATE.lastTickPrice : 0);
+
+      // no ticks yet => store pending buy (executes on first tick)
+      if (px <= 0) {
+        if (ENV.PENDING_BUY_ENABLED) {
+          storePendingBuy(evt, evt.price);
+          return res.json({ ok: true, action: "pending_buy_stored" });
+        }
+        return res.json({ ok: false, action: "enter_long_failed", error: "no_price_and_pending_disabled" });
+      }
+
+      // handle enter now
+      const out = await handleEnterLong(evt, px, { fromPending: false });
+      return res.json(out);
     }
 
     return res.status(200).json({ ok: true, action: "ignored", reason: "unknown_intent", got: evt.intent });
   } catch (e) {
-    console.error("ERROR in webhook:", e);
+    console.error("ERROR in /webhook:", e);
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 
+/* ------------------------- BOOT ------------------------- */
+log("STARTUP_CONFIG", {
+  brain: "v2.9.6-LONG",
+  port: ENV.PORT,
+  path: ENV.WEBHOOK_PATH,
+  enablePost3c: ENV.ENABLE_POST_3C,
+  c3_bot_uuid_set: !!ENV.C3_BOT_UUID,
+  c3_signal_secret_set: !!ENV.C3_SIGNAL_SECRET,
+  readyEnabled: true,
+  pendingBuy: ENV.PENDING_BUY_ENABLED,
+  reentryEnabled: ENV.REENTRY_ENABLED,
+});
+console.log(`[BOOT] LONG brain listening soon | WEBHOOK_SECRET suffix=${ENV.WEBHOOK_SECRET.slice(-6)} len=${ENV.WEBHOOK_SECRET.length}`);
+
 app.listen(ENV.PORT, () => {
-  log("LISTENING", { port: ENV.PORT, path: ENV.WEBHOOK_PATH, brain: "v2.9.5-LONG" });
+  log("LISTENING", { port: ENV.PORT, path: ENV.WEBHOOK_PATH, brain: "v2.9.6-LONG" });
 });
