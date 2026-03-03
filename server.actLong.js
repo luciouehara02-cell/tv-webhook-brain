@@ -20,7 +20,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.6-LONG";
+const BRAIN_VERSION = "v2.9.6-LONG-Live";
 
 // ====================
 // CONFIG (Railway Variables)
