@@ -1,27 +1,29 @@
 /**
- * TickRouter — server.js (Complete)
+ * TickRouter — server.js (Complete) — FIXED
  *
- * TradingView -> TickRouter:
- *   - validate WEBHOOK_SECRET (optional but recommended)
- *
- * TickRouter -> Brain(s):
- *   - forward to BRAIN_URLS (comma-separated)
- *   - rewrite payload.secret per-destination using:
- *       BRAIN_SECRET_ACTLONG
- *       BRAIN_SECRET_DEMOLONG
- *       BRAIN_SECRET_DEMOSHORT
- *     fallback to BRAIN_SECRET (default) if specific not set
+ * Fixes:
+ * ✅ NEVER falls back to TickRouter inbound WEBHOOK_SECRET by accident
+ * ✅ Forces per-destination secret override (no “random secret after deploy”)
+ * ✅ If a brain secret is missing, it SKIPS forwarding to that brain + logs why
+ * ✅ Optional: BRAIN_SECRET_DEFAULT for “other brains” (safe), but not required
  *
  * ENV (Railway Variables):
  *   PORT=8080
- *   WEBHOOK_SECRET=TickRouter_xxx                      (secret used by TradingView)
+ *   WEBHOOK_SECRET=TickRouter_xxx
  *   BRAIN_URLS="https://brainact.../webhook,https://satisfied-mercy.../webhook,https://braindemoshort.../webhook"
  *   FORWARD_TIMEOUT_MS=4000
  *
- *   BRAIN_SECRET=ACT_xxx                               (default fallback)
+ *   # REQUIRED per-destination secrets (recommended)
  *   BRAIN_SECRET_ACTLONG=ACT_xxx
- *   BRAIN_SECRET_DEMOLONG=ACT_xxx or DEMO_LONG_xxx
+ *   BRAIN_SECRET_DEMOLONG=DEMO_LONG_xxx
  *   BRAIN_SECRET_DEMOSHORT=DEMO_SHORT_xxx
+ *
+ *   # OPTIONAL safe default for other brains you may add later
+ *   BRAIN_SECRET_DEFAULT=some_other_brain_secret
+ *
+ * IMPORTANT:
+ * - Do NOT set BRAIN_SECRET to WEBHOOK_SECRET.
+ * - This version DOES NOT use BRAIN_SECRET at all, to prevent mistakes.
  */
 
 import express from "express";
@@ -30,14 +32,25 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
+
+// TradingView -> TickRouter secret
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
-const BRAIN_SECRET = String(process.env.BRAIN_SECRET || "");
+
+// Forwarding settings
 const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 
 const BRAIN_URLS = String(process.env.BRAIN_URLS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+// Optional safe default for unknown brains
+const BRAIN_SECRET_DEFAULT = String(process.env.BRAIN_SECRET_DEFAULT || "");
+
+// Per-brain secrets
+const BRAIN_SECRET_ACTLONG = String(process.env.BRAIN_SECRET_ACTLONG || "");
+const BRAIN_SECRET_DEMOLONG = String(process.env.BRAIN_SECRET_DEMOLONG || "");
+const BRAIN_SECRET_DEMOSHORT = String(process.env.BRAIN_SECRET_DEMOSHORT || "");
 
 function extractSecret(payload) {
   return String(
@@ -57,23 +70,17 @@ function inboundSecretOk(payload) {
 
 /**
  * Decide which Brain secret to use based on destination URL.
- * This matches your actual domains shown in Railway.
+ * IMPORTANT: no fallback to TickRouter inbound secret.
  */
 function secretFor(url) {
   const u = String(url).toLowerCase();
 
-  if (u.includes("brainact-production")) {
-    return String(process.env.BRAIN_SECRET_ACTLONG || BRAIN_SECRET || "");
-  }
-  if (u.includes("satisfied-mercy-production")) {
-    return String(process.env.BRAIN_SECRET_DEMOLONG || BRAIN_SECRET || "");
-  }
-  if (u.includes("braindemoshort-production")) {
-    return String(process.env.BRAIN_SECRET_DEMOSHORT || BRAIN_SECRET || "");
-  }
+  if (u.includes("brainact-production")) return BRAIN_SECRET_ACTLONG;
+  if (u.includes("satisfied-mercy-production")) return BRAIN_SECRET_DEMOLONG;
+  if (u.includes("braindemoshort-production")) return BRAIN_SECRET_DEMOSHORT;
 
-  // fallback for any other brain you add
-  return String(BRAIN_SECRET || "");
+  // fallback for any other brain you add (optional)
+  return BRAIN_SECRET_DEFAULT;
 }
 
 async function forwardToBrain(url, payload, timeoutMs) {
@@ -114,10 +121,10 @@ app.get("/", (req, res) => {
     hasInboundSecret: Boolean(WEBHOOK_SECRET),
     forwardTimeoutMs: FORWARD_TIMEOUT_MS,
     perBrainSecrets: {
-      hasDefault: Boolean(BRAIN_SECRET),
-      hasAct: Boolean(process.env.BRAIN_SECRET_ACTLONG),
-      hasDemoLong: Boolean(process.env.BRAIN_SECRET_DEMOLONG),
-      hasDemoShort: Boolean(process.env.BRAIN_SECRET_DEMOSHORT),
+      hasAct: Boolean(BRAIN_SECRET_ACTLONG),
+      hasDemoLong: Boolean(BRAIN_SECRET_DEMOLONG),
+      hasDemoShort: Boolean(BRAIN_SECRET_DEMOSHORT),
+      hasDefault: Boolean(BRAIN_SECRET_DEFAULT),
     },
   });
 });
@@ -139,12 +146,17 @@ app.post("/webhook", async (req, res) => {
 
   // 3) Forward async to all brains
   const results = await Promise.all(
-    BRAIN_URLS.map((u) => {
-      const out = { ...inbound };
-
-      // rewrite secret for this destination
+    BRAIN_URLS.map(async (u) => {
       const s = secretFor(u);
-      if (s) out.secret = s;
+
+      // If we don't have a destination secret, do NOT forward (prevents “wrong secret”)
+      if (!s) {
+        console.error(`⛔ SKIP -> ${u} (missing destination brain secret env var)`);
+        return { url: u, ok: false, status: 0, resp: "skipped_missing_brain_secret" };
+      }
+
+      // Force destination secret override
+      const out = { ...inbound, secret: s };
 
       // safe debug: suffix only (no full secret)
       const suffix = String(out.secret || "").slice(-6);
@@ -176,10 +188,18 @@ app.listen(PORT, () => {
   console.log(`✅ tick-router listening on port ${PORT}`);
   console.log(`Brains: ${BRAIN_URLS.join(", ") || "(none)"}`);
   console.log(`Inbound secret check: ${WEBHOOK_SECRET ? "ON" : "OFF"}`);
-  console.log(`Default brain secret set: ${BRAIN_SECRET ? "YES" : "NO"}`);
+
   console.log(
-    `Per-brain secrets set: ACT=${process.env.BRAIN_SECRET_ACTLONG ? "YES" : "NO"}, ` +
-      `DEMO_LONG=${process.env.BRAIN_SECRET_DEMOLONG ? "YES" : "NO"}, ` +
-      `DEMO_SHORT=${process.env.BRAIN_SECRET_DEMOSHORT ? "YES" : "NO"}`
+    `Per-brain secrets set: ACT=${BRAIN_SECRET_ACTLONG ? "YES" : "NO"}, ` +
+      `DEMO_LONG=${BRAIN_SECRET_DEMOLONG ? "YES" : "NO"}, ` +
+      `DEMO_SHORT=${BRAIN_SECRET_DEMOSHORT ? "YES" : "NO"}, ` +
+      `DEFAULT=${BRAIN_SECRET_DEFAULT ? "YES" : "NO"}`
   );
+
+  // Extra safety warning
+  if (WEBHOOK_SECRET && (WEBHOOK_SECRET === BRAIN_SECRET_DEFAULT)) {
+    console.log(
+      "⚠️ WARNING: WEBHOOK_SECRET equals BRAIN_SECRET_DEFAULT. This is usually a misconfig."
+    );
+  }
 });
