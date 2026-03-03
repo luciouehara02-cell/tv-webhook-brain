@@ -2,12 +2,17 @@
  * Brain v2.9.6-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * + Pending BUY buffer (pink fix)
  * + Re-entry window (yellow fix) with loop protection (restored)
- * + Emergency overrides (new):
- *   ✅ Emergency ENTER_LONG can bypass READY / cooldown / conservative / stale-heartbeat (still blocks crashLock)
- *   ✅ Emergency EXIT_LONG does NOT trigger EquityStab cooldown/conservative
- *   ✅ Emergency price fallback: if price missing/0 -> uses lastTickPrice (or readyPrice)
  *
- * Keeps your v2.9.5 behavior otherwise.
+ * Key fixes in v2.9.6:
+ * ✅ 3Commas payload uses the exact working structure you validated.
+ * ✅ tv_exchange / tv_instrument derived from symbol: BINANCE:SOLUSDT if missing (prevents UNKNOWN).
+ * ✅ READY symbol normalization consistency (prevents ready_symbol_mismatch).
+ * ✅ Reentry loop protection: ENTER dedupe + "one reentry per exit" latch + fixed reentryCandidate logic.
+ * ✅ EMERGENCY enter bypasses READY (already) + now can bypass cooldown with EMERGENCY_BYPASS_COOLDOWN=true
+ * ✅ EMERGENCY exit skips EquityStab cooldown/conservative (already) but still applies normal EXIT_COOLDOWN_MIN (as before)
+ *
+ * New optional Railway var:
+ *   EMERGENCY_BYPASS_COOLDOWN="true"  // allows emergency enter_long to ignore cooldownActive
  */
 
 import express from "express";
@@ -15,13 +20,17 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.6-LONG-FORCEA";
+const BRAIN_VERSION = "v2.9.6-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
 // ====================
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+
+// ✅ NEW (optional)
+const EMERGENCY_BYPASS_COOLDOWN =
+  String(process.env.EMERGENCY_BYPASS_COOLDOWN || "false").toLowerCase() === "true";
 
 // READY TTL (minutes). 0 = disabled
 const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
@@ -156,8 +165,12 @@ const THREECOMMAS_SECRET =
   process.env.C3_WEBHOOK_SECRET ||
   "";
 
-const THREECOMMAS_MAX_LAG = String(process.env.THREECOMMAS_MAX_LAG || process.env.C3_MAX_LAG_SEC || "300");
-const THREECOMMAS_TIMEOUT_MS = Number(process.env.THREECOMMAS_TIMEOUT_MS || process.env.C3_TIMEOUT_MS || "8000");
+const THREECOMMAS_MAX_LAG = String(
+  process.env.THREECOMMAS_MAX_LAG || process.env.C3_MAX_LAG_SEC || "300"
+);
+const THREECOMMAS_TIMEOUT_MS = Number(
+  process.env.THREECOMMAS_TIMEOUT_MS || process.env.C3_TIMEOUT_MS || "8000"
+);
 
 // Optional fallbacks if TV doesn't send these
 const THREECOMMAS_TV_EXCHANGE = process.env.THREECOMMAS_TV_EXCHANGE || "";
@@ -218,7 +231,7 @@ let reentry = {
   triesUsed: 0,
   triesMax: REENTRY_MAX_TRIES,
   exitTs: 0,
-  consumed: false,
+  consumed: false, // one reentry per exit
 };
 
 // Key loop-prevention flag: was the CURRENT position opened via re-entry?
@@ -282,8 +295,8 @@ function normalizeIntent(payload) {
 }
 
 function isEmergency(payload) {
-  const r = String(payload?.exitReason || payload?.reason || "").toLowerCase();
-  return payload?.emergency === true || r === "emergency";
+  const er = String(payload?.exitReason || "").toLowerCase().trim();
+  return er === "emergency";
 }
 
 function pctDiff(a, b) {
@@ -496,9 +509,7 @@ function updateRegime(symbol) {
 
   if (prev.regime !== next) {
     console.log(
-      `🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(
-        3
-      )}% | atr=${atrP.toFixed(3)}%`
+      `🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(3)}% | atr=${atrP.toFixed(3)}%`
     );
   }
   return st;
@@ -685,9 +696,7 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
   const floor = peakPrice * (1 - givebackPct / 100);
   if (currentPrice <= floor) {
     console.log(
-      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(
-        4
-      )} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
+      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
     );
 
     lastAction = "profit_lock_exit_long";
@@ -834,21 +843,15 @@ function pendingCanConsumeWithReady(readySym, readyPx) {
 function enterDedupeActive(ts) {
   if (!ENTER_DEDUP_SEC || ENTER_DEDUP_SEC <= 0) return false;
   const gapMs = ENTER_DEDUP_SEC * 1000;
-  return lastEnterAcceptedTs && (ts - lastEnterAcceptedTs) < gapMs;
+  return lastEnterAcceptedTs && ts - lastEnterAcceptedTs < gapMs;
 }
 
 async function handleEnterLong(payload, res, sourceTag) {
-  const emergency = isEmergency(payload);
-
-  let px = getRayPrice(payload);
+  const px = getRayPrice(payload);
   const sym = getSymbolFromPayload(payload);
   const ts = nowMs();
 
-  // Emergency price fallback: allow price missing/0
-  if ((px == null || px === 0) && emergency) {
-    px = lastTickPrice ?? readyPrice ?? null;
-    if (px != null) console.log(`🧨 EMERGENCY price fallback -> ${px}`);
-  }
+  const emergency = isEmergency(payload);
 
   if (crashLockActive()) {
     lastAction = "enter_long_blocked_crash_lock";
@@ -860,13 +863,12 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "already_in_position" });
   }
 
-  // Emergency bypasses stale-heartbeat
-  if (!isHeartbeatFresh() && !emergency) {
+  if (!isHeartbeatFresh()) {
     lastAction = "enter_long_blocked_stale_heartbeat";
     return res.json({ ok: false, blocked: "stale_heartbeat" });
   }
 
-  // ENTER dedupe prevents Pine spam loop (do not bypass; keeps safety)
+  // ✅ ENTER dedupe prevents Pine spam loop
   if (enterDedupeActive(ts)) {
     lastAction = "enter_long_deduped";
     return res.json({ ok: true, ignored: "enter_dedup", window_sec: ENTER_DEDUP_SEC });
@@ -874,22 +876,21 @@ async function handleEnterLong(payload, res, sourceTag) {
 
   // Re-entry candidate (only when FLAT)
   const reentryCandidate =
-    REENTRY_ENABLED &&
-    reentryActive() &&
-    reentryTriesLeft() &&
-    !reentry.consumed &&
-    (!REENTRY_REQUIRE_READY || readyOn);
+    REENTRY_ENABLED && reentryActive() && reentryTriesLeft() && !reentry.consumed && (!REENTRY_REQUIRE_READY || readyOn);
 
-  // Cooldown handling: allow re-entry to bypass normal cooldown; emergency also bypasses
-  if (cooldownActive() && !reentryCandidate && !emergency) {
+  // ✅ NEW: Emergency can bypass cooldown if EMERGENCY_BYPASS_COOLDOWN=true
+  const emergencyBypassCooldown = emergency && EMERGENCY_BYPASS_COOLDOWN;
+
+  if (cooldownActive() && !reentryCandidate && !emergencyBypassCooldown) {
     lastAction = "enter_long_blocked_cooldown";
     return res.json({ ok: false, blocked: "cooldown_active" });
-  } else if (cooldownActive() && (reentryCandidate || emergency)) {
-    console.log(`🟣 REENTRY/EMERGENCY bypassing cooldown (${reentryCandidate ? "reentry" : "emergency"})`);
+  } else if (cooldownActive() && reentryCandidate) {
+    console.log("🟣 REENTRY bypassing cooldown (valid re-entry candidate)");
+  } else if (cooldownActive() && emergencyBypassCooldown) {
+    console.log("🧨 EMERGENCY: bypassing cooldown (EMERGENCY_BYPASS_COOLDOWN=true)");
   }
 
-  // Conservative mode: emergency bypasses
-  if (conservativeModeActive() && !emergency) {
+  if (conservativeModeActive()) {
     const reg = sym ? getRegime(sym) : "RANGE";
     if (reg !== "TREND") {
       lastAction = "enter_long_blocked_conservative_range";
@@ -897,7 +898,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     }
   }
 
-  // If not re-entry, require READY (emergency bypass)
+  // If not re-entry, require READY (unless emergency)
   if (!reentryCandidate && !emergency) {
     if (!readyOn) {
       lastAction = "enter_long_blocked_not_ready";
@@ -906,12 +907,15 @@ async function handleEnterLong(payload, res, sourceTag) {
       }
       return res.json({ ok: false, blocked: "not_ready" });
     }
-  } else if (!reentryCandidate && emergency && !readyOn) {
+  }
+
+  // Emergency logs (so you can see why it went through)
+  if (emergency && !reentryCandidate) {
     console.log("🧨 EMERGENCY: ENTER_LONG bypassing READY requirement");
   }
 
+  // Re-entry logic checks
   if (reentryCandidate) {
-    // Re-entry requires symbol match with reentry state
     if (reentry.symbol && sym && reentry.symbol !== sym) {
       lastAction = "enter_long_blocked_reentry_symbol_mismatch";
       return res.json({
@@ -922,7 +926,6 @@ async function handleEnterLong(payload, res, sourceTag) {
       });
     }
 
-    // Optional: require trend on re-entry
     if (REENTRY_REQUIRE_TREND) {
       const r = getRegime(sym);
       if (r !== "TREND") {
@@ -931,7 +934,6 @@ async function handleEnterLong(payload, res, sourceTag) {
       }
     }
 
-    // fall/rise guard vs reference
     if (Number.isFinite(reentry.ref) && Number.isFinite(px)) {
       const move = reentryFallRiseFromRef(reentry.ref, px);
       if (move) {
@@ -949,12 +951,13 @@ async function handleEnterLong(payload, res, sourceTag) {
 
     // consume a try NOW
     reentry.triesUsed += 1;
+
     console.log(
       `🟣 REENTRY allowed (${sourceTag}) ref=${reentry.ref} regime=${getRegime(sym)} tries=${reentry.triesUsed}/${reentry.triesMax}`
     );
   }
 
-  // READY symbol match (normal entry only; emergency bypass)
+  // READY symbol match (normal entry only; emergency bypasses)
   if (!reentryCandidate && !emergency) {
     if (readySymbol && sym && readySymbol !== sym) {
       lastAction = "enter_long_blocked_symbol_mismatch";
@@ -967,7 +970,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "missing_price_or_symbol" });
   }
 
-  // Drift gate for normal entry (skip for reentry + emergency)
+  // Drift gate for normal entry only (emergency bypasses)
   if (!reentryCandidate && !emergency) {
     if (readyPrice == null) {
       lastAction = "enter_long_blocked_missing_ready_price";
@@ -1008,7 +1011,7 @@ async function handleEnterLong(payload, res, sourceTag) {
       payload?.tv_instrument ?? payload?.ticker ?? readyMeta?.tv_instrument ?? derived.tv_instrument ?? null,
   };
 
-  lastAction = emergency ? "enter_long_emergency" : "enter_long";
+  lastAction = "enter_long";
   lastEnterAcceptedTs = ts;
 
   console.log(
@@ -1023,7 +1026,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     tv_instrument: entryMeta?.tv_instrument,
   });
 
-  // ONE reentry per exit: after accepted entry, close reentry window
+  // one reentry per exit: after accepted entry, close reentry window
   if (reentryCandidate) {
     reentry.consumed = true;
     reentry.active = false;
@@ -1041,8 +1044,6 @@ async function handleEnterLong(payload, res, sourceTag) {
 }
 
 async function handleExitLong(payload, res, sourceTag) {
-  const emergency = isEmergency(payload);
-
   const px = getRayPrice(payload);
   const exitPx = px ?? lastTickPrice ?? null;
 
@@ -1050,6 +1051,8 @@ async function handleExitLong(payload, res, sourceTag) {
     lastAction = "exit_long_no_position";
     return res.json({ ok: false, blocked: "no_position" });
   }
+
+  const emergency = isEmergency(payload);
 
   if (PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT > 0 && exitPx != null) {
     const p = pctProfit(entryPrice, exitPx);
@@ -1062,7 +1065,7 @@ async function handleExitLong(payload, res, sourceTag) {
     }
   }
 
-  lastAction = emergency ? "exit_long_emergency" : "exit_long";
+  lastAction = "exit_long";
 
   const sym = entrySymbol || getSymbolFromPayload(payload) || "";
   const derived = deriveTvFromSymbol(sym);
@@ -1079,25 +1082,23 @@ async function handleExitLong(payload, res, sourceTag) {
   if (exitPx != null) {
     pnlPct = pctProfit(entryPrice, exitPx);
 
-    if (!emergency) {
-      noteExitForEquity(exitPx);
-    } else {
+    // ✅ Emergency exit should NOT trigger equity cooldown / conservative
+    if (emergency) {
       console.log("🧨 EMERGENCY EXIT: skipping EquityStab cooldown/conservative");
+    } else {
+      noteExitForEquity(exitPx);
     }
   }
 
-  // re-entry window management
+  // re-entry window management (kept even for emergency exits, as per your logs)
   if (exitPx != null) {
-    maybeStartOrKeepReentryWindow(
-      sym,
-      exitPx,
-      `exit_${sourceTag}`,
-      pnlPct
-    );
+    maybeStartOrKeepReentryWindow(sym, exitPx, `exit_${sourceTag}`, pnlPct);
   }
 
   clearReadyContext("exit_long");
   clearPositionContext("exit_long");
+
+  // Normal exit cooldown always applies (keeps your existing behavior)
   startCooldown(sourceTag);
 
   console.log(`✅ EXIT LONG (${sourceTag}${emergency ? "+emergency" : ""})`);
@@ -1107,9 +1108,13 @@ async function handleExitLong(payload, res, sourceTag) {
 // ====================
 // ROUTES
 // ====================
-app.get("/", (req, res) => {
-  res.json({
+function statusPayload() {
+  return {
     brain: BRAIN_VERSION,
+
+    // new
+    EMERGENCY_BYPASS_COOLDOWN,
+
     readyOn,
     inPosition,
     lastAction,
@@ -1122,7 +1127,7 @@ app.get("/", (req, res) => {
     READY_AUTOEXPIRE_PCT,
 
     EXIT_COOLDOWN_MIN,
-    crashLockActive: crashLockActive(),
+    crashLockActive: crashLockActive() ? 1 : 0,
     crashLockUntilMs,
     cooldownActive: cooldownActive(),
     cooldownUntilMs,
@@ -1148,7 +1153,7 @@ app.get("/", (req, res) => {
 
     EQUITY_STABILIZER_ENABLED,
     lossStreak,
-    conservativeModeActive: conservativeModeActive(),
+    conservativeModeActive: conservativeModeActive() ? 1 : 0,
     conservativeUntilMs,
 
     REENTRY_ENABLED,
@@ -1193,8 +1198,11 @@ app.get("/", (req, res) => {
     regime: lastTickSymbol ? regimeState.get(lastTickSymbol) || null : null,
     threecommas_configured: Boolean(THREECOMMAS_BOT_UUID && THREECOMMAS_SECRET),
     READY_ACCEPT_LEGACY_READY,
-  });
-});
+  };
+}
+
+app.get("/", (_req, res) => res.json(statusPayload()));
+app.get("/status", (_req, res) => res.json(statusPayload()));
 
 app.post("/webhook", async (req, res) => {
   const payload = req.body || {};
@@ -1366,6 +1374,10 @@ app.listen(PORT, () => {
   console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
 
   console.log(
+    `Emergency: EMERGENCY_BYPASS_COOLDOWN=${EMERGENCY_BYPASS_COOLDOWN}`
+  );
+
+  console.log(
     `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
   );
   console.log(
@@ -1378,7 +1390,7 @@ app.listen(PORT, () => {
     `CrashProtect: ENABLED=${CRASH_PROTECT_ENABLED} | dump1m=${CRASH_DUMP_1M_PCT}% | dump5m=${CRASH_DUMP_5M_PCT}% | cooldown=${CRASH_COOLDOWN_MIN}m`
   );
   console.log(
-  `EquityStab: ENABLED=${EQUITY_STABILIZER_ENABLED} | loss2_cd=${ES_LOSS_STREAK_2_COOLDOWN_MIN}m | loss3_cd=${ES_LOSS_STREAK_3_COOLDOWN_MIN}m | conservative=${ES_CONSERVATIVE_MIN}m`
+    `EquityStab: ENABLED=${EQUITY_STABILIZER_ENABLED} | loss2_cd=${ES_LOSS_STREAK_2_COOLDOWN_MIN}m | loss3_cd=${ES_LOSS_STREAK_3_COOLDOWN_MIN}m | conservative=${ES_CONSERVATIVE_MIN}m`
   );
   console.log(
     `ReEntry: ENABLED=${REENTRY_ENABLED} | window=${REENTRY_WINDOW_MIN}m | fall<=${REENTRY_MAX_FALL_PCT}% | rise<=${REENTRY_MAX_RISE_PCT}% | reqTrend=${REENTRY_REQUIRE_TREND} | reqReady=${REENTRY_REQUIRE_READY} | cancelOnBreach=${REENTRY_CANCEL_ON_BREACH} | maxTries=${REENTRY_MAX_TRIES} | skipStartIfExitPnL<=${REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT}%`
@@ -1388,8 +1400,6 @@ app.listen(PORT, () => {
   );
   console.log(`EnterDedupe: ENTER_DEDUP_SEC=${ENTER_DEDUP_SEC}`);
   console.log(
-    `3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${
-      THREECOMMAS_SECRET ? "(set)" : "(missing)"
-    } | TIMEOUT_MS=${THREECOMMAS_TIMEOUT_MS}`
+    `3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"} | TIMEOUT_MS=${THREECOMMAS_TIMEOUT_MS}`
   );
 });
