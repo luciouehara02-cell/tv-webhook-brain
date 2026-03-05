@@ -465,16 +465,59 @@ function authOk(body) {
 // ------------------------
 app.get("/", (_, res) => res.json({ ok: true, brain: "v3.0-phase2-symbol-bot" }));
 
-app.post("/tv", async (req, res) => {
+async function handleWebhook(req, res) {
+
   const body = req.body || {};
-  if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
-
   const symbol = body.symbol;
-  if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
 
-  // Ignore legacy Pine decision messages
-  if (body.action === "ready" || body.src === "enter_long" || body.intent === "exit_long") {
-    return res.json({ ok: true, ignored: "legacy_pine_decision" });
+  if (!symbol) {
+    return res.status(400).json({ ok:false, error:"missing symbol" });
+  }
+
+  const s = ensureSymbol(symbol);
+
+  // TICK
+  if (body.src === "tick") {
+
+    const price = Number(body.price);
+    if (!price) return res.json({ok:false});
+
+    s.lastPrice = price;
+    s.lastTickMs = Date.now();
+
+    await runDecision(symbol);
+
+    return res.json({ ok:true });
+  }
+
+  // FEATURES
+  if (body.src === "features") {
+
+    const bar = {
+      close: Number(body.close),
+      high: Number(body.high),
+      low: Number(body.low),
+      ema8: Number(body.ema8),
+      ema18: Number(body.ema18),
+      ema50: Number(body.ema50),
+      rsi: Number(body.rsi),
+      atr: Number(body.atr),
+      atrPct: Number(body.atrPct),
+      adx: Number(body.adx)
+    };
+
+    s.bars.push(bar);
+
+    await runDecision(symbol);
+
+    return res.json({ ok:true });
+  }
+
+  return res.json({ ok:true });
+}
+
+app.post("/tv", handleWebhook);
+app.post("/webhook", handleWebhook);
   }
 
   const s = ensureSymbol(symbol);
