@@ -188,7 +188,8 @@ function detectSetups(s) {
   const wasBelowEma18 = canUseEma ? (prev.close < prev.ema18) : false;
   const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
 
-  const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
+ // TEST MODE: relaxed washout detection
+const washout = (last.ema50 != null) ? (localLow < last.ema50 * 1.005) : false;
   const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
 
   if (washout && reclaimed && rsiUp) {
