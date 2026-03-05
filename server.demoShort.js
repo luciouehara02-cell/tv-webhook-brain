@@ -1,44 +1,22 @@
 /**
  * Brain v3.0 Phase2 — Full server.js (SOLUSDT one-symbol = one-bot)
+ * ✅ POST /tv and POST /webhook (alias)
+ * ✅ TickRouter tick payload compatible
+ * ✅ Features payload supported (Phase2)
+ * ✅ Legacy Pine READY/enter/exit ignored
+ * ✅ One symbol = one bot via SYMBOL_BOT_MAP
+ * ✅ 3Commas timeout via C3_TIMEOUT_MS
+ * ✅ Debug logs for tick + features (so you SEE traffic)
  *
- * Endpoints:
- *   POST /tv
- *   POST /webhook   (alias for TickRouter or legacy forwarders)
- *
- * Accepts:
- *   - tick:
- *     { secret, src:"tick", symbol, price, time }
- *
- *   - features (bar close snapshot):
- *     { secret, src:"features", symbol, tf, timestamp, close, high, low,
- *       ema8, ema18, ema50, rsi, atr, atrPct, adx, fwo, ray_buy, ray_sell, fwo_recover }
- *
- * Ignores legacy Pine decisions:
- *   - { action:"ready", ... }
- *   - { src:"enter_long", ... }
- *   - { intent:"exit_long", ... }
- *
- * Sends to 3Commas signal bots:
- *   POST https://api.3commas.io/signal_bots/webhooks
- *
- * ENV (recommended):
+ * ENV:
  *   PORT=8080
- *   WEBHOOK_SECRET=...               (for features)
- *   TICKROUTER_SECRET=...            (for tick router)
+ *   WEBHOOK_SECRET=...           (features secret)
+ *   TICKROUTER_SECRET=...        (tick router secret)
  *   C3_SIGNAL_SECRET=...
  *   C3_SIGNAL_URL=https://api.3commas.io/signal_bots/webhooks
  *   C3_TIMEOUT_MS=8000
  *   MAX_LAG_SEC=300
  *   SYMBOL_BOT_MAP='{"BINANCE:SOLUSDT":"26626591-bb3e-4cda-8638-d3f6ce328a74"}'
- *
- * Optional tuning:
- *   TICK_MAX_AGE_SEC=60
- *   SETUP_TTL_SEC=1800
- *   COOLDOWN_SEC=180
- *   SCORE_ENTER_SMALL=6
- *   SCORE_ENTER_FULL=7
- *   PUMP_BLOCK_PCT=1.8
- *   PUMP_BLOCK_WINDOW_BARS=3
  */
 
 import express from "express";
@@ -113,7 +91,6 @@ function ensureSymbol(symbol) {
       lastTickMs: 0,
       lastPrice: null,
       bars: [],
-
       regime: { mode: "unknown", confidence: 0 },
 
       setup: {
@@ -280,7 +257,7 @@ function scoreSetup(s) {
   // Momentum: RSI rising
   if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) score += 1;
 
-  // Anti-FOMO pump penalty (last N bars move)
+  // Anti-FOMO pump penalty
   const nBars = PUMP_BLOCK_WINDOW_BARS;
   if (bars.length > nBars) {
     const past = bars[bars.length - 1 - nBars];
@@ -476,7 +453,7 @@ function authOk(body) {
   // fallback if only one secret configured
   if (BRAIN_SECRET || TICKROUTER_SECRET) return body.secret === (BRAIN_SECRET || TICKROUTER_SECRET);
 
-  return true; // (not recommended) but allows local dev
+  return true;
 }
 
 // ---------------------------
@@ -501,6 +478,9 @@ async function handleWebhook(req, res) {
     if (body.src === "tick") {
       const price = n(body.price);
       if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
+
+      // ✅ DEBUG LOG (you will see ticks now)
+      console.log(`🟦 TICK rx ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
 
       s.lastPrice = price;
       s.lastTickMs = nowMs();
@@ -538,10 +518,14 @@ async function handleWebhook(req, res) {
         fwo_recover: bool01(body.fwo_recover),
       };
 
-      // Basic OHLC validation (avoid crashes)
       if (bar.close == null || bar.high == null || bar.low == null) {
         return res.status(400).json({ ok: false, err: "bad OHLC" });
       }
+
+      // ✅ DEBUG LOG (you will see features now)
+      console.log(
+        `🟩 FEAT rx ${symbol} tf=${body.tf || ""} close=${bar.close} rsi=${bar.rsi} atrPct=${bar.atrPct} ray_buy=${bar.ray_buy ? 1 : 0}`
+      );
 
       s.bars.push(bar);
       pruneBars(s);
@@ -558,6 +542,8 @@ async function handleWebhook(req, res) {
       return res.json({ ok: true });
     }
 
+    // Unknown payload
+    console.log(`🟨 UNKNOWN payload src=${body.src} keys=${Object.keys(body || {}).join(",")}`);
     return res.status(400).json({ ok: false, err: "unknown src" });
   } catch (e) {
     console.error("handleWebhook error:", e?.stack || e);
@@ -571,7 +557,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.0-phase2-full",
+    brain: "v3.0-phase2-full+logs",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
