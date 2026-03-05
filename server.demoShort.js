@@ -1,99 +1,119 @@
 /**
- * Brain v3.0 — Phase 2 (No READY in Pine)
- * One symbol = one bot (routes by symbol->bot_uuid map)
+ * Brain v3.0 Phase2 — Full server.js (SOLUSDT one-symbol = one-bot)
  *
- * INPUTS:
- *  - tick (from shared TickRouter):
- *    { secret, src:"tick", symbol, price, time }
+ * Endpoints:
+ *   POST /tv
+ *   POST /webhook   (alias for TickRouter or legacy forwarders)
  *
- *  - features (bar close snapshot):
- *    { secret, src:"features", symbol, tf, timestamp, close, high, low,
- *      ema8, ema18, ema50, rsi, atr, atrPct, adx, fwo, ray_buy, ray_sell }
+ * Accepts:
+ *   - tick:
+ *     { secret, src:"tick", symbol, price, time }
  *
- * LEGACY (ignored):
- *  - { action:"ready", ... }
- *  - { src:"enter_long", ... }
- *  - { intent:"exit_long", ... }
+ *   - features (bar close snapshot):
+ *     { secret, src:"features", symbol, tf, timestamp, close, high, low,
+ *       ema8, ema18, ema50, rsi, atr, atrPct, adx, fwo, ray_buy, ray_sell, fwo_recover }
  *
- * OUTPUT (Brain -> 3Commas Signal Bot Webhook):
- *  POST https://api.3commas.io/signal_bots/webhooks
- *   {
- *     secret: C3_SIGNAL_SECRET,
- *     bot_uuid: "<uuid>",
- *     max_lag: "300",
- *     timestamp: "<ISO>",
- *     trigger_price: "<string>",
- *     tv_exchange: "BINANCE",
- *     tv_instrument: "SOLUSDT",
- *     action: "enter_long" | "exit_long",
- *     comment: "..."
- *   }
+ * Ignores legacy Pine decisions:
+ *   - { action:"ready", ... }
+ *   - { src:"enter_long", ... }
+ *   - { intent:"exit_long", ... }
+ *
+ * Sends to 3Commas signal bots:
+ *   POST https://api.3commas.io/signal_bots/webhooks
+ *
+ * ENV (recommended):
+ *   PORT=8080
+ *   WEBHOOK_SECRET=...               (for features)
+ *   TICKROUTER_SECRET=...            (for tick router)
+ *   C3_SIGNAL_SECRET=...
+ *   C3_SIGNAL_URL=https://api.3commas.io/signal_bots/webhooks
+ *   C3_TIMEOUT_MS=8000
+ *   MAX_LAG_SEC=300
+ *   SYMBOL_BOT_MAP='{"BINANCE:SOLUSDT":"26626591-bb3e-4cda-8638-d3f6ce328a74"}'
+ *
+ * Optional tuning:
+ *   TICK_MAX_AGE_SEC=60
+ *   SETUP_TTL_SEC=1800
+ *   COOLDOWN_SEC=180
+ *   SCORE_ENTER_SMALL=6
+ *   SCORE_ENTER_FULL=7
+ *   PUMP_BLOCK_PCT=1.8
+ *   PUMP_BLOCK_WINDOW_BARS=3
  */
 
 import express from "express";
 
+// ---------------------------
+// Config
+// ---------------------------
 const PORT = process.env.PORT || 8080;
 
-// Secrets (separate is best)
-const BRAIN_SECRET = process.env.WEBHOOK_SECRET || ""; // for features/events
-const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || ""; // for ticks
+// Secrets
+const BRAIN_SECRET = process.env.WEBHOOK_SECRET || ""; // features/events
+const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || ""; // ticks
 
 // 3Commas
 const C3_SIGNAL_URL =
   process.env.C3_SIGNAL_URL || "https://api.3commas.io/signal_bots/webhooks";
 const C3_SIGNAL_SECRET = process.env.C3_SIGNAL_SECRET || "";
+const C3_TIMEOUT_MS = parseInt(process.env.C3_TIMEOUT_MS || "8000", 10);
 const MAX_LAG_SEC = parseInt(process.env.MAX_LAG_SEC || "300", 10);
 
-// Symbol->Bot map (JSON string)
-const SYMBOL_BOT_MAP_RAW = process.env.SYMBOL_BOT_MAP || "{}";
+// Routing: symbol -> bot_uuid (JSON)
 let SYMBOL_BOT_MAP = {};
 try {
-  SYMBOL_BOT_MAP = JSON.parse(SYMBOL_BOT_MAP_RAW);
-} catch {
-  console.error("❌ SYMBOL_BOT_MAP is not valid JSON");
+  SYMBOL_BOT_MAP = JSON.parse(process.env.SYMBOL_BOT_MAP || "{}");
+} catch (e) {
+  console.error("❌ SYMBOL_BOT_MAP invalid JSON:", e?.message || e);
   SYMBOL_BOT_MAP = {};
 }
 
-// Execution tuning
+// Decision tuning
 const TICK_MAX_AGE_SEC = parseInt(process.env.TICK_MAX_AGE_SEC || "60", 10);
 const SETUP_TTL_SEC = parseInt(process.env.SETUP_TTL_SEC || "1800", 10);
 const COOLDOWN_SEC = parseInt(process.env.COOLDOWN_SEC || "180", 10);
 
-// Score thresholds
-const SCORE_ENTER_FULL = parseInt(process.env.SCORE_ENTER_FULL || "7", 10);
 const SCORE_ENTER_SMALL = parseInt(process.env.SCORE_ENTER_SMALL || "6", 10);
+const SCORE_ENTER_FULL = parseInt(process.env.SCORE_ENTER_FULL || "7", 10);
 
-// Anti-FOMO / pump penalty
 const PUMP_BLOCK_PCT = parseFloat(process.env.PUMP_BLOCK_PCT || "1.8");
 const PUMP_BLOCK_WINDOW_BARS = parseInt(process.env.PUMP_BLOCK_WINDOW_BARS || "3", 10);
 
+// ---------------------------
+// App
+// ---------------------------
 const app = express();
 app.use(express.json({ limit: "512kb" }));
 
-// ------------------------
+// ---------------------------
 // State
-// ------------------------
+// ---------------------------
 const state = new Map();
 
 function nowMs() {
   return Date.now();
 }
-
 function n(x, fallback = null) {
   const v = Number(x);
   return Number.isFinite(v) ? v : fallback;
 }
-
 function bool01(x) {
   return String(x || "0") === "1" || x === true;
 }
-
+function tvParts(symbol) {
+  const [ex, inst] = symbol.includes(":") ? symbol.split(":") : ["BINANCE", symbol];
+  return { tv_exchange: ex || "BINANCE", tv_instrument: inst || symbol };
+}
+function botUuidForSymbol(symbol) {
+  return SYMBOL_BOT_MAP?.[symbol] || null;
+}
 function ensureSymbol(symbol) {
   if (!state.has(symbol)) {
     state.set(symbol, {
       lastTickMs: 0,
       lastPrice: null,
       bars: [],
+
       regime: { mode: "unknown", confidence: 0 },
 
       setup: {
@@ -126,20 +146,16 @@ function ensureSymbol(symbol) {
   }
   return state.get(symbol);
 }
-
-function pruneBars(s, maxBars = 600) {
+function pruneBars(s, maxBars = 800) {
   if (s.bars.length > maxBars) s.bars.splice(0, s.bars.length - maxBars);
 }
-
 function isInCooldown(s) {
   return nowMs() < s.cooldownUntilMs;
 }
-
 function startCooldown(s, reason) {
   s.cooldownUntilMs = nowMs() + COOLDOWN_SEC * 1000;
-  console.log(`⏳ Cooldown started ${COOLDOWN_SEC}s reason=${reason}`);
+  console.log(`⏳ Cooldown ${COOLDOWN_SEC}s reason=${reason}`);
 }
-
 function clearSetup(s, why) {
   if (s.setup.armed) console.log(`🧹 Setup cleared (${why}) type=${s.setup.setupType}`);
   s.setup.armed = false;
@@ -149,31 +165,25 @@ function clearSetup(s, why) {
   s.setup.invalidationPrice = null;
   s.setup.level = null;
 }
-
-function tvParts(symbol) {
-  const [ex, inst] = symbol.includes(":") ? symbol.split(":") : ["BINANCE", symbol];
-  return { tv_exchange: ex || "BINANCE", tv_instrument: inst || symbol };
+function canUseTick(s) {
+  return s.lastPrice != null && (nowMs() - s.lastTickMs) <= TICK_MAX_AGE_SEC * 1000;
 }
 
-function botUuidForSymbol(symbol) {
-  return SYMBOL_BOT_MAP[symbol] || null;
-}
-
-// ------------------------
-// Engines
-// ------------------------
+// ---------------------------
+// Engines (Phase 2 core)
+// ---------------------------
 function computeRegime(lastBar) {
   const ema8 = lastBar.ema8, ema18 = lastBar.ema18, ema50 = lastBar.ema50;
   const adx = lastBar.adx, atrPct = lastBar.atrPct;
 
   let score = 0;
-  if (ema8 && ema18 && ema50) {
+  if (ema8 != null && ema18 != null && ema50 != null) {
     if (ema8 > ema18 && ema18 > ema50) score += 2;
     const spread = (ema8 - ema50) / ema50;
     if (spread > 0.003) score += 1;
   }
-  if (adx && adx >= 18) score += 1;
-  if (atrPct && atrPct >= 0.5) score += 1;
+  if (adx != null && adx >= 18) score += 1;
+  if (atrPct != null && atrPct >= 0.5) score += 1;
 
   if (score >= 4) return { mode: "trend", confidence: 0.8 };
   if (score >= 3) return { mode: "trend", confidence: 0.6 };
@@ -189,7 +199,7 @@ function detectSetups(s) {
   const last = bars[bars.length - 1];
   const prev = bars[bars.length - 2];
 
-  // Setup A: washout -> reclaim
+  // Setup A: Washout -> Reclaim (READY replacement)
   const lookback = 20;
   let localLow = Infinity;
   for (let i = bars.length - lookback; i < bars.length; i++) {
@@ -197,8 +207,10 @@ function detectSetups(s) {
     localLow = Math.min(localLow, bars[i].low);
   }
 
-  const wasBelowEma18 = prev.close < prev.ema18;
-  const reclaimed = last.close > last.ema18 && wasBelowEma18;
+  const canUseEma = (last.ema18 != null && prev.ema18 != null);
+  const wasBelowEma18 = canUseEma ? (prev.close < prev.ema18) : false;
+  const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
+
   const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
   const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
 
@@ -212,7 +224,7 @@ function detectSetups(s) {
     return;
   }
 
-  // Setup B: breakout -> pullback
+  // Setup B: Breakout -> Pullback (trend continuation)
   if (s.regime.mode === "trend") {
     const swingLb = 30;
     let swingHigh = -Infinity;
@@ -248,27 +260,27 @@ function scoreSetup(s) {
 
   let score = 0;
 
-  // Regime
+  // Regime weight
   if (s.regime.mode === "trend") score += Math.round(3 * s.regime.confidence);
   else score += Math.round(2 * s.regime.confidence);
 
-  // Vol fit
+  // Volatility fit
   if (last.atrPct != null) {
     if (last.atrPct >= 0.6) score += 2;
     else if (last.atrPct >= 0.4) score += 1;
   }
 
-  // Fresh Ray buy (best confirmation)
+  // Confirmation: fresh Ray buy
   const freshMs = 5 * 60 * 1000;
   if (nowMs() - s.signals.lastRayBuyMs < freshMs) score += 3;
 
-  // Fresh FWO recover (optional)
+  // Confirmation: fresh FWO recover (optional)
   if (nowMs() - s.signals.lastFwoRecoverMs < freshMs) score += 2;
 
-  // Momentum
+  // Momentum: RSI rising
   if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) score += 1;
 
-  // Pump penalty
+  // Anti-FOMO pump penalty (last N bars move)
   const nBars = PUMP_BLOCK_WINDOW_BARS;
   if (bars.length > nBars) {
     const past = bars[bars.length - 1 - nBars];
@@ -287,10 +299,6 @@ function sizeFromScore(score) {
   return 0.0;
 }
 
-function canUseTick(s) {
-  return s.lastPrice != null && (nowMs() - s.lastTickMs) <= TICK_MAX_AGE_SEC * 1000;
-}
-
 function shouldEnter(s) {
   if (!s.setup.armed) return false;
   if (s.position.inPosition) return false;
@@ -306,7 +314,6 @@ function shouldEnter(s) {
     return false;
   }
 
-  // Score
   const score = s.setup.score;
   if (score < SCORE_ENTER_SMALL) return false;
 
@@ -319,7 +326,7 @@ function shouldEnter(s) {
 
   if (s.setup.setupType === "breakout_pullback") {
     const level = s.setup.level;
-    if (!level || !last.ema8) return false;
+    if (!level || last.ema8 == null) return false;
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
     return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && score >= SCORE_ENTER_FULL;
@@ -338,7 +345,7 @@ function exitCheck(s) {
   // peak
   s.position.peak = Math.max(s.position.peak ?? s.position.entry, price);
 
-  // ATR trailing
+  // ATR trailing stop
   if (last.atr != null && s.position.peak != null) {
     const mult = (s.regime.mode === "trend") ? 2.2 : 1.6;
     const newStop = s.position.peak - last.atr * mult;
@@ -347,7 +354,7 @@ function exitCheck(s) {
 
   if (s.position.stop != null && price <= s.position.stop) return "atr_trail_stop";
 
-  // trend fail
+  // trend failure confirmation
   if (s.regime.mode === "trend" && last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18) {
     return "trend_fail_ema_cross";
   }
@@ -355,9 +362,9 @@ function exitCheck(s) {
   return null;
 }
 
-// ------------------------
-// 3Commas
-// ------------------------
+// ---------------------------
+// 3Commas sender with timeout
+// ---------------------------
 async function post3C({ action, symbol, price, comment }) {
   if (!C3_SIGNAL_SECRET) throw new Error("Missing C3_SIGNAL_SECRET");
 
@@ -378,31 +385,39 @@ async function post3C({ action, symbol, price, comment }) {
     comment,
   };
 
-  const resp = await fetch(C3_SIGNAL_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), C3_TIMEOUT_MS);
 
-  const body = await resp.text();
-  return { status: resp.status, body };
+  try {
+    const resp = await fetch(C3_SIGNAL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const body = await resp.text();
+    return { status: resp.status, body };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-// ------------------------
-// Decision runner
-// ------------------------
+// ---------------------------
+// Main decision runner
+// ---------------------------
 async function runDecision(symbol) {
   const s = ensureSymbol(symbol);
   if (s.bars.length < 3) return;
 
   const lastBar = s.bars[s.bars.length - 1];
-  s.regime = computeRegime(lastBar);
 
+  s.regime = computeRegime(lastBar);
   expireSetup(s);
   detectSetups(s);
   scoreSetup(s);
 
-  // Exit first
+  // EXIT first
   const exitReason = exitCheck(s);
   if (exitReason) {
     const price = s.lastPrice ?? lastBar.close;
@@ -411,7 +426,7 @@ async function runDecision(symbol) {
       const r = await post3C({ action: "exit_long", symbol, price, comment: exitReason });
       console.log(`📨 3Commas exit_long status=${r.status}`);
     } catch (e) {
-      console.error("Exit error:", e);
+      console.error("Exit error:", e?.message || e);
       return;
     }
 
@@ -421,7 +436,7 @@ async function runDecision(symbol) {
     return;
   }
 
-  // Entry
+  // ENTRY
   if (shouldEnter(s)) {
     const price = s.lastPrice ?? lastBar.close;
     const sizeMult = sizeFromScore(s.setup.score);
@@ -434,7 +449,7 @@ async function runDecision(symbol) {
       const r = await post3C({ action: "enter_long", symbol, price, comment });
       console.log(`📨 3Commas enter_long status=${r.status}`);
     } catch (e) {
-      console.error("Entry error:", e);
+      console.error("Entry error:", e?.message || e);
       return;
     }
 
@@ -448,137 +463,136 @@ async function runDecision(symbol) {
   }
 }
 
-// ------------------------
+// ---------------------------
 // Auth
-// ------------------------
+// ---------------------------
 function authOk(body) {
+  // tick router ticks
   if (body?.src === "tick" && TICKROUTER_SECRET) return body.secret === TICKROUTER_SECRET;
+
+  // features from Pine
   if (body?.src === "features" && BRAIN_SECRET) return body.secret === BRAIN_SECRET;
 
-  // fallback if you only set one secret
+  // fallback if only one secret configured
   if (BRAIN_SECRET || TICKROUTER_SECRET) return body.secret === (BRAIN_SECRET || TICKROUTER_SECRET);
-  return true;
+
+  return true; // (not recommended) but allows local dev
 }
 
-// ------------------------
-// Routes
-// ------------------------
-app.get("/", (_, res) => res.json({ ok: true, brain: "v3.0-phase2-symbol-bot" }));
-
+// ---------------------------
+// Webhook handler (shared by /tv and /webhook)
+// ---------------------------
 async function handleWebhook(req, res) {
+  try {
+    const body = req.body || {};
+    if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
 
-  const body = req.body || {};
-  const symbol = body.symbol;
+    const symbol = body.symbol;
+    if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
 
-  if (!symbol) {
-    return res.status(400).json({ ok:false, error:"missing symbol" });
-  }
-
-  const s = ensureSymbol(symbol);
-
-  // TICK
-  if (body.src === "tick") {
-
-    const price = Number(body.price);
-    if (!price) return res.json({ok:false});
-
-    s.lastPrice = price;
-    s.lastTickMs = Date.now();
-
-    await runDecision(symbol);
-
-    return res.json({ ok:true });
-  }
-
-  // FEATURES
-  if (body.src === "features") {
-
-    const bar = {
-      close: Number(body.close),
-      high: Number(body.high),
-      low: Number(body.low),
-      ema8: Number(body.ema8),
-      ema18: Number(body.ema18),
-      ema50: Number(body.ema50),
-      rsi: Number(body.rsi),
-      atr: Number(body.atr),
-      atrPct: Number(body.atrPct),
-      adx: Number(body.adx)
-    };
-
-    s.bars.push(bar);
-
-    await runDecision(symbol);
-
-    return res.json({ ok:true });
-  }
-
-  return res.json({ ok:true });
-}
-
-app.post("/tv", handleWebhook);
-app.post("/webhook", handleWebhook);
-  }
-
-  const s = ensureSymbol(symbol);
-
-  if (body.src === "tick") {
-    const price = n(body.price);
-    if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
-
-    s.lastPrice = price;
-    s.lastTickMs = nowMs();
-
-    await runDecision(symbol);
-    return res.json({ ok: true });
-  }
-
-  if (body.src === "features") {
-    const timeMs = body.timestamp ? Date.parse(body.timestamp) : (body.time ? Date.parse(body.time) : nowMs());
-
-    const bar = {
-      timeMs,
-      close: n(body.close),
-      high: n(body.high),
-      low: n(body.low),
-
-      ema8: n(body.ema8),
-      ema18: n(body.ema18),
-      ema50: n(body.ema50),
-
-      rsi: n(body.rsi),
-      adx: n(body.adx),
-      atr: n(body.atr),
-      atrPct: n(body.atrPct),
-
-      fwo: n(body.fwo),
-
-      ray_buy: bool01(body.ray_buy),
-      ray_sell: bool01(body.ray_sell),
-      fwo_recover: bool01(body.fwo_recover),
-    };
-
-    if (bar.close == null || bar.high == null || bar.low == null) {
-      return res.status(400).json({ ok: false, err: "bad OHLC" });
+    // Ignore legacy Pine decision messages to enforce Brain authority
+    if (body.action === "ready" || body.src === "enter_long" || body.intent === "exit_long") {
+      return res.json({ ok: true, ignored: "legacy_pine_decision" });
     }
 
-    s.bars.push(bar);
-    pruneBars(s);
+    const s = ensureSymbol(symbol);
 
-    if (bar.ray_buy) s.signals.lastRayBuyMs = nowMs();
-    if (bar.ray_sell) s.signals.lastRaySellMs = nowMs();
-    if (bar.fwo_recover) s.signals.lastFwoRecoverMs = nowMs();
+    // TICK
+    if (body.src === "tick") {
+      const price = n(body.price);
+      if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
 
-    if (s.lastPrice == null) s.lastPrice = bar.close;
+      s.lastPrice = price;
+      s.lastTickMs = nowMs();
 
-    await runDecision(symbol);
-    return res.json({ ok: true });
+      await runDecision(symbol);
+      return res.json({ ok: true });
+    }
+
+    // FEATURES
+    if (body.src === "features") {
+      const timeMs =
+        body.timestamp ? Date.parse(body.timestamp) :
+        body.time ? Date.parse(body.time) :
+        nowMs();
+
+      const bar = {
+        timeMs,
+        close: n(body.close),
+        high: n(body.high),
+        low: n(body.low),
+
+        ema8: n(body.ema8),
+        ema18: n(body.ema18),
+        ema50: n(body.ema50),
+
+        rsi: n(body.rsi),
+        adx: n(body.adx),
+        atr: n(body.atr),
+        atrPct: n(body.atrPct),
+
+        fwo: n(body.fwo),
+
+        ray_buy: bool01(body.ray_buy),
+        ray_sell: bool01(body.ray_sell),
+        fwo_recover: bool01(body.fwo_recover),
+      };
+
+      // Basic OHLC validation (avoid crashes)
+      if (bar.close == null || bar.high == null || bar.low == null) {
+        return res.status(400).json({ ok: false, err: "bad OHLC" });
+      }
+
+      s.bars.push(bar);
+      pruneBars(s);
+
+      // update signal freshness
+      if (bar.ray_buy) s.signals.lastRayBuyMs = nowMs();
+      if (bar.ray_sell) s.signals.lastRaySellMs = nowMs();
+      if (bar.fwo_recover) s.signals.lastFwoRecoverMs = nowMs();
+
+      // ensure lastPrice at least exists
+      if (s.lastPrice == null) s.lastPrice = bar.close;
+
+      await runDecision(symbol);
+      return res.json({ ok: true });
+    }
+
+    return res.status(400).json({ ok: false, err: "unknown src" });
+  } catch (e) {
+    console.error("handleWebhook error:", e?.stack || e);
+    return res.status(500).json({ ok: false, err: "server error" });
   }
+}
 
-  return res.status(400).json({ ok: false, err: "unknown src" });
+// ---------------------------
+// Routes
+// ---------------------------
+app.get("/", (_, res) => {
+  res.json({
+    ok: true,
+    brain: "v3.0-phase2-full",
+    symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
+    hasBrainSecret: Boolean(BRAIN_SECRET),
+    hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
+  });
 });
 
+app.post("/tv", handleWebhook);
+app.post("/webhook", handleWebhook); // ✅ fixes TickRouter 404
+
+// Safety: do not crash on unhandled promise errors
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException:", err);
+});
+
+// ---------------------------
+// Start
+// ---------------------------
 app.listen(PORT, () => {
-  console.log(`✅ Brain v3.0 Phase2 listening on :${PORT}`);
-  console.log(`🧭 Symbol->Bot map keys: ${Object.keys(SYMBOL_BOT_MAP).length}`);
+  console.log(`✅ Brain listening on :${PORT}`);
+  console.log(`🧭 SYMBOL_BOT_MAP keys=${Object.keys(SYMBOL_BOT_MAP).length}`);
 });
