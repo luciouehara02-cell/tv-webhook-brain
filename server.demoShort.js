@@ -1,894 +1,541 @@
 /**
- * Brain v2.9-SHORT — READY_SHORT + enter/exit gatekeeper + 3Commas + (CrashProtect + EquityStab + Adaptive ProfitLock)
+ * Brain v3.0 — Phase 2 (No READY in Pine)
+ * One symbol = one bot (routes by symbol->bot_uuid map)
  *
- * INPUT (TradingView -> Brain):
- *  {
- *    "secret": "...",                    // WEBHOOK_SECRET
- *    "src"|"action"|"intent": "tick" | "ready_short" | "enter_short" | "exit_short",
- *    "symbol": "BINANCE:SOLUSDT",
- *    "price": "83.60",
- *    "time": "2026-02-22T17:01:03Z",
- *    "exitReason": "ray_exit"            // optional for exit_short
- *  }
+ * INPUTS:
+ *  - tick (from shared TickRouter):
+ *    { secret, src:"tick", symbol, price, time }
+ *
+ *  - features (bar close snapshot):
+ *    { secret, src:"features", symbol, tf, timestamp, close, high, low,
+ *      ema8, ema18, ema50, rsi, atr, atrPct, adx, fwo, ray_buy, ray_sell }
+ *
+ * LEGACY (ignored):
+ *  - { action:"ready", ... }
+ *  - { src:"enter_long", ... }
+ *  - { intent:"exit_long", ... }
  *
  * OUTPUT (Brain -> 3Commas Signal Bot Webhook):
  *  POST https://api.3commas.io/signal_bots/webhooks
- *  {
- *    "secret": C3_SIGNAL_SECRET,
- *    "max_lag": "300",
- *    "timestamp": "<ISO>",
- *    "trigger_price": "<string>",
- *    "tv_exchange": "BINANCE",
- *    "tv_instrument": "SOLUSDT",
- *    "action": "enter_short" | "exit_short",
- *    "bot_uuid": C3_BOT_UUID
- *  }
+ *   {
+ *     secret: C3_SIGNAL_SECRET,
+ *     bot_uuid: "<uuid>",
+ *     max_lag: "300",
+ *     timestamp: "<ISO>",
+ *     trigger_price: "<string>",
+ *     tv_exchange: "BINANCE",
+ *     tv_instrument: "SOLUSDT",
+ *     action: "enter_long" | "exit_long",
+ *     comment: "..."
+ *   }
  */
 
 import express from "express";
-import crypto from "crypto";
 
-process.on("unhandledRejection", (err) =>
-  console.error("[FATAL] unhandledRejection:", err)
-);
-process.on("uncaughtException", (err) =>
-  console.error("[FATAL] uncaughtException:", err)
-);
+const PORT = process.env.PORT || 8080;
 
-/* ------------------------- ENV helpers ------------------------- */
-function safeStr(x) {
-  return x == null ? "" : String(x);
-}
-function bool(v, d = false) {
-  if (v == null) return d;
-  if (typeof v === "boolean") return v;
-  const s = String(v).toLowerCase().trim();
-  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
-  if (["0", "false", "no", "n", "off"].includes(s)) return false;
-  return d;
-}
-function num(v, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
-}
-function int(v, d = 0) {
-  const n = parseInt(String(v), 10);
-  return Number.isFinite(n) ? n : d;
-}
-function toMs(iso) {
-  const t = iso ? Date.parse(iso) : NaN;
-  return Number.isFinite(t) ? t : null;
-}
-function msMin(m) {
-  return Math.floor(m * 60 * 1000);
-}
-function round(x, dp = 4) {
-  if (!Number.isFinite(x)) return x;
-  const m = 10 ** dp;
-  return Math.round(x * m) / m;
-}
-function uid() {
-  return crypto.randomBytes(8).toString("hex");
+// Secrets (separate is best)
+const BRAIN_SECRET = process.env.WEBHOOK_SECRET || ""; // for features/events
+const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || ""; // for ticks
+
+// 3Commas
+const C3_SIGNAL_URL =
+  process.env.C3_SIGNAL_URL || "https://api.3commas.io/signal_bots/webhooks";
+const C3_SIGNAL_SECRET = process.env.C3_SIGNAL_SECRET || "";
+const MAX_LAG_SEC = parseInt(process.env.MAX_LAG_SEC || "300", 10);
+
+// Symbol->Bot map (JSON string)
+const SYMBOL_BOT_MAP_RAW = process.env.SYMBOL_BOT_MAP || "{}";
+let SYMBOL_BOT_MAP = {};
+try {
+  SYMBOL_BOT_MAP = JSON.parse(SYMBOL_BOT_MAP_RAW);
+} catch {
+  console.error("❌ SYMBOL_BOT_MAP is not valid JSON");
+  SYMBOL_BOT_MAP = {};
 }
 
-/* ------------------------- ENV ------------------------- */
-const ENV = {
-  PORT: int(process.env.PORT, 8080),
-  WEBHOOK_SECRET:
-    process.env.WEBHOOK_SECRET || "CHANGE_ME_TO_RANDOM_40+CHARS",
-  WEBHOOK_PATH: process.env.WEBHOOK_PATH || "/webhook",
+// Execution tuning
+const TICK_MAX_AGE_SEC = parseInt(process.env.TICK_MAX_AGE_SEC || "60", 10);
+const SETUP_TTL_SEC = parseInt(process.env.SETUP_TTL_SEC || "1800", 10);
+const COOLDOWN_SEC = parseInt(process.env.COOLDOWN_SEC || "180", 10);
 
-  ENABLE_POST_3C: bool(process.env.ENABLE_POST_3C, false),
+// Score thresholds
+const SCORE_ENTER_FULL = parseInt(process.env.SCORE_ENTER_FULL || "7", 10);
+const SCORE_ENTER_SMALL = parseInt(process.env.SCORE_ENTER_SMALL || "6", 10);
 
-  // Heartbeat
-  REQUIRE_FRESH_HEARTBEAT: bool(process.env.REQUIRE_FRESH_HEARTBEAT, true),
-  HEARTBEAT_MAX_AGE_SEC: num(process.env.HEARTBEAT_MAX_AGE_SEC, 240),
+// Anti-FOMO / pump penalty
+const PUMP_BLOCK_PCT = parseFloat(process.env.PUMP_BLOCK_PCT || "1.8");
+const PUMP_BLOCK_WINDOW_BARS = parseInt(process.env.PUMP_BLOCK_WINDOW_BARS || "3", 10);
 
-  // Cooldown
-  COOLDOWN_MIN: num(process.env.COOLDOWN_MIN, 3),
+const app = express();
+app.use(express.json({ limit: "512kb" }));
 
-  // ✅ READY gate (SHORT)
-  READY_ENABLED: bool(process.env.READY_ENABLED, true),
-  READY_TTL_MIN: num(process.env.READY_TTL_MIN, 20),
-  READY_MAX_MOVE_PCT: num(process.env.READY_MAX_MOVE_PCT, 0.6),
-  READY_AUTOEXPIRE_ENABLED: bool(process.env.READY_AUTOEXPIRE_ENABLED, true),
-  READY_AUTOEXPIRE_PCT: num(process.env.READY_AUTOEXPIRE_PCT, 0.6),
-  READY_ACCEPT_LEGACY_READY: bool(process.env.READY_ACCEPT_LEGACY_READY, false),
+// ------------------------
+// State
+// ------------------------
+const state = new Map();
 
-  // Optional: accept legacy Ray format for SHORT
-  ACCEPT_RAY_SIDE_FOR_SHORT: bool(
-    process.env.ACCEPT_RAY_SIDE_FOR_SHORT,
-    true
-  ),
-
-  // ProfitLock base (will be adapted)
-  PROFIT_LOCK_ENABLED: bool(process.env.PROFIT_LOCK_ENABLED, true),
-  PROFIT_LOCK_TRIGGER_PCT: num(process.env.PROFIT_LOCK_TRIGGER_PCT, 0.6), // base arm %
-  PROFIT_LOCK_GIVEBACK_PCT: num(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.3), // base give %
-  PROFIT_LOCK_ADAPTIVE: bool(process.env.PROFIT_LOCK_ADAPTIVE, true),
-
-  // Adaptive multipliers
-  TREND_MULT_ARM: num(process.env.TREND_MULT_ARM, 2.2),
-  TREND_MULT_GIVE: num(process.env.TREND_MULT_GIVE, 1.2),
-  RANGE_MULT_ARM: num(process.env.RANGE_MULT_ARM, 1.4),
-  RANGE_MULT_GIVE: num(process.env.RANGE_MULT_GIVE, 0.9),
-
-  // Clamps
-  PL_MIN_ARM: num(process.env.PL_MIN_ARM, 0.4),
-  PL_MIN_GIVE: num(process.env.PL_MIN_GIVE, 0.3),
-  PL_MAX_ARM: num(process.env.PL_MAX_ARM, 3.0),
-  PL_MAX_GIVE: num(process.env.PL_MAX_GIVE, 1.5),
-
-  // CrashProtect (dump protection)
-  CRASH_PROTECT_ENABLED: bool(process.env.CRASH_PROTECT_ENABLED, true),
-  DUMP_1M_PCT: num(process.env.DUMP_1M_PCT, 2.0),
-  DUMP_5M_PCT: num(process.env.DUMP_5M_PCT, 4.0),
-  CRASH_COOLDOWN_MIN: num(process.env.CRASH_COOLDOWN_MIN, 45),
-
-  // EquityStab (loss streak protection)
-  EQUITY_STAB_ENABLED: bool(process.env.EQUITY_STAB_ENABLED, true),
-  LOSS2_COOLDOWN_MIN: num(process.env.LOSS2_COOLDOWN_MIN, 15),
-  LOSS3_COOLDOWN_MIN: num(process.env.LOSS3_COOLDOWN_MIN, 45),
-  CONSERVATIVE_COOLDOWN_MIN: num(
-    process.env.CONSERVATIVE_COOLDOWN_MIN,
-    45
-  ),
-
-  // 3Commas
-  C3_WEBHOOK_URL:
-    process.env.C3_WEBHOOK_URL ||
-    "https://api.3commas.io/signal_bots/webhooks",
-  C3_BOT_UUID: process.env.C3_BOT_UUID || "",
-  // accept either name to avoid confusion
-  C3_SIGNAL_SECRET:
-    process.env.C3_SIGNAL_SECRET || process.env.C3_WEBHOOK_SECRET || "",
-  C3_MAX_LAG_SEC: String(process.env.C3_MAX_LAG_SEC || "300"),
-  C3_TIMEOUT_MS: int(process.env.C3_TIMEOUT_MS, 8000),
-
-  LOG_JSON: bool(process.env.LOG_JSON, true),
-};
-
-// ✅ BOOT log (outside ENV object; no crash)
-console.log(
-  `[BOOT] WEBHOOK_SECRET suffix=${String(ENV.WEBHOOK_SECRET || "").slice(
-    -6
-  )} len=${String(ENV.WEBHOOK_SECRET || "").length}`
-);
-
-function log(tag, obj = {}) {
-  const payload = { tag, t: new Date().toISOString(), ...obj };
-  if (ENV.LOG_JSON) console.log(JSON.stringify(payload));
-  else console.log(`[${payload.t}] ${tag}`, obj);
+function nowMs() {
+  return Date.now();
 }
 
-log("STARTUP_CONFIG", {
-  brain: "v2.9-SHORT",
-  port: ENV.PORT,
-  path: ENV.WEBHOOK_PATH,
-  enablePost3c: ENV.ENABLE_POST_3C,
-  c3_bot_uuid_set: !!ENV.C3_BOT_UUID,
-  c3_signal_secret_set: !!ENV.C3_SIGNAL_SECRET,
-  readyEnabled: ENV.READY_ENABLED,
-  crashProtect: ENV.CRASH_PROTECT_ENABLED,
-  equityStab: ENV.EQUITY_STAB_ENABLED,
-  profitLock: ENV.PROFIT_LOCK_ENABLED,
-  adaptivePL: ENV.PROFIT_LOCK_ADAPTIVE,
-});
-
-/* ------------------------- Secret check ------------------------- */
-function verifySecret(got, expected) {
-  const a = Buffer.from(String(got || ""));
-  const b = Buffer.from(String(expected || ""));
-  if (a.length !== b.length) return false;
-  try {
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
+function n(x, fallback = null) {
+  const v = Number(x);
+  return Number.isFinite(v) ? v : fallback;
 }
 
-// ✅ robust extraction (works with secret/tv_secret/passphrase/token)
-function extractSecret(payload) {
-  return (
-    payload?.secret ??
-    payload?.tv_secret ??
-    payload?.passphrase ??
-    payload?.token ??
-    ""
-  );
+function bool01(x) {
+  return String(x || "0") === "1" || x === true;
 }
 
-/* ------------------------- STATE ------------------------- */
-const STATE = {
-  POSITION_SHORT: null,
-  READY_SHORT: null,
-  ACT: {
-    lastHeartbeatTs: 0,
-    cooldownUntil: 0,
-    crashCooldownUntil: 0,
-    conservativeUntil: 0,
-    lossesInRow: 0,
-    lastTradePnlPct: null,
-  },
-  TICKS: [],
-};
+function ensureSymbol(symbol) {
+  if (!state.has(symbol)) {
+    state.set(symbol, {
+      lastTickMs: 0,
+      lastPrice: null,
+      bars: [],
+      regime: { mode: "unknown", confidence: 0 },
 
-/* ------------------------- 3Commas payload ------------------------- */
-function build3CommasCustomSignal(action, evt) {
-  return {
-    secret: ENV.C3_SIGNAL_SECRET,
-    max_lag: ENV.C3_MAX_LAG_SEC,
-    timestamp: new Date(evt.ts).toISOString(),
-    trigger_price: String(evt.price),
-    tv_exchange: evt.exchange || "BINANCE",
-    tv_instrument: evt.instrument,
-    action,
-    bot_uuid: ENV.C3_BOT_UUID,
-  };
-}
+      setup: {
+        armed: false,
+        setupType: null,
+        armedMs: 0,
+        ttlMs: SETUP_TTL_SEC * 1000,
+        score: 0,
+        invalidationPrice: null,
+        level: null,
+      },
 
-async function postTo3Commas(payload) {
-  if (!ENV.C3_BOT_UUID || !ENV.C3_SIGNAL_SECRET) {
-    return { ok: false, error: "missing_C3_BOT_UUID_or_C3_SIGNAL_SECRET" };
-  }
+      position: {
+        inPosition: false,
+        entry: null,
+        peak: null,
+        stop: null,
+        sizeMult: 0,
+        enteredMs: 0,
+      },
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), ENV.C3_TIMEOUT_MS);
+      cooldownUntilMs: 0,
 
-  try {
-    const r = await fetch(ENV.C3_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
+      signals: {
+        lastRayBuyMs: 0,
+        lastRaySellMs: 0,
+        lastFwoRecoverMs: 0,
+      },
     });
-    const body = await r.text().catch(() => "");
-    return { ok: r.ok, status: r.status, body };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  } finally {
-    clearTimeout(t);
   }
+  return state.get(symbol);
 }
 
-/* ------------------------- Normalization ------------------------- */
-function toBotPair(symNoEx) {
-  if (!symNoEx) return "UNKNOWN_PAIR";
-  if (symNoEx.includes("_")) return symNoEx;
-  const quotes = ["USDT", "USD", "BUSD", "USDC", "BTC", "ETH"];
-  for (const q of quotes) {
-    if (symNoEx.endsWith(q) && symNoEx.length > q.length) {
-      const base = symNoEx.slice(0, -q.length);
-      return `${base}_${q}`;
+function pruneBars(s, maxBars = 600) {
+  if (s.bars.length > maxBars) s.bars.splice(0, s.bars.length - maxBars);
+}
+
+function isInCooldown(s) {
+  return nowMs() < s.cooldownUntilMs;
+}
+
+function startCooldown(s, reason) {
+  s.cooldownUntilMs = nowMs() + COOLDOWN_SEC * 1000;
+  console.log(`⏳ Cooldown started ${COOLDOWN_SEC}s reason=${reason}`);
+}
+
+function clearSetup(s, why) {
+  if (s.setup.armed) console.log(`🧹 Setup cleared (${why}) type=${s.setup.setupType}`);
+  s.setup.armed = false;
+  s.setup.setupType = null;
+  s.setup.armedMs = 0;
+  s.setup.score = 0;
+  s.setup.invalidationPrice = null;
+  s.setup.level = null;
+}
+
+function tvParts(symbol) {
+  const [ex, inst] = symbol.includes(":") ? symbol.split(":") : ["BINANCE", symbol];
+  return { tv_exchange: ex || "BINANCE", tv_instrument: inst || symbol };
+}
+
+function botUuidForSymbol(symbol) {
+  return SYMBOL_BOT_MAP[symbol] || null;
+}
+
+// ------------------------
+// Engines
+// ------------------------
+function computeRegime(lastBar) {
+  const ema8 = lastBar.ema8, ema18 = lastBar.ema18, ema50 = lastBar.ema50;
+  const adx = lastBar.adx, atrPct = lastBar.atrPct;
+
+  let score = 0;
+  if (ema8 && ema18 && ema50) {
+    if (ema8 > ema18 && ema18 > ema50) score += 2;
+    const spread = (ema8 - ema50) / ema50;
+    if (spread > 0.003) score += 1;
+  }
+  if (adx && adx >= 18) score += 1;
+  if (atrPct && atrPct >= 0.5) score += 1;
+
+  if (score >= 4) return { mode: "trend", confidence: 0.8 };
+  if (score >= 3) return { mode: "trend", confidence: 0.6 };
+  if (score >= 2) return { mode: "range", confidence: 0.55 };
+  return { mode: "range", confidence: 0.4 };
+}
+
+function detectSetups(s) {
+  if (s.setup.armed) return;
+  const bars = s.bars;
+  if (bars.length < 60) return;
+
+  const last = bars[bars.length - 1];
+  const prev = bars[bars.length - 2];
+
+  // Setup A: washout -> reclaim
+  const lookback = 20;
+  let localLow = Infinity;
+  for (let i = bars.length - lookback; i < bars.length; i++) {
+    if (i < 0) continue;
+    localLow = Math.min(localLow, bars[i].low);
+  }
+
+  const wasBelowEma18 = prev.close < prev.ema18;
+  const reclaimed = last.close > last.ema18 && wasBelowEma18;
+  const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
+  const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
+
+  if (washout && reclaimed && rsiUp) {
+    s.setup.armed = true;
+    s.setup.setupType = "washout_reclaim";
+    s.setup.armedMs = nowMs();
+    s.setup.invalidationPrice = localLow * 0.999;
+    s.setup.level = last.ema18;
+    console.log(`🟡 Armed washout_reclaim inv=${s.setup.invalidationPrice}`);
+    return;
+  }
+
+  // Setup B: breakout -> pullback
+  if (s.regime.mode === "trend") {
+    const swingLb = 30;
+    let swingHigh = -Infinity;
+    for (let i = bars.length - swingLb; i < bars.length - 1; i++) {
+      if (i < 0) continue;
+      swingHigh = Math.max(swingHigh, bars[i].high);
+    }
+    const breakout = last.close > swingHigh;
+    if (breakout) {
+      s.setup.armed = true;
+      s.setup.setupType = "breakout_pullback";
+      s.setup.armedMs = nowMs();
+      s.setup.level = swingHigh;
+      s.setup.invalidationPrice = (last.ema50 != null) ? (last.ema50 * 0.995) : null;
+      console.log(`🟡 Armed breakout_pullback level=${s.setup.level}`);
+      return;
     }
   }
-  return symNoEx;
 }
 
-function normalizeIntent(p) {
-  const a = safeStr(p.action).toLowerCase().trim();
-  const i = safeStr(p.intent).toLowerCase().trim();
-  const s = safeStr(p.src).toLowerCase().trim();
-  return a || i || s;
+function expireSetup(s) {
+  if (!s.setup.armed) return;
+  if (nowMs() - s.setup.armedMs > s.setup.ttlMs) clearSetup(s, "ttl");
 }
 
-function normalizeWebhook(p) {
-  const ts = toMs(p.time || p.timestamp) ?? Date.now();
-  const intent = normalizeIntent(p);
+function scoreSetup(s) {
+  if (!s.setup.armed) return 0;
+  const bars = s.bars;
+  if (bars.length < 3) return 0;
 
-  const rawSymbol = safeStr(p.symbol || "");
-  const exchangeFromSymbol = rawSymbol.includes(":")
-    ? rawSymbol.split(":")[0]
-    : "";
-  const instrumentFromSymbol = rawSymbol.includes(":")
-    ? rawSymbol.split(":")[1]
-    : rawSymbol;
+  const last = bars[bars.length - 1];
+  const prev = bars[bars.length - 2];
 
-  const exchange = safeStr(p.tv_exchange || exchangeFromSymbol || "BINANCE");
-  const instrument = safeStr(
-    p.tv_instrument || instrumentFromSymbol || "UNKNOWN"
-  );
-  const pair = toBotPair(instrument);
+  let score = 0;
 
-  const price = num(p.price ?? p.trigger_price, NaN);
+  // Regime
+  if (s.regime.mode === "trend") score += Math.round(3 * s.regime.confidence);
+  else score += Math.round(2 * s.regime.confidence);
 
-  return {
-    ts,
-    intent,
-    exchange,
-    instrument,
-    pair,
-    price,
-    exitReason: safeStr(p.exitReason || ""),
-    side: safeStr(p.side || "").toUpperCase(),
-  };
-}
-
-/* ------------------------- READY helpers ------------------------- */
-function readyIsOn() {
-  return !!(STATE.READY_SHORT && STATE.READY_SHORT.on);
-}
-
-function clearReady(reason) {
-  if (!STATE.READY_SHORT) return;
-  log("READY_SHORT_CLEARED", { reason, ready: STATE.READY_SHORT });
-  STATE.READY_SHORT = null;
-}
-
-function setReady(evt) {
-  const ttlMs = ENV.READY_TTL_MIN > 0 ? msMin(ENV.READY_TTL_MIN) : 0;
-  const expiresAt = ttlMs > 0 ? evt.ts + ttlMs : 0;
-
-  STATE.READY_SHORT = {
-    on: true,
-    id: uid(),
-    ts: evt.ts,
-    pair: evt.pair,
-    exchange: evt.exchange,
-    instrument: evt.instrument,
-    signalPrice: evt.price,
-    expiresAt,
-  };
-
-  log("READY_SHORT_SET", {
-    id: STATE.READY_SHORT.id,
-    ts: STATE.READY_SHORT.ts,
-    pair: STATE.READY_SHORT.pair,
-    exchange: STATE.READY_SHORT.exchange,
-    instrument: STATE.READY_SHORT.instrument,
-    signalPrice: STATE.READY_SHORT.signalPrice,
-    expiresAt: STATE.READY_SHORT.expiresAt || null,
-  });
-}
-
-function readyTTLExpireCheck(nowTs) {
-  if (!ENV.READY_ENABLED) return;
-  if (!STATE.READY_SHORT?.on) return;
-  if (!STATE.READY_SHORT.expiresAt) return;
-  if (nowTs >= STATE.READY_SHORT.expiresAt) clearReady("ttl_expired");
-}
-
-function pctDiff(a, b) {
-  if (!Number.isFinite(a) || a === 0 || !Number.isFinite(b)) return NaN;
-  return (Math.abs(b - a) / Math.abs(a)) * 100.0;
-}
-
-function maybeAutoExpireReadyOnTick(evt) {
-  if (!ENV.READY_ENABLED) return;
-  if (!ENV.READY_AUTOEXPIRE_ENABLED) return;
-  if (!STATE.READY_SHORT?.on) return;
-  if (STATE.POSITION_SHORT?.isOpen) return;
-  if (!Number.isFinite(evt.price)) return;
-  if (STATE.READY_SHORT.instrument !== evt.instrument) return;
-
-  const d = pctDiff(STATE.READY_SHORT.signalPrice, evt.price);
-  if (!Number.isFinite(d)) return;
-
-  if (d > ENV.READY_AUTOEXPIRE_PCT) {
-    clearReady(`autoexpire_drift_${round(d, 3)}%`);
-  }
-}
-
-function gateEnterByReady(evt) {
-  if (!ENV.READY_ENABLED) return { ok: true, reason: "ready_disabled" };
-  if (!STATE.READY_SHORT?.on) return { ok: false, reason: "not_ready_short" };
-
-  if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-    if (!STATE.ACT.lastHeartbeatTs)
-      return { ok: false, reason: "no_heartbeat_seen" };
-    const ageMs = evt.ts - STATE.ACT.lastHeartbeatTs;
-    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000)
-      return { ok: false, reason: "heartbeat_stale" };
+  // Vol fit
+  if (last.atrPct != null) {
+    if (last.atrPct >= 0.6) score += 2;
+    else if (last.atrPct >= 0.4) score += 1;
   }
 
-  if (STATE.READY_SHORT.instrument !== evt.instrument) {
-    return { ok: false, reason: "ready_symbol_mismatch" };
+  // Fresh Ray buy (best confirmation)
+  const freshMs = 5 * 60 * 1000;
+  if (nowMs() - s.signals.lastRayBuyMs < freshMs) score += 3;
+
+  // Fresh FWO recover (optional)
+  if (nowMs() - s.signals.lastFwoRecoverMs < freshMs) score += 2;
+
+  // Momentum
+  if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) score += 1;
+
+  // Pump penalty
+  const nBars = PUMP_BLOCK_WINDOW_BARS;
+  if (bars.length > nBars) {
+    const past = bars[bars.length - 1 - nBars];
+    const movePct = ((last.close - past.close) / past.close) * 100;
+    if (movePct > PUMP_BLOCK_PCT) score -= 3;
   }
 
-  if (
-    !Number.isFinite(STATE.READY_SHORT.signalPrice) ||
-    !Number.isFinite(evt.price)
-  ) {
-    return { ok: false, reason: "missing_prices_for_drift" };
-  }
-
-  const d = pctDiff(STATE.READY_SHORT.signalPrice, evt.price);
-  if (!Number.isFinite(d)) return { ok: false, reason: "bad_drift_calc" };
-
-  if (d > ENV.READY_MAX_MOVE_PCT) {
-    clearReady(`hard_reset_drift_${round(d, 3)}%`);
-    return { ok: false, reason: `ready_drift_reset_${round(d, 3)}%` };
-  }
-
-  return { ok: true, reason: "ready_ok", driftPct: d };
+  score = Math.max(0, Math.min(10, score));
+  s.setup.score = score;
+  return score;
 }
 
-/* ------------------------- Tick storage + CrashProtect ------------------------- */
-function pushTick(ts, price) {
-  if (!Number.isFinite(price)) return;
-  STATE.TICKS.push({ ts, price });
-
-  const cutoff = ts - 6 * 60 * 1000;
-  while (STATE.TICKS.length && STATE.TICKS[0].ts < cutoff) STATE.TICKS.shift();
+function sizeFromScore(score) {
+  if (score >= SCORE_ENTER_FULL) return 1.0;
+  if (score >= SCORE_ENTER_SMALL) return 0.6;
+  return 0.0;
 }
 
-function pctChange(from, to) {
-  if (!Number.isFinite(from) || from === 0 || !Number.isFinite(to)) return NaN;
-  return ((to - from) / from) * 100;
+function canUseTick(s) {
+  return s.lastPrice != null && (nowMs() - s.lastTickMs) <= TICK_MAX_AGE_SEC * 1000;
 }
 
-function findPriceAtOrBefore(targetTs) {
-  for (let i = STATE.TICKS.length - 1; i >= 0; i--) {
-    if (STATE.TICKS[i].ts <= targetTs) return STATE.TICKS[i].price;
+function shouldEnter(s) {
+  if (!s.setup.armed) return false;
+  if (s.position.inPosition) return false;
+  if (isInCooldown(s)) return false;
+  if (!canUseTick(s)) return false;
+
+  const price = s.lastPrice;
+  const last = s.bars[s.bars.length - 1];
+
+  // Invalidation
+  if (s.setup.invalidationPrice != null && price <= s.setup.invalidationPrice) {
+    clearSetup(s, "invalidation");
+    return false;
   }
+
+  // Score
+  const score = s.setup.score;
+  if (score < SCORE_ENTER_SMALL) return false;
+
+  if (s.setup.setupType === "washout_reclaim") {
+    const level = s.setup.level ?? last.ema18;
+    if (!level) return false;
+    const chasePct = ((price - level) / level) * 100;
+    return price > level && chasePct <= 0.25;
+  }
+
+  if (s.setup.setupType === "breakout_pullback") {
+    const level = s.setup.level;
+    if (!level || !last.ema8) return false;
+    const nearLevelPct = Math.abs((price - level) / level) * 100;
+    const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
+    return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && score >= SCORE_ENTER_FULL;
+  }
+
+  return false;
+}
+
+function exitCheck(s) {
+  if (!s.position.inPosition) return null;
+  if (!canUseTick(s)) return null;
+
+  const price = s.lastPrice;
+  const last = s.bars[s.bars.length - 1];
+
+  // peak
+  s.position.peak = Math.max(s.position.peak ?? s.position.entry, price);
+
+  // ATR trailing
+  if (last.atr != null && s.position.peak != null) {
+    const mult = (s.regime.mode === "trend") ? 2.2 : 1.6;
+    const newStop = s.position.peak - last.atr * mult;
+    if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
+  }
+
+  if (s.position.stop != null && price <= s.position.stop) return "atr_trail_stop";
+
+  // trend fail
+  if (s.regime.mode === "trend" && last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18) {
+    return "trend_fail_ema_cross";
+  }
+
   return null;
 }
 
-function crashProtectCheck(ts, currentPrice) {
-  if (!ENV.CRASH_PROTECT_ENABLED) return { block: false, reason: "disabled" };
+// ------------------------
+// 3Commas
+// ------------------------
+async function post3C({ action, symbol, price, comment }) {
+  if (!C3_SIGNAL_SECRET) throw new Error("Missing C3_SIGNAL_SECRET");
 
-  const p1 = findPriceAtOrBefore(ts - 60 * 1000);
-  const p5 = findPriceAtOrBefore(ts - 5 * 60 * 1000);
+  const bot_uuid = botUuidForSymbol(symbol);
+  if (!bot_uuid) throw new Error(`No bot_uuid mapping for symbol=${symbol}`);
 
-  const ch1 = p1 == null ? NaN : pctChange(p1, currentPrice);
-  const ch5 = p5 == null ? NaN : pctChange(p5, currentPrice);
+  const { tv_exchange, tv_instrument } = tvParts(symbol);
 
-  if (Number.isFinite(ch1) && ch1 <= -ENV.DUMP_1M_PCT)
-    return { block: true, reason: `dump1m(${round(ch1, 2)}%)` };
-  if (Number.isFinite(ch5) && ch5 <= -ENV.DUMP_5M_PCT)
-    return { block: true, reason: `dump5m(${round(ch5, 2)}%)` };
-  return { block: false, reason: "ok" };
-}
-
-/* ------------------------- Simple regime inference (ticks only) ------------------------- */
-function inferRegime(ts, currentPrice) {
-  const p3 = findPriceAtOrBefore(ts - 3 * 60 * 1000);
-  if (p3 == null) return { regime: "unknown", slopePct: 0, volPct: 0 };
-
-  const slopePct = pctChange(p3, currentPrice);
-  const cutoff = ts - 3 * 60 * 1000;
-  let minP = Infinity,
-    maxP = -Infinity;
-
-  for (const x of STATE.TICKS) {
-    if (x.ts >= cutoff) {
-      minP = Math.min(minP, x.price);
-      maxP = Math.max(maxP, x.price);
-    }
-  }
-
-  const volPct =
-    Number.isFinite(minP) && Number.isFinite(maxP) && minP > 0
-      ? ((maxP - minP) / minP) * 100
-      : 0;
-
-  const absSlope = Math.abs(slopePct);
-  const regime = absSlope >= Math.max(0.15, volPct * 0.6) ? "trend" : "range";
-  return { regime, slopePct, volPct };
-}
-
-function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
-}
-
-function computeAdaptiveProfitLock(ts, currentPrice) {
-  const baseArm = ENV.PROFIT_LOCK_TRIGGER_PCT;
-  const baseGive = ENV.PROFIT_LOCK_GIVEBACK_PCT;
-
-  if (!ENV.PROFIT_LOCK_ADAPTIVE) {
-    return {
-      armPct: clamp(baseArm, ENV.PL_MIN_ARM, ENV.PL_MAX_ARM),
-      givePct: clamp(baseGive, ENV.PL_MIN_GIVE, ENV.PL_MAX_GIVE),
-      mode: "fixed",
-    };
-  }
-
-  const { regime } = inferRegime(ts, currentPrice);
-  const multArm = regime === "trend" ? ENV.TREND_MULT_ARM : ENV.RANGE_MULT_ARM;
-  const multGive =
-    regime === "trend" ? ENV.TREND_MULT_GIVE : ENV.RANGE_MULT_GIVE;
-
-  const armPct = clamp(baseArm * multArm, ENV.PL_MIN_ARM, ENV.PL_MAX_ARM);
-  const givePct = clamp(baseGive * multGive, ENV.PL_MIN_GIVE, ENV.PL_MAX_GIVE);
-
-  return { armPct, givePct, mode: regime };
-}
-
-/* ------------------------- Profit lock mirror (short) ------------------------- */
-function updateShortPositionOnTick(price, ts) {
-  const p = STATE.POSITION_SHORT;
-  if (!p?.isOpen) return;
-
-  p.lastPrice = price;
-  p.lastUpdateTs = ts;
-  p.trough = Math.min(p.trough, price);
-
-  if (!ENV.PROFIT_LOCK_ENABLED) return;
-
-  const triggerAbs = (p.entryPrice * p.plArmPct) / 100;
-  const moveInFavor = p.entryPrice - p.trough;
-
-  if (!p.profitLockArmed && moveInFavor >= triggerAbs) {
-    p.profitLockArmed = true;
-    log("PROFIT_LOCK_ARMED", {
-      entry: p.entryPrice,
-      trough: p.trough,
-      moveInFavor: round(moveInFavor, 4),
-      armPct: p.plArmPct,
-      givePct: p.plGivePct,
-      mode: p.plMode,
-    });
-  }
-}
-
-function profitLockExitCheck(currentPrice) {
-  const p = STATE.POSITION_SHORT;
-  if (!p?.isOpen) return { shouldExit: false, detail: "no_position" };
-  if (!ENV.PROFIT_LOCK_ENABLED) return { shouldExit: false, detail: "disabled" };
-  if (!p.profitLockArmed) return { shouldExit: false, detail: "not_armed" };
-  if (!Number.isFinite(currentPrice))
-    return { shouldExit: false, detail: "no_price" };
-
-  const floor = p.trough * (1 + p.plGivePct / 100);
-  if (currentPrice >= floor) {
-    return {
-      shouldExit: true,
-      detail: `price=${round(currentPrice, 4)}>=floor=${round(
-        floor,
-        4
-      )} trough=${round(p.trough, 4)}`,
-    };
-  }
-  return { shouldExit: false, detail: "hold" };
-}
-
-/* ------------------------- EquityStab ------------------------- */
-function computeShortPnlPct(entry, exit) {
-  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(exit))
-    return NaN;
-  return ((entry - exit) / entry) * 100;
-}
-
-function equityStabOnClose(ts, pnlPct) {
-  if (!ENV.EQUITY_STAB_ENABLED) return;
-  if (!Number.isFinite(pnlPct)) return;
-
-  STATE.ACT.lastTradePnlPct = pnlPct;
-  if (pnlPct < 0) STATE.ACT.lossesInRow += 1;
-  else STATE.ACT.lossesInRow = 0;
-
-  if (STATE.ACT.lossesInRow >= 3) {
-    STATE.ACT.conservativeUntil = Math.max(
-      STATE.ACT.conservativeUntil,
-      ts + msMin(ENV.CONSERVATIVE_COOLDOWN_MIN)
-    );
-    STATE.ACT.cooldownUntil = Math.max(
-      STATE.ACT.cooldownUntil,
-      ts + msMin(ENV.LOSS3_COOLDOWN_MIN)
-    );
-    log("EQUITY_STAB", {
-      lossesInRow: STATE.ACT.lossesInRow,
-      action: "loss3_cooldown",
-      cooldownMin: ENV.LOSS3_COOLDOWN_MIN,
-    });
-  } else if (STATE.ACT.lossesInRow === 2) {
-    STATE.ACT.cooldownUntil = Math.max(
-      STATE.ACT.cooldownUntil,
-      ts + msMin(ENV.LOSS2_COOLDOWN_MIN)
-    );
-    log("EQUITY_STAB", {
-      lossesInRow: STATE.ACT.lossesInRow,
-      action: "loss2_cooldown",
-      cooldownMin: ENV.LOSS2_COOLDOWN_MIN,
-    });
-  }
-}
-
-/* ------------------------- Core gates ------------------------- */
-function canEnter(ts) {
-  if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-    if (!STATE.ACT.lastHeartbeatTs)
-      return { ok: false, reason: "no_heartbeat_seen" };
-    const ageMs = ts - STATE.ACT.lastHeartbeatTs;
-    if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000)
-      return { ok: false, reason: "heartbeat_stale" };
-  }
-
-  if (STATE.POSITION_SHORT?.isOpen)
-    return { ok: false, reason: "short_already_open" };
-  if (ts < STATE.ACT.cooldownUntil)
-    return { ok: false, reason: "cooldown_active" };
-  if (ts < STATE.ACT.crashCooldownUntil)
-    return { ok: false, reason: "crash_cooldown_active" };
-  if (ts < STATE.ACT.conservativeUntil)
-    return { ok: false, reason: "conservative_mode" };
-
-  return { ok: true, reason: "ok" };
-}
-
-/* ------------------------- Position open/close ------------------------- */
-function openShortPosition(evt) {
-  const adaptive = computeAdaptiveProfitLock(evt.ts, evt.price);
-  STATE.POSITION_SHORT = {
-    isOpen: true,
-    pair: evt.pair,
-    exchange: evt.exchange,
-    instrument: evt.instrument,
-    entryPrice: evt.price,
-    entryTs: evt.ts,
-    trough: evt.price,
-    lastPrice: evt.price,
-    profitLockArmed: false,
-    lastUpdateTs: evt.ts,
-    plArmPct: adaptive.armPct,
-    plGivePct: adaptive.givePct,
-    plMode: adaptive.mode,
+  const payload = {
+    secret: C3_SIGNAL_SECRET,
+    bot_uuid,
+    max_lag: String(MAX_LAG_SEC),
+    timestamp: new Date().toISOString(),
+    trigger_price: String(price),
+    tv_exchange,
+    tv_instrument,
+    action,
+    comment,
   };
-  log("POSITION_SHORT_OPEN", {
-    pair: evt.pair,
-    exchange: evt.exchange,
-    instrument: evt.instrument,
-    entryPrice: evt.price,
-    entryTs: evt.ts,
-    plArmPct: adaptive.armPct,
-    plGivePct: adaptive.givePct,
-    plMode: adaptive.mode,
-  });
-}
 
-function closeShortPosition(ts, reason, exitPrice) {
-  const p = STATE.POSITION_SHORT;
-  if (!p?.isOpen) return;
-
-  const px = Number.isFinite(exitPrice) ? exitPrice : p.lastPrice;
-  const pnlPct = computeShortPnlPct(p.entryPrice, px);
-
-  log("POSITION_SHORT_CLOSE", {
-    reason,
-    pair: p.pair,
-    entryPrice: p.entryPrice,
-    exitPrice: px,
-    trough: p.trough,
-    pnlPct: round(pnlPct, 4),
+  const resp = await fetch(C3_SIGNAL_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 
-  STATE.POSITION_SHORT = null;
-
-  STATE.ACT.cooldownUntil = Math.max(
-    STATE.ACT.cooldownUntil,
-    ts + msMin(ENV.COOLDOWN_MIN)
-  );
-
-  equityStabOnClose(ts, pnlPct);
+  const body = await resp.text();
+  return { status: resp.status, body };
 }
 
-/* ------------------------- Exit helper ------------------------- */
-async function doExit(evt, reason) {
-  if (!STATE.POSITION_SHORT?.isOpen) {
-    log("EXIT_IGNORED", { reason: "no_open_short", wanted: reason });
-    return { ok: true, ignored: true, reason: "no_open_short" };
+// ------------------------
+// Decision runner
+// ------------------------
+async function runDecision(symbol) {
+  const s = ensureSymbol(symbol);
+  if (s.bars.length < 3) return;
+
+  const lastBar = s.bars[s.bars.length - 1];
+  s.regime = computeRegime(lastBar);
+
+  expireSetup(s);
+  detectSetups(s);
+  scoreSetup(s);
+
+  // Exit first
+  const exitReason = exitCheck(s);
+  if (exitReason) {
+    const price = s.lastPrice ?? lastBar.close;
+    console.log(`📤 EXIT ${symbol} reason=${exitReason} price=${price}`);
+    try {
+      const r = await post3C({ action: "exit_long", symbol, price, comment: exitReason });
+      console.log(`📨 3Commas exit_long status=${r.status}`);
+    } catch (e) {
+      console.error("Exit error:", e);
+      return;
+    }
+
+    s.position = { inPosition: false, entry: null, peak: null, stop: null, sizeMult: 0, enteredMs: 0 };
+    clearSetup(s, exitReason);
+    startCooldown(s, exitReason);
+    return;
   }
 
-  closeShortPosition(evt.ts, reason, evt.price);
+  // Entry
+  if (shouldEnter(s)) {
+    const price = s.lastPrice ?? lastBar.close;
+    const sizeMult = sizeFromScore(s.setup.score);
+    if (sizeMult <= 0) return;
 
-  if (!ENV.ENABLE_POST_3C) return { ok: true, posted: false };
+    const comment = `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}`;
+    console.log(`📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizeMult}`);
 
-  const payload = build3CommasCustomSignal("exit_short", evt);
-  log("3COMMAS_POST", {
-    action: "exit_short",
-    url: ENV.C3_WEBHOOK_URL,
-    payload: { ...payload, secret: "***" },
-  });
+    try {
+      const r = await post3C({ action: "enter_long", symbol, price, comment });
+      console.log(`📨 3Commas enter_long status=${r.status}`);
+    } catch (e) {
+      console.error("Entry error:", e);
+      return;
+    }
 
-  const resp = await postTo3Commas(payload);
-  log("3COMMAS_RESP", { action: "exit_short", resp });
+    s.position.inPosition = true;
+    s.position.entry = price;
+    s.position.peak = price;
+    s.position.sizeMult = sizeMult;
+    s.position.enteredMs = nowMs();
 
-  return resp;
+    clearSetup(s, "entered");
+  }
 }
 
-/* ------------------------- Express app ------------------------- */
-const app = express();
-app.use(express.json({ limit: "1mb" }));
+// ------------------------
+// Auth
+// ------------------------
+function authOk(body) {
+  if (body?.src === "tick" && TICKROUTER_SECRET) return body.secret === TICKROUTER_SECRET;
+  if (body?.src === "features" && BRAIN_SECRET) return body.secret === BRAIN_SECRET;
 
-app.get("/", (_req, res) =>
-  res.status(200).send("OK: Brain SHORT v2.9 (READY_SHORT gate + v2.8.1 blocks)")
-);
+  // fallback if you only set one secret
+  if (BRAIN_SECRET || TICKROUTER_SECRET) return body.secret === (BRAIN_SECRET || TICKROUTER_SECRET);
+  return true;
+}
 
-app.get("/status", (_req, res) => {
-  const now = Date.now();
-  const p = STATE.POSITION_SHORT;
-  const floor = p?.isOpen
-    ? p.trough *
-      (1 + (p.plGivePct ?? ENV.PROFIT_LOCK_GIVEBACK_PCT) / 100)
-    : null;
-  res.json({
-    ok: true,
-    now,
-    ready: STATE.READY_SHORT || null,
-    position: p ? { ...p, floor } : null,
-    act: STATE.ACT,
-    ticks: {
-      count: STATE.TICKS.length,
-      oldestTs: STATE.TICKS[0]?.ts ?? null,
-      newestTs: STATE.TICKS.at(-1)?.ts ?? null,
-    },
-    env: {
-      READY_ENABLED: ENV.READY_ENABLED,
-      READY_TTL_MIN: ENV.READY_TTL_MIN,
-      READY_MAX_MOVE_PCT: ENV.READY_MAX_MOVE_PCT,
-      READY_AUTOEXPIRE_ENABLED: ENV.READY_AUTOEXPIRE_ENABLED,
-      READY_AUTOEXPIRE_PCT: ENV.READY_AUTOEXPIRE_PCT,
-    },
-  });
-});
+// ------------------------
+// Routes
+// ------------------------
+app.get("/", (_, res) => res.json({ ok: true, brain: "v3.0-phase2-symbol-bot" }));
 
-app.post(ENV.WEBHOOK_PATH, async (req, res) => {
-  try {
-    const body = req.body || {};
+app.post("/tv", async (req, res) => {
+  const body = req.body || {};
+  if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
 
-    // ✅ robust secret validation
-    const gotSecret = extractSecret(body);
-    if (!verifySecret(gotSecret, ENV.WEBHOOK_SECRET)) {
-      log("UNAUTHORIZED", { hasSecret: !!gotSecret });
-      return res.status(401).json({ ok: false, error: "unauthorized" });
-    }
+  const symbol = body.symbol;
+  if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
 
-    const evt = normalizeWebhook(body);
-
-    readyTTLExpireCheck(evt.ts);
-
-    if (ENV.ACCEPT_RAY_SIDE_FOR_SHORT && evt.intent === "ray" && evt.side) {
-      if (evt.side === "SELL") evt.intent = "enter_short";
-      if (evt.side === "BUY") evt.intent = "exit_short";
-    }
-
-    log("WEBHOOK_IN", {
-      intent: evt.intent,
-      exchange: evt.exchange,
-      instrument: evt.instrument,
-      pair: evt.pair,
-      price: evt.price,
-      ts: evt.ts,
-    });
-
-    // tick
-    if (evt.intent === "tick" && Number.isFinite(evt.price)) {
-      STATE.ACT.lastHeartbeatTs = evt.ts;
-      pushTick(evt.ts, evt.price);
-
-      maybeAutoExpireReadyOnTick(evt);
-
-      if (STATE.POSITION_SHORT?.isOpen) {
-        updateShortPositionOnTick(evt.price, evt.ts);
-        const pl = profitLockExitCheck(evt.price);
-        if (pl.shouldExit) {
-          const resp = await doExit(evt, `profit_lock_exit:${pl.detail}`);
-          return res.json({ ok: true, action: "exit_short", auto: true, resp });
-        }
-      }
-
-      return res.json({ ok: true, action: "tick" });
-    }
-
-    // ready_short
-    if (
-      evt.intent === "ready_short" ||
-      (ENV.READY_ACCEPT_LEGACY_READY && evt.intent === "ready")
-    ) {
-      if (!ENV.READY_ENABLED)
-        return res.json({
-          ok: true,
-          action: "ready_short_ignored",
-          reason: "ready_disabled",
-        });
-
-      if (ENV.REQUIRE_FRESH_HEARTBEAT) {
-        if (!STATE.ACT.lastHeartbeatTs) {
-          log("READY_SHORT_IGNORED", { reason: "no_heartbeat_seen" });
-          return res.json({
-            ok: true,
-            action: "ready_short_ignored",
-            reason: "no_heartbeat_seen",
-          });
-        }
-        const ageMs = evt.ts - STATE.ACT.lastHeartbeatTs;
-        if (ageMs > ENV.HEARTBEAT_MAX_AGE_SEC * 1000) {
-          log("READY_SHORT_IGNORED", { reason: "heartbeat_stale" });
-          return res.json({
-            ok: true,
-            action: "ready_short_ignored",
-            reason: "heartbeat_stale",
-          });
-        }
-      }
-
-      if (STATE.POSITION_SHORT?.isOpen) {
-        log("READY_SHORT_IGNORED", { reason: "in_position" });
-        return res.json({
-          ok: true,
-          action: "ready_short_ignored",
-          reason: "in_position",
-        });
-      }
-
-      setReady(evt);
-      return res.json({ ok: true, action: "ready_short", ready: STATE.READY_SHORT });
-    }
-
-    // enter_short
-    if (evt.intent === "enter_short") {
-      const crash = crashProtectCheck(evt.ts, evt.price);
-      if (crash.block) {
-        STATE.ACT.crashCooldownUntil = Math.max(
-          STATE.ACT.crashCooldownUntil,
-          evt.ts + msMin(ENV.CRASH_COOLDOWN_MIN)
-        );
-        log("CRASH_PROTECT_BLOCK", {
-          reason: crash.reason,
-          crashCooldownMin: ENV.CRASH_COOLDOWN_MIN,
-        });
-        return res.json({
-          ok: true,
-          action: "blocked",
-          reason: `crash_protect:${crash.reason}`,
-        });
-      }
-
-      const gate = canEnter(evt.ts);
-      if (!gate.ok) {
-        log("ENTER_BLOCKED", { reason: gate.reason });
-        return res.json({ ok: true, action: "blocked", reason: gate.reason });
-      }
-
-      const rGate = gateEnterByReady(evt);
-      if (!rGate.ok) {
-        log("ENTER_BLOCKED_READY", { reason: rGate.reason });
-        return res.json({ ok: true, action: "blocked", reason: rGate.reason });
-      }
-
-      clearReady("entered_short");
-      openShortPosition(evt);
-
-      if (!ENV.ENABLE_POST_3C)
-        return res.json({ ok: true, action: "enter_short", posted: false });
-
-      const payload = build3CommasCustomSignal("enter_short", evt);
-      log("3COMMAS_POST", {
-        action: "enter_short",
-        url: ENV.C3_WEBHOOK_URL,
-        payload: { ...payload, secret: "***" },
-      });
-
-      const resp = await postTo3Commas(payload);
-      log("3COMMAS_RESP", { action: "enter_short", resp });
-
-      if (!resp.ok) {
-        closeShortPosition(evt.ts, "3commas_post_failed", evt.price);
-        return res.json({ ok: false, action: "enter_short_failed", resp });
-      }
-
-      return res.json({ ok: true, action: "enter_short", resp });
-    }
-
-    // exit_short
-    if (evt.intent === "exit_short") {
-      const resp = await doExit(evt, evt.exitReason || "signal_exit");
-      return res.json({ ok: true, action: "exit_short", resp });
-    }
-
-    return res.status(200).json({
-      ok: true,
-      action: "ignored",
-      reason: "unknown_intent",
-      got: evt.intent,
-    });
-  } catch (e) {
-    console.error("ERROR in /webhook:", e);
-    return res.status(500).json({ ok: false, error: "server_error" });
+  // Ignore legacy Pine decision messages
+  if (body.action === "ready" || body.src === "enter_long" || body.intent === "exit_long") {
+    return res.json({ ok: true, ignored: "legacy_pine_decision" });
   }
+
+  const s = ensureSymbol(symbol);
+
+  if (body.src === "tick") {
+    const price = n(body.price);
+    if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
+
+    s.lastPrice = price;
+    s.lastTickMs = nowMs();
+
+    await runDecision(symbol);
+    return res.json({ ok: true });
+  }
+
+  if (body.src === "features") {
+    const timeMs = body.timestamp ? Date.parse(body.timestamp) : (body.time ? Date.parse(body.time) : nowMs());
+
+    const bar = {
+      timeMs,
+      close: n(body.close),
+      high: n(body.high),
+      low: n(body.low),
+
+      ema8: n(body.ema8),
+      ema18: n(body.ema18),
+      ema50: n(body.ema50),
+
+      rsi: n(body.rsi),
+      adx: n(body.adx),
+      atr: n(body.atr),
+      atrPct: n(body.atrPct),
+
+      fwo: n(body.fwo),
+
+      ray_buy: bool01(body.ray_buy),
+      ray_sell: bool01(body.ray_sell),
+      fwo_recover: bool01(body.fwo_recover),
+    };
+
+    if (bar.close == null || bar.high == null || bar.low == null) {
+      return res.status(400).json({ ok: false, err: "bad OHLC" });
+    }
+
+    s.bars.push(bar);
+    pruneBars(s);
+
+    if (bar.ray_buy) s.signals.lastRayBuyMs = nowMs();
+    if (bar.ray_sell) s.signals.lastRaySellMs = nowMs();
+    if (bar.fwo_recover) s.signals.lastFwoRecoverMs = nowMs();
+
+    if (s.lastPrice == null) s.lastPrice = bar.close;
+
+    await runDecision(symbol);
+    return res.json({ ok: true });
+  }
+
+  return res.status(400).json({ ok: false, err: "unknown src" });
 });
 
-/* ------------------------- START ------------------------- */
-app.listen(ENV.PORT, () => {
-  log("LISTENING", { port: ENV.PORT, path: ENV.WEBHOOK_PATH, brain: "v2.9-SHORT" });
+app.listen(PORT, () => {
+  console.log(`✅ Brain v3.0 Phase2 listening on :${PORT}`);
+  console.log(`🧭 Symbol->Bot map keys: ${Object.keys(SYMBOL_BOT_MAP).length}`);
 });
