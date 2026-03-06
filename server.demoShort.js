@@ -591,7 +591,11 @@ async function handleWebhook(req, res) {
       s.lastTickMs = nowMs();
       s.tickCount++;
 
-      dlog(`🟦 TICK rx ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
+const now = nowMs();
+if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
+  console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
+  s.lastTickLogMs = now;
+}
 
       await runDecision(symbol, "tick");
       return res.json({ ok: true });
