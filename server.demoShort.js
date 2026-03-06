@@ -610,9 +610,9 @@ async function handleWebhook(req, res) {
         return res.status(400).json({ ok: false, err: "bad OHLC" });
       }
 
-      console.log(
-        `🟩 FEAT rx ${symbol} tf=${body.tf || ""} close=${bar.close} rsi=${bar.rsi} atrPct=${bar.atrPct} ray_buy=${bar.ray_buy ? 1 : 0}`
-      );
+   console.log(
+  `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ray_buy=${bar.ray_buy ? 1 : 0} ray_sell=${bar.ray_sell ? 1 : 0} fwo=${bar.fwo}`
+);
 
       s.bars.push(bar);
       pruneBars(s);
