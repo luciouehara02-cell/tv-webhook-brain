@@ -218,7 +218,7 @@ function detectSetups(s) {
   if (s.setup.armed) return;
 
   const bars = s.bars;
-  if (bars.length < 60) {
+  if (bars.length < 20) {
     dlog(`⏳ detectSetups waiting bars=${bars.length}/60`);
     return;
   }
