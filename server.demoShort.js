@@ -236,10 +236,14 @@ function detectSetups(s) {
 
   const canUseEma = (last.ema18 != null && prev.ema18 != null);
   const wasBelowEma18 = canUseEma ? (prev.close < prev.ema18) : false;
-  const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
-
-  const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
+//const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
+//const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
   const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
+
+// TEST MODE: relaxed washout detection
+const reclaimed = last.close > last.ema18 * 0.995;
+const washout = (last.ema50 != null) ? (localLow < last.ema50 * 1.005) : false;
+
 
   dlog(
     `🔎 SETUPCHK localLow=${Number.isFinite(localLow) ? localLow.toFixed(4) : localLow} ` +
