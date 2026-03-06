@@ -1,22 +1,28 @@
 /**
- * Brain v3.0 Phase2 — Full server.js (SOLUSDT one-symbol = one-bot)
- * ✅ POST /tv and POST /webhook (alias)
- * ✅ TickRouter tick payload compatible
- * ✅ Features payload supported (Phase2)
- * ✅ Legacy Pine READY/enter/exit ignored
- * ✅ One symbol = one bot via SYMBOL_BOT_MAP
- * ✅ 3Commas timeout via C3_TIMEOUT_MS
- * ✅ Debug logs for tick + features (so you SEE traffic)
+ * Brain v3.0 Phase2 — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
+ * ✅ Duplicate-enter protection (enterInFlight + lastEnterMs)
+ * ✅ Duplicate-exit protection (exitInFlight + lastExitMs)
+ * ✅ No setup arming while in position
+ * ✅ Setup/scoring ONLY on FEATURES (3m)
+ * ✅ Tick path ONLY does entry/exit timing
+ * ✅ Tick logging throttled to ~3 minutes (configurable)
+ * ✅ /tv and /webhook endpoints
  *
- * ENV:
+ * ENV (recommended)
  *   PORT=8080
- *   WEBHOOK_SECRET=...           (features secret)
- *   TICKROUTER_SECRET=...        (tick router secret)
+ *   DEBUG=1
+ *   WEBHOOK_SECRET=...            (features secret)
+ *   TICKROUTER_SECRET=...         (tick router secret)
  *   C3_SIGNAL_SECRET=...
  *   C3_SIGNAL_URL=https://api.3commas.io/signal_bots/webhooks
  *   C3_TIMEOUT_MS=8000
  *   MAX_LAG_SEC=300
  *   SYMBOL_BOT_MAP='{"BINANCE:SOLUSDT":"26626591-bb3e-4cda-8638-d3f6ce328a74"}'
+ *
+ * Optional
+ *   TICK_LOG_EVERY_MS=180000      (3 minutes)
+ *   ENTER_DEDUP_MS=60000
+ *   EXIT_DEDUP_MS=30000
  */
 
 import express from "express";
@@ -30,9 +36,15 @@ const PORT = process.env.PORT || 8080;
 const DEBUG = (process.env.DEBUG || "1") === "1";
 function dlog(...args) { if (DEBUG) console.log(...args); }
 
+// Tick log throttling (default 3 minutes)
+const TICK_LOG_EVERY_MS = parseInt(
+  process.env.TICK_LOG_EVERY_MS || String(3 * 60 * 1000),
+  10
+);
+
 // Secrets
-const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";         // features
-const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || ""; // ticks
+const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";          // features
+const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";  // ticks
 
 // 3Commas
 const C3_SIGNAL_URL =
@@ -106,6 +118,9 @@ function ensureSymbol(symbol) {
       lastPrice: null,
       tickCount: 0,
 
+      // tick log throttle
+      lastTickLogMs: 0,
+
       bars: [],
       regime: { mode: "unknown", confidence: 0 },
 
@@ -136,6 +151,7 @@ function ensureSymbol(symbol) {
         lastFwoRecoverMs: 0,
       },
 
+      // protects against duplicate enter/exit posts
       orderLock: {
         enterInFlight: false,
         exitInFlight: false,
@@ -197,14 +213,12 @@ function computeRegime(lastBar) {
 }
 
 function detectSetups(s) {
+  // ✅ FIX: never arm setups while in position
   if (s.position.inPosition) {
     dlog("⏭️ detectSetups skipped: already in position");
     return;
   }
-  if (s.setup.armed) {
-    dlog("⏭️ detectSetups skipped: setup already armed");
-    return;
-  }
+  if (s.setup.armed) return;
 
   const bars = s.bars;
   if (bars.length < 60) {
@@ -225,13 +239,10 @@ function detectSetups(s) {
 
   const canUseEma = (last.ema18 != null && prev.ema18 != null);
   const wasBelowEma18 = canUseEma ? (prev.close < prev.ema18) : false;
-//const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
-//const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
-  const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
+  const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
 
-// TEST MODE: relaxed washout detection
-const reclaimed = last.close > last.ema18 * 0.995;
-const washout = (last.ema50 != null) ? (localLow < last.ema50 * 1.005) : false;
+  const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
+  const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
 
   dlog(
     `🔎 SETUPCHK localLow=${Number.isFinite(localLow) ? localLow.toFixed(4) : localLow} ` +
@@ -260,7 +271,9 @@ const washout = (last.ema50 != null) ? (localLow < last.ema50 * 1.005) : false;
     }
     const breakout = last.close > swingHigh;
 
-    dlog(`🔎 BRKCHK swingHigh=${Number.isFinite(swingHigh) ? swingHigh.toFixed(4) : swingHigh} breakout=${breakout ? 1 : 0}`);
+    dlog(
+      `🔎 BRKCHK swingHigh=${Number.isFinite(swingHigh) ? swingHigh.toFixed(4) : swingHigh} breakout=${breakout ? 1 : 0}`
+    );
 
     if (breakout) {
       s.setup.armed = true;
@@ -292,9 +305,9 @@ function scoreSetup(s) {
   const prev = bars[bars.length - 2];
 
   let score = 0;
-  const add = (n, label) => {
-    score += n;
-    dlog(`   ➕ ${label} +${n} => ${score}`);
+  const add = (nn, label) => {
+    score += nn;
+    dlog(`   ➕ ${label} +${nn} => ${score}`);
   };
 
   dlog(`📊 SCORE start type=${s.setup.setupType} reg=${s.regime.mode} conf=${s.regime.confidence}`);
@@ -324,8 +337,6 @@ function scoreSetup(s) {
     if (movePct > PUMP_BLOCK_PCT) {
       score -= 3;
       dlog(`   ➖ pump penalty movePct=${movePct.toFixed(2)}% -3 => ${score}`);
-    } else {
-      dlog(`   ➕ pump ok movePct=${movePct.toFixed(2)}% (0)`);
     }
   }
 
@@ -335,62 +346,56 @@ function scoreSetup(s) {
   return score;
 }
 
-function shouldEnter(s) {
-  dlog(
-    `🚦 ENTERCHK armed=${s.setup.armed ? 1 : 0} inPos=${s.position.inPosition ? 1 : 0} ` +
-    `cooldown=${isInCooldown(s) ? 1 : 0} tickOk=${canUseTick(s) ? 1 : 0} score=${s.setup.score} ` +
-    `enterInFlight=${s.orderLock.enterInFlight ? 1 : 0}`
-  );
+function sizeFromScore(score) {
+  if (score >= SCORE_ENTER_FULL) return 1.0;
+  if (score >= SCORE_ENTER_SMALL) return 0.6;
+  return 0.0;
+}
 
-  if (!s.setup.armed) { dlog("🚫 no enter: not armed"); return false; }
-  if (s.position.inPosition) { dlog("🚫 no enter: already in position"); return false; }
-  if (isInCooldown(s)) { dlog("🚫 no enter: cooldown"); return false; }
-  if (!canUseTick(s)) { dlog("🚫 no enter: no fresh tick"); return false; }
-  if (s.orderLock.enterInFlight) { dlog("🚫 no enter: enterInFlight"); return false; }
-  if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) {
-    dlog(`🚫 no enter: dedup active lastEnterMs=${s.orderLock.lastEnterMs}`);
-    return false;
-  }
+function shouldEnter(s) {
+  if (!s.setup.armed) return false;
+  if (s.position.inPosition) return false;
+  if (isInCooldown(s)) return false;
+  if (!canUseTick(s)) return false;
+
+  // ✅ FIX: hard dedup + inflight lock
+  if (s.orderLock.enterInFlight) return false;
+  if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return false;
 
   const price = s.lastPrice;
   const last = s.bars[s.bars.length - 1];
 
   if (s.setup.invalidationPrice != null && price <= s.setup.invalidationPrice) {
-    dlog(`🧨 invalidation: price=${price} <= inv=${s.setup.invalidationPrice}`);
     clearSetup(s, "invalidation");
     return false;
   }
 
   const score = s.setup.score;
-  if (score < SCORE_ENTER_SMALL) {
-    dlog(`🚫 no enter: score ${score} < ${SCORE_ENTER_SMALL}`);
-    return false;
-  }
+  if (score < SCORE_ENTER_SMALL) return false;
 
   if (s.setup.setupType === "washout_reclaim") {
     const level = s.setup.level ?? last.ema18;
-    if (!level) { dlog("🚫 no enter: missing level"); return false; }
+    if (!level) return false;
     const chasePct = ((price - level) / level) * 100;
-    dlog(`🎯 washout entry check: price=${price} level=${level} chasePct=${chasePct.toFixed(3)}%`);
     return price > level && chasePct <= 0.25;
   }
 
   if (s.setup.setupType === "breakout_pullback") {
     const level = s.setup.level;
-    if (!level || last.ema8 == null) { dlog("🚫 no enter: missing breakout vars"); return false; }
+    if (!level || last.ema8 == null) return false;
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
-    dlog(`🎯 breakout entry check: nearLevelPct=${nearLevelPct.toFixed(3)} nearEma8Pct=${nearEma8Pct.toFixed(3)}`);
     return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && score >= SCORE_ENTER_FULL;
   }
 
-  dlog(`🚫 no enter: unknown setupType=${s.setup.setupType}`);
   return false;
 }
 
 function exitCheck(s) {
   if (!s.position.inPosition) return null;
   if (!canUseTick(s)) return null;
+
+  // ✅ FIX: hard dedup + inflight lock
   if (s.orderLock.exitInFlight) return null;
   if (recently(s.orderLock.lastExitMs, EXIT_DEDUP_MS)) return null;
 
@@ -404,8 +409,6 @@ function exitCheck(s) {
     const newStop = s.position.peak - last.atr * mult;
     if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
   }
-
-  dlog(`🛡️ EXITCHK price=${price} entry=${s.position.entry} peak=${s.position.peak} stop=${s.position.stop} reg=${s.regime.mode}`);
 
   if (s.position.stop != null && price <= s.position.stop) return "atr_trail_stop";
 
@@ -466,25 +469,22 @@ async function runDecision(symbol, source) {
 
   const lastBar = s.bars[s.bars.length - 1];
 
-  // Only features should update regime/setup/score
+  // ✅ FIX: only FEATURES updates regime/setup/score
   if (source === "features") {
     s.regime = computeRegime(lastBar);
     dlog(`🧭 REGIME ${symbol} mode=${s.regime.mode} conf=${s.regime.confidence}`);
-
     expireSetup(s);
     detectSetups(s);
     scoreSetup(s);
   }
 
-  // Exit checks can run on both features and tick
+  // exits can be checked on both tick + features
   const exitReason = exitCheck(s);
   if (exitReason) {
     const price = s.lastPrice ?? lastBar.close;
 
-    if (s.orderLock.exitInFlight) {
-      dlog("🚫 exit blocked: exitInFlight");
-      return;
-    }
+    if (s.orderLock.exitInFlight) return;
+    if (recently(s.orderLock.lastExitMs, EXIT_DEDUP_MS)) return;
 
     s.orderLock.exitInFlight = true;
 
@@ -506,22 +506,16 @@ async function runDecision(symbol, source) {
     return;
   }
 
-  // Only ticks should trigger entry timing
+  // ✅ FIX: only TICK triggers entry timing
   if (source !== "tick") return;
 
   if (shouldEnter(s)) {
     const price = s.lastPrice ?? lastBar.close;
     const sizeMult = sizeFromScore(s.setup.score);
-    if (sizeMult <= 0) { dlog("🚫 sizeMult=0"); return; }
+    if (sizeMult <= 0) return;
 
-    if (s.orderLock.enterInFlight) {
-      dlog("🚫 enter blocked: enterInFlight");
-      return;
-    }
-    if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) {
-      dlog("🚫 enter blocked: dedup");
-      return;
-    }
+    if (s.orderLock.enterInFlight) return;
+    if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return;
 
     s.orderLock.enterInFlight = true;
 
@@ -547,12 +541,6 @@ async function runDecision(symbol, source) {
 
     clearSetup(s, "entered");
   }
-}
-
-function sizeFromScore(score) {
-  if (score >= SCORE_ENTER_FULL) return 1.0;
-  if (score >= SCORE_ENTER_SMALL) return 0.6;
-  return 0.0;
 }
 
 // ---------------------------
@@ -591,11 +579,14 @@ async function handleWebhook(req, res) {
       s.lastTickMs = nowMs();
       s.tickCount++;
 
-const now = nowMs();
-if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
-  console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
-  s.lastTickLogMs = now;
-}
+      // ✅ Throttled tick printing (default 3m)
+      const now = nowMs();
+      if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
+        console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
+        s.lastTickLogMs = now;
+      } else {
+        dlog(`🟦 tick ${symbol} price=${price}`);
+      }
 
       await runDecision(symbol, "tick");
       return res.json({ ok: true });
@@ -637,18 +628,12 @@ if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
         `🟩 FEAT rx ${symbol} tf=${body.tf || ""} close=${bar.close} rsi=${bar.rsi} atrPct=${bar.atrPct} ray_buy=${bar.ray_buy ? 1 : 0}`
       );
 
-      dlog(
-        `🧠 FEAT ${symbol} close=${bar.close} ema18=${bar.ema18} ema50=${bar.ema50} rsi=${bar.rsi} atrPct=${bar.atrPct} adx=${bar.adx}`
-      );
-
       s.bars.push(bar);
       pruneBars(s);
 
       if (bar.ray_buy) s.signals.lastRayBuyMs = nowMs();
       if (bar.ray_sell) s.signals.lastRaySellMs = nowMs();
-      if (body.fwo_recover != null ? bool01(body.fwo_recover) : bar.fwo_recover) {
-        s.signals.lastFwoRecoverMs = nowMs();
-      }
+      if (bar.fwo_recover) s.signals.lastFwoRecoverMs = nowMs();
 
       if (s.lastPrice == null) s.lastPrice = bar.close;
 
@@ -656,6 +641,7 @@ if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
       return res.json({ ok: true });
     }
 
+    // Ignore unknown src to avoid noise
     console.log(`🟪 IGNORE src=${body.src} symbol=${symbol}`);
     return res.json({ ok: true, ignored: "src_not_supported" });
   } catch (e) {
@@ -670,11 +656,12 @@ if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.0-phase2-full-fixed",
+    brain: "v3.0-phase2-full-fixed+tick-throttle",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
     debug: DEBUG,
+    tickLogEveryMs: TICK_LOG_EVERY_MS,
   });
 });
 
@@ -694,4 +681,5 @@ app.listen(PORT, () => {
   console.log(`✅ Brain listening on :${PORT}`);
   console.log(`🧭 SYMBOL_BOT_MAP keys=${Object.keys(SYMBOL_BOT_MAP).length}`);
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
+  console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
 });
