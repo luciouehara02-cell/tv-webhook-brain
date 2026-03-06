@@ -5,7 +5,7 @@
  * ✅ No setup arming while in position
  * ✅ Setup/scoring ONLY on FEATURES (3m)
  * ✅ Tick path ONLY does entry/exit timing
- * ✅ Tick logging throttled to ~3 minutes (configurable)
+ * ✅ Tick logging throttled to ~3 minutes (NO per-tick debug spam)
  * ✅ /tv and /webhook endpoints
  *
  * ENV (recommended)
@@ -213,11 +213,8 @@ function computeRegime(lastBar) {
 }
 
 function detectSetups(s) {
-  // ✅ FIX: never arm setups while in position
-  if (s.position.inPosition) {
-    dlog("⏭️ detectSetups skipped: already in position");
-    return;
-  }
+  // never arm setups while in position
+  if (s.position.inPosition) return;
   if (s.setup.armed) return;
 
   const bars = s.bars;
@@ -247,8 +244,7 @@ function detectSetups(s) {
   dlog(
     `🔎 SETUPCHK localLow=${Number.isFinite(localLow) ? localLow.toFixed(4) : localLow} ` +
     `ema50=${last.ema50 != null ? last.ema50.toFixed(4) : "null"} ` +
-    `washout=${washout ? 1 : 0} reclaimed=${reclaimed ? 1 : 0} rsiUp=${rsiUp ? 1 : 0} ` +
-    `prevClose=${prev.close} lastClose=${last.close}`
+    `washout=${washout ? 1 : 0} reclaimed=${reclaimed ? 1 : 0} rsiUp=${rsiUp ? 1 : 0}`
   );
 
   if (washout && reclaimed && rsiUp) {
@@ -310,17 +306,12 @@ function scoreSetup(s) {
     dlog(`   ➕ ${label} +${nn} => ${score}`);
   };
 
-  dlog(`📊 SCORE start type=${s.setup.setupType} reg=${s.regime.mode} conf=${s.regime.confidence}`);
-
   if (s.regime.mode === "trend") add(Math.round(3 * s.regime.confidence), "regime(trend)");
   else add(Math.round(2 * s.regime.confidence), "regime(range)");
 
   if (last.atrPct != null) {
     if (last.atrPct >= 0.6) add(2, "atrPct>=0.6");
     else if (last.atrPct >= 0.4) add(1, "atrPct>=0.4");
-    else dlog(`   ➕ atrPct low (0) atrPct=${last.atrPct}`);
-  } else {
-    dlog(`   ➕ atrPct missing (0)`);
   }
 
   const freshMs = 5 * 60 * 1000;
@@ -328,16 +319,12 @@ function scoreSetup(s) {
   if (nowMs() - s.signals.lastFwoRecoverMs < freshMs) add(2, "fresh fwo_recover");
 
   if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) add(1, "rsi rising");
-  else dlog(`   ➕ rsi not rising (0) last=${last.rsi} prev=${prev.rsi}`);
 
   const nBars = PUMP_BLOCK_WINDOW_BARS;
   if (bars.length > nBars) {
     const past = bars[bars.length - 1 - nBars];
     const movePct = ((last.close - past.close) / past.close) * 100;
-    if (movePct > PUMP_BLOCK_PCT) {
-      score -= 3;
-      dlog(`   ➖ pump penalty movePct=${movePct.toFixed(2)}% -3 => ${score}`);
-    }
+    if (movePct > PUMP_BLOCK_PCT) score -= 3;
   }
 
   score = Math.max(0, Math.min(10, score));
@@ -358,7 +345,6 @@ function shouldEnter(s) {
   if (isInCooldown(s)) return false;
   if (!canUseTick(s)) return false;
 
-  // ✅ FIX: hard dedup + inflight lock
   if (s.orderLock.enterInFlight) return false;
   if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return false;
 
@@ -370,8 +356,7 @@ function shouldEnter(s) {
     return false;
   }
 
-  const score = s.setup.score;
-  if (score < SCORE_ENTER_SMALL) return false;
+  if (s.setup.score < SCORE_ENTER_SMALL) return false;
 
   if (s.setup.setupType === "washout_reclaim") {
     const level = s.setup.level ?? last.ema18;
@@ -385,7 +370,7 @@ function shouldEnter(s) {
     if (!level || last.ema8 == null) return false;
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
-    return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && score >= SCORE_ENTER_FULL;
+    return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && s.setup.score >= SCORE_ENTER_FULL;
   }
 
   return false;
@@ -395,7 +380,6 @@ function exitCheck(s) {
   if (!s.position.inPosition) return null;
   if (!canUseTick(s)) return null;
 
-  // ✅ FIX: hard dedup + inflight lock
   if (s.orderLock.exitInFlight) return null;
   if (recently(s.orderLock.lastExitMs, EXIT_DEDUP_MS)) return null;
 
@@ -469,7 +453,7 @@ async function runDecision(symbol, source) {
 
   const lastBar = s.bars[s.bars.length - 1];
 
-  // ✅ FIX: only FEATURES updates regime/setup/score
+  // only FEATURES updates regime/setup/score
   if (source === "features") {
     s.regime = computeRegime(lastBar);
     dlog(`🧭 REGIME ${symbol} mode=${s.regime.mode} conf=${s.regime.confidence}`);
@@ -506,7 +490,7 @@ async function runDecision(symbol, source) {
     return;
   }
 
-  // ✅ FIX: only TICK triggers entry timing
+  // only TICK triggers entry timing
   if (source !== "tick") return;
 
   if (shouldEnter(s)) {
@@ -579,13 +563,11 @@ async function handleWebhook(req, res) {
       s.lastTickMs = nowMs();
       s.tickCount++;
 
-      // ✅ Throttled tick printing (default 3m)
+      // ✅ only print one tick line every ~3 minutes
       const now = nowMs();
       if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
         console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
         s.lastTickLogMs = now;
-      } else {
-        dlog(`🟦 tick ${symbol} price=${price}`);
       }
 
       await runDecision(symbol, "tick");
@@ -641,7 +623,6 @@ async function handleWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // Ignore unknown src to avoid noise
     console.log(`🟪 IGNORE src=${body.src} symbol=${symbol}`);
     return res.json({ ok: true, ignored: "src_not_supported" });
   } catch (e) {
@@ -656,7 +637,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.0-phase2-full-fixed+tick-throttle",
+    brain: "v3.0-phase2-full-fixed+tick-throttle-clean",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
