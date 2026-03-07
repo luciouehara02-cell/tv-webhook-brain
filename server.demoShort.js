@@ -43,8 +43,8 @@ const TICK_LOG_EVERY_MS = parseInt(
 );
 
 // Secrets
-const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";          // features
-const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";  // ticks
+const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
+const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
 
 // 3Commas
 const C3_SIGNAL_URL =
@@ -53,7 +53,7 @@ const C3_SIGNAL_SECRET = process.env.C3_SIGNAL_SECRET || "";
 const C3_TIMEOUT_MS = parseInt(process.env.C3_TIMEOUT_MS || "8000", 10);
 const MAX_LAG_SEC = parseInt(process.env.MAX_LAG_SEC || "300", 10);
 
-// Routing: symbol -> bot_uuid (JSON)
+// Routing: symbol -> bot_uuid
 let SYMBOL_BOT_MAP = {};
 try {
   SYMBOL_BOT_MAP = JSON.parse(process.env.SYMBOL_BOT_MAP || "{}");
@@ -75,6 +75,23 @@ const PUMP_BLOCK_WINDOW_BARS = parseInt(process.env.PUMP_BLOCK_WINDOW_BARS || "3
 
 const ENTER_DEDUP_MS = parseInt(process.env.ENTER_DEDUP_MS || "60000", 10);
 const EXIT_DEDUP_MS = parseInt(process.env.EXIT_DEDUP_MS || "30000", 10);
+
+// ---------------------------
+// Risk-based sizing
+// ---------------------------
+// This should match your bot's Max investment usage in 3Commas
+const BOT_MAX_NOTIONAL_USDT = parseFloat(process.env.BOT_MAX_NOTIONAL_USDT || "10000");
+
+// Risk budget as % of bot allocation, not account
+// e.g. 0.5 = risk 0.5% of 10,000 = 50 USDT per trade
+const RISK_PCT_OF_BOT = parseFloat(process.env.RISK_PCT_OF_BOT || "0.5");
+
+// Optional score multiplier to make weak setups smaller
+const USE_SCORE_SIZE_MULT = (process.env.USE_SCORE_SIZE_MULT || "1") === "1";
+
+// Safety caps
+const MIN_VOLUME_PCT = parseFloat(process.env.MIN_VOLUME_PCT || "5");
+const MAX_VOLUME_PCT = parseFloat(process.env.MAX_VOLUME_PCT || "100");
 
 // ---------------------------
 // App
@@ -117,8 +134,6 @@ function ensureSymbol(symbol) {
       lastTickMs: 0,
       lastPrice: null,
       tickCount: 0,
-
-      // tick log throttle
       lastTickLogMs: 0,
 
       bars: [],
@@ -140,6 +155,7 @@ function ensureSymbol(symbol) {
         peak: null,
         stop: null,
         sizeMult: 0,
+        volumePercent: 0,
         enteredMs: 0,
       },
 
@@ -151,7 +167,6 @@ function ensureSymbol(symbol) {
         lastFwoRecoverMs: 0,
       },
 
-      // protects against duplicate enter/exit posts
       orderLock: {
         enterInFlight: false,
         exitInFlight: false,
@@ -213,13 +228,12 @@ function computeRegime(lastBar) {
 }
 
 function detectSetups(s) {
-  // never arm setups while in position
   if (s.position.inPosition) return;
   if (s.setup.armed) return;
 
   const bars = s.bars;
-  if (bars.length < 20) {
-    dlog(`⏳ detectSetups waiting bars=${bars.length}/60`);
+  if (bars.length < 20) { // faster testing
+    dlog(`⏳ detectSetups waiting bars=${bars.length}/20`);
     return;
   }
 
@@ -236,14 +250,9 @@ function detectSetups(s) {
 
   const canUseEma = (last.ema18 != null && prev.ema18 != null);
   const wasBelowEma18 = canUseEma ? (prev.close < prev.ema18) : false;
-//const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
-//const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
+  const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
+  const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
   const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
-
-// TEST MODE: relaxed washout detection
-const reclaimed = last.close > last.ema18 * 0.995;
-const washout = (last.ema50 != null) ? (localLow < last.ema50 * 1.005) : false;
-
 
   dlog(
     `🔎 SETUPCHK localLow=${Number.isFinite(localLow) ? localLow.toFixed(4) : localLow} ` +
@@ -271,9 +280,7 @@ const washout = (last.ema50 != null) ? (localLow < last.ema50 * 1.005) : false;
     }
     const breakout = last.close > swingHigh;
 
-    dlog(
-      `🔎 BRKCHK swingHigh=${Number.isFinite(swingHigh) ? swingHigh.toFixed(4) : swingHigh} breakout=${breakout ? 1 : 0}`
-    );
+    dlog(`🔎 BRKCHK swingHigh=${Number.isFinite(swingHigh) ? swingHigh.toFixed(4) : swingHigh} breakout=${breakout ? 1 : 0}`);
 
     if (breakout) {
       s.setup.armed = true;
@@ -337,10 +344,51 @@ function scoreSetup(s) {
   return score;
 }
 
-function sizeFromScore(score) {
-  if (score >= SCORE_ENTER_FULL) return 1.0;
-  if (score >= SCORE_ENTER_SMALL) return 0.6;
+// ---------------------------
+// Risk sizing helpers
+// ---------------------------
+function scoreMultiplier(score) {
+  if (!USE_SCORE_SIZE_MULT) return 1.0;
+  if (score >= 8) return 1.2;
+  if (score >= 6) return 1.0;
+  if (score >= 4) return 0.8;
+  if (score >= 2) return 0.6;
   return 0.0;
+}
+
+function computeRiskBasedSize(s, entryPrice) {
+  const stop = s.setup.invalidationPrice;
+  if (!entryPrice || !stop || entryPrice <= stop) {
+    return { sizeMult: 0, volumePercent: 0, riskUsd: 0, stopDistance: 0 };
+  }
+
+  const stopDistance = entryPrice - stop;
+  const riskUsdBase = BOT_MAX_NOTIONAL_USDT * (RISK_PCT_OF_BOT / 100.0);
+  const scoreMult = scoreMultiplier(s.setup.score);
+  const riskUsd = riskUsdBase * scoreMult;
+
+  if (riskUsd <= 0) {
+    return { sizeMult: 0, volumePercent: 0, riskUsd, stopDistance };
+  }
+
+  // Qty based on allowed loss / stop distance
+  const qty = riskUsd / stopDistance;
+  const notionalUsd = qty * entryPrice;
+
+  // Convert to % of bot max allocation
+  let volumePercent = (notionalUsd / BOT_MAX_NOTIONAL_USDT) * 100.0;
+
+  // clamp
+  volumePercent = Math.max(MIN_VOLUME_PCT, Math.min(MAX_VOLUME_PCT, volumePercent));
+
+  const sizeMult = volumePercent / 100.0;
+
+  return {
+    sizeMult: Math.round(sizeMult * 1000) / 1000,
+    volumePercent: Math.round(volumePercent * 100) / 100,
+    riskUsd: Math.round(riskUsd * 100) / 100,
+    stopDistance: Math.round(stopDistance * 100000) / 100000,
+  };
 }
 
 function shouldEnter(s) {
@@ -348,7 +396,6 @@ function shouldEnter(s) {
   if (s.position.inPosition) return false;
   if (isInCooldown(s)) return false;
   if (!canUseTick(s)) return false;
-
   if (s.orderLock.enterInFlight) return false;
   if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return false;
 
@@ -362,35 +409,35 @@ function shouldEnter(s) {
 
   if (s.setup.score < SCORE_ENTER_SMALL) return false;
 
-if (s.setup.setupType === "washout_reclaim") {
-  const level = s.setup.level ?? last.ema18;
-  if (!level) {
-    dlog("🚫 no enter: missing washout level");
-    return false;
+  if (s.setup.setupType === "washout_reclaim") {
+    const level = s.setup.level ?? last.ema18;
+    if (!level) {
+      dlog("🚫 no enter: missing washout level");
+      return false;
+    }
+
+    const chasePct = ((price - level) / level) * 100;
+
+    dlog(
+      `🎯 washout entry check: ` +
+      `price=${price} level=${level} ` +
+      `aboveLevel=${price > level ? 1 : 0} ` +
+      `chasePct=${chasePct.toFixed(3)}% ` +
+      `score=${s.setup.score}`
+    );
+
+    if (!(price > level)) {
+      dlog("🚫 no enter: price not above reclaim level");
+      return false;
+    }
+
+    if (!(chasePct <= 0.25)) {
+      dlog("🚫 no enter: chasePct too high");
+      return false;
+    }
+
+    return true;
   }
-
-  const chasePct = ((price - level) / level) * 100;
-
-  dlog(
-    `🎯 washout entry check: ` +
-    `price=${price} level=${level} ` +
-    `aboveLevel=${price > level ? 1 : 0} ` +
-    `chasePct=${chasePct.toFixed(3)}% ` +
-    `score=${s.setup.score}`
-  );
-
-  if (!(price > level)) {
-    dlog("🚫 no enter: price not above reclaim level");
-    return false;
-  }
-
-  if (!(chasePct <= 0.25)) {
-    dlog("🚫 no enter: chasePct too high");
-    return false;
-  }
-
-  return true;
-}
 
   if (s.setup.setupType === "breakout_pullback") {
     const level = s.setup.level;
@@ -406,7 +453,6 @@ if (s.setup.setupType === "washout_reclaim") {
 function exitCheck(s) {
   if (!s.position.inPosition) return null;
   if (!canUseTick(s)) return null;
-
   if (s.orderLock.exitInFlight) return null;
   if (recently(s.orderLock.lastExitMs, EXIT_DEDUP_MS)) return null;
 
@@ -433,7 +479,7 @@ function exitCheck(s) {
 // ---------------------------
 // 3Commas sender
 // ---------------------------
-async function post3C({ action, symbol, price, comment }) {
+async function post3C({ action, symbol, price, comment, volumePercent = null }) {
   if (!C3_SIGNAL_SECRET) throw new Error("Missing C3_SIGNAL_SECRET");
 
   const bot_uuid = botUuidForSymbol(symbol);
@@ -453,6 +499,11 @@ async function post3C({ action, symbol, price, comment }) {
     comment,
   };
 
+  // 3Commas bot must be set to "Send in webhook, %"
+  if (volumePercent != null && action === "enter_long") {
+    payload.volume_percent = String(volumePercent);
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), C3_TIMEOUT_MS);
 
@@ -465,7 +516,7 @@ async function post3C({ action, symbol, price, comment }) {
     });
 
     const body = await resp.text();
-    return { status: resp.status, body };
+    return { status: resp.status, body, payload };
   } finally {
     clearTimeout(timer);
   }
@@ -480,7 +531,6 @@ async function runDecision(symbol, source) {
 
   const lastBar = s.bars[s.bars.length - 1];
 
-  // only FEATURES updates regime/setup/score
   if (source === "features") {
     s.regime = computeRegime(lastBar);
     dlog(`🧭 REGIME ${symbol} mode=${s.regime.mode} conf=${s.regime.confidence}`);
@@ -489,7 +539,6 @@ async function runDecision(symbol, source) {
     scoreSetup(s);
   }
 
-  // exits can be checked on both tick + features
   const exitReason = exitCheck(s);
   if (exitReason) {
     const price = s.lastPrice ?? lastBar.close;
@@ -511,30 +560,45 @@ async function runDecision(symbol, source) {
       s.orderLock.exitInFlight = false;
     }
 
-    s.position = { inPosition: false, entry: null, peak: null, stop: null, sizeMult: 0, enteredMs: 0 };
+    s.position = { inPosition: false, entry: null, peak: null, stop: null, sizeMult: 0, volumePercent: 0, enteredMs: 0 };
     clearSetup(s, exitReason);
     startCooldown(s, exitReason);
     return;
   }
 
-  // only TICK triggers entry timing
   if (source !== "tick") return;
 
   if (shouldEnter(s)) {
     const price = s.lastPrice ?? lastBar.close;
-    const sizeMult = sizeFromScore(s.setup.score);
-    if (sizeMult <= 0) return;
 
     if (s.orderLock.enterInFlight) return;
     if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return;
 
+    const sizing = computeRiskBasedSize(s, price);
+    if (sizing.volumePercent <= 0) {
+      dlog("🚫 no enter: sizing returned 0");
+      return;
+    }
+
     s.orderLock.enterInFlight = true;
 
-    const comment = `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}`;
-    console.log(`📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizeMult}`);
+    const comment =
+      `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}` +
+      `|riskUsd=${sizing.riskUsd}|stopDist=${sizing.stopDistance}` +
+      `|volPct=${sizing.volumePercent}`;
+
+    console.log(
+      `📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizing.sizeMult} volumePercent=${sizing.volumePercent}`
+    );
 
     try {
-      const r = await post3C({ action: "enter_long", symbol, price, comment });
+      const r = await post3C({
+        action: "enter_long",
+        symbol,
+        price,
+        comment,
+        volumePercent: sizing.volumePercent,
+      });
       console.log(`📨 3Commas enter_long status=${r.status}`);
       s.orderLock.lastEnterMs = nowMs();
     } catch (e) {
@@ -547,7 +611,8 @@ async function runDecision(symbol, source) {
     s.position.inPosition = true;
     s.position.entry = price;
     s.position.peak = price;
-    s.position.sizeMult = sizeMult;
+    s.position.sizeMult = sizing.sizeMult;
+    s.position.volumePercent = sizing.volumePercent;
     s.position.enteredMs = nowMs();
 
     clearSetup(s, "entered");
@@ -575,7 +640,6 @@ async function handleWebhook(req, res) {
     const symbol = body.symbol;
     if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
 
-    // Ignore legacy Pine decision messages
     if (body.action === "ready" || body.src === "enter_long" || body.intent === "exit_long") {
       return res.json({ ok: true, ignored: "legacy_pine_decision" });
     }
@@ -590,7 +654,6 @@ async function handleWebhook(req, res) {
       s.lastTickMs = nowMs();
       s.tickCount++;
 
-      // ✅ only print one tick line every ~3 minutes
       const now = nowMs();
       if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
         console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
@@ -633,9 +696,9 @@ async function handleWebhook(req, res) {
         return res.status(400).json({ ok: false, err: "bad OHLC" });
       }
 
-   console.log(
-  `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ray_buy=${bar.ray_buy ? 1 : 0} ray_sell=${bar.ray_sell ? 1 : 0} fwo=${bar.fwo}`
-);
+      console.log(
+        `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ray_buy=${bar.ray_buy ? 1 : 0} ray_sell=${bar.ray_sell ? 1 : 0} fwo=${bar.fwo}`
+      );
 
       s.bars.push(bar);
       pruneBars(s);
@@ -664,12 +727,14 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.0-phase2-full-fixed+tick-throttle-clean",
+    brain: "v3.1-phase2-risk-sizing",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
     debug: DEBUG,
     tickLogEveryMs: TICK_LOG_EVERY_MS,
+    botMaxNotionalUsd: BOT_MAX_NOTIONAL_USDT,
+    riskPctOfBot: RISK_PCT_OF_BOT,
   });
 });
 
@@ -690,4 +755,6 @@ app.listen(PORT, () => {
   console.log(`🧭 SYMBOL_BOT_MAP keys=${Object.keys(SYMBOL_BOT_MAP).length}`);
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
   console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
+  console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
+  console.log(`🛡️ RISK_PCT_OF_BOT=${RISK_PCT_OF_BOT}`);
 });
