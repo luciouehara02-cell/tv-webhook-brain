@@ -362,12 +362,35 @@ function shouldEnter(s) {
 
   if (s.setup.score < SCORE_ENTER_SMALL) return false;
 
-  if (s.setup.setupType === "washout_reclaim") {
-    const level = s.setup.level ?? last.ema18;
-    if (!level) return false;
-    const chasePct = ((price - level) / level) * 100;
-    return price > level && chasePct <= 0.25;
+if (s.setup.setupType === "washout_reclaim") {
+  const level = s.setup.level ?? last.ema18;
+  if (!level) {
+    dlog("🚫 no enter: missing washout level");
+    return false;
   }
+
+  const chasePct = ((price - level) / level) * 100;
+
+  dlog(
+    `🎯 washout entry check: ` +
+    `price=${price} level=${level} ` +
+    `aboveLevel=${price > level ? 1 : 0} ` +
+    `chasePct=${chasePct.toFixed(3)}% ` +
+    `score=${s.setup.score}`
+  );
+
+  if (!(price > level)) {
+    dlog("🚫 no enter: price not above reclaim level");
+    return false;
+  }
+
+  if (!(chasePct <= 0.25)) {
+    dlog("🚫 no enter: chasePct too high");
+    return false;
+  }
+
+  return true;
+}
 
   if (s.setup.setupType === "breakout_pullback") {
     const level = s.setup.level;
