@@ -79,17 +79,17 @@ const EXIT_DEDUP_MS = parseInt(process.env.EXIT_DEDUP_MS || "30000", 10);
 // ---------------------------
 // Risk-based sizing
 // ---------------------------
-// This should match your bot's Max investment usage in 3Commas
 const BOT_MAX_NOTIONAL_USDT = parseFloat(process.env.BOT_MAX_NOTIONAL_USDT || "10000");
 
-// Risk budget as % of bot allocation, not account
-// e.g. 0.5 = risk 0.5% of 10,000 = 50 USDT per trade
-const RISK_PCT_OF_BOT = parseFloat(process.env.RISK_PCT_OF_BOT || "0.5");
+// Adaptive risk bounds as % of bot allocation
+const BASE_RISK_PCT = parseFloat(process.env.BASE_RISK_PCT || "0.5");
+const MIN_RISK_PCT = parseFloat(process.env.MIN_RISK_PCT || "0.3");
+const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PCT || "1.0");
 
-// Optional score multiplier to make weak setups smaller
+// Optional score multiplier
 const USE_SCORE_SIZE_MULT = (process.env.USE_SCORE_SIZE_MULT || "1") === "1";
 
-// Safety caps
+// Safety caps on webhook volume %
 const MIN_VOLUME_PCT = parseFloat(process.env.MIN_VOLUME_PCT || "5");
 const MAX_VOLUME_PCT = parseFloat(process.env.MAX_VOLUME_PCT || "100");
 
@@ -156,6 +156,7 @@ function ensureSymbol(symbol) {
         stop: null,
         sizeMult: 0,
         volumePercent: 0,
+        adaptiveRiskPct: 0,
         enteredMs: 0,
       },
 
@@ -232,7 +233,7 @@ function detectSetups(s) {
   if (s.setup.armed) return;
 
   const bars = s.bars;
-  if (bars.length < 20) { // faster testing
+  if (bars.length < 20) {
     dlog(`⏳ detectSetups waiting bars=${bars.length}/20`);
     return;
   }
@@ -345,7 +346,7 @@ function scoreSetup(s) {
 }
 
 // ---------------------------
-// Risk sizing helpers
+// Adaptive risk + size helpers
 // ---------------------------
 function scoreMultiplier(score) {
   if (!USE_SCORE_SIZE_MULT) return 1.0;
@@ -356,29 +357,52 @@ function scoreMultiplier(score) {
   return 0.0;
 }
 
+function computeAdaptiveRiskPct(s, lastBar) {
+  const atrPct = lastBar?.atrPct ?? 0;
+  const adx = lastBar?.adx ?? 0;
+  const regime = s.regime.mode;
+
+  let risk = BASE_RISK_PCT;
+
+  // volatility
+  if (atrPct < 0.15) risk -= 0.2;
+  else if (atrPct > 0.60) risk += 0.2;
+  else if (atrPct > 0.35) risk += 0.1;
+
+  // trend bonus
+  if (regime === "trend" && adx > 22) risk += 0.2;
+
+  // range penalty
+  if (regime === "range" && adx < 18) risk -= 0.1;
+
+  risk = Math.max(MIN_RISK_PCT, Math.min(MAX_RISK_PCT, risk));
+  return Math.round(risk * 1000) / 1000;
+}
+
 function computeRiskBasedSize(s, entryPrice) {
+  const lastBar = s.bars[s.bars.length - 1];
   const stop = s.setup.invalidationPrice;
+
   if (!entryPrice || !stop || entryPrice <= stop) {
-    return { sizeMult: 0, volumePercent: 0, riskUsd: 0, stopDistance: 0 };
+    return { sizeMult: 0, volumePercent: 0, riskUsd: 0, stopDistance: 0, adaptiveRiskPct: 0 };
   }
 
+  const adaptiveRiskPct = computeAdaptiveRiskPct(s, lastBar);
   const stopDistance = entryPrice - stop;
-  const riskUsdBase = BOT_MAX_NOTIONAL_USDT * (RISK_PCT_OF_BOT / 100.0);
+  const riskUsdBase = BOT_MAX_NOTIONAL_USDT * (adaptiveRiskPct / 100.0);
   const scoreMult = scoreMultiplier(s.setup.score);
   const riskUsd = riskUsdBase * scoreMult;
 
   if (riskUsd <= 0) {
-    return { sizeMult: 0, volumePercent: 0, riskUsd, stopDistance };
+    return { sizeMult: 0, volumePercent: 0, riskUsd, stopDistance, adaptiveRiskPct };
   }
 
-  // Qty based on allowed loss / stop distance
+  // qty from allowed loss / stop distance
   const qty = riskUsd / stopDistance;
   const notionalUsd = qty * entryPrice;
 
-  // Convert to % of bot max allocation
+  // convert to bot allocation %
   let volumePercent = (notionalUsd / BOT_MAX_NOTIONAL_USDT) * 100.0;
-
-  // clamp
   volumePercent = Math.max(MIN_VOLUME_PCT, Math.min(MAX_VOLUME_PCT, volumePercent));
 
   const sizeMult = volumePercent / 100.0;
@@ -388,6 +412,7 @@ function computeRiskBasedSize(s, entryPrice) {
     volumePercent: Math.round(volumePercent * 100) / 100,
     riskUsd: Math.round(riskUsd * 100) / 100,
     stopDistance: Math.round(stopDistance * 100000) / 100000,
+    adaptiveRiskPct,
   };
 }
 
@@ -450,6 +475,9 @@ function shouldEnter(s) {
   return false;
 }
 
+// ---------------------------
+// Regime-aware exit logic
+// ---------------------------
 function exitCheck(s) {
   if (!s.position.inPosition) return null;
   if (!canUseTick(s)) return null;
@@ -458,19 +486,53 @@ function exitCheck(s) {
 
   const price = s.lastPrice;
   const last = s.bars[s.bars.length - 1];
+  const entry = s.position.entry ?? price;
 
-  s.position.peak = Math.max(s.position.peak ?? s.position.entry, price);
+  s.position.peak = Math.max(s.position.peak ?? entry, price);
 
-  if (last.atr != null && s.position.peak != null) {
-    const mult = (s.regime.mode === "trend") ? 2.2 : 1.6;
-    const newStop = s.position.peak - last.atr * mult;
-    if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
+  const pnlPct = ((price - entry) / entry) * 100;
+  const atr = last.atr ?? 0;
+
+  // Regime-aware stop
+  if (s.regime.mode === "trend") {
+    // wider trailing in trend to let winners run
+    if (atr > 0 && s.position.peak != null) {
+      const trendTrailMult = 2.4;
+      const newStop = s.position.peak - atr * trendTrailMult;
+      if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
+    }
+
+    // trend structure failure
+    if (last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18) {
+      return "trend_fail_ema_cross";
+    }
+
+    // hard stop
+    if (s.position.stop != null && price <= s.position.stop) {
+      return "atr_trail_stop_trend";
+    }
+  } else {
+    // range mode: tighter trailing + mean-reversion take-profit
+    if (atr > 0 && s.position.peak != null) {
+      const rangeTrailMult = 1.3;
+      const newStop = s.position.peak - atr * rangeTrailMult;
+      if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
+    }
+
+    // take profit earlier in range
+    if (pnlPct >= 0.35) {
+      return "range_take_profit";
+    }
+
+    if (s.position.stop != null && price <= s.position.stop) {
+      return "atr_trail_stop_range";
+    }
   }
 
-  if (s.position.stop != null && price <= s.position.stop) return "atr_trail_stop";
-
-  if (s.regime.mode === "trend" && last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18) {
-    return "trend_fail_ema_cross";
+  // dead trade / time-based exit
+  const minsInTrade = (nowMs() - (s.position.enteredMs || nowMs())) / 60000;
+  if (minsInTrade >= 30 && pnlPct < 0.10) {
+    return "time_stop_no_progress";
   }
 
   return null;
@@ -560,7 +622,16 @@ async function runDecision(symbol, source) {
       s.orderLock.exitInFlight = false;
     }
 
-    s.position = { inPosition: false, entry: null, peak: null, stop: null, sizeMult: 0, volumePercent: 0, enteredMs: 0 };
+    s.position = {
+      inPosition: false,
+      entry: null,
+      peak: null,
+      stop: null,
+      sizeMult: 0,
+      volumePercent: 0,
+      adaptiveRiskPct: 0,
+      enteredMs: 0,
+    };
     clearSetup(s, exitReason);
     startCooldown(s, exitReason);
     return;
@@ -584,8 +655,8 @@ async function runDecision(symbol, source) {
 
     const comment =
       `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}` +
-      `|riskUsd=${sizing.riskUsd}|stopDist=${sizing.stopDistance}` +
-      `|volPct=${sizing.volumePercent}`;
+      `|riskPct=${sizing.adaptiveRiskPct}|riskUsd=${sizing.riskUsd}` +
+      `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}`;
 
     console.log(
       `📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizing.sizeMult} volumePercent=${sizing.volumePercent}`
@@ -613,6 +684,7 @@ async function runDecision(symbol, source) {
     s.position.peak = price;
     s.position.sizeMult = sizing.sizeMult;
     s.position.volumePercent = sizing.volumePercent;
+    s.position.adaptiveRiskPct = sizing.adaptiveRiskPct;
     s.position.enteredMs = nowMs();
 
     clearSetup(s, "entered");
@@ -727,14 +799,16 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.1-phase2-risk-sizing",
+    brain: "v3.2-phase2-adaptive-risk+regime-exit",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
     debug: DEBUG,
     tickLogEveryMs: TICK_LOG_EVERY_MS,
     botMaxNotionalUsd: BOT_MAX_NOTIONAL_USDT,
-    riskPctOfBot: RISK_PCT_OF_BOT,
+    baseRiskPct: BASE_RISK_PCT,
+    minRiskPct: MIN_RISK_PCT,
+    maxRiskPct: MAX_RISK_PCT,
   });
 });
 
@@ -756,5 +830,7 @@ app.listen(PORT, () => {
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
   console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
-  console.log(`🛡️ RISK_PCT_OF_BOT=${RISK_PCT_OF_BOT}`);
+  console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
+  console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
+  console.log(`🛡️ MAX_RISK_PCT=${MAX_RISK_PCT}`);
 });
