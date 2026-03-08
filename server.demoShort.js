@@ -25,6 +25,7 @@
  *   EXIT_DEDUP_MS=30000
  */
 
+
 import express from "express";
 
 // ---------------------------
@@ -347,14 +348,12 @@ function scoreSetup(s) {
 
   if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) add(1, "rsi rising");
 
-  // Ray weighting by signal type
   if (rayFresh) {
     if (s.signals.lastRayBuySignal === "bullish_trend_change") add(3, "fresh ray trend change");
     else if (s.signals.lastRayBuySignal === "bullish_bos") add(2, "fresh ray bos");
     else add(2, "fresh ray_buy");
   }
 
-  // FWO weighting by signal type
   if (fwoFresh) {
     if (s.signals.lastFwoBuySignal === "sniper_buy") add(2, "fresh fwo sniper");
     else add(2, "fresh fwo_buy");
@@ -522,10 +521,17 @@ function exitCheck(s) {
   const pnlPct = ((price - entry) / entry) * 100;
   const atr = last.atr ?? 0;
 
-  dlog(
-    `🛡️ EXITCHK price=${price} entry=${entry} peak=${s.position.peak} ` +
-    `stop=${s.position.stop} pnlPct=${pnlPct.toFixed(3)} reg=${s.regime.mode}`
-  );
+  const shouldLogExitCheck =
+    price <= (s.position.stop ?? -Infinity) ||
+    (s.regime.mode === "range" && pnlPct >= 0.35) ||
+    (s.regime.mode === "trend" && last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18);
+
+  if (shouldLogExitCheck) {
+    dlog(
+      `🛡️ EXITCHK price=${price} entry=${entry} peak=${s.position.peak} ` +
+      `stop=${s.position.stop} pnlPct=${pnlPct.toFixed(3)} reg=${s.regime.mode}`
+    );
+  }
 
   if (s.regime.mode === "trend") {
     if (atr > 0 && s.position.peak != null) {
@@ -588,8 +594,13 @@ async function post3C({ action, symbol, price, comment, volumePercent = null }) 
     comment,
   };
 
+  // For "Send in webhook, %" mode in 3Commas
   if (volumePercent != null && action === "enter_long") {
-    payload.volume_percent = String(volumePercent);
+    payload.order = {
+      amount: String(volumePercent),
+      currency_type: "margin_percent",
+      order_type: "market",
+    };
   }
 
   dlog(`📦 3C PAYLOAD ${JSON.stringify(payload)}`);
@@ -747,9 +758,9 @@ async function handleWebhook(req, res) {
     const body = req.body || {};
     if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
 
- if (body.src !== "tick") {
-  dlog(`📩 WEBHOOK src=${body.src || ""} signal=${body.signal || ""} symbol=${body.symbol || ""}`);
-}
+    if (body.src !== "tick") {
+      dlog(`📩 WEBHOOK src=${body.src || ""} signal=${body.signal || ""} symbol=${body.symbol || ""}`);
+    }
 
     const symbol = body.symbol;
     if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
@@ -847,7 +858,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.2-phase2-full-debug",
+    brain: "v3.2-phase2-full-debug-fixed-entry",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
