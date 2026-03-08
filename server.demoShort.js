@@ -42,6 +42,10 @@ const TICK_LOG_EVERY_MS = parseInt(
   10
 );
 
+// Signal freshness TTLs
+const RAY_SIGNAL_TTL_MS = parseInt(process.env.RAY_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
+const FWO_SIGNAL_TTL_MS = parseInt(process.env.FWO_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
+
 // Secrets
 const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -128,6 +132,10 @@ function botUuidForSymbol(symbol) {
   return SYMBOL_BOT_MAP?.[symbol] || null;
 }
 
+function signalFresh(ts, ttlMs) {
+  return ts > 0 && (nowMs() - ts) < ttlMs;
+}
+
 function ensureSymbol(symbol) {
   if (!state.has(symbol)) {
     state.set(symbol, {
@@ -164,8 +172,9 @@ function ensureSymbol(symbol) {
 
       signals: {
         lastRayBuyMs: 0,
-        lastRaySellMs: 0,
-        lastFwoRecoverMs: 0,
+        lastRayBuySignal: "",
+        lastFwoBuyMs: 0,
+        lastFwoBuySignal: "",
       },
 
       orderLock: {
@@ -318,6 +327,16 @@ function scoreSetup(s) {
     dlog(`   ➕ ${label} +${nn} => ${score}`);
   };
 
+  const rayFresh = signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS);
+  const fwoFresh = signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS);
+
+  dlog(
+    `🧠 SIGNAL TTL rayFresh=${rayFresh ? 1 : 0} ` +
+    `fwoFresh=${fwoFresh ? 1 : 0} ` +
+    `raySignal=${s.signals.lastRayBuySignal || ""} ` +
+    `fwoSignal=${s.signals.lastFwoBuySignal || ""}`
+  );
+
   if (s.regime.mode === "trend") add(Math.round(3 * s.regime.confidence), "regime(trend)");
   else add(Math.round(2 * s.regime.confidence), "regime(range)");
 
@@ -326,17 +345,29 @@ function scoreSetup(s) {
     else if (last.atrPct >= 0.4) add(1, "atrPct>=0.4");
   }
 
-  const freshMs = 5 * 60 * 1000;
-  if (nowMs() - s.signals.lastRayBuyMs < freshMs) add(3, "fresh ray_buy");
-  if (nowMs() - s.signals.lastFwoRecoverMs < freshMs) add(2, "fresh fwo_recover");
-
   if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) add(1, "rsi rising");
+
+  // Ray weighting by signal type
+  if (rayFresh) {
+    if (s.signals.lastRayBuySignal === "bullish_trend_change") add(3, "fresh ray trend change");
+    else if (s.signals.lastRayBuySignal === "bullish_bos") add(2, "fresh ray bos");
+    else add(2, "fresh ray_buy");
+  }
+
+  // FWO weighting by signal type
+  if (fwoFresh) {
+    if (s.signals.lastFwoBuySignal === "sniper_buy") add(2, "fresh fwo sniper");
+    else add(2, "fresh fwo_buy");
+  }
 
   const nBars = PUMP_BLOCK_WINDOW_BARS;
   if (bars.length > nBars) {
     const past = bars[bars.length - 1 - nBars];
     const movePct = ((last.close - past.close) / past.close) * 100;
-    if (movePct > PUMP_BLOCK_PCT) score -= 3;
+    if (movePct > PUMP_BLOCK_PCT) {
+      score -= 3;
+      dlog(`   ➖ pump penalty -3 => ${score}`);
+    }
   }
 
   score = Math.max(0, Math.min(10, score));
@@ -364,15 +395,11 @@ function computeAdaptiveRiskPct(s, lastBar) {
 
   let risk = BASE_RISK_PCT;
 
-  // volatility
   if (atrPct < 0.15) risk -= 0.2;
   else if (atrPct > 0.60) risk += 0.2;
   else if (atrPct > 0.35) risk += 0.1;
 
-  // trend bonus
   if (regime === "trend" && adx > 22) risk += 0.2;
-
-  // range penalty
   if (regime === "range" && adx < 18) risk -= 0.1;
 
   risk = Math.max(MIN_RISK_PCT, Math.min(MAX_RISK_PCT, risk));
@@ -397,11 +424,9 @@ function computeRiskBasedSize(s, entryPrice) {
     return { sizeMult: 0, volumePercent: 0, riskUsd, stopDistance, adaptiveRiskPct };
   }
 
-  // qty from allowed loss / stop distance
   const qty = riskUsd / stopDistance;
   const notionalUsd = qty * entryPrice;
 
-  // convert to bot allocation %
   let volumePercent = (notionalUsd / BOT_MAX_NOTIONAL_USDT) * 100.0;
   volumePercent = Math.max(MIN_VOLUME_PCT, Math.min(MAX_VOLUME_PCT, volumePercent));
 
@@ -432,7 +457,10 @@ function shouldEnter(s) {
     return false;
   }
 
-  if (s.setup.score < SCORE_ENTER_SMALL) return false;
+  if (s.setup.score < SCORE_ENTER_SMALL) {
+    dlog(`🚫 no enter: score ${s.setup.score} < ${SCORE_ENTER_SMALL}`);
+    return false;
+  }
 
   if (s.setup.setupType === "washout_reclaim") {
     const level = s.setup.level ?? last.ema18;
@@ -469,6 +497,7 @@ function shouldEnter(s) {
     if (!level || last.ema8 == null) return false;
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
+    dlog(`🎯 breakout entry check nearLevelPct=${nearLevelPct.toFixed(3)} nearEma8Pct=${nearEma8Pct.toFixed(3)} score=${s.setup.score}`);
     return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && s.setup.score >= SCORE_ENTER_FULL;
   }
 
@@ -493,33 +522,32 @@ function exitCheck(s) {
   const pnlPct = ((price - entry) / entry) * 100;
   const atr = last.atr ?? 0;
 
-  // Regime-aware stop
+  dlog(
+    `🛡️ EXITCHK price=${price} entry=${entry} peak=${s.position.peak} ` +
+    `stop=${s.position.stop} pnlPct=${pnlPct.toFixed(3)} reg=${s.regime.mode}`
+  );
+
   if (s.regime.mode === "trend") {
-    // wider trailing in trend to let winners run
     if (atr > 0 && s.position.peak != null) {
       const trendTrailMult = 2.4;
       const newStop = s.position.peak - atr * trendTrailMult;
       if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
     }
 
-    // trend structure failure
     if (last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18) {
       return "trend_fail_ema_cross";
     }
 
-    // hard stop
     if (s.position.stop != null && price <= s.position.stop) {
       return "atr_trail_stop_trend";
     }
   } else {
-    // range mode: tighter trailing + mean-reversion take-profit
     if (atr > 0 && s.position.peak != null) {
       const rangeTrailMult = 1.3;
       const newStop = s.position.peak - atr * rangeTrailMult;
       if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
     }
 
-    // take profit earlier in range
     if (pnlPct >= 0.35) {
       return "range_take_profit";
     }
@@ -529,7 +557,6 @@ function exitCheck(s) {
     }
   }
 
-  // dead trade / time-based exit
   const minsInTrade = (nowMs() - (s.position.enteredMs || nowMs())) / 60000;
   if (minsInTrade >= 30 && pnlPct < 0.10) {
     return "time_stop_no_progress";
@@ -561,10 +588,11 @@ async function post3C({ action, symbol, price, comment, volumePercent = null }) 
     comment,
   };
 
-  // 3Commas bot must be set to "Send in webhook, %"
   if (volumePercent != null && action === "enter_long") {
     payload.volume_percent = String(volumePercent);
   }
+
+  dlog(`📦 3C PAYLOAD ${JSON.stringify(payload)}`);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), C3_TIMEOUT_MS);
@@ -578,6 +606,7 @@ async function post3C({ action, symbol, price, comment, volumePercent = null }) 
     });
 
     const body = await resp.text();
+    dlog(`📦 3C RESPONSE status=${resp.status} body=${body}`);
     return { status: resp.status, body, payload };
   } finally {
     clearTimeout(timer);
@@ -599,6 +628,14 @@ async function runDecision(symbol, source) {
     expireSetup(s);
     detectSetups(s);
     scoreSetup(s);
+
+    dlog(
+      `📌 STATE ${symbol} ` +
+      `reg=${s.regime.mode} armed=${s.setup.armed ? 1 : 0} score=${s.setup.score} ` +
+      `inPos=${s.position.inPosition ? 1 : 0} cooldown=${isInCooldown(s) ? 1 : 0} ` +
+      `rayFresh=${signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS) ? 1 : 0} ` +
+      `fwoFresh=${signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS) ? 1 : 0}`
+    );
   }
 
   const exitReason = exitCheck(s);
@@ -697,6 +734,7 @@ async function runDecision(symbol, source) {
 function authOk(body) {
   if (body?.src === "tick" && TICKROUTER_SECRET) return body.secret === TICKROUTER_SECRET;
   if (body?.src === "features" && BRAIN_SECRET) return body.secret === BRAIN_SECRET;
+  if ((body?.src === "ray_buy" || body?.src === "fwo_buy") && BRAIN_SECRET) return body.secret === BRAIN_SECRET;
   if (BRAIN_SECRET || TICKROUTER_SECRET) return body.secret === (BRAIN_SECRET || TICKROUTER_SECRET);
   return true;
 }
@@ -708,6 +746,8 @@ async function handleWebhook(req, res) {
   try {
     const body = req.body || {};
     if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
+
+    dlog(`📩 WEBHOOK src=${body.src || ""} signal=${body.signal || ""} symbol=${body.symbol || ""}`);
 
     const symbol = body.symbol;
     if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
@@ -756,12 +796,6 @@ async function handleWebhook(req, res) {
         adx: n(body.adx),
         atr: n(body.atr),
         atrPct: n(body.atrPct),
-
-        fwo: n(body.fwo),
-
-        ray_buy: bool01(body.ray_buy),
-        ray_sell: bool01(body.ray_sell),
-        fwo_recover: bool01(body.fwo_recover),
       };
 
       if (bar.close == null || bar.high == null || bar.low == null) {
@@ -769,33 +803,34 @@ async function handleWebhook(req, res) {
       }
 
       console.log(
-        `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ray_buy=${bar.ray_buy ? 1 : 0} ray_sell=${bar.ray_sell ? 1 : 0} fwo=${bar.fwo}`
+        `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx}`
       );
 
       s.bars.push(bar);
       pruneBars(s);
-
-      if (bar.ray_buy) s.signals.lastRayBuyMs = nowMs();
-      if (bar.ray_sell) s.signals.lastRaySellMs = nowMs();
-      if (bar.fwo_recover) s.signals.lastFwoRecoverMs = nowMs();
 
       if (s.lastPrice == null) s.lastPrice = bar.close;
 
       await runDecision(symbol, "features");
       return res.json({ ok: true });
     }
-    
-if (body.src === "ray_buy") {
-  s.signals.lastRayBuyMs = nowMs();
-  console.log(`🟪 RAY BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
-  return res.json({ ok: true });
-}
 
-if (body.src === "fwo_buy") {
-  s.signals.lastFwoRecoverMs = nowMs();
-  console.log(`🟪 FWO BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
-  return res.json({ ok: true });
-}
+    if (body.src === "ray_buy") {
+      s.signals.lastRayBuyMs = nowMs();
+      s.signals.lastRayBuySignal = body.signal || "";
+      console.log(`🟪 RAY BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
+      dlog(`🧠 RAY state lastRayBuyMs=${s.signals.lastRayBuyMs}`);
+      return res.json({ ok: true });
+    }
+
+    if (body.src === "fwo_buy") {
+      s.signals.lastFwoBuyMs = nowMs();
+      s.signals.lastFwoBuySignal = body.signal || "";
+      console.log(`🟪 FWO BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
+      dlog(`🧠 FWO state lastFwoBuyMs=${s.signals.lastFwoBuyMs}`);
+      return res.json({ ok: true });
+    }
+
     console.log(`🟪 IGNORE src=${body.src} symbol=${symbol}`);
     return res.json({ ok: true, ignored: "src_not_supported" });
   } catch (e) {
@@ -810,12 +845,14 @@ if (body.src === "fwo_buy") {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.2-phase2-adaptive-risk+regime-exit",
+    brain: "v3.2-phase2-full-debug",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
     debug: DEBUG,
     tickLogEveryMs: TICK_LOG_EVERY_MS,
+    raySignalTtlMs: RAY_SIGNAL_TTL_MS,
+    fwoSignalTtlMs: FWO_SIGNAL_TTL_MS,
     botMaxNotionalUsd: BOT_MAX_NOTIONAL_USDT,
     baseRiskPct: BASE_RISK_PCT,
     minRiskPct: MIN_RISK_PCT,
@@ -840,6 +877,8 @@ app.listen(PORT, () => {
   console.log(`🧭 SYMBOL_BOT_MAP keys=${Object.keys(SYMBOL_BOT_MAP).length}`);
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
   console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
+  console.log(`🕒 RAY_SIGNAL_TTL_MS=${RAY_SIGNAL_TTL_MS}`);
+  console.log(`🕒 FWO_SIGNAL_TTL_MS=${FWO_SIGNAL_TTL_MS}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
