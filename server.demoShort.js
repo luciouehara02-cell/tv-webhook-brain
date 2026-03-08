@@ -784,7 +784,18 @@ async function handleWebhook(req, res) {
       await runDecision(symbol, "features");
       return res.json({ ok: true });
     }
+    
+if (body.src === "ray_buy") {
+  s.signals.lastRayBuyMs = nowMs();
+  console.log(`🟪 RAY BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
+  return res.json({ ok: true });
+}
 
+if (body.src === "fwo_buy") {
+  s.signals.lastFwoRecoverMs = nowMs();
+  console.log(`🟪 FWO BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
+  return res.json({ ok: true });
+}
     console.log(`🟪 IGNORE src=${body.src} symbol=${symbol}`);
     return res.json({ ok: true, ignored: "src_not_supported" });
   } catch (e) {
