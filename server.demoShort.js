@@ -747,7 +747,9 @@ async function handleWebhook(req, res) {
     const body = req.body || {};
     if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
 
-    dlog(`📩 WEBHOOK src=${body.src || ""} signal=${body.signal || ""} symbol=${body.symbol || ""}`);
+ if (body.src !== "tick") {
+  dlog(`📩 WEBHOOK src=${body.src || ""} signal=${body.signal || ""} symbol=${body.symbol || ""}`);
+}
 
     const symbol = body.symbol;
     if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
