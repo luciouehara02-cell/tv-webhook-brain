@@ -1,5 +1,5 @@
 /**
- * Brain v3.0 Phase2 — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
+ * Brain v3.3 Phase2 — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
  * ✅ Duplicate-enter protection (enterInFlight + lastEnterMs)
  * ✅ Duplicate-exit protection (exitInFlight + lastExitMs)
  * ✅ No setup arming while in position
@@ -26,6 +26,8 @@
  */
 
 
+
+
 import express from "express";
 
 // ---------------------------
@@ -46,6 +48,10 @@ const TICK_LOG_EVERY_MS = parseInt(
 // Signal freshness TTLs
 const RAY_SIGNAL_TTL_MS = parseInt(process.env.RAY_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
 const FWO_SIGNAL_TTL_MS = parseInt(process.env.FWO_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
+
+// Breakout setup aging
+const BREAKOUT_MAX_AGE_MIN = parseInt(process.env.BREAKOUT_MAX_AGE_MIN || "15", 10);
+const BREAKOUT_STALE_MIN_SCORE = parseInt(process.env.BREAKOUT_STALE_MIN_SCORE || "4", 10);
 
 // Secrets
 const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
@@ -135,6 +141,11 @@ function botUuidForSymbol(symbol) {
 
 function signalFresh(ts, ttlMs) {
   return ts > 0 && (nowMs() - ts) < ttlMs;
+}
+
+function setupAgeMin(setup) {
+  if (!setup?.armedMs) return 0;
+  return (nowMs() - setup.armedMs) / 60000;
 }
 
 function ensureSymbol(symbol) {
@@ -307,10 +318,21 @@ function detectSetups(s) {
 
 function expireSetup(s) {
   if (!s.setup.armed) return;
+
   const ageMs = nowMs() - s.setup.armedMs;
   if (ageMs > s.setup.ttlMs) {
     dlog(`⌛ Setup TTL expired ageSec=${(ageMs / 1000).toFixed(0)}`);
     clearSetup(s, "ttl");
+    return;
+  }
+
+  // extra stale control for breakout setups
+  if (s.setup.setupType === "breakout_pullback") {
+    const ageMin = setupAgeMin(s.setup);
+    if (ageMin > BREAKOUT_MAX_AGE_MIN) {
+      dlog(`⌛ Breakout setup stale ageMin=${ageMin.toFixed(1)} > ${BREAKOUT_MAX_AGE_MIN}`);
+      clearSetup(s, "breakout_stale");
+    }
   }
 }
 
@@ -493,11 +515,48 @@ function shouldEnter(s) {
 
   if (s.setup.setupType === "breakout_pullback") {
     const level = s.setup.level;
-    if (!level || last.ema8 == null) return false;
+    if (!level || last.ema8 == null) {
+      dlog("🚫 no breakout enter: missing level or ema8");
+      return false;
+    }
+
+    const ageMin = setupAgeMin(s.setup);
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
-    dlog(`🎯 breakout entry check nearLevelPct=${nearLevelPct.toFixed(3)} nearEma8Pct=${nearEma8Pct.toFixed(3)} score=${s.setup.score}`);
-    return (nearLevelPct <= 0.20 || nearEma8Pct <= 0.20) && s.setup.score >= SCORE_ENTER_FULL;
+
+    dlog(
+      `🎯 breakout entry check ` +
+      `ageMin=${ageMin.toFixed(1)} ` +
+      `nearLevelPct=${nearLevelPct.toFixed(3)} ` +
+      `nearEma8Pct=${nearEma8Pct.toFixed(3)} ` +
+      `score=${s.setup.score}`
+    );
+
+    if (ageMin > BREAKOUT_MAX_AGE_MIN) {
+      dlog(`🚫 no breakout enter: setup stale ageMin=${ageMin.toFixed(1)} > ${BREAKOUT_MAX_AGE_MIN}`);
+      clearSetup(s, "breakout_stale");
+      return false;
+    }
+
+    if (ageMin > Math.max(3, BREAKOUT_MAX_AGE_MIN * 0.5) && s.setup.score < BREAKOUT_STALE_MIN_SCORE) {
+      dlog(
+        `🚫 no breakout enter: aged setup needs higher score ` +
+        `score=${s.setup.score} < ${BREAKOUT_STALE_MIN_SCORE}`
+      );
+      return false;
+    }
+
+    if (!((nearLevelPct <= 0.20) || (nearEma8Pct <= 0.20))) {
+      dlog("🚫 no breakout enter: too far from level/ema8");
+      return false;
+    }
+
+    if (!(s.setup.score >= SCORE_ENTER_FULL)) {
+      dlog(`🚫 no breakout enter: score ${s.setup.score} < ${SCORE_ENTER_FULL}`);
+      return false;
+    }
+
+    return true;
   }
 
   return false;
@@ -642,8 +701,9 @@ async function runDecision(symbol, source) {
 
     dlog(
       `📌 STATE ${symbol} ` +
-      `reg=${s.regime.mode} armed=${s.setup.armed ? 1 : 0} score=${s.setup.score} ` +
-      `inPos=${s.position.inPosition ? 1 : 0} cooldown=${isInCooldown(s) ? 1 : 0} ` +
+      `reg=${s.regime.mode} armed=${s.setup.armed ? 1 : 0} type=${s.setup.setupType || ""} ` +
+      `setupAgeMin=${s.setup.armed ? setupAgeMin(s.setup).toFixed(1) : 0} ` +
+      `score=${s.setup.score} inPos=${s.position.inPosition ? 1 : 0} cooldown=${isInCooldown(s) ? 1 : 0} ` +
       `rayFresh=${signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS) ? 1 : 0} ` +
       `fwoFresh=${signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS) ? 1 : 0}`
     );
@@ -858,7 +918,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.2-phase2-full-debug-fixed-entry",
+    brain: "v3.2-phase2-full-debug-breakout-stale",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
@@ -866,6 +926,8 @@ app.get("/", (_, res) => {
     tickLogEveryMs: TICK_LOG_EVERY_MS,
     raySignalTtlMs: RAY_SIGNAL_TTL_MS,
     fwoSignalTtlMs: FWO_SIGNAL_TTL_MS,
+    breakoutMaxAgeMin: BREAKOUT_MAX_AGE_MIN,
+    breakoutStaleMinScore: BREAKOUT_STALE_MIN_SCORE,
     botMaxNotionalUsd: BOT_MAX_NOTIONAL_USDT,
     baseRiskPct: BASE_RISK_PCT,
     minRiskPct: MIN_RISK_PCT,
@@ -892,6 +954,8 @@ app.listen(PORT, () => {
   console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
   console.log(`🕒 RAY_SIGNAL_TTL_MS=${RAY_SIGNAL_TTL_MS}`);
   console.log(`🕒 FWO_SIGNAL_TTL_MS=${FWO_SIGNAL_TTL_MS}`);
+  console.log(`⏱️ BREAKOUT_MAX_AGE_MIN=${BREAKOUT_MAX_AGE_MIN}`);
+  console.log(`📏 BREAKOUT_STALE_MIN_SCORE=${BREAKOUT_STALE_MIN_SCORE}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
