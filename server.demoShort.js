@@ -49,9 +49,10 @@ const TICK_LOG_EVERY_MS = parseInt(
 const RAY_SIGNAL_TTL_MS = parseInt(process.env.RAY_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
 const FWO_SIGNAL_TTL_MS = parseInt(process.env.FWO_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
 
-// Breakout setup aging
+// Setup aging
 const BREAKOUT_MAX_AGE_MIN = parseInt(process.env.BREAKOUT_MAX_AGE_MIN || "15", 10);
 const BREAKOUT_STALE_MIN_SCORE = parseInt(process.env.BREAKOUT_STALE_MIN_SCORE || "4", 10);
+const WASHOUT_MAX_AGE_MIN = parseInt(process.env.WASHOUT_MAX_AGE_MIN || "12", 10);
 
 // Secrets
 const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
@@ -120,10 +121,6 @@ function nowMs() { return Date.now(); }
 function n(x, fallback = null) {
   const v = Number(x);
   return Number.isFinite(v) ? v : fallback;
-}
-
-function bool01(x) {
-  return String(x || "0") === "1" || x === true;
 }
 
 function recently(ts, windowMs) {
@@ -326,13 +323,17 @@ function expireSetup(s) {
     return;
   }
 
-  // extra stale control for breakout setups
-  if (s.setup.setupType === "breakout_pullback") {
-    const ageMin = setupAgeMin(s.setup);
-    if (ageMin > BREAKOUT_MAX_AGE_MIN) {
-      dlog(`⌛ Breakout setup stale ageMin=${ageMin.toFixed(1)} > ${BREAKOUT_MAX_AGE_MIN}`);
-      clearSetup(s, "breakout_stale");
-    }
+  const ageMin = setupAgeMin(s.setup);
+
+  if (s.setup.setupType === "breakout_pullback" && ageMin > BREAKOUT_MAX_AGE_MIN) {
+    dlog(`⌛ Breakout setup stale ageMin=${ageMin.toFixed(1)} > ${BREAKOUT_MAX_AGE_MIN}`);
+    clearSetup(s, "breakout_stale");
+    return;
+  }
+
+  if (s.setup.setupType === "washout_reclaim" && ageMin > WASHOUT_MAX_AGE_MIN) {
+    dlog(`⌛ Washout setup stale ageMin=${ageMin.toFixed(1)} > ${WASHOUT_MAX_AGE_MIN}`);
+    clearSetup(s, "washout_stale");
   }
 }
 
@@ -472,9 +473,16 @@ function shouldEnter(s) {
 
   const price = s.lastPrice;
   const last = s.bars[s.bars.length - 1];
+  const ageMin = setupAgeMin(s.setup);
 
   if (s.setup.invalidationPrice != null && price <= s.setup.invalidationPrice) {
     clearSetup(s, "invalidation");
+    return false;
+  }
+
+  if (s.setup.setupType === "washout_reclaim" && ageMin > WASHOUT_MAX_AGE_MIN) {
+    dlog(`🚫 no washout enter: setup stale ageMin=${ageMin.toFixed(1)} > ${WASHOUT_MAX_AGE_MIN}`);
+    clearSetup(s, "washout_stale");
     return false;
   }
 
@@ -494,6 +502,7 @@ function shouldEnter(s) {
 
     dlog(
       `🎯 washout entry check: ` +
+      `ageMin=${ageMin.toFixed(1)} ` +
       `price=${price} level=${level} ` +
       `aboveLevel=${price > level ? 1 : 0} ` +
       `chasePct=${chasePct.toFixed(3)}% ` +
@@ -520,7 +529,6 @@ function shouldEnter(s) {
       return false;
     }
 
-    const ageMin = setupAgeMin(s.setup);
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
 
@@ -653,7 +661,6 @@ async function post3C({ action, symbol, price, comment, volumePercent = null }) 
     comment,
   };
 
-  // For "Send in webhook, %" mode in 3Commas
   if (volumePercent != null && action === "enter_long") {
     payload.order = {
       amount: String(volumePercent),
@@ -860,11 +867,9 @@ async function handleWebhook(req, res) {
         close: n(body.close),
         high: n(body.high),
         low: n(body.low),
-
         ema8: n(body.ema8),
         ema18: n(body.ema18),
         ema50: n(body.ema50),
-
         rsi: n(body.rsi),
         adx: n(body.adx),
         atr: n(body.atr),
@@ -918,7 +923,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.2-phase2-full-debug-breakout-stale",
+    brain: "v3.2-phase2-full-debug-washout-stale",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
@@ -928,6 +933,7 @@ app.get("/", (_, res) => {
     fwoSignalTtlMs: FWO_SIGNAL_TTL_MS,
     breakoutMaxAgeMin: BREAKOUT_MAX_AGE_MIN,
     breakoutStaleMinScore: BREAKOUT_STALE_MIN_SCORE,
+    washoutMaxAgeMin: WASHOUT_MAX_AGE_MIN,
     botMaxNotionalUsd: BOT_MAX_NOTIONAL_USDT,
     baseRiskPct: BASE_RISK_PCT,
     minRiskPct: MIN_RISK_PCT,
@@ -956,6 +962,7 @@ app.listen(PORT, () => {
   console.log(`🕒 FWO_SIGNAL_TTL_MS=${FWO_SIGNAL_TTL_MS}`);
   console.log(`⏱️ BREAKOUT_MAX_AGE_MIN=${BREAKOUT_MAX_AGE_MIN}`);
   console.log(`📏 BREAKOUT_STALE_MIN_SCORE=${BREAKOUT_STALE_MIN_SCORE}`);
+  console.log(`⏱️ WASHOUT_MAX_AGE_MIN=${WASHOUT_MAX_AGE_MIN}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
