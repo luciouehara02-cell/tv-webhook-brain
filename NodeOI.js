@@ -1,25 +1,28 @@
 /**
  * NodeOI.js
- * ESM version for Brain v3.3 integration
+ * Bybit V5 public market data version
+ *
  * Purpose:
- *  - Fetch Binance futures OI / price / volume context
+ *  - Fetch OI / price / volume / funding context from Bybit
  *  - Build cached market-positioning snapshot
  *  - Validate long entries before 3Commas execution
  *
- * Note:
- *  - In your Railway environment, Binance Futures is returning HTTP 451
- *  - This script is correct, but the provider is geoblocked from that server location
+ * Notes:
+ *  - Designed to be drop-in compatible with the Brain integration already added
+ *  - Uses public endpoints only
+ *  - Symbol example: SOLUSDT
  */
 
 export default class NodeOI {
   constructor(config = {}) {
     this.cfg = {
       symbol: config.symbol || "SOLUSDT",
-      baseUrl: config.baseUrl || "https://fapi.binance.com",
+      baseUrl: config.baseUrl || "https://api.bybit.com",
+      category: config.category || "linear",
 
-      oiPeriod: config.oiPeriod || "5m",
+      oiPeriod: config.oiPeriod || "5m",     // internal style
       oiLimit: Number(config.oiLimit || 30),
-      klineInterval: config.klineInterval || "5m",
+      klineInterval: config.klineInterval || "5m", // internal style
       klineLimit: Number(config.klineLimit || 30),
 
       oiExpandPct: Number(config.oiExpandPct || 0.40),
@@ -29,7 +32,7 @@ export default class NodeOI {
       breakoutLookback: Number(config.breakoutLookback || 12),
       minConfidence: Number(config.minConfidence || 0.60),
 
-      useGlobalLs: Boolean(config.useGlobalLs ?? true),
+      useGlobalLs: Boolean(config.useGlobalLs ?? false), // Bybit version does not fetch global LS here
       useFunding: Boolean(config.useFunding ?? true),
 
       timeoutMs: Number(config.timeoutMs || 7000),
@@ -110,6 +113,35 @@ export default class NodeOI {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  mapOiInterval(period) {
+    const p = String(period || "5m").toLowerCase();
+    if (p === "5m") return "5min";
+    if (p === "15m") return "15min";
+    if (p === "30m") return "30min";
+    if (p === "1h") return "1h";
+    if (p === "4h") return "4h";
+    if (p === "1d") return "1d";
+    return "5min";
+  }
+
+  mapKlineInterval(interval) {
+    const p = String(interval || "5m").toLowerCase();
+    if (p === "1m") return "1";
+    if (p === "3m") return "3";
+    if (p === "5m") return "5";
+    if (p === "15m") return "15";
+    if (p === "30m") return "30";
+    if (p === "1h") return "60";
+    if (p === "2h") return "120";
+    if (p === "4h") return "240";
+    if (p === "6h") return "360";
+    if (p === "12h") return "720";
+    if (p === "1d") return "D";
+    if (p === "1w") return "W";
+    if (p === "1mo") return "M";
+    return "5";
+  }
+
   async request(path, params = {}) {
     const url = new URL(path, this.cfg.baseUrl);
     for (const [k, v] of Object.entries(params)) {
@@ -139,6 +171,12 @@ export default class NodeOI {
         }
 
         const json = await resp.json();
+
+        // Bybit uses retCode/retMsg
+        if (json && typeof json === "object" && "retCode" in json && json.retCode !== 0) {
+          throw new Error(`Bybit retCode=${json.retCode} retMsg=${json.retMsg || ""}`.trim());
+        }
+
         return json;
       } catch (e) {
         clearTimeout(timer);
@@ -151,28 +189,37 @@ export default class NodeOI {
     throw lastErr || new Error(`request failed: ${path}`);
   }
 
-  async fetchMarkPrice(symbol) {
-    return this.request("/fapi/v1/premiumIndex", { symbol });
-  }
-
-  async fetchCurrentOI(symbol) {
-    return this.request("/fapi/v1/openInterest", { symbol });
+  async fetchTickers(symbol) {
+    return this.request("/v5/market/tickers", {
+      category: this.cfg.category,
+      symbol,
+    });
   }
 
   async fetchOIHistory(symbol, period = "5m", limit = 30) {
-    return this.request("/futures/data/openInterestHist", { symbol, period, limit });
+    return this.request("/v5/market/open-interest", {
+      category: this.cfg.category,
+      symbol,
+      intervalTime: this.mapOiInterval(period),
+      limit,
+    });
   }
 
   async fetchKlines(symbol, interval = "5m", limit = 30) {
-    return this.request("/fapi/v1/klines", { symbol, interval, limit });
-  }
-
-  async fetchGlobalLongShortRatio(symbol, period = "5m", limit = 2) {
-    return this.request("/futures/data/globalLongShortAccountRatio", { symbol, period, limit });
+    return this.request("/v5/market/kline", {
+      category: this.cfg.category,
+      symbol,
+      interval: this.mapKlineInterval(interval),
+      limit,
+    });
   }
 
   async fetchFundingRate(symbol, limit = 1) {
-    return this.request("/fapi/v1/fundingRate", { symbol, limit });
+    return this.request("/v5/market/funding/history", {
+      category: this.cfg.category,
+      symbol,
+      limit,
+    });
   }
 
   classifyOIState(oiDelta5mPct) {
@@ -251,51 +298,42 @@ export default class NodeOI {
     const errors = [];
 
     try {
-      const [
-        markPrice,
-        oiNow,
-        oiHist,
-        klines,
-        globalLs,
-        fundingRate,
-      ] = await Promise.all([
-        this.fetchMarkPrice(symbol).catch((e) => {
-          errors.push(`mark=${e?.message || e}`);
-          return null;
-        }),
-        this.fetchCurrentOI(symbol).catch((e) => {
-          errors.push(`oiNow=${e?.message || e}`);
+      const [tickersResp, oiHistResp, klinesResp, fundingResp] = await Promise.all([
+        this.fetchTickers(symbol).catch((e) => {
+          errors.push(`tickers=${e?.message || e}`);
           return null;
         }),
         this.fetchOIHistory(symbol, this.cfg.oiPeriod, this.cfg.oiLimit).catch((e) => {
           errors.push(`oiHist=${e?.message || e}`);
-          return [];
+          return null;
         }),
         this.fetchKlines(symbol, this.cfg.klineInterval, this.cfg.klineLimit).catch((e) => {
           errors.push(`klines=${e?.message || e}`);
-          return [];
+          return null;
         }),
-        this.cfg.useGlobalLs
-          ? this.fetchGlobalLongShortRatio(symbol, this.cfg.oiPeriod, 2).catch((e) => {
-              errors.push(`gls=${e?.message || e}`);
-              return [];
-            })
-          : Promise.resolve([]),
         this.cfg.useFunding
           ? this.fetchFundingRate(symbol, 1).catch((e) => {
               errors.push(`fund=${e?.message || e}`);
-              return [];
+              return null;
             })
-          : Promise.resolve([]),
+          : Promise.resolve(null),
       ]);
 
-      const oiSeries = (oiHist || [])
-        .map((x) => this.num(x?.sumOpenInterest ?? x?.openInterest))
+      const ticker = Array.isArray(tickersResp?.result?.list) ? tickersResp.result.list[0] || null : null;
+
+      const oiHistList = Array.isArray(oiHistResp?.result?.list) ? oiHistResp.result.list : [];
+      // Bybit kline list is reverse-sorted by startTime, so reverse to oldest->newest
+      const klineListRaw = Array.isArray(klinesResp?.result?.list) ? [...klinesResp.result.list].reverse() : [];
+      const fundingList = Array.isArray(fundingResp?.result?.list) ? fundingResp.result.list : [];
+
+      const oiSeries = oiHistList
+        .map((x) => this.num(x?.openInterest))
         .filter((x) => Number.isFinite(x));
 
-      const candles = (klines || [])
+      const candles = klineListRaw
         .filter((k) => Array.isArray(k) && k.length >= 6)
         .map((k) => ({
+          startTime: this.num(k[0]),
           open: this.num(k[1]),
           high: this.num(k[2]),
           low: this.num(k[3]),
@@ -312,26 +350,27 @@ export default class NodeOI {
         );
 
       const s = this.state;
-
       s.ts = Date.now();
       s.errors = errors;
 
       s.rawCounts = {
-        oiHistLen: Array.isArray(oiHist) ? oiHist.length : 0,
-        klineLen: Array.isArray(klines) ? klines.length : 0,
-        globalLsLen: Array.isArray(globalLs) ? globalLs.length : 0,
-        fundingLen: Array.isArray(fundingRate) ? fundingRate.length : 0,
+        oiHistLen: oiHistList.length,
+        klineLen: klineListRaw.length,
+        globalLsLen: 0,
+        fundingLen: fundingList.length,
       };
 
-      s.fetchOk = !!(oiSeries.length >= 2 && candles.length >= 2);
+      s.fetchOk = !!((oiSeries.length >= 2 || Number.isFinite(this.num(ticker?.openInterest))) && candles.length >= 2);
 
-      s.markPrice = this.num(markPrice?.markPrice ?? markPrice?.price);
-      s.oiNow = this.num(oiNow?.openInterest) ?? (oiSeries.length ? oiSeries[oiSeries.length - 1] : null);
+      s.markPrice = this.num(ticker?.markPrice ?? ticker?.lastPrice);
+      s.oiNow = this.num(ticker?.openInterest) ?? (oiSeries.length ? oiSeries[oiSeries.length - 1] : null);
       s.oiPrev5m = oiSeries.length >= 2 ? oiSeries[oiSeries.length - 2] : null;
       s.oiPrev15m = oiSeries.length >= 4 ? oiSeries[oiSeries.length - 4] : null;
 
-      s.oiDelta5mPct = (s.oiNow != null && s.oiPrev5m != null) ? this.pct(s.oiPrev5m, s.oiNow) : null;
-      s.oiDelta15mPct = (s.oiNow != null && s.oiPrev15m != null) ? this.pct(s.oiPrev15m, s.oiNow) : null;
+      s.oiDelta5mPct =
+        (s.oiNow != null && s.oiPrev5m != null) ? this.pct(s.oiPrev5m, s.oiNow) : null;
+      s.oiDelta15mPct =
+        (s.oiNow != null && s.oiPrev15m != null) ? this.pct(s.oiPrev15m, s.oiNow) : null;
 
       s.oiMean = oiSeries.length ? this.mean(oiSeries) : null;
       s.oiStd = oiSeries.length > 1 ? this.std(oiSeries) : null;
@@ -376,15 +415,11 @@ export default class NodeOI {
         s.breakoutDown = false;
       }
 
-      s.globalLongShortRatio =
-        Array.isArray(globalLs) && globalLs.length
-          ? this.num(globalLs[globalLs.length - 1]?.longShortRatio)
-          : null;
+      s.globalLongShortRatio = null;
 
       s.fundingRate =
-        Array.isArray(fundingRate) && fundingRate.length
-          ? this.num(fundingRate[fundingRate.length - 1]?.fundingRate)
-          : null;
+        this.num(ticker?.fundingRate) ??
+        (fundingList.length ? this.num(fundingList[0]?.fundingRate) : null);
 
       s.oiState = this.classifyOIState(s.oiDelta5mPct);
       s.positioningBias = this.classifyPositioningBias({
