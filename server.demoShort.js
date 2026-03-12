@@ -1,8 +1,9 @@
 /**
- * Brain v3.4 Phase3-OI — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
+ * Brain v3.3 Phase3-OI — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
  * ✅ Original Phase2 protections preserved
  * ✅ OI validation added before enter_long
  * ✅ OI polling cached (NOT per tick)
+ * ✅ Diagnostic OI logging added
  * ✅ /tv and /webhook unchanged
  */
 
@@ -292,9 +293,16 @@ async function refreshOiIfNeeded(symbol, force = false) {
 
     dlog(
       `🟦 OI SNAP ${symbol} ` +
-      `reg=${snap.regime} conf=${snap.confidence} ` +
-      `bias=${snap.positioningBias} oi5=${snap.oiDelta5mPct} ` +
-      `px5=${snap.priceChange5mPct} volR=${snap.volRatio}`
+      `ok=${snap.fetchOk ? 1 : 0} ` +
+      `reg=${snap.regime} conf=${snap.confidence} bias=${snap.positioningBias} ` +
+      `oiNow=${snap.oiNow} oi5=${snap.oiDelta5mPct} oi15=${snap.oiDelta15mPct} ` +
+      `px5=${snap.priceChange5mPct} px15=${snap.priceChange15mPct} ` +
+      `volNow=${snap.volNow} volAvg=${snap.volAvg} volR=${snap.volRatio} ` +
+      `oiHistLen=${snap.rawCounts?.oiHistLen ?? 0} ` +
+      `klineLen=${snap.rawCounts?.klineLen ?? 0} ` +
+      `glsLen=${snap.rawCounts?.globalLsLen ?? 0} ` +
+      `fundLen=${snap.rawCounts?.fundingLen ?? 0} ` +
+      `errs=${Array.isArray(snap.errors) ? snap.errors.join(";") : ""}`
     );
 
     return snap;
@@ -821,7 +829,6 @@ async function runDecision(symbol, source) {
       `fwoFresh=${signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS) ? 1 : 0}`
     );
 
-    // Keep OI fresh in background cadence, but do not block features flow if not stale
     await refreshOiIfNeeded(symbol, false);
   }
 
@@ -869,7 +876,6 @@ async function runDecision(symbol, source) {
     if (s.orderLock.enterInFlight) return;
     if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return;
 
-    // OI validation inserted here
     const oiDecision = await oiDecisionForLong(symbol, s);
     if (!oiDecision.allow) {
       console.log(
@@ -1047,7 +1053,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.4-phase3-oi",
+    brain: "v3.3-phase3-oi-debug",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
