@@ -1,34 +1,13 @@
 /**
- * Brain v3.3 Phase2 — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
- * ✅ Duplicate-enter protection (enterInFlight + lastEnterMs)
- * ✅ Duplicate-exit protection (exitInFlight + lastExitMs)
- * ✅ No setup arming while in position
- * ✅ Setup/scoring ONLY on FEATURES (3m)
- * ✅ Tick path ONLY does entry/exit timing
- * ✅ Tick logging throttled to ~3 minutes (NO per-tick debug spam)
- * ✅ /tv and /webhook endpoints
- *
- * ENV (recommended)
- *   PORT=8080
- *   DEBUG=1
- *   WEBHOOK_SECRET=...            (features secret)
- *   TICKROUTER_SECRET=...         (tick router secret)
- *   C3_SIGNAL_SECRET=...
- *   C3_SIGNAL_URL=https://api.3commas.io/signal_bots/webhooks
- *   C3_TIMEOUT_MS=8000
- *   MAX_LAG_SEC=300
- *   SYMBOL_BOT_MAP='{"BINANCE:SOLUSDT":"26626591-bb3e-4cda-8638-d3f6ce328a74"}'
- *
- * Optional
- *   TICK_LOG_EVERY_MS=180000      (3 minutes)
- *   ENTER_DEDUP_MS=60000
- *   EXIT_DEDUP_MS=30000
+ * Brain v3.4 Phase3-OI — FULL FIXED server.js (SOLUSDT one-symbol = one-bot)
+ * ✅ Original Phase2 protections preserved
+ * ✅ OI validation added before enter_long
+ * ✅ OI polling cached (NOT per tick)
+ * ✅ /tv and /webhook unchanged
  */
 
-
-
-
 import express from "express";
+import NodeOI from "./NodeOI.js";
 
 // ---------------------------
 // Config
@@ -106,6 +85,30 @@ const MIN_VOLUME_PCT = parseFloat(process.env.MIN_VOLUME_PCT || "5");
 const MAX_VOLUME_PCT = parseFloat(process.env.MAX_VOLUME_PCT || "100");
 
 // ---------------------------
+// OI config
+// ---------------------------
+const OI_ENABLED = (process.env.OI_ENABLED || "1") === "1";
+const OI_REFRESH_MS = parseInt(process.env.OI_REFRESH_MS || "45000", 10);
+const OI_REQUIRE_FOR_ENTRY = (process.env.OI_REQUIRE_FOR_ENTRY || "1") === "1";
+const OI_MIN_CONFIDENCE = parseFloat(process.env.OI_MIN_CONFIDENCE || "0.60");
+
+const OI_PERIOD = process.env.OI_PERIOD || "5m";
+const OI_LIMIT = parseInt(process.env.OI_LIMIT || "30", 10);
+const OI_KLINE_INTERVAL = process.env.OI_KLINE_INTERVAL || "5m";
+const OI_KLINE_LIMIT = parseInt(process.env.OI_KLINE_LIMIT || "30", 10);
+
+const OI_EXPAND_PCT = parseFloat(process.env.OI_EXPAND_PCT || "0.40");
+const OI_CONTRACT_PCT = parseFloat(process.env.OI_CONTRACT_PCT || "-0.25");
+const OI_PRICE_MOVE_PCT = parseFloat(process.env.OI_PRICE_MOVE_PCT || "0.35");
+const OI_VOL_SPIKE_RATIO = parseFloat(process.env.OI_VOL_SPIKE_RATIO || "1.20");
+const OI_BREAKOUT_LOOKBACK = parseInt(process.env.OI_BREAKOUT_LOOKBACK || "12", 10);
+
+const OI_USE_GLOBAL_LS = (process.env.OI_USE_GLOBAL_LS || "1") === "1";
+const OI_USE_FUNDING = (process.env.OI_USE_FUNDING || "1") === "1";
+const OI_TIMEOUT_MS = parseInt(process.env.OI_TIMEOUT_MS || "7000", 10);
+const OI_RETRIES = parseInt(process.env.OI_RETRIES || "2", 10);
+
+// ---------------------------
 // App
 // ---------------------------
 const app = express();
@@ -130,6 +133,10 @@ function recently(ts, windowMs) {
 function tvParts(symbol) {
   const [ex, inst] = symbol.includes(":") ? symbol.split(":") : ["BINANCE", symbol];
   return { tv_exchange: ex || "BINANCE", tv_instrument: inst || symbol };
+}
+
+function binanceInst(symbol) {
+  return tvParts(symbol).tv_instrument;
 }
 
 function botUuidForSymbol(symbol) {
@@ -192,6 +199,14 @@ function ensureSymbol(symbol) {
         lastEnterMs: 0,
         lastExitMs: 0,
       },
+
+      oi: {
+        engine: null,
+        refreshInFlight: false,
+        lastRefreshMs: 0,
+        lastError: "",
+        snapshot: null,
+      },
     });
   }
   return state.get(symbol);
@@ -222,6 +237,97 @@ function clearSetup(s, why) {
 
 function canUseTick(s) {
   return s.lastPrice != null && (nowMs() - s.lastTickMs) <= TICK_MAX_AGE_SEC * 1000;
+}
+
+// ---------------------------
+// OI helpers
+// ---------------------------
+function ensureOiEngine(symbol) {
+  const s = ensureSymbol(symbol);
+  if (!OI_ENABLED) return null;
+
+  if (!s.oi.engine) {
+    s.oi.engine = new NodeOI({
+      symbol: binanceInst(symbol),
+      oiPeriod: OI_PERIOD,
+      oiLimit: OI_LIMIT,
+      klineInterval: OI_KLINE_INTERVAL,
+      klineLimit: OI_KLINE_LIMIT,
+      oiExpandPct: OI_EXPAND_PCT,
+      oiContractPct: OI_CONTRACT_PCT,
+      priceMovePct: OI_PRICE_MOVE_PCT,
+      volSpikeRatio: OI_VOL_SPIKE_RATIO,
+      breakoutLookback: OI_BREAKOUT_LOOKBACK,
+      minConfidence: OI_MIN_CONFIDENCE,
+      useGlobalLs: OI_USE_GLOBAL_LS,
+      useFunding: OI_USE_FUNDING,
+      timeoutMs: OI_TIMEOUT_MS,
+      retries: OI_RETRIES,
+      debug: DEBUG,
+    });
+  }
+
+  return s.oi.engine;
+}
+
+async function refreshOiIfNeeded(symbol, force = false) {
+  if (!OI_ENABLED) return null;
+
+  const s = ensureSymbol(symbol);
+  const engine = ensureOiEngine(symbol);
+  if (!engine) return null;
+
+  const stale = !s.oi.lastRefreshMs || (nowMs() - s.oi.lastRefreshMs) >= OI_REFRESH_MS;
+
+  if (!force && !stale && s.oi.snapshot) return s.oi.snapshot;
+  if (s.oi.refreshInFlight) return s.oi.snapshot;
+
+  s.oi.refreshInFlight = true;
+
+  try {
+    const snap = await engine.refresh();
+    s.oi.snapshot = snap;
+    s.oi.lastRefreshMs = nowMs();
+    s.oi.lastError = "";
+
+    dlog(
+      `🟦 OI SNAP ${symbol} ` +
+      `reg=${snap.regime} conf=${snap.confidence} ` +
+      `bias=${snap.positioningBias} oi5=${snap.oiDelta5mPct} ` +
+      `px5=${snap.priceChange5mPct} volR=${snap.volRatio}`
+    );
+
+    return snap;
+  } catch (e) {
+    s.oi.lastError = e?.message || String(e);
+    console.error(`NodeOI refresh failed ${symbol}:`, s.oi.lastError);
+    return s.oi.snapshot;
+  } finally {
+    s.oi.refreshInFlight = false;
+  }
+}
+
+async function oiDecisionForLong(symbol, s) {
+  if (!OI_ENABLED) {
+    return { allow: true, skipped: "oi_disabled" };
+  }
+
+  const snap = await refreshOiIfNeeded(symbol, false);
+
+  if (!snap?.fetchOk) {
+    if (OI_REQUIRE_FOR_ENTRY) {
+      return { allow: false, reasons: ["oi_data_unavailable"] };
+    }
+    return { allow: true, skipped: "oi_unavailable_but_not_required" };
+  }
+
+  const decision = s.oi.engine.validateReadySignal({
+    side: "long",
+    readyTag: s.setup.setupType || "ready_long",
+    extraFilters: { minConfidence: OI_MIN_CONFIDENCE },
+  });
+
+  return decision;
 }
 
 // ---------------------------
@@ -714,6 +820,9 @@ async function runDecision(symbol, source) {
       `rayFresh=${signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS) ? 1 : 0} ` +
       `fwoFresh=${signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS) ? 1 : 0}`
     );
+
+    // Keep OI fresh in background cadence, but do not block features flow if not stale
+    await refreshOiIfNeeded(symbol, false);
   }
 
   const exitReason = exitCheck(s);
@@ -760,6 +869,16 @@ async function runDecision(symbol, source) {
     if (s.orderLock.enterInFlight) return;
     if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return;
 
+    // OI validation inserted here
+    const oiDecision = await oiDecisionForLong(symbol, s);
+    if (!oiDecision.allow) {
+      console.log(
+        `🚫 OI BLOCK ${symbol} type=${s.setup.setupType || ""} score=${s.setup.score} ` +
+        `reasons=${(oiDecision.reasons || []).join(",")}`
+      );
+      return;
+    }
+
     const sizing = computeRiskBasedSize(s, price);
     if (sizing.volumePercent <= 0) {
       dlog("🚫 no enter: sizing returned 0");
@@ -768,10 +887,15 @@ async function runDecision(symbol, source) {
 
     s.orderLock.enterInFlight = true;
 
+    const oiSnap = s.oi.snapshot || {};
     const comment =
       `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}` +
       `|riskPct=${sizing.adaptiveRiskPct}|riskUsd=${sizing.riskUsd}` +
-      `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}`;
+      `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}` +
+      `|oiReg=${oiDecision.regime || oiSnap.regime || "na"}` +
+      `|oiBias=${oiDecision.positioningBias || oiSnap.positioningBias || "na"}` +
+      `|oi5=${oiDecision.oiDelta5mPct ?? oiSnap.oiDelta5mPct ?? "na"}` +
+      `|oiConf=${oiDecision.confidence ?? oiSnap.confidence ?? "na"}`;
 
     console.log(
       `📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizing.sizeMult} volumePercent=${sizing.volumePercent}`
@@ -923,7 +1047,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.2-phase2-full-debug-washout-stale",
+    brain: "v3.4-phase3-oi",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
@@ -938,6 +1062,10 @@ app.get("/", (_, res) => {
     baseRiskPct: BASE_RISK_PCT,
     minRiskPct: MIN_RISK_PCT,
     maxRiskPct: MAX_RISK_PCT,
+    oiEnabled: OI_ENABLED,
+    oiRefreshMs: OI_REFRESH_MS,
+    oiRequireForEntry: OI_REQUIRE_FOR_ENTRY,
+    oiMinConfidence: OI_MIN_CONFIDENCE,
   });
 });
 
@@ -949,6 +1077,29 @@ app.post("/webhook", handleWebhook);
 // ---------------------------
 process.on("unhandledRejection", (reason) => console.error("unhandledRejection:", reason));
 process.on("uncaughtException", (err) => console.error("uncaughtException:", err));
+
+// ---------------------------
+// OI startup polling
+// ---------------------------
+function startOiPolling() {
+  if (!OI_ENABLED) return;
+
+  const symbols = Object.keys(SYMBOL_BOT_MAP);
+  for (const symbol of symbols) {
+    ensureSymbol(symbol);
+    ensureOiEngine(symbol);
+
+    refreshOiIfNeeded(symbol, true).catch((e) => {
+      console.error(`Initial OI refresh failed ${symbol}:`, e?.message || e);
+    });
+
+    setInterval(() => {
+      refreshOiIfNeeded(symbol, false).catch((e) => {
+        console.error(`Scheduled OI refresh failed ${symbol}:`, e?.message || e);
+      });
+    }, OI_REFRESH_MS);
+  }
+}
 
 // ---------------------------
 // Start
@@ -967,4 +1118,10 @@ app.listen(PORT, () => {
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
   console.log(`🛡️ MAX_RISK_PCT=${MAX_RISK_PCT}`);
+  console.log(`🛰️ OI_ENABLED=${OI_ENABLED ? 1 : 0}`);
+  console.log(`🛰️ OI_REFRESH_MS=${OI_REFRESH_MS}`);
+  console.log(`🛰️ OI_REQUIRE_FOR_ENTRY=${OI_REQUIRE_FOR_ENTRY ? 1 : 0}`);
+  console.log(`🛰️ OI_MIN_CONFIDENCE=${OI_MIN_CONFIDENCE}`);
+
+  startOiPolling();
 });
