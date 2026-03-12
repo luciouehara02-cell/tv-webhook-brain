@@ -5,6 +5,10 @@
  *  - Fetch Binance futures OI / price / volume context
  *  - Build cached market-positioning snapshot
  *  - Validate long entries before 3Commas execution
+ *
+ * Note:
+ *  - In your Railway environment, Binance Futures is returning HTTP 451
+ *  - This script is correct, but the provider is geoblocked from that server location
  */
 
 export default class NodeOI {
