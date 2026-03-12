@@ -39,6 +39,13 @@ export default class NodeOI {
       fetchOk: false,
       errors: [],
 
+      rawCounts: {
+        oiHistLen: 0,
+        klineLen: 0,
+        globalLsLen: 0,
+        fundingLen: 0,
+      },
+
       markPrice: null,
       priceChange5mPct: null,
       priceChange15mPct: null,
@@ -112,6 +119,8 @@ export default class NodeOI {
       const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs);
 
       try {
+        this.log(`GET ${url.toString()}`);
+
         const resp = await fetch(url.toString(), {
           method: "GET",
           headers: { "Content-Type": "application/json" },
@@ -125,10 +134,12 @@ export default class NodeOI {
           throw new Error(`HTTP ${resp.status} ${resp.statusText} ${body}`.trim());
         }
 
-        return await resp.json();
+        const json = await resp.json();
+        return json;
       } catch (e) {
         clearTimeout(timer);
         lastErr = e;
+        this.log(`request failed path=${path} attempt=${i + 1} err=${e?.message || e}`);
         if (i < this.cfg.retries) await this.sleep(250 * (i + 1));
       }
     }
@@ -182,7 +193,15 @@ export default class NodeOI {
     return "mixed";
   }
 
-  classifyRegime({ priceChange5mPct, oiDelta5mPct, volRatio, breakoutUp, breakoutDown, fundingRate, globalLongShortRatio }) {
+  classifyRegime({
+    priceChange5mPct,
+    oiDelta5mPct,
+    volRatio,
+    breakoutUp,
+    breakoutDown,
+    fundingRate,
+    globalLongShortRatio,
+  }) {
     let regime = "range";
     let score = 0.25;
 
@@ -236,34 +255,70 @@ export default class NodeOI {
         globalLs,
         fundingRate,
       ] = await Promise.all([
-        this.fetchMarkPrice(symbol).catch((e) => { errors.push(`mark=${e.message}`); return null; }),
-        this.fetchCurrentOI(symbol).catch((e) => { errors.push(`oiNow=${e.message}`); return null; }),
-        this.fetchOIHistory(symbol, this.cfg.oiPeriod, this.cfg.oiLimit).catch((e) => { errors.push(`oiHist=${e.message}`); return []; }),
-        this.fetchKlines(symbol, this.cfg.klineInterval, this.cfg.klineLimit).catch((e) => { errors.push(`klines=${e.message}`); return []; }),
+        this.fetchMarkPrice(symbol).catch((e) => {
+          errors.push(`mark=${e?.message || e}`);
+          return null;
+        }),
+        this.fetchCurrentOI(symbol).catch((e) => {
+          errors.push(`oiNow=${e?.message || e}`);
+          return null;
+        }),
+        this.fetchOIHistory(symbol, this.cfg.oiPeriod, this.cfg.oiLimit).catch((e) => {
+          errors.push(`oiHist=${e?.message || e}`);
+          return [];
+        }),
+        this.fetchKlines(symbol, this.cfg.klineInterval, this.cfg.klineLimit).catch((e) => {
+          errors.push(`klines=${e?.message || e}`);
+          return [];
+        }),
         this.cfg.useGlobalLs
-          ? this.fetchGlobalLongShortRatio(symbol, this.cfg.oiPeriod, 2).catch((e) => { errors.push(`gls=${e.message}`); return []; })
+          ? this.fetchGlobalLongShortRatio(symbol, this.cfg.oiPeriod, 2).catch((e) => {
+              errors.push(`gls=${e?.message || e}`);
+              return [];
+            })
           : Promise.resolve([]),
         this.cfg.useFunding
-          ? this.fetchFundingRate(symbol, 1).catch((e) => { errors.push(`fund=${e.message}`); return []; })
+          ? this.fetchFundingRate(symbol, 1).catch((e) => {
+              errors.push(`fund=${e?.message || e}`);
+              return [];
+            })
           : Promise.resolve([]),
       ]);
 
       const oiSeries = (oiHist || [])
-        .map((x) => this.num(x.sumOpenInterest ?? x.openInterest))
+        .map((x) => this.num(x?.sumOpenInterest ?? x?.openInterest))
         .filter((x) => Number.isFinite(x));
 
-      const candles = (klines || []).map((k) => ({
-        open: this.num(k[1]),
-        high: this.num(k[2]),
-        low: this.num(k[3]),
-        close: this.num(k[4]),
-        volume: this.num(k[5]),
-      }));
+      const candles = (klines || [])
+        .filter((k) => Array.isArray(k) && k.length >= 6)
+        .map((k) => ({
+          open: this.num(k[1]),
+          high: this.num(k[2]),
+          low: this.num(k[3]),
+          close: this.num(k[4]),
+          volume: this.num(k[5]),
+        }))
+        .filter(
+          (x) =>
+            Number.isFinite(x.open) &&
+            Number.isFinite(x.high) &&
+            Number.isFinite(x.low) &&
+            Number.isFinite(x.close) &&
+            Number.isFinite(x.volume)
+        );
 
       const s = this.state;
 
       s.ts = Date.now();
       s.errors = errors;
+
+      s.rawCounts = {
+        oiHistLen: Array.isArray(oiHist) ? oiHist.length : 0,
+        klineLen: Array.isArray(klines) ? klines.length : 0,
+        globalLsLen: Array.isArray(globalLs) ? globalLs.length : 0,
+        fundingLen: Array.isArray(fundingRate) ? fundingRate.length : 0,
+      };
+
       s.fetchOk = !!(oiSeries.length >= 2 && candles.length >= 2);
 
       s.markPrice = this.num(markPrice?.markPrice ?? markPrice?.price);
@@ -277,7 +332,10 @@ export default class NodeOI {
       s.oiMean = oiSeries.length ? this.mean(oiSeries) : null;
       s.oiStd = oiSeries.length > 1 ? this.std(oiSeries) : null;
       s.oiZScore =
-        Number.isFinite(s.oiNow) && Number.isFinite(s.oiMean) && Number.isFinite(s.oiStd) && s.oiStd > 0
+        Number.isFinite(s.oiNow) &&
+        Number.isFinite(s.oiMean) &&
+        Number.isFinite(s.oiStd) &&
+        s.oiStd > 0
           ? Number(((s.oiNow - s.oiMean) / s.oiStd).toFixed(4))
           : null;
 
@@ -288,12 +346,14 @@ export default class NodeOI {
         s.volNow = last.volume;
         const vols = candles.slice(0, -1).map((x) => x.volume).filter((x) => Number.isFinite(x));
         s.volAvg = vols.length ? this.mean(vols) : null;
-        s.volRatio = Number.isFinite(s.volNow) && Number.isFinite(s.volAvg) && s.volAvg > 0
-          ? Number((s.volNow / s.volAvg).toFixed(4))
-          : null;
+        s.volRatio =
+          Number.isFinite(s.volNow) && Number.isFinite(s.volAvg) && s.volAvg > 0
+            ? Number((s.volNow / s.volAvg).toFixed(4))
+            : null;
 
         s.priceChange5mPct = this.pct(prev.close, last.close);
-        s.priceChange15mPct = candles.length >= 4 ? this.pct(candles[candles.length - 4].close, last.close) : null;
+        s.priceChange15mPct =
+          candles.length >= 4 ? this.pct(candles[candles.length - 4].close, last.close) : null;
 
         const lb = Math.min(this.cfg.breakoutLookback, candles.length - 1);
         const prior = candles.slice(-1 - lb, -1);
@@ -345,7 +405,7 @@ export default class NodeOI {
     } catch (e) {
       this.state.ts = Date.now();
       this.state.fetchOk = false;
-      this.state.errors = [e.message];
+      this.state.errors = [e?.message || String(e)];
       throw e;
     }
   }
