@@ -1,5 +1,5 @@
 /**
- * Brain v3.3 Phase3-TVFlow — FULL FIXED server.js
+ * Brain v3.3 Phase3-TVFlow — OPTIMIZED server.demoShort.js
  * ✅ No NodeOI / no external OI API calls
  * ✅ Duplicate-enter protection
  * ✅ Duplicate-exit protection
@@ -12,6 +12,12 @@
  *    - oiTrend
  *    - oiDeltaBias
  *    - cvdTrend
+ * ✅ Time-stop disabled for trend mode
+ * ✅ Prevent repeated washout re-arm recycling
+ * ✅ Range washout requires bullish flow confirmation
+ * ✅ Range washout minimum score raised
+ * ✅ Washout auto-clears if bearish flow persists 2 bars
+ * ✅ Reject log throttling
  */
 
 import express from "express";
@@ -39,6 +45,9 @@ const FWO_SIGNAL_TTL_MS = parseInt(process.env.FWO_SIGNAL_TTL_MS || String(10 * 
 const BREAKOUT_MAX_AGE_MIN = parseInt(process.env.BREAKOUT_MAX_AGE_MIN || "15", 10);
 const BREAKOUT_STALE_MIN_SCORE = parseInt(process.env.BREAKOUT_STALE_MIN_SCORE || "4", 10);
 const WASHOUT_MAX_AGE_MIN = parseInt(process.env.WASHOUT_MAX_AGE_MIN || "12", 10);
+
+// Reject log throttling
+const NO_ENTER_LOG_EVERY_MS = parseInt(process.env.NO_ENTER_LOG_EVERY_MS || "60000", 10);
 
 // Secrets
 const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
@@ -131,6 +140,15 @@ function setupAgeMin(setup) {
   return (nowMs() - setup.armedMs) / 60000;
 }
 
+function logNoEnter(s, msg) {
+  const now = nowMs();
+  if (s.lastNoEnterReason !== msg || (now - (s.lastNoEnterLogMs || 0)) >= NO_ENTER_LOG_EVERY_MS) {
+    dlog(msg);
+    s.lastNoEnterReason = msg;
+    s.lastNoEnterLogMs = now;
+  }
+}
+
 function ensureSymbol(symbol) {
   if (!state.has(symbol)) {
     state.set(symbol, {
@@ -150,6 +168,9 @@ function ensureSymbol(symbol) {
         score: 0,
         invalidationPrice: null,
         level: null,
+
+        lastWashoutInv: null,
+        lastWashoutArmMs: 0,
       },
 
       position: {
@@ -178,6 +199,9 @@ function ensureSymbol(symbol) {
         lastEnterMs: 0,
         lastExitMs: 0,
       },
+
+      lastNoEnterReason: "",
+      lastNoEnterLogMs: 0,
     });
   }
   return state.get(symbol);
@@ -266,11 +290,26 @@ function detectSetups(s) {
   );
 
   if (washout && reclaimed && rsiUp) {
+    const candidateInv = localLow * 0.999;
+    const recentlyArmedSameWashout =
+      s.setup.lastWashoutInv != null &&
+      Math.abs(candidateInv - s.setup.lastWashoutInv) / s.setup.lastWashoutInv < 0.0015 &&
+      (nowMs() - (s.setup.lastWashoutArmMs || 0)) < 20 * 60 * 1000;
+
+    if (recentlyArmedSameWashout) {
+      dlog(`🚫 skip washout re-arm: same invalidation recently used inv=${candidateInv}`);
+      return;
+    }
+
     s.setup.armed = true;
     s.setup.setupType = "washout_reclaim";
     s.setup.armedMs = nowMs();
-    s.setup.invalidationPrice = localLow * 0.999;
+    s.setup.invalidationPrice = candidateInv;
     s.setup.level = last.ema18;
+
+    s.setup.lastWashoutInv = candidateInv;
+    s.setup.lastWashoutArmMs = nowMs();
+
     console.log(`🟡 Armed washout_reclaim inv=${s.setup.invalidationPrice}`);
     return;
   }
@@ -320,6 +359,22 @@ function expireSetup(s) {
   if (s.setup.setupType === "washout_reclaim" && ageMin > WASHOUT_MAX_AGE_MIN) {
     dlog(`⌛ Washout setup stale ageMin=${ageMin.toFixed(1)} > ${WASHOUT_MAX_AGE_MIN}`);
     clearSetup(s, "washout_stale");
+    return;
+  }
+
+  // Clear washout early if bearish flow persists 2 bars
+  if (s.setup.armed && s.setup.setupType === "washout_reclaim" && s.bars.length >= 2) {
+    const last = s.bars[s.bars.length - 1];
+    const prev = s.bars[s.bars.length - 2];
+
+    const badFlowNow = last.cvdTrend === -1 && last.oiDeltaBias <= 0;
+    const badFlowPrev = prev.cvdTrend === -1 && prev.oiDeltaBias <= 0;
+
+    if (badFlowNow && badFlowPrev) {
+      dlog("⌛ Washout setup cleared: bearish flow persisted 2 bars");
+      clearSetup(s, "washout_bad_flow");
+      return;
+    }
   }
 }
 
@@ -483,7 +538,7 @@ function shouldEnter(s) {
 
   // Hard flow filter
   if (last.cvdTrend === -1 && last.oiDeltaBias <= 0) {
-    dlog("🚫 no enter: bearish flow + no oi expansion");
+    logNoEnter(s, "🚫 no enter: bearish flow + no oi expansion");
     return false;
   }
 
@@ -493,16 +548,28 @@ function shouldEnter(s) {
     return false;
   }
 
-  if (s.setup.score < SCORE_ENTER_SMALL) {
-    dlog(`🚫 no enter: score ${s.setup.score} < ${SCORE_ENTER_SMALL}`);
+  let minScoreNeeded = SCORE_ENTER_SMALL;
+  if (s.setup.setupType === "washout_reclaim" && s.regime.mode === "range") {
+    minScoreNeeded = Math.max(SCORE_ENTER_SMALL, 6);
+  }
+
+  if (s.setup.score < minScoreNeeded) {
+    logNoEnter(s, `🚫 no enter: score ${s.setup.score} < ${minScoreNeeded}`);
     return false;
   }
 
   if (s.setup.setupType === "washout_reclaim") {
     const level = s.setup.level ?? last.ema18;
     if (!level) {
-      dlog("🚫 no enter: missing washout level");
+      logNoEnter(s, "🚫 no enter: missing washout level");
       return false;
+    }
+
+    if (s.regime.mode === "range") {
+      if (!(last.cvdTrend === 1 && last.oiDeltaBias === 1)) {
+        logNoEnter(s, "🚫 no washout enter: range mode requires bullish flow confirmation");
+        return false;
+      }
     }
 
     const chasePct = ((price - level) / level) * 100;
@@ -517,12 +584,12 @@ function shouldEnter(s) {
     );
 
     if (!(price > level)) {
-      dlog("🚫 no enter: price not above reclaim level");
+      logNoEnter(s, "🚫 no enter: price not above reclaim level");
       return false;
     }
 
     if (!(chasePct <= 0.25)) {
-      dlog("🚫 no enter: chasePct too high");
+      logNoEnter(s, "🚫 no enter: chasePct too high");
       return false;
     }
 
@@ -532,7 +599,7 @@ function shouldEnter(s) {
   if (s.setup.setupType === "breakout_pullback") {
     const level = s.setup.level;
     if (!level || last.ema8 == null) {
-      dlog("🚫 no breakout enter: missing level or ema8");
+      logNoEnter(s, "🚫 no breakout enter: missing level or ema8");
       return false;
     }
 
@@ -554,20 +621,20 @@ function shouldEnter(s) {
     }
 
     if (ageMin > Math.max(3, BREAKOUT_MAX_AGE_MIN * 0.5) && s.setup.score < BREAKOUT_STALE_MIN_SCORE) {
-      dlog(
-        `🚫 no breakout enter: aged setup needs higher score ` +
-        `score=${s.setup.score} < ${BREAKOUT_STALE_MIN_SCORE}`
+      logNoEnter(
+        s,
+        `🚫 no breakout enter: aged setup needs higher score score=${s.setup.score} < ${BREAKOUT_STALE_MIN_SCORE}`
       );
       return false;
     }
 
     if (!((nearLevelPct <= 0.20) || (nearEma8Pct <= 0.20))) {
-      dlog("🚫 no breakout enter: too far from level/ema8");
+      logNoEnter(s, "🚫 no breakout enter: too far from level/ema8");
       return false;
     }
 
     if (!(s.setup.score >= SCORE_ENTER_FULL)) {
-      dlog(`🚫 no breakout enter: score ${s.setup.score} < ${SCORE_ENTER_FULL}`);
+      logNoEnter(s, `🚫 no breakout enter: score ${s.setup.score} < ${SCORE_ENTER_FULL}`);
       return false;
     }
 
@@ -637,9 +704,12 @@ function exitCheck(s) {
     }
   }
 
+  // Time-stop only for range mode
   const minsInTrade = (nowMs() - (s.position.enteredMs || nowMs())) / 60000;
-  if (minsInTrade >= 30 && pnlPct < 0.10) {
-    return "time_stop_no_progress";
+  if (s.regime.mode === "range") {
+    if (minsInTrade >= 30 && pnlPct < 0.10) {
+      return "time_stop_no_progress";
+    }
   }
 
   return null;
@@ -936,7 +1006,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.3-phase3-tvflow",
+    brain: "v3.3-phase3-tvflow-optimized",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
