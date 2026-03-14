@@ -545,6 +545,14 @@ function shouldEnter(s) {
     return false;
   }
 
+  // NEW FILTER: prevent weak breakout entries
+  if (s.setup.type === "breakout_pullback") {
+    if ((last.atrPct ?? 0) < 0.15) {
+      logNoEnter(s, "🚫 breakout blocked: ATR too low");
+      return false;
+    }
+  }
+
   // Hard flow filter
   if (last.cvdTrend === -1 && last.oiDeltaBias <= 0) {
     logNoEnter(s, "🚫 no enter: bearish flow + no oi expansion");
