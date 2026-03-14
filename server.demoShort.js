@@ -1,5 +1,5 @@
 /**
- * Brain v3.3 Phase3-TVFlow — OPTIMIZED server.demoShort.js
+ * Brain v3.3 Phase3-TVFlow — OPTIMIZED + Pattern A server.demoShort.js
  * ✅ No NodeOI / no external OI API calls
  * ✅ Duplicate-enter protection
  * ✅ Duplicate-exit protection
@@ -8,10 +8,14 @@
  * ✅ Tick path ONLY does entry/exit timing
  * ✅ Tick logging throttled
  * ✅ /tv and /webhook endpoints
- * ✅ Adds TV-derived flow filters:
+ * ✅ TV-derived flow filters:
  *    - oiTrend
  *    - oiDeltaBias
  *    - cvdTrend
+ * ✅ Pattern A fields:
+ *    - liqClusterBelow
+ *    - priceDropPct
+ *    - patternAReady
  * ✅ Time-stop disabled for trend mode
  * ✅ Prevent repeated washout re-arm recycling
  * ✅ Range washout requires bullish flow confirmation
@@ -438,6 +442,11 @@ function scoreSetup(s) {
     dlog(`   ➖ cvd bearish -2 => ${score}`);
   }
 
+  // Pattern A helpers
+  if (last.liqClusterBelow === 1) add(1, "liq cluster below");
+  if (last.priceDropPct <= -0.7) add(1, "flush down");
+  if (last.patternAReady === 1) add(2, "pattern A ready");
+
   const nBars = PUMP_BLOCK_WINDOW_BARS;
   if (bars.length > nBars) {
     const past = bars[bars.length - 1 - nBars];
@@ -849,7 +858,8 @@ async function runDecision(symbol, source) {
       `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}` +
       `|riskPct=${sizing.adaptiveRiskPct}|riskUsd=${sizing.riskUsd}` +
       `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}` +
-      `|oiT=${lastBar.oiTrend}|oiD=${lastBar.oiDeltaBias}|cvd=${lastBar.cvdTrend}`;
+      `|oiT=${lastBar.oiTrend}|oiD=${lastBar.oiDeltaBias}|cvd=${lastBar.cvdTrend}` +
+      `|liq=${lastBar.liqClusterBelow}|drop=${lastBar.priceDropPct}|pA=${lastBar.patternAReady}`;
 
     console.log(
       `📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizing.sizeMult} volumePercent=${sizing.volumePercent}`
@@ -955,6 +965,9 @@ async function handleWebhook(req, res) {
         oiTrend: n(body.oiTrend, 0),
         oiDeltaBias: n(body.oiDeltaBias, 0),
         cvdTrend: n(body.cvdTrend, 0),
+        liqClusterBelow: n(body.liqClusterBelow, 0),
+        priceDropPct: n(body.priceDropPct, 0),
+        patternAReady: n(body.patternAReady, 0),
       };
 
       if (bar.close == null || bar.high == null || bar.low == null) {
@@ -964,7 +977,8 @@ async function handleWebhook(req, res) {
       console.log(
         `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} ` +
         `rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ` +
-        `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend}`
+        `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend} ` +
+        `liqClusterBelow=${bar.liqClusterBelow} priceDropPct=${bar.priceDropPct} patternAReady=${bar.patternAReady}`
       );
 
       s.bars.push(bar);
@@ -1006,7 +1020,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.3-phase3-tvflow-optimized",
+    brain: "v3.3-phase3-tvflow-optimized-patternA",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
