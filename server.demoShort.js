@@ -1,5 +1,5 @@
 /**
- * Brain v3.3 Phase3-TVFlow — OPTIMIZED + Pattern A server.demoShort.js
+ * Brain v3.3 Phase3-TVFlow — OPTIMIZED + Pattern A + Exit Upgrade
  * ✅ No NodeOI / no external OI API calls
  * ✅ Duplicate-enter protection
  * ✅ Duplicate-exit protection
@@ -22,6 +22,7 @@
  * ✅ Range washout minimum score raised
  * ✅ Washout auto-clears if bearish flow persists 2 bars
  * ✅ Reject log throttling
+ * ✅ Trend ATR stop delayed and widened in low-ATR environments
  */
 
 import express from "express";
@@ -52,6 +53,9 @@ const WASHOUT_MAX_AGE_MIN = parseInt(process.env.WASHOUT_MAX_AGE_MIN || "12", 10
 
 // Reject log throttling
 const NO_ENTER_LOG_EVERY_MS = parseInt(process.env.NO_ENTER_LOG_EVERY_MS || "60000", 10);
+
+// Trend stop delay
+const TREND_STOP_ACTIVATE_MIN = parseInt(process.env.TREND_STOP_ACTIVATE_MIN || "6", 10);
 
 // Secrets
 const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
@@ -545,14 +549,6 @@ function shouldEnter(s) {
     return false;
   }
 
-  // NEW FILTER: prevent weak breakout entries
-  if (s.setup.type === "breakout_pullback") {
-    if ((last.atrPct ?? 0) < 0.15) {
-      logNoEnter(s, "🚫 breakout blocked: ATR too low");
-      return false;
-    }
-  }
-
   // Hard flow filter
   if (last.cvdTrend === -1 && last.oiDeltaBias <= 0) {
     logNoEnter(s, "🚫 no enter: bearish flow + no oi expansion");
@@ -620,6 +616,12 @@ function shouldEnter(s) {
       return false;
     }
 
+    // Low-vol breakout filter
+    if ((last.atrPct ?? 0) < 0.15) {
+      logNoEnter(s, "🚫 no breakout enter: atrPct too low");
+      return false;
+    }
+
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
 
@@ -678,6 +680,7 @@ function exitCheck(s) {
 
   const pnlPct = ((price - entry) / entry) * 100;
   const atr = last.atr ?? 0;
+  const minsInTrade = (nowMs() - (s.position.enteredMs || nowMs())) / 60000;
 
   const shouldLogExitCheck =
     price <= (s.position.stop ?? -Infinity) ||
@@ -692,8 +695,11 @@ function exitCheck(s) {
   }
 
   if (s.regime.mode === "trend") {
+    let trendTrailMult = 2.4;
+    if ((last.atrPct ?? 0) < 0.10) trendTrailMult = 3.2;
+    else if ((last.atrPct ?? 0) < 0.15) trendTrailMult = 2.8;
+
     if (atr > 0 && s.position.peak != null) {
-      const trendTrailMult = 2.4;
       const newStop = s.position.peak - atr * trendTrailMult;
       if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
     }
@@ -702,7 +708,8 @@ function exitCheck(s) {
       return "trend_fail_ema_cross";
     }
 
-    if (s.position.stop != null && price <= s.position.stop) {
+    const trendStopActive = minsInTrade >= TREND_STOP_ACTIVATE_MIN;
+    if (trendStopActive && s.position.stop != null && price <= s.position.stop) {
       return "atr_trail_stop_trend";
     }
   } else {
@@ -722,7 +729,6 @@ function exitCheck(s) {
   }
 
   // Time-stop only for range mode
-  const minsInTrade = (nowMs() - (s.position.enteredMs || nowMs())) / 60000;
   if (s.regime.mode === "range") {
     if (minsInTrade >= 30 && pnlPct < 0.10) {
       return "time_stop_no_progress";
@@ -1028,7 +1034,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.3-phase3-tvflow-optimized-patternA",
+    brain: "v3.3-phase3-tvflow-optimized-patternA-exitv2",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
@@ -1043,6 +1049,7 @@ app.get("/", (_, res) => {
     baseRiskPct: BASE_RISK_PCT,
     minRiskPct: MIN_RISK_PCT,
     maxRiskPct: MAX_RISK_PCT,
+    trendStopActivateMin: TREND_STOP_ACTIVATE_MIN,
   });
 });
 
@@ -1072,4 +1079,5 @@ app.listen(PORT, () => {
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
   console.log(`🛡️ MAX_RISK_PCT=${MAX_RISK_PCT}`);
+  console.log(`⏳ TREND_STOP_ACTIVATE_MIN=${TREND_STOP_ACTIVATE_MIN}`);
 });
