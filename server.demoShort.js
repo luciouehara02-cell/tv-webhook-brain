@@ -1,5 +1,5 @@
 /**
- * Brain v3.3 Phase3-TVFlow — OPTIMIZED + Pattern A + Exit Upgrade
+ * Brain v3.3 Phase3-TVFlow — OPTIMIZED + Pattern A + Exit Upgrade + Score Amount Table
  * ✅ No NodeOI / no external OI API calls
  * ✅ Duplicate-enter protection
  * ✅ Duplicate-exit protection
@@ -23,6 +23,8 @@
  * ✅ Washout auto-clears if bearish flow persists 2 bars
  * ✅ Reject log throttling
  * ✅ Trend ATR stop delayed and widened in low-ATR environments
+ * ✅ Score-based default amount table
+ * ✅ Adaptive breakout entry distance by ATR
  */
 
 import express from "express";
@@ -101,7 +103,7 @@ const BASE_RISK_PCT = parseFloat(process.env.BASE_RISK_PCT || "0.5");
 const MIN_RISK_PCT = parseFloat(process.env.MIN_RISK_PCT || "0.3");
 const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PCT || "1.0");
 
-// Optional score multiplier
+// Optional score sizing
 const USE_SCORE_SIZE_MULT = (process.env.USE_SCORE_SIZE_MULT || "1") === "1";
 
 // Safety caps on webhook volume %
@@ -370,7 +372,6 @@ function expireSetup(s) {
     return;
   }
 
-  // Clear washout early if bearish flow persists 2 bars
   if (s.setup.armed && s.setup.setupType === "washout_reclaim" && s.bars.length >= 2) {
     const last = s.bars[s.bars.length - 1];
     const prev = s.bars[s.bars.length - 2];
@@ -431,7 +432,6 @@ function scoreSetup(s) {
     else add(2, "fresh fwo_buy");
   }
 
-  // TV-derived flow filters
   if (last.oiTrend === 1) add(1, "oi trend up");
   if (last.oiDeltaBias === 1) add(1, "oi expansion");
   if (last.cvdTrend === 1) add(1, "cvd bullish");
@@ -446,7 +446,6 @@ function scoreSetup(s) {
     dlog(`   ➖ cvd bearish -2 => ${score}`);
   }
 
-  // Pattern A helpers
   if (last.liqClusterBelow === 1) add(1, "liq cluster below");
   if (last.priceDropPct <= -0.7) add(1, "flush down");
   if (last.patternAReady === 1) add(2, "pattern A ready");
@@ -470,13 +469,14 @@ function scoreSetup(s) {
 // ---------------------------
 // Adaptive risk + size helpers
 // ---------------------------
-function scoreMultiplier(score) {
-  if (!USE_SCORE_SIZE_MULT) return 1.0;
-  if (score >= 8) return 1.2;
-  if (score >= 6) return 1.0;
-  if (score >= 4) return 0.8;
-  if (score >= 2) return 0.6;
-  return 0.0;
+function scoreTargetAmountPct(score) {
+  if (!USE_SCORE_SIZE_MULT) return 100;
+  if (score >= 10) return 100;
+  if (score >= 9) return 90;
+  if (score >= 8) return 80;
+  if (score >= 7) return 60;
+  if (score >= 6) return 40;
+  return 0;
 }
 
 function computeAdaptiveRiskPct(s, lastBar) {
@@ -508,17 +508,14 @@ function computeRiskBasedSize(s, entryPrice) {
   const adaptiveRiskPct = computeAdaptiveRiskPct(s, lastBar);
   const stopDistance = entryPrice - stop;
   const riskUsdBase = BOT_MAX_NOTIONAL_USDT * (adaptiveRiskPct / 100.0);
-  const scoreMult = scoreMultiplier(s.setup.score);
-  const riskUsd = riskUsdBase * scoreMult;
 
-  if (riskUsd <= 0) {
-    return { sizeMult: 0, volumePercent: 0, riskUsd, stopDistance, adaptiveRiskPct };
-  }
-
-  const qty = riskUsd / stopDistance;
+  const qty = riskUsdBase / stopDistance;
   const notionalUsd = qty * entryPrice;
 
-  let volumePercent = (notionalUsd / BOT_MAX_NOTIONAL_USDT) * 100.0;
+  let riskBasedVolumePercent = (notionalUsd / BOT_MAX_NOTIONAL_USDT) * 100.0;
+  const targetAmountPct = scoreTargetAmountPct(s.setup.score);
+
+  let volumePercent = Math.min(riskBasedVolumePercent, targetAmountPct);
   volumePercent = Math.max(MIN_VOLUME_PCT, Math.min(MAX_VOLUME_PCT, volumePercent));
 
   const sizeMult = volumePercent / 100.0;
@@ -526,7 +523,8 @@ function computeRiskBasedSize(s, entryPrice) {
   return {
     sizeMult: Math.round(sizeMult * 1000) / 1000,
     volumePercent: Math.round(volumePercent * 100) / 100,
-    riskUsd: Math.round(riskUsd * 100) / 100,
+    targetAmountPct,
+    riskUsd: Math.round(riskUsdBase * 100) / 100,
     stopDistance: Math.round(stopDistance * 100000) / 100000,
     adaptiveRiskPct,
   };
@@ -549,7 +547,6 @@ function shouldEnter(s) {
     return false;
   }
 
-  // Hard flow filter
   if (last.cvdTrend === -1 && last.oiDeltaBias <= 0) {
     logNoEnter(s, "🚫 no enter: bearish flow + no oi expansion");
     return false;
@@ -616,7 +613,6 @@ function shouldEnter(s) {
       return false;
     }
 
-    // Low-vol breakout filter
     if ((last.atrPct ?? 0) < 0.15) {
       logNoEnter(s, "🚫 no breakout enter: atrPct too low");
       return false;
@@ -625,11 +621,16 @@ function shouldEnter(s) {
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
 
+    let maxEntryDistPct = 0.20;
+    if ((last.atrPct ?? 0) >= 0.25) maxEntryDistPct = 0.35;
+    else if ((last.atrPct ?? 0) >= 0.18) maxEntryDistPct = 0.28;
+
     dlog(
       `🎯 breakout entry check ` +
       `ageMin=${ageMin.toFixed(1)} ` +
       `nearLevelPct=${nearLevelPct.toFixed(3)} ` +
       `nearEma8Pct=${nearEma8Pct.toFixed(3)} ` +
+      `maxDist=${maxEntryDistPct.toFixed(2)} ` +
       `score=${s.setup.score}`
     );
 
@@ -647,7 +648,7 @@ function shouldEnter(s) {
       return false;
     }
 
-    if (!((nearLevelPct <= 0.20) || (nearEma8Pct <= 0.20))) {
+    if (!((nearLevelPct <= maxEntryDistPct) || (nearEma8Pct <= maxEntryDistPct))) {
       logNoEnter(s, "🚫 no breakout enter: too far from level/ema8");
       return false;
     }
@@ -728,7 +729,6 @@ function exitCheck(s) {
     }
   }
 
-  // Time-stop only for range mode
   if (s.regime.mode === "range") {
     if (minsInTrade >= 30 && pnlPct < 0.10) {
       return "time_stop_no_progress";
@@ -871,7 +871,7 @@ async function runDecision(symbol, source) {
     const comment =
       `${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}` +
       `|riskPct=${sizing.adaptiveRiskPct}|riskUsd=${sizing.riskUsd}` +
-      `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}` +
+      `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}|targetPct=${sizing.targetAmountPct}` +
       `|oiT=${lastBar.oiTrend}|oiD=${lastBar.oiDeltaBias}|cvd=${lastBar.cvdTrend}` +
       `|liq=${lastBar.liqClusterBelow}|drop=${lastBar.priceDropPct}|pA=${lastBar.patternAReady}`;
 
@@ -1034,7 +1034,7 @@ async function handleWebhook(req, res) {
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.3-phase3-tvflow-optimized-patternA-exitv2",
+    brain: "v3.3-phase3-tvflow-optimized-patternA-exitv2-amountTable-adaptiveDist",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
