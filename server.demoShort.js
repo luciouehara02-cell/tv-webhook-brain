@@ -964,36 +964,37 @@ async function handleWebhook(req, res) {
         body.time ? Date.parse(body.time) :
         nowMs();
 
-      const bar = {
-        timeMs,
-        close: n(body.close),
-        high: n(body.high),
-        low: n(body.low),
-        ema8: n(body.ema8),
-        ema18: n(body.ema18),
-        ema50: n(body.ema50),
-        rsi: n(body.rsi),
-        adx: n(body.adx),
-        atr: n(body.atr),
-        atrPct: n(body.atrPct),
-        oiTrend: n(body.oiTrend, 0),
-        oiDeltaBias: n(body.oiDeltaBias, 0),
-        cvdTrend: n(body.cvdTrend, 0),
-        liqClusterBelow: n(body.liqClusterBelow, 0),
-        priceDropPct: n(body.priceDropPct, 0),
-        patternAReady: n(body.patternAReady, 0),
-      };
+const bar = {
+  timeMs,
+  close: n(body.close),
+  high: n(body.high),
+  low: n(body.low),
+  ema8: n(body.ema8),
+  ema18: n(body.ema18),
+  ema50: n(body.ema50),
+  rsi: n(body.rsi),
+  adx: n(body.adx),
+  atr: n(body.atr),
+  atrPct: n(body.atrPct),
+  oiTrend: n(body.oiTrend, 0),
+  oiDeltaBias: n(body.oiDeltaBias, 0),
+  cvdTrend: n(body.cvdTrend, 0),
+  liqClusterBelow: n(body.liqClusterBelow, 0),
+  priceDropPct: n(body.priceDropPct, 0),
+  patternAReady: n(body.patternAReady, 0),
+  patternAWatch: n(body.patternAWatch, 0),
+};
 
       if (bar.close == null || bar.high == null || bar.low == null) {
         return res.status(400).json({ ok: false, err: "bad OHLC" });
       }
 
-      console.log(
-        `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} ` +
-        `rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ` +
-        `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend} ` +
-        `liqClusterBelow=${bar.liqClusterBelow} priceDropPct=${bar.priceDropPct} patternAReady=${bar.patternAReady}`
-      );
+console.log(
+  `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} ` +
+  `rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ` +
+  `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend} ` +
+  `liqClusterBelow=${bar.liqClusterBelow} priceDropPct=${bar.priceDropPct} patternAReady=${bar.patternAReady} patternAWatch=${bar.patternAWatch}`
+);
 
       s.bars.push(bar);
       pruneBars(s);
