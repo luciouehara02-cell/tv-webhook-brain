@@ -1012,10 +1012,11 @@ if (body.src === "tick") {
   s.lastTickMs = nowMs();
   s.tickCount++;
 
-tickCount++;
-if (tickCount % 20 === 0) {
-  console.log(`🟦 tick ok count=${tickCount} px=${price}`);
-}
+  if (s.tickCount % 50 === 0) {
+    console.log(`🟦 LIVE TICKS ${symbol} count=${s.tickCount} px=${price}`);
+  }
+
+  return res.json({ ok: true, src: "tick", tickCount: s.tickCount });
 }
 
       const now = nowMs();
