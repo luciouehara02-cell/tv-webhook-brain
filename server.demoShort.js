@@ -1004,13 +1004,18 @@ async function handleWebhook(req, res) {
 
     const s = ensureSymbol(symbol);
 
-    if (body.src === "tick") {
-      const price = n(body.price);
-      if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
+if (body.src === "tick") {
+  const price = n(body.price);
+  if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
 
-      s.lastPrice = price;
-      s.lastTickMs = nowMs();
-      s.tickCount++;
+  s.lastPrice = price;
+  s.lastTickMs = nowMs();
+  s.tickCount++;
+
+  if (s.tickCount % 50 === 0) {
+    console.log(`🟦 LIVE TICKS ${symbol} count=${s.tickCount} px=${price}`);
+  }
+}
 
       const now = nowMs();
       if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
