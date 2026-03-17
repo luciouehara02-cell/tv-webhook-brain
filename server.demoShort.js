@@ -1,14 +1,10 @@
 /**
- * Brain v3.3 Phase3-TVFlow — OPTIMIZED + Pattern A + Exit Upgrade + Score Amount Table
- * ✅ No NodeOI / no external OI API calls
- * ✅ Duplicate-enter protection
- * ✅ Duplicate-exit protection
- * ✅ No setup arming while in position
- * ✅ Setup/scoring ONLY on FEATURES (3m)
- * ✅ Tick path ONLY does entry/exit timing
- * ✅ Tick logging throttled
- * ✅ /tv and /webhook endpoints
- * ✅ TV-derived flow filters:
+ * Brain v3.4 — Breakout Confirmation Entry + Better Trend Exit
+ * ✅ No external OI API
+ * ✅ Duplicate enter/exit protection
+ * ✅ Tick path only handles execution timing
+ * ✅ Features path handles regime/setup/scoring
+ * ✅ TV-derived flow:
  *    - oiTrend
  *    - oiDeltaBias
  *    - cvdTrend
@@ -16,14 +12,14 @@
  *    - liqClusterBelow
  *    - priceDropPct
  *    - patternAReady
- * ✅ Time-stop disabled for trend mode
- * ✅ Prevent repeated washout re-arm recycling
- * ✅ Range washout requires bullish flow confirmation
- * ✅ Range washout minimum score raised
- * ✅ Washout auto-clears if bearish flow persists 2 bars
- * ✅ Reject log throttling
- * ✅ Trend ATR stop delayed and widened in low-ATR environments
- * ✅ Score-based default amount table
+ *    - patternAWatch
+ * ✅ Breakout confirmation entry:
+ *    breakout -> retest -> bounce -> enter
+ * ✅ Trend stop delay
+ * ✅ Trend stop uses wider of:
+ *    - ATR trail
+ *    - minimum % trail
+ * ✅ Score-based amount table
  * ✅ Adaptive breakout entry distance by ATR
  */
 
@@ -38,7 +34,7 @@ const PORT = process.env.PORT || 8080;
 const DEBUG = (process.env.DEBUG || "1") === "1";
 function dlog(...args) { if (DEBUG) console.log(...args); }
 
-// Tick log throttling (default 3 minutes)
+// Tick log throttling
 const TICK_LOG_EVERY_MS = parseInt(
   process.env.TICK_LOG_EVERY_MS || String(3 * 60 * 1000),
   10
@@ -49,15 +45,28 @@ const RAY_SIGNAL_TTL_MS = parseInt(process.env.RAY_SIGNAL_TTL_MS || String(10 * 
 const FWO_SIGNAL_TTL_MS = parseInt(process.env.FWO_SIGNAL_TTL_MS || String(10 * 60 * 1000), 10);
 
 // Setup aging
-const BREAKOUT_MAX_AGE_MIN = parseInt(process.env.BREAKOUT_MAX_AGE_MIN || "15", 10);
-const BREAKOUT_STALE_MIN_SCORE = parseInt(process.env.BREAKOUT_STALE_MIN_SCORE || "4", 10);
+const BREAKOUT_MAX_AGE_MIN = parseInt(process.env.BREAKOUT_MAX_AGE_MIN || "12", 10);
+const BREAKOUT_STALE_MIN_SCORE = parseInt(process.env.BREAKOUT_STALE_MIN_SCORE || "5", 10);
 const WASHOUT_MAX_AGE_MIN = parseInt(process.env.WASHOUT_MAX_AGE_MIN || "12", 10);
 
 // Reject log throttling
 const NO_ENTER_LOG_EVERY_MS = parseInt(process.env.NO_ENTER_LOG_EVERY_MS || "60000", 10);
 
 // Trend stop delay
-const TREND_STOP_ACTIVATE_MIN = parseInt(process.env.TREND_STOP_ACTIVATE_MIN || "6", 10);
+const TREND_STOP_ACTIVATE_MIN = parseInt(process.env.TREND_STOP_ACTIVATE_MIN || "9", 10);
+
+// Trend minimum trailing %
+const TREND_MIN_TRAIL_PCT = parseFloat(process.env.TREND_MIN_TRAIL_PCT || "0.5");
+
+// Breakout confirmation bounce %
+const BREAKOUT_CONFIRM_BOUNCE_PCT = parseFloat(process.env.BREAKOUT_CONFIRM_BOUNCE_PCT || "0.08");
+
+// Breakout minimum ADX
+const BREAKOUT_MIN_ADX = parseFloat(process.env.BREAKOUT_MIN_ADX || "20");
+
+// Entry score tuning
+const BREAKOUT_MIN_SCORE = parseInt(process.env.BREAKOUT_MIN_SCORE || "7", 10);
+const WASHOUT_MIN_SCORE = parseInt(process.env.WASHOUT_MIN_SCORE || "6", 10);
 
 // Secrets
 const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
@@ -99,15 +108,15 @@ const EXIT_DEDUP_MS = parseInt(process.env.EXIT_DEDUP_MS || "30000", 10);
 const BOT_MAX_NOTIONAL_USDT = parseFloat(process.env.BOT_MAX_NOTIONAL_USDT || "10000");
 
 // Adaptive risk bounds as % of bot allocation
-const BASE_RISK_PCT = parseFloat(process.env.BASE_RISK_PCT || "0.5");
-const MIN_RISK_PCT = parseFloat(process.env.MIN_RISK_PCT || "0.3");
-const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PCT || "1.0");
+const BASE_RISK_PCT = parseFloat(process.env.BASE_RISK_PCT || "0.35");
+const MIN_RISK_PCT = parseFloat(process.env.MIN_RISK_PCT || "0.20");
+const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PCT || "0.70");
 
 // Optional score sizing
 const USE_SCORE_SIZE_MULT = (process.env.USE_SCORE_SIZE_MULT || "1") === "1";
 
 // Safety caps on webhook volume %
-const MIN_VOLUME_PCT = parseFloat(process.env.MIN_VOLUME_PCT || "5");
+const MIN_VOLUME_PCT = parseFloat(process.env.MIN_VOLUME_PCT || "10");
 const MAX_VOLUME_PCT = parseFloat(process.env.MAX_VOLUME_PCT || "100");
 
 // ---------------------------
@@ -179,8 +188,14 @@ function ensureSymbol(symbol) {
         invalidationPrice: null,
         level: null,
 
+        // washout memory
         lastWashoutInv: null,
         lastWashoutArmMs: 0,
+
+        // breakout confirmation state
+        retestSeen: false,
+        retestSeenMs: 0,
+        retestPrice: null,
       },
 
       position: {
@@ -238,6 +253,9 @@ function clearSetup(s, why) {
   s.setup.score = 0;
   s.setup.invalidationPrice = null;
   s.setup.level = null;
+  s.setup.retestSeen = false;
+  s.setup.retestSeenMs = 0;
+  s.setup.retestPrice = null;
 }
 
 function canUseTick(s) {
@@ -342,6 +360,11 @@ function detectSetups(s) {
       s.setup.armedMs = nowMs();
       s.setup.level = swingHigh;
       s.setup.invalidationPrice = (last.ema50 != null) ? (last.ema50 * 0.995) : null;
+
+      s.setup.retestSeen = false;
+      s.setup.retestSeenMs = 0;
+      s.setup.retestPrice = null;
+
       console.log(`🟡 Armed breakout_pullback level=${s.setup.level}`);
       return;
     }
@@ -446,8 +469,10 @@ function scoreSetup(s) {
     dlog(`   ➖ cvd bearish -2 => ${score}`);
   }
 
+  // Pattern A / flush helpers
   if (last.liqClusterBelow === 1) add(1, "liq cluster below");
-  if (last.priceDropPct <= -0.7) add(1, "flush down");
+  if (last.priceDropPct <= -0.35) add(1, "flush down");
+  if (last.patternAWatch === 1) add(1, "pattern A watch");
   if (last.patternAReady === 1) add(2, "pattern A ready");
 
   const nBars = PUMP_BLOCK_WINDOW_BARS;
@@ -502,7 +527,7 @@ function computeRiskBasedSize(s, entryPrice) {
   const stop = s.setup.invalidationPrice;
 
   if (!entryPrice || !stop || entryPrice <= stop) {
-    return { sizeMult: 0, volumePercent: 0, riskUsd: 0, stopDistance: 0, adaptiveRiskPct: 0 };
+    return { sizeMult: 0, volumePercent: 0, riskUsd: 0, stopDistance: 0, adaptiveRiskPct: 0, targetAmountPct: 0 };
   }
 
   const adaptiveRiskPct = computeAdaptiveRiskPct(s, lastBar);
@@ -530,6 +555,12 @@ function computeRiskBasedSize(s, entryPrice) {
   };
 }
 
+function breakoutMaxDistPct(last) {
+  if ((last.atrPct ?? 0) >= 0.25) return 0.35;
+  if ((last.atrPct ?? 0) >= 0.18) return 0.28;
+  return 0.20;
+}
+
 function shouldEnter(s) {
   if (!s.setup.armed) return false;
   if (s.position.inPosition) return false;
@@ -547,6 +578,7 @@ function shouldEnter(s) {
     return false;
   }
 
+  // Hard flow filter
   if (last.cvdTrend === -1 && last.oiDeltaBias <= 0) {
     logNoEnter(s, "🚫 no enter: bearish flow + no oi expansion");
     return false;
@@ -558,17 +590,12 @@ function shouldEnter(s) {
     return false;
   }
 
-  let minScoreNeeded = SCORE_ENTER_SMALL;
-  if (s.setup.setupType === "washout_reclaim" && s.regime.mode === "range") {
-    minScoreNeeded = Math.max(SCORE_ENTER_SMALL, 6);
-  }
-
-  if (s.setup.score < minScoreNeeded) {
-    logNoEnter(s, `🚫 no enter: score ${s.setup.score} < ${minScoreNeeded}`);
-    return false;
-  }
-
   if (s.setup.setupType === "washout_reclaim") {
+    if (s.setup.score < WASHOUT_MIN_SCORE) {
+      logNoEnter(s, `🚫 no enter: score ${s.setup.score} < ${WASHOUT_MIN_SCORE}`);
+      return false;
+    }
+
     const level = s.setup.level ?? last.ema18;
     if (!level) {
       logNoEnter(s, "🚫 no enter: missing washout level");
@@ -613,6 +640,16 @@ function shouldEnter(s) {
       return false;
     }
 
+    if (s.setup.score < BREAKOUT_MIN_SCORE) {
+      logNoEnter(s, `🚫 no breakout enter: score ${s.setup.score} < ${BREAKOUT_MIN_SCORE}`);
+      return false;
+    }
+
+    if ((last.adx ?? 0) < BREAKOUT_MIN_ADX) {
+      logNoEnter(s, `🚫 breakout rejected: ADX ${last.adx} < ${BREAKOUT_MIN_ADX}`);
+      return false;
+    }
+
     if ((last.atrPct ?? 0) < 0.15) {
       logNoEnter(s, "🚫 no breakout enter: atrPct too low");
       return false;
@@ -620,10 +657,7 @@ function shouldEnter(s) {
 
     const nearLevelPct = Math.abs((price - level) / level) * 100;
     const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
-
-    let maxEntryDistPct = 0.20;
-    if ((last.atrPct ?? 0) >= 0.25) maxEntryDistPct = 0.35;
-    else if ((last.atrPct ?? 0) >= 0.18) maxEntryDistPct = 0.28;
+    const maxEntryDistPct = breakoutMaxDistPct(last);
 
     dlog(
       `🎯 breakout entry check ` +
@@ -648,13 +682,41 @@ function shouldEnter(s) {
       return false;
     }
 
-    if (!((nearLevelPct <= maxEntryDistPct) || (nearEma8Pct <= maxEntryDistPct))) {
-      logNoEnter(s, "🚫 no breakout enter: too far from level/ema8");
+    // Breakout confirmation step 1:
+    // wait for retest zone touch first, do not enter immediately
+    if (!s.setup.retestSeen) {
+      if ((nearLevelPct <= maxEntryDistPct) || (nearEma8Pct <= maxEntryDistPct)) {
+        s.setup.retestSeen = true;
+        s.setup.retestSeenMs = nowMs();
+        s.setup.retestPrice = price;
+        dlog(`✅ breakout retest seen price=${price} level=${level} ema8=${last.ema8}`);
+      } else {
+        logNoEnter(s, "🚫 no breakout enter: too far from level/ema8");
+      }
       return false;
     }
 
-    if (!(s.setup.score >= SCORE_ENTER_FULL)) {
-      logNoEnter(s, `🚫 no breakout enter: score ${s.setup.score} < ${SCORE_ENTER_FULL}`);
+    // Breakout confirmation step 2:
+    // after retest, require bounce confirmation
+    const bounceRef = s.setup.retestPrice ?? price;
+    const bouncePct = ((price - bounceRef) / bounceRef) * 100;
+    const aboveLevel = price >= level;
+    const aboveEma8 = price >= last.ema8;
+
+    dlog(
+      `🎯 breakout confirm ` +
+      `bouncePct=${bouncePct.toFixed(3)} ` +
+      `need=${BREAKOUT_CONFIRM_BOUNCE_PCT.toFixed(3)} ` +
+      `aboveLevel=${aboveLevel ? 1 : 0} aboveEma8=${aboveEma8 ? 1 : 0}`
+    );
+
+    if (!(aboveLevel && aboveEma8)) {
+      logNoEnter(s, "🚫 no breakout confirm: price not back above level/ema8");
+      return false;
+    }
+
+    if (!(bouncePct >= BREAKOUT_CONFIRM_BOUNCE_PCT)) {
+      logNoEnter(s, "🚫 no breakout confirm: bounce too small");
       return false;
     }
 
@@ -701,7 +763,9 @@ function exitCheck(s) {
     else if ((last.atrPct ?? 0) < 0.15) trendTrailMult = 2.8;
 
     if (atr > 0 && s.position.peak != null) {
-      const newStop = s.position.peak - atr * trendTrailMult;
+      const atrStop = s.position.peak - atr * trendTrailMult;
+      const pctStop = s.position.peak * (1 - TREND_MIN_TRAIL_PCT / 100.0);
+      const newStop = Math.max(atrStop, pctStop); // wider stop
       if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
     }
 
@@ -964,37 +1028,38 @@ async function handleWebhook(req, res) {
         body.time ? Date.parse(body.time) :
         nowMs();
 
-const bar = {
-  timeMs,
-  close: n(body.close),
-  high: n(body.high),
-  low: n(body.low),
-  ema8: n(body.ema8),
-  ema18: n(body.ema18),
-  ema50: n(body.ema50),
-  rsi: n(body.rsi),
-  adx: n(body.adx),
-  atr: n(body.atr),
-  atrPct: n(body.atrPct),
-  oiTrend: n(body.oiTrend, 0),
-  oiDeltaBias: n(body.oiDeltaBias, 0),
-  cvdTrend: n(body.cvdTrend, 0),
-  liqClusterBelow: n(body.liqClusterBelow, 0),
-  priceDropPct: n(body.priceDropPct, 0),
-  patternAReady: n(body.patternAReady, 0),
-  patternAWatch: n(body.patternAWatch, 0),
-};
+      const bar = {
+        timeMs,
+        close: n(body.close),
+        high: n(body.high),
+        low: n(body.low),
+        ema8: n(body.ema8),
+        ema18: n(body.ema18),
+        ema50: n(body.ema50),
+        rsi: n(body.rsi),
+        adx: n(body.adx),
+        atr: n(body.atr),
+        atrPct: n(body.atrPct),
+        oiTrend: n(body.oiTrend, 0),
+        oiDeltaBias: n(body.oiDeltaBias, 0),
+        cvdTrend: n(body.cvdTrend, 0),
+        liqClusterBelow: n(body.liqClusterBelow, 0),
+        priceDropPct: n(body.priceDropPct, 0),
+        patternAReady: n(body.patternAReady, 0),
+        patternAWatch: n(body.patternAWatch, 0),
+      };
 
       if (bar.close == null || bar.high == null || bar.low == null) {
         return res.status(400).json({ ok: false, err: "bad OHLC" });
       }
 
-console.log(
-  `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} ` +
-  `rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ` +
-  `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend} ` +
-  `liqClusterBelow=${bar.liqClusterBelow} priceDropPct=${bar.priceDropPct} patternAReady=${bar.patternAReady} patternAWatch=${bar.patternAWatch}`
-);
+      console.log(
+        `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} ` +
+        `rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ` +
+        `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend} ` +
+        `liqClusterBelow=${bar.liqClusterBelow} priceDropPct=${bar.priceDropPct} ` +
+        `patternAReady=${bar.patternAReady} patternAWatch=${bar.patternAWatch}`
+      );
 
       s.bars.push(bar);
       pruneBars(s);
@@ -1035,7 +1100,7 @@ console.log(
 app.get("/", (_, res) => {
   res.json({
     ok: true,
-    brain: "v3.3-phase3-tvflow-optimized-patternA-exitv2-amountTable-adaptiveDist",
+    brain: "Brain v3.4",
     symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
     hasBrainSecret: Boolean(BRAIN_SECRET),
     hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
@@ -1051,6 +1116,11 @@ app.get("/", (_, res) => {
     minRiskPct: MIN_RISK_PCT,
     maxRiskPct: MAX_RISK_PCT,
     trendStopActivateMin: TREND_STOP_ACTIVATE_MIN,
+    trendMinTrailPct: TREND_MIN_TRAIL_PCT,
+    breakoutConfirmBouncePct: BREAKOUT_CONFIRM_BOUNCE_PCT,
+    breakoutMinAdx: BREAKOUT_MIN_ADX,
+    breakoutMinScore: BREAKOUT_MIN_SCORE,
+    washoutMinScore: WASHOUT_MIN_SCORE,
   });
 });
 
@@ -1081,4 +1151,9 @@ app.listen(PORT, () => {
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
   console.log(`🛡️ MAX_RISK_PCT=${MAX_RISK_PCT}`);
   console.log(`⏳ TREND_STOP_ACTIVATE_MIN=${TREND_STOP_ACTIVATE_MIN}`);
+  console.log(`📉 TREND_MIN_TRAIL_PCT=${TREND_MIN_TRAIL_PCT}`);
+  console.log(`✅ BREAKOUT_CONFIRM_BOUNCE_PCT=${BREAKOUT_CONFIRM_BOUNCE_PCT}`);
+  console.log(`✅ BREAKOUT_MIN_ADX=${BREAKOUT_MIN_ADX}`);
+  console.log(`✅ BREAKOUT_MIN_SCORE=${BREAKOUT_MIN_SCORE}`);
+  console.log(`✅ WASHOUT_MIN_SCORE=${WASHOUT_MIN_SCORE}`);
 });
