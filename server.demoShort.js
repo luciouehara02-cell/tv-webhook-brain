@@ -1013,21 +1013,18 @@ if (body.src === "tick") {
   s.tickCount++;
 
   if (s.tickCount % 50 === 0) {
-    console.log(`🟦 LIVE TICKS ${symbol} count=${s.tickCount} px=${price}`);
+    console.log(`🟦 LIVE TICKS ${body.symbol} count=${s.tickCount} px=${price}`);
   }
 
-  return res.json({ ok: true, src: "tick", tickCount: s.tickCount });
+  const now = nowMs();
+  if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
+    console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
+    s.lastTickLogMs = now;
+  }
+
+  await runDecision(symbol, "tick");
+  return res.json({ ok: true });
 }
-
-      const now = nowMs();
-      if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
-        console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
-        s.lastTickLogMs = now;
-      }
-
-      await runDecision(symbol, "tick");
-      return res.json({ ok: true });
-    }
 
     if (body.src === "features") {
       const timeMs =
