@@ -7,13 +7,16 @@ function pctDiff(a, b) {
 
 export function validateBreakout(state) {
   const reasons = [];
-  const s = state.setups.breakout;
+  const b = state.setups.breakout;
   const f = state.features;
   const c = state.context;
   const close = f.close;
 
-  if (s.phase !== "bounce_confirmed" && s.phase !== "ready") {
-    reasons.push("setup not in entry-capable phase");
+  const isReady = b.phase === "ready";
+  const isBounce = b.phase === "bounce_confirmed";
+
+  if (!isReady && !(CONFIG.ALLOW_ENTRY_ON_BOUNCE_CONFIRMED && isBounce)) {
+    reasons.push("not in entry-capable phase");
     return { allowed: false, reasons };
   }
 
@@ -41,7 +44,7 @@ export function validateBreakout(state) {
     reasons.push(`too extended from ema18 (${extFromEma18.toFixed(3)}%)`);
   }
 
-  const extFromTrigger = pctDiff(close, s.triggerPrice);
+  const extFromTrigger = pctDiff(close, b.triggerPrice);
   if (
     extFromTrigger !== null &&
     extFromTrigger > CONFIG.MAX_ENTRY_EXTENSION_FROM_TRIGGER_PCT
