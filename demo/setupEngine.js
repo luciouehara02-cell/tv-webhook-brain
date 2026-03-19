@@ -69,7 +69,6 @@ export function runBreakoutSetup(state) {
   const bar = state.meta.barIndex;
 
   const close = f.close;
-  const high = f.high ?? close;
   const low = f.low ?? close;
   const ema8 = f.ema8;
   const ema18 = f.ema18;
