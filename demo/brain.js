@@ -75,7 +75,6 @@ export function processEvent(payload) {
   updateContext(context);
 
   const before = getState().setups.breakout.phase;
-
   const breakoutResult = runBreakoutSetup(getState());
 
   if (breakoutResult.patch) {
