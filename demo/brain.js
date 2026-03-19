@@ -100,6 +100,7 @@ export function processEvent(payload) {
   const after = state3.setups.breakout.phase;
 
   logCore("FEATURES", state3);
+  console.log(`🔎 SETUP NOTE | ${breakoutResult.note}`);
   logTransition(before, after, breakoutResult.note);
   logBreakout(state3);
 
