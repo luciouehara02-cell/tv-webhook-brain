@@ -112,6 +112,22 @@ export function runBreakoutSetup(state) {
   }
 
   if (s.phase === "idle") {
+    const rejectReasons = [];
+
+    if (c.regime !== "trend") rejectReasons.push(`regime=${c.regime}`);
+    if (c.hostile) rejectReasons.push("hostile=true");
+    if (!bullAligned) rejectReasons.push("bullAligned=false");
+    if (impulsePct < CONFIG.BREAKOUT_MIN_IMPULSE_PCT) {
+      rejectReasons.push(
+        `impulsePct=${impulsePct.toFixed(3)} < min=${CONFIG.BREAKOUT_MIN_IMPULSE_PCT}`
+      );
+    }
+    if ((f.adx ?? 0) < CONFIG.REGIME_ADX_TREND_MIN) {
+      rejectReasons.push(
+        `adx=${(f.adx ?? 0).toFixed(2)} < min=${CONFIG.REGIME_ADX_TREND_MIN}`
+      );
+    }
+
     if (
       c.regime === "trend" &&
       !c.hostile &&
@@ -137,7 +153,11 @@ export function runBreakoutSetup(state) {
       };
     }
 
-    return { action: "noop", patch: null, note: "idle no breakout" };
+    return {
+      action: "noop",
+      patch: null,
+      note: `idle no breakout | ${rejectReasons.join(", ") || "no specific reject reason"}`,
+    };
   }
 
   if (s.phase === "breakout_detected") {
