@@ -4,12 +4,16 @@ import {
   updateBreakoutSetup,
   updateBreakoutValidation,
   updateContext,
+  updateExecution,
   updateFeatures,
+  updatePosition,
   updateTick,
 } from "./stateStore.js";
 import { calculateRegime } from "./regimeEngine.js";
 import { validateBreakout } from "./validationEngine.js";
 import { runBreakoutSetup } from "./setupEngine.js";
+import { routeExecution } from "./executionRouter.js";
+import { applyExecutionResult, maybeExitDryRunPosition } from "./positionEngine.js";
 
 function formatNum(v, digits = 2) {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "na";
@@ -46,6 +50,12 @@ function logBreakout(state) {
   }
 }
 
+function logPosition(state) {
+  console.log(
+    `📍 POSITION | inPosition=${state.position.inPosition ? 1 : 0} side=${state.position.side ?? "na"} entry=${formatNum(state.position.entryPrice, 4)} cooldownUntilBar=${state.execution.cooldownUntilBar ?? "na"}`
+  );
+}
+
 function logTransition(beforePhase, afterPhase, note) {
   if (beforePhase !== afterPhase) {
     console.log(`🔄 BREAKOUT transition | ${beforePhase} -> ${afterPhase} | ${note}`);
@@ -60,6 +70,7 @@ export function processEvent(payload) {
     const state = getState();
     logCore("TICK", state);
     logBreakout(state);
+    logPosition(state);
     return;
   }
 
@@ -97,20 +108,45 @@ export function processEvent(payload) {
   }
 
   const state3 = getState();
-  const after = state3.setups.breakout.phase;
+  const execResult = routeExecution(state3);
 
-  logCore("FEATURES", state3);
+  if (execResult.action !== "noop") {
+    const applyResult = applyExecutionResult(state3, execResult);
+
+    if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
+    if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
+    if (applyResult.logLine) console.log(applyResult.logLine);
+  } else {
+    console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
+  }
+
+  const postExecState = getState();
+  const maybeExit = maybeExitDryRunPosition(postExecState);
+
+  if (maybeExit) {
+    if (maybeExit.positionPatch) updatePosition(maybeExit.positionPatch);
+    if (maybeExit.executionPatch) updateExecution(maybeExit.executionPatch);
+    if (maybeExit.logLine) console.log(maybeExit.logLine);
+  }
+
+  const state4 = getState();
+  const after = state4.setups.breakout.phase;
+
+  logCore("FEATURES", state4);
   console.log(`🔎 SETUP NOTE | ${breakoutResult.note}`);
   logTransition(before, after, breakoutResult.note);
-  logBreakout(state3);
+  logBreakout(state4);
+  logPosition(state4);
 
   if (CONFIG.LOG_FULL_STATE_ON_TRANSITIONS && before !== after) {
     console.log(
       `📝 STATE SNAPSHOT ${JSON.stringify({
-        market: state3.market,
-        context: state3.context,
-        breakout: state3.setups.breakout,
-        validation: state3.validation.breakout,
+        market: state4.market,
+        context: state4.context,
+        breakout: state4.setups.breakout,
+        validation: state4.validation.breakout,
+        position: state4.position,
+        execution: state4.execution,
       })}`
     );
   }
