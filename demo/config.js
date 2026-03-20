@@ -26,19 +26,29 @@ export const CONFIG = {
   ALLOW_ENTRY_ON_BOUNCE_CONFIRMED: true,
 
   // Execution
-  EXECUTION_MODE: process.env.EXECUTION_MODE || "dry_run", // dry_run | live
+  EXECUTION_MODE: process.env.EXECUTION_MODE || "dry_run",
   DRY_RUN_EXECUTION_ENABLED: true,
   LIVE_EXECUTION_ENABLED: process.env.LIVE_EXECUTION_ENABLED === "true",
   ALLOW_ONLY_ONE_ENTRY_PER_SETUP: true,
   ENTRY_COOLDOWN_BARS: 3,
 
-  // 3Commas / Signal Bot
+  // 3Commas
   C3_WEBHOOK_URL:
     process.env.C3_WEBHOOK_URL ||
     "https://api.3commas.io/signal_bots/webhooks",
   C3_SIGNAL_SECRET: process.env.C3_SIGNAL_SECRET || "",
   C3_BOT_UUID: process.env.C3_BOT_UUID || "",
   C3_MAX_LAG_SEC: Number(process.env.C3_MAX_LAG_SEC || 300),
+
+  // Position management
+  INIT_STOP_ATR_MULT: 1.8,
+  INIT_STOP_EMA_BUFFER_ATR_MULT: 0.3,
+  BREAKEVEN_ARM_PCT: 0.35,
+  TRAILING_START_PCT: 0.55,
+  TRAILING_ATR_MULT: 1.4,
+  PROFIT_LOCK_ARM_PCT: 0.9,
+  PROFIT_LOCK_GIVEBACK_PCT: 0.35,
+  EXIT_ON_CLOSE_BELOW_EMA18: true,
 
   // Debug
   LOG_FULL_STATE_ON_TRANSITIONS: true,
