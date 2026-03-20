@@ -83,6 +83,9 @@ const state = {
     lastActionAt: null,
     lastEnteredSetupId: null,
     cooldownUntilBar: null,
+    lastLiveSendOk: null,
+    lastLiveSendAt: null,
+    lastLiveResponse: null,
   },
 };
 
