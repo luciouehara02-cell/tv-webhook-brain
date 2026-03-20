@@ -68,6 +68,14 @@ export function runBreakoutSetup(state) {
   const f = state.features;
   const c = state.context;
   const s = state.setups.breakout;
+  // 🔒 If already consumed, do nothing until reset
+if (s.phase === "consumed") {
+  return {
+    action: "noop",
+    patch: null,
+    note: "setup consumed",
+  };
+}
   const bar = state.meta.barIndex;
 
   const close = f.close;
