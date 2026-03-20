@@ -9,7 +9,9 @@ function pctChange(current, base) {
   return ((current - base) / base) * 100;
 }
 
-function scoreBreakout(state, setup) {
+function scoreBreakout(state, setup, options = {}) {
+  const { provisional = false } = options;
+
   let score = 0;
   const reasons = [];
   const f = state.features;
@@ -56,7 +58,7 @@ function scoreBreakout(state, setup) {
     setup.bouncePrice > setup.retestPrice
   ) {
     score += 1;
-    reasons.push("bounce confirmed");
+    reasons.push(provisional ? "bounce prelim confirmed" : "bounce confirmed");
   }
 
   return { score, reasons };
@@ -208,6 +210,16 @@ export function runBreakoutSetup(state) {
     }
 
     if (retestSeen) {
+      const provisionalScore = scoreBreakout(
+        state,
+        {
+          ...s,
+          retestPrice: low,
+          bouncePrice: close,
+        },
+        { provisional: true }
+      );
+
       return {
         action: "transition",
         patch: {
@@ -215,8 +227,9 @@ export function runBreakoutSetup(state) {
           phaseBar: bar,
           retestPrice: low,
           bouncePrice: close,
+          score: provisionalScore.score,
+          reasons: provisionalScore.reasons,
           lastTransition: "bounce_confirmed",
-          reasons: ["retest seen", "bounce confirmed prelim"],
         },
         note: "retest seen",
       };
@@ -229,10 +242,14 @@ export function runBreakoutSetup(state) {
     const bouncePct = pctChange(close, s.retestPrice) ?? 0;
 
     if (bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT) {
-      const scored = scoreBreakout(state, {
-        ...s,
-        bouncePrice: close,
-      });
+      const scored = scoreBreakout(
+        state,
+        {
+          ...s,
+          bouncePrice: close,
+        },
+        { provisional: false }
+      );
 
       return {
         action: "transition",
@@ -262,11 +279,29 @@ export function runBreakoutSetup(state) {
       };
     }
 
-    return { action: "noop", patch: null, note: "bounce not enough yet" };
+    const rescored = scoreBreakout(
+      state,
+      {
+        ...s,
+        bouncePrice: close,
+      },
+      { provisional: true }
+    );
+
+    return {
+      action: "rescore",
+      patch: {
+        score: rescored.score,
+        reasons: rescored.reasons,
+        phaseBar: bar,
+        bouncePrice: close,
+      },
+      note: "bounce still forming",
+    };
   }
 
   if (s.phase === "ready") {
-    const rescored = scoreBreakout(state, s);
+    const rescored = scoreBreakout(state, s, { provisional: false });
 
     return {
       action: "rescore",
