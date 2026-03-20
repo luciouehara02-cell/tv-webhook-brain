@@ -68,6 +68,22 @@ const state = {
       updatedAt: null,
     },
   },
+
+  position: {
+    inPosition: false,
+    side: null,
+    entryPrice: null,
+    entryTime: null,
+    entrySetupType: null,
+    entrySetupId: null,
+  },
+
+  execution: {
+    lastAction: null,
+    lastActionAt: null,
+    lastEnteredSetupId: null,
+    cooldownUntilBar: null,
+  },
 };
 
 function touchMeta(eventType) {
@@ -130,27 +146,25 @@ export function updateBreakoutSetup(patch) {
   };
 }
 
-export function resetBreakoutSetup(reason = "reset") {
-  state.setups.breakout = {
-    phase: "idle",
-    startedBar: null,
-    phaseBar: null,
-    triggerPrice: null,
-    breakoutLevel: null,
-    retestPrice: null,
-    bouncePrice: null,
-    score: 0,
-    reasons: [reason],
-    lastTransition: "reset",
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 export function updateBreakoutValidation(patch) {
   state.validation.breakout = {
     ...state.validation.breakout,
     ...patch,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+export function updatePosition(patch) {
+  state.position = {
+    ...state.position,
+    ...patch,
+  };
+}
+
+export function updateExecution(patch) {
+  state.execution = {
+    ...state.execution,
+    ...patch,
   };
 }
 
