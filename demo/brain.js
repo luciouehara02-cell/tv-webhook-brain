@@ -14,6 +14,7 @@ import { validateBreakout } from "./validationEngine.js";
 import { runBreakoutSetup } from "./setupEngine.js";
 import { routeExecution } from "./executionRouter.js";
 import { applyExecutionResult, maybeExitDryRunPosition } from "./positionEngine.js";
+import { executeEnterLong, executeExitLong } from "./executionModeRouter.js";
 
 function formatNum(v, digits = 2) {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "na";
@@ -62,7 +63,7 @@ function logTransition(beforePhase, afterPhase, note) {
   }
 }
 
-export function processEvent(payload) {
+export async function processEvent(payload) {
   const src = payload?.src;
 
   if (src === "tick") {
@@ -111,11 +112,20 @@ export function processEvent(payload) {
   const execResult = routeExecution(state3);
 
   if (execResult.action !== "noop") {
+    const execModeResult = await executeEnterLong(state3);
+    if (execModeResult.logLine) console.log(execModeResult.logLine);
+
     const applyResult = applyExecutionResult(state3, execResult);
 
     if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
     if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
     if (applyResult.logLine) console.log(applyResult.logLine);
+
+    updateExecution({
+      lastLiveSendOk: execModeResult.ok,
+      lastLiveSendAt: state3.market.time,
+      lastLiveResponse: execModeResult.result || execModeResult.logLine,
+    });
   } else {
     console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
   }
@@ -124,9 +134,18 @@ export function processEvent(payload) {
   const maybeExit = maybeExitDryRunPosition(postExecState);
 
   if (maybeExit) {
+    const exitModeResult = await executeExitLong(postExecState);
+    if (exitModeResult.logLine) console.log(exitModeResult.logLine);
+
     if (maybeExit.positionPatch) updatePosition(maybeExit.positionPatch);
     if (maybeExit.executionPatch) updateExecution(maybeExit.executionPatch);
     if (maybeExit.logLine) console.log(maybeExit.logLine);
+
+    updateExecution({
+      lastLiveSendOk: exitModeResult.ok,
+      lastLiveSendAt: postExecState.market.time,
+      lastLiveResponse: exitModeResult.result || exitModeResult.logLine,
+    });
   }
 
   const state4 = getState();
