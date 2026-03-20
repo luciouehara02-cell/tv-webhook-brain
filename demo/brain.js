@@ -13,8 +13,10 @@ import { calculateRegime } from "./regimeEngine.js";
 import { validateBreakout } from "./validationEngine.js";
 import { runBreakoutSetup } from "./setupEngine.js";
 import { routeExecution } from "./executionRouter.js";
-import { applyExecutionResult, maybeExitDryRunPosition } from "./positionEngine.js";
+import { applyExecutionResult } from "./positionEngine.js";
 import { executeEnterLong, executeExitLong } from "./executionModeRouter.js";
+import { onEntryPositionPatch, manageOpenPosition, buildExitPatches } from "./tradeManager.js";
+import { shouldExitPosition } from "./exitPolicy.js";
 
 function formatNum(v, digits = 2) {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "na";
@@ -53,7 +55,7 @@ function logBreakout(state) {
 
 function logPosition(state) {
   console.log(
-    `📍 POSITION | inPosition=${state.position.inPosition ? 1 : 0} side=${state.position.side ?? "na"} entry=${formatNum(state.position.entryPrice, 4)} cooldownUntilBar=${state.execution.cooldownUntilBar ?? "na"}`
+    `📍 POSITION | inPosition=${state.position.inPosition ? 1 : 0} side=${state.position.side ?? "na"} entry=${formatNum(state.position.entryPrice, 4)} stop=${formatNum(state.position.stopPrice, 4)} peak=${formatNum(state.position.peakPrice, 4)} be=${state.position.breakEvenArmed ? 1 : 0} trail=${state.position.trailingActive ? 1 : 0} pl=${state.position.profitLockActive ? 1 : 0} cooldownUntilBar=${state.execution.cooldownUntilBar ?? "na"}`
   );
 }
 
@@ -121,7 +123,10 @@ export async function processEvent(payload) {
     if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
     if (applyResult.logLine) console.log(applyResult.logLine);
 
-    // mark setup as consumed after successful entry
+    const postEntryState = getState();
+    const tradePatch = onEntryPositionPatch(postEntryState);
+    if (tradePatch) updatePosition(tradePatch);
+
     updateBreakoutSetup({
       phase: "consumed",
       lastTransition: "consumed_after_entry",
@@ -138,25 +143,37 @@ export async function processEvent(payload) {
   }
 
   const postExecState = getState();
-  const maybeExit = maybeExitDryRunPosition(postExecState);
+  const manageResult = manageOpenPosition(postExecState);
 
-  if (maybeExit) {
-    const exitModeResult = await executeExitLong(postExecState);
+  if (manageResult.positionPatch) {
+    updatePosition(manageResult.positionPatch);
+  }
+
+  for (const line of manageResult.logs) {
+    console.log(line);
+  }
+
+  const latestManagedState = getState();
+  const exitDecision = shouldExitPosition(latestManagedState, manageResult.exitSignal);
+
+  if (exitDecision.allowed) {
+    const exitModeResult = await executeExitLong(latestManagedState);
     if (exitModeResult.logLine) console.log(exitModeResult.logLine);
 
-    if (maybeExit.positionPatch) updatePosition(maybeExit.positionPatch);
-    if (maybeExit.executionPatch) updateExecution(maybeExit.executionPatch);
-    if (maybeExit.logLine) console.log(maybeExit.logLine);
+    const exitPatches = buildExitPatches(latestManagedState, manageResult.exitSignal);
+
+    if (exitPatches.positionPatch) updatePosition(exitPatches.positionPatch);
+    if (exitPatches.executionPatch) updateExecution(exitPatches.executionPatch);
+    if (exitPatches.logLine) console.log(exitPatches.logLine);
 
     updateExecution({
       lastLiveSendOk: exitModeResult.ok,
-      lastLiveSendAt: postExecState.market.time,
+      lastLiveSendAt: latestManagedState.market.time,
       lastLiveResponse: exitModeResult.result || exitModeResult.logLine,
     });
 
     const latestState = getState();
 
-    // reset setup after exit
     updateBreakoutSetup({
       phase: "idle",
       startedBar: null,
