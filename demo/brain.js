@@ -111,28 +111,28 @@ export async function processEvent(payload) {
   const state3 = getState();
   const execResult = routeExecution(state3);
 
-if (execResult.action !== "noop") {
-  const execModeResult = await executeEnterLong(state3);
-  if (execModeResult.logLine) console.log(execModeResult.logLine);
+  if (execResult.action !== "noop") {
+    const execModeResult = await executeEnterLong(state3);
+    if (execModeResult.logLine) console.log(execModeResult.logLine);
 
-  const applyResult = applyExecutionResult(state3, execResult);
+    const applyResult = applyExecutionResult(state3, execResult);
 
-  if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
-  if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
-  if (applyResult.logLine) console.log(applyResult.logLine);
+    if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
+    if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
+    if (applyResult.logLine) console.log(applyResult.logLine);
 
-  // 🔥 NEW: mark setup as consumed
-  updateBreakoutSetup({
-    phase: "consumed",
-    lastTransition: "consumed_after_entry",
-    reasons: ["setup consumed after entry"],
-  });
+    // mark setup as consumed after successful entry
+    updateBreakoutSetup({
+      phase: "consumed",
+      lastTransition: "consumed_after_entry",
+      reasons: ["setup consumed after entry"],
+    });
 
-  updateExecution({
-    lastLiveSendOk: execModeResult.ok,
-    lastLiveSendAt: state3.market.time,
-    lastLiveResponse: execModeResult.result || execModeResult.logLine,
-  });
+    updateExecution({
+      lastLiveSendOk: execModeResult.ok,
+      lastLiveSendAt: state3.market.time,
+      lastLiveResponse: execModeResult.result || execModeResult.logLine,
+    });
   } else {
     console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
   }
@@ -152,6 +152,22 @@ if (execResult.action !== "noop") {
       lastLiveSendOk: exitModeResult.ok,
       lastLiveSendAt: postExecState.market.time,
       lastLiveResponse: exitModeResult.result || exitModeResult.logLine,
+    });
+
+    const latestState = getState();
+
+    // reset setup after exit
+    updateBreakoutSetup({
+      phase: "idle",
+      startedBar: null,
+      phaseBar: latestState.meta.barIndex,
+      triggerPrice: null,
+      breakoutLevel: null,
+      retestPrice: null,
+      bouncePrice: null,
+      score: 0,
+      reasons: ["reset after exit"],
+      lastTransition: "reset_after_exit",
     });
   }
 
