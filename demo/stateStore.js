@@ -76,6 +76,12 @@ const state = {
     entryTime: null,
     entrySetupType: null,
     entrySetupId: null,
+    peakPrice: null,
+    stopPrice: null,
+    breakEvenArmed: false,
+    trailingActive: false,
+    profitLockActive: false,
+    lastExitReason: null,
   },
 
   execution: {
