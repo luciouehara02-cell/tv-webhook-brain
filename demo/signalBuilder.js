@@ -17,10 +17,10 @@ export function build3CommasEnterLongSignal(state) {
     tv_exchange: "BINANCE",
     tv_instrument: "SOLUSDT",
     action: "enter_long",
-    order: {
-      amount: "199",
-      currency_type: "quote",
-    },
+order: {
+  amount: CONFIG.C3_ENTRY_AMOUNT,
+  currency_type: CONFIG.C3_ENTRY_CURRENCY_TYPE,
+},
     meta: {
       brain: CONFIG.BRAIN_VERSION,
       setup_type: "breakout",
