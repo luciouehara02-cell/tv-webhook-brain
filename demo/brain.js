@@ -15,7 +15,11 @@ import { runBreakoutSetup } from "./setupEngine.js";
 import { routeExecution } from "./executionRouter.js";
 import { applyExecutionResult } from "./positionEngine.js";
 import { executeEnterLong, executeExitLong } from "./executionModeRouter.js";
-import { onEntryPositionPatch, manageOpenPosition, buildExitPatches } from "./tradeManager.js";
+import {
+  onEntryPositionPatch,
+  manageOpenPosition,
+  buildExitPatches,
+} from "./tradeManager.js";
 import { shouldExitPosition } from "./exitPolicy.js";
 
 function formatNum(v, digits = 2) {
@@ -154,13 +158,19 @@ export async function processEvent(payload) {
   }
 
   const latestManagedState = getState();
-  const exitDecision = shouldExitPosition(latestManagedState, manageResult.exitSignal);
+  const exitDecision = shouldExitPosition(
+    latestManagedState,
+    manageResult.exitSignal
+  );
 
   if (exitDecision.allowed) {
     const exitModeResult = await executeExitLong(latestManagedState);
     if (exitModeResult.logLine) console.log(exitModeResult.logLine);
 
-    const exitPatches = buildExitPatches(latestManagedState, manageResult.exitSignal);
+    const exitPatches = buildExitPatches(
+      latestManagedState,
+      manageResult.exitSignal
+    );
 
     if (exitPatches.positionPatch) updatePosition(exitPatches.positionPatch);
     if (exitPatches.executionPatch) updateExecution(exitPatches.executionPatch);
