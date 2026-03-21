@@ -43,6 +43,12 @@ export const CONFIG = {
   C3_BOT_UUID: process.env.C3_BOT_UUID || "",
   C3_MAX_LAG_SEC: Number(process.env.C3_MAX_LAG_SEC || 300),
 
+  // Position size
+  C3_ENTRY_AMOUNT: process.env.C3_ENTRY_AMOUNT || "199",
+  C3_ENTRY_CURRENCY_TYPE:
+    process.env.C3_ENTRY_CURRENCY_TYPE || "quote", // quote | base
+  C3_RISK_MODE: process.env.C3_RISK_MODE || "fixed", // fixed | dynamic
+
   // Position management
   INIT_STOP_ATR_MULT: 1.8,
   INIT_STOP_EMA_BUFFER_ATR_MULT: 0.3,
