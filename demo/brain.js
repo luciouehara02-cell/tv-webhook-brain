@@ -141,6 +141,9 @@ export async function processEvent(payload) {
       lastLiveSendOk: execModeResult.ok,
       lastLiveSendAt: state3.market.time,
       lastLiveResponse: execModeResult.result || execModeResult.logLine,
+      lastLiveEventKey: execModeResult.eventKey ?? null,
+      lastLiveGuardrailReason: execModeResult.guardrailReason ?? null,
+      lastSignalPayload: execModeResult.signalPayload ?? null,
     });
   } else {
     console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
@@ -180,6 +183,9 @@ export async function processEvent(payload) {
       lastLiveSendOk: exitModeResult.ok,
       lastLiveSendAt: latestManagedState.market.time,
       lastLiveResponse: exitModeResult.result || exitModeResult.logLine,
+      lastLiveEventKey: exitModeResult.eventKey ?? null,
+      lastLiveGuardrailReason: exitModeResult.guardrailReason ?? null,
+      lastSignalPayload: exitModeResult.signalPayload ?? null,
     });
 
     const latestState = getState();
