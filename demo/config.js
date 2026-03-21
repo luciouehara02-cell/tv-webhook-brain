@@ -25,10 +25,13 @@ export const CONFIG = {
   MAX_ENTRY_EXTENSION_FROM_TRIGGER_PCT: 0.35,
   ALLOW_ENTRY_ON_BOUNCE_CONFIRMED: true,
 
-  // Execution
-  EXECUTION_MODE: process.env.EXECUTION_MODE || "dry_run",
+  // Execution mode
+  EXECUTION_MODE: process.env.EXECUTION_MODE || "dry_run", // dry_run | live
   DRY_RUN_EXECUTION_ENABLED: true,
+
+  // Live guardrails
   LIVE_EXECUTION_ENABLED: process.env.LIVE_EXECUTION_ENABLED === "true",
+  LIVE_MANUAL_ARMING_ENABLED: process.env.LIVE_MANUAL_ARMING_ENABLED === "true",
   ALLOW_ONLY_ONE_ENTRY_PER_SETUP: true,
   ENTRY_COOLDOWN_BARS: 3,
 
@@ -52,4 +55,5 @@ export const CONFIG = {
 
   // Debug
   LOG_FULL_STATE_ON_TRANSITIONS: true,
+  LOG_SIGNAL_PAYLOADS: true,
 };
