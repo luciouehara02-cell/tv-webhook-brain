@@ -1,5 +1,21 @@
 import { CONFIG } from "./config.js";
 
+function buildTiming(marketTime) {
+  const useReplayTiming = CONFIG.REPLAY_SIGNAL_MODE === true;
+
+  if (useReplayTiming) {
+    return {
+      timestamp: new Date().toISOString(),
+      maxLag: String(CONFIG.REPLAY_MAX_LAG_SEC),
+    };
+  }
+
+  return {
+    timestamp: marketTime || new Date().toISOString(),
+    maxLag: String(CONFIG.C3_MAX_LAG_SEC),
+  };
+}
+
 export function build3CommasEnterLongSignal(state) {
   const breakout = state.setups.breakout;
   const market = state.market;
@@ -8,14 +24,7 @@ export function build3CommasEnterLongSignal(state) {
   const entryPrice =
     features.close ?? market.price ?? breakout.bouncePrice ?? breakout.triggerPrice;
 
-  const isLive = CONFIG.EXECUTION_MODE === "live";
-  const timestamp = isLive
-    ? market.time || new Date().toISOString()
-    : new Date().toISOString();
-
-  const maxLag = isLive
-    ? String(CONFIG.C3_MAX_LAG_SEC)
-    : "3600";
+  const { timestamp, maxLag } = buildTiming(market.time);
 
   return {
     secret: CONFIG.C3_SIGNAL_SECRET,
@@ -41,6 +50,7 @@ export function build3CommasEnterLongSignal(state) {
       tf: market.tf,
       symbol: market.symbol,
       exec_mode: CONFIG.EXECUTION_MODE,
+      replay_signal_mode: CONFIG.REPLAY_SIGNAL_MODE,
     },
   };
 }
@@ -50,15 +60,7 @@ export function build3CommasExitLongSignal(state) {
   const features = state.features;
 
   const exitPrice = features.close ?? market.price;
-
-  const isLive = CONFIG.EXECUTION_MODE === "live";
-  const timestamp = isLive
-    ? market.time || new Date().toISOString()
-    : new Date().toISOString();
-
-  const maxLag = isLive
-    ? String(CONFIG.C3_MAX_LAG_SEC)
-    : "3600";
+  const { timestamp, maxLag } = buildTiming(market.time);
 
   return {
     secret: CONFIG.C3_SIGNAL_SECRET,
@@ -75,6 +77,7 @@ export function build3CommasExitLongSignal(state) {
       tf: market.tf,
       symbol: market.symbol,
       exec_mode: CONFIG.EXECUTION_MODE,
+      replay_signal_mode: CONFIG.REPLAY_SIGNAL_MODE,
     },
   };
 }
