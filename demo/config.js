@@ -29,6 +29,10 @@ export const CONFIG = {
   EXECUTION_MODE: process.env.EXECUTION_MODE || "dry_run", // dry_run | live
   DRY_RUN_EXECUTION_ENABLED: true,
 
+  // Replay signal mode
+  REPLAY_SIGNAL_MODE: process.env.REPLAY_SIGNAL_MODE === "true",
+  REPLAY_MAX_LAG_SEC: Number(process.env.REPLAY_MAX_LAG_SEC || 3600),
+
   // Live guardrails
   LIVE_EXECUTION_ENABLED: process.env.LIVE_EXECUTION_ENABLED === "true",
   LIVE_MANUAL_ARMING_ENABLED: process.env.LIVE_MANUAL_ARMING_ENABLED === "true",
@@ -46,8 +50,8 @@ export const CONFIG = {
   // Position size
   C3_ENTRY_AMOUNT: process.env.C3_ENTRY_AMOUNT || "199",
   C3_ENTRY_CURRENCY_TYPE:
-    process.env.C3_ENTRY_CURRENCY_TYPE || "quote", // quote | base
-  C3_RISK_MODE: process.env.C3_RISK_MODE || "fixed", // fixed | dynamic
+    process.env.C3_ENTRY_CURRENCY_TYPE || "quote",
+  C3_RISK_MODE: process.env.C3_RISK_MODE || "fixed",
 
   // Position management
   INIT_STOP_ATR_MULT: 1.8,
