@@ -11,8 +11,8 @@ export function build3CommasEnterLongSignal(state) {
   return {
     secret: CONFIG.C3_SIGNAL_SECRET,
     bot_uuid: CONFIG.C3_BOT_UUID,
-    max_lag: "3600",
-    timestamp: new Date().toISOString(),
+    max_lag: String(CONFIG.C3_MAX_LAG_SEC),
+    timestamp: market.time || new Date().toISOString(),
     trigger_price: String(entryPrice),
     tv_exchange: "BINANCE",
     tv_instrument: "SOLUSDT",
@@ -44,8 +44,8 @@ export function build3CommasExitLongSignal(state) {
   return {
     secret: CONFIG.C3_SIGNAL_SECRET,
     bot_uuid: CONFIG.C3_BOT_UUID,
-    max_lag: "3600",
-    timestamp: new Date().toISOString(),
+    max_lag: String(CONFIG.C3_MAX_LAG_SEC),
+    timestamp: market.time || new Date().toISOString(),
     trigger_price: String(exitPrice),
     tv_exchange: "BINANCE",
     tv_instrument: "SOLUSDT",
