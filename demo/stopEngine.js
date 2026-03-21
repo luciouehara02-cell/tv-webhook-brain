@@ -31,10 +31,7 @@ export function shouldMoveToBreakEven(state) {
   const p = state.position;
   const close = state.features.close;
 
-  if (!p.inPosition || !num(p.entryPrice) || !num(close)) {
-    return false;
-  }
-
+  if (!p.inPosition || !num(p.entryPrice) || !num(close)) return false;
   if (p.breakEvenArmed) return false;
 
   const gainPct = ((close - p.entryPrice) / p.entryPrice) * 100;
@@ -45,9 +42,7 @@ export function calcTrailingStop(state) {
   const p = state.position;
   const f = state.features;
 
-  if (!p.inPosition || !num(p.entryPrice) || !num(f.close)) {
-    return null;
-  }
+  if (!p.inPosition || !num(p.entryPrice) || !num(f.close)) return null;
 
   const atr = f.atr ?? null;
   const close = f.close;
@@ -61,11 +56,8 @@ export function calcTrailingStop(state) {
 
 export function calcProfitLockStop(state) {
   const p = state.position;
-  const close = state.features.close;
 
-  if (!p.inPosition || !num(p.entryPrice) || !num(close) || !num(p.peakPrice)) {
-    return null;
-  }
+  if (!p.inPosition || !num(p.entryPrice) || !num(p.peakPrice)) return null;
 
   const gainPct = ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100;
 
@@ -85,11 +77,24 @@ export function checkExitTrigger(state) {
   const stopPrice = p.stopPrice;
 
   if (num(stopPrice) && num(close) && close <= stopPrice) {
-    return { shouldExit: true, reason: "stop_hit", exitPrice: close };
+    return {
+      shouldExit: true,
+      reason: "stop_hit",
+      exitPrice: close,
+    };
   }
 
-  if (CONFIG.EXIT_ON_CLOSE_BELOW_EMA18 && num(close) && num(ema18) && close < ema18) {
-    return { shouldExit: true, reason: "close_below_ema18", exitPrice: close };
+  if (
+    CONFIG.EXIT_ON_CLOSE_BELOW_EMA18 &&
+    num(close) &&
+    num(ema18) &&
+    close < ema18
+  ) {
+    return {
+      shouldExit: true,
+      reason: "close_below_ema18",
+      exitPrice: close,
+    };
   }
 
   return null;
