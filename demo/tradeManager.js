@@ -46,12 +46,12 @@ export function manageOpenPosition(state) {
   }
 
   if (shouldMoveToBreakEven(state)) {
+    const currentStop = num(p.stopPrice) ? p.stopPrice : -Infinity;
+    const newStop = Math.max(currentStop, p.entryPrice);
+
     patch.breakEvenArmed = true;
-    patch.stopPrice = Math.max(
-      num(p.stopPrice) ? p.stopPrice : -Infinity,
-      p.entryPrice
-    );
-    logs.push(`🟨 BREAKEVEN ARMED | stop=${patch.stopPrice}`);
+    patch.stopPrice = newStop;
+    logs.push(`🟨 BREAKEVEN ARMED | stop=${newStop.toFixed(4)}`);
   }
 
   const trailStop = calcTrailingStop({
@@ -75,7 +75,11 @@ export function manageOpenPosition(state) {
 
   const profitLockStop = calcProfitLockStop({
     ...state,
-    position: { ...p, ...patch, peakPrice: patch.peakPrice ?? p.peakPrice },
+    position: {
+      ...p,
+      ...patch,
+      peakPrice: patch.peakPrice ?? p.peakPrice,
+    },
   });
 
   if (num(profitLockStop)) {
