@@ -92,6 +92,9 @@ const state = {
     lastLiveSendOk: null,
     lastLiveSendAt: null,
     lastLiveResponse: null,
+    lastLiveEventKey: null,
+    lastLiveGuardrailReason: null,
+    lastSignalPayload: null,
   },
 };
 
