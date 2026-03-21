@@ -18,7 +18,7 @@ export function build3CommasEnterLongSignal(state) {
     tv_instrument: "SOLUSDT",
     action: "enter_long",
     order: {
-      amount: "base",
+      amount: "199",
       currency_type: "quote",
     },
     meta: {
