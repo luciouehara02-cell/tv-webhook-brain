@@ -1,47 +1,70 @@
 import { CONFIG } from "./config.js";
 
-export function applyExecutionResult(state, execResult) {
-  const bar = state.meta.barIndex;
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v);
+}
 
-  if (execResult.action === "enter_long_dry_run" && execResult.payload) {
+function calcInitialStop(state) {
+  const f = state.features;
+  const close = f.close;
+  const ema18 = f.ema18;
+  const atr = f.atr;
+
+  if (!num(close) || !num(ema18) || !num(atr)) return null;
+
+  const atrStop = close - atr * CONFIG.INIT_STOP_ATR_MULT;
+  const emaStop = ema18 - atr * CONFIG.INIT_STOP_EMA_BUFFER_ATR_MULT;
+
+  return Math.min(atrStop, emaStop);
+}
+
+export function applyExecutionResult(state, execResult) {
+  if (!execResult || execResult.action === "noop") {
+    return {
+      positionPatch: null,
+      executionPatch: null,
+      logLine: null,
+    };
+  }
+
+  if (execResult.action === "enter_long") {
+    const close = state.features.close;
+    const time = state.market.time;
+    const breakout = state.setups.breakout;
+
+    const stopPrice = calcInitialStop(state);
+
+    const setupId =
+      breakout.setupId ||
+      `${breakout.startedBar}-${breakout.lastTransition}-${breakout.triggerPrice}`;
+
     return {
       positionPatch: {
         inPosition: true,
         side: "long",
-        entryPrice: execResult.payload.entryPrice,
-        entryTime: execResult.payload.time,
-        entrySetupType: execResult.payload.setupType,
-        entrySetupId: execResult.payload.setupId,
+        entryPrice: close,
+        entryTime: time,
+        entrySetupType: "breakout",
+        entrySetupId: setupId,
+        peakPrice: close,
+        stopPrice,
+        breakEvenArmed: false,
+        trailingActive: false,
+        profitLockActive: false,
+        lastExitReason: null,
       },
       executionPatch: {
-        lastAction: "enter_long_dry_run",
-        lastActionAt: execResult.payload.time,
-        lastEnteredSetupId: execResult.payload.setupId,
+        lastAction: "enter_long",
+        lastActionAt: time,
+        lastEnteredSetupId: setupId,
       },
-      logLine: `🚀 DRY-RUN ENTRY | type=${execResult.payload.setupType} | phase=${execResult.payload.phase} | entry=${execResult.payload.entryPrice} | score=${execResult.payload.score}`,
+      logLine: `✅ SIM POSITION OPENED | side=long entry=${num(close) ? close.toFixed(4) : "na"} stop=${num(stopPrice) ? stopPrice.toFixed(4) : "na"} setupId=${setupId}`,
     };
   }
 
-  return {
-    positionPatch: null,
-    executionPatch: null,
-    logLine: null,
-  };
-}
+  if (execResult.action === "exit_long") {
+    const time = state.market.time;
 
-export function maybeExitDryRunPosition(state) {
-  const position = state.position;
-  const features = state.features;
-  const bar = state.meta.barIndex;
-
-  if (!position.inPosition) {
-    return null;
-  }
-
-  const close = features.close;
-  const ema18 = features.ema18;
-
-  if (close !== null && ema18 !== null && close < ema18) {
     return {
       positionPatch: {
         inPosition: false,
@@ -50,15 +73,24 @@ export function maybeExitDryRunPosition(state) {
         entryTime: null,
         entrySetupType: null,
         entrySetupId: null,
+        peakPrice: null,
+        stopPrice: null,
+        breakEvenArmed: false,
+        trailingActive: false,
+        profitLockActive: false,
       },
       executionPatch: {
-        lastAction: "exit_long_dry_run",
-        lastActionAt: state.market.time,
-        cooldownUntilBar: bar + CONFIG.ENTRY_COOLDOWN_BARS,
+        lastAction: "exit_long",
+        lastActionAt: time,
+        cooldownUntilBar: state.meta.barIndex + CONFIG.ENTRY_COOLDOWN_BARS,
       },
-      logLine: `🛑 DRY-RUN EXIT | reason=close_below_ema18 | close=${close} ema18=${ema18}`,
+      logLine: `✅ SIM POSITION CLOSED | cooldownUntilBar=${state.meta.barIndex + CONFIG.ENTRY_COOLDOWN_BARS}`,
     };
   }
 
-  return null;
+  return {
+    positionPatch: null,
+    executionPatch: null,
+    logLine: null,
+  };
 }
