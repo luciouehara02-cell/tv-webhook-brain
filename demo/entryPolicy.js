@@ -6,6 +6,7 @@ export function shouldEnterBreakout(state) {
   const position = state.position;
   const execution = state.execution;
   const bar = state.meta.barIndex;
+  const close = state.features.close;
 
   if (!CONFIG.DRY_RUN_EXECUTION_ENABLED && CONFIG.EXECUTION_MODE === "dry_run") {
     return { allowed: false, reasons: ["dry run execution disabled"] };
@@ -43,7 +44,34 @@ export function shouldEnterBreakout(state) {
     };
   }
 
-  const setupId = `${breakout.startedBar}-${breakout.lastTransition}-${breakout.triggerPrice}`;
+  if (
+    breakout.readySinceBar !== null &&
+    (bar - breakout.readySinceBar) > CONFIG.BREAKOUT_MAX_READY_AGE_BARS_FOR_ENTRY
+  ) {
+    return {
+      allowed: false,
+      reasons: [`ready too old (${bar - breakout.readySinceBar} bars)`],
+    };
+  }
+
+  if (
+    breakout.bouncePrice !== null &&
+    typeof close === "number" &&
+    Number.isFinite(close)
+  ) {
+    const chasePct = ((close - breakout.bouncePrice) / breakout.bouncePrice) * 100;
+
+    if (chasePct > CONFIG.BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT) {
+      return {
+        allowed: false,
+        reasons: [`late entry chase too large (${chasePct.toFixed(3)}%)`],
+      };
+    }
+  }
+
+  const setupId =
+    breakout.setupId ||
+    `${breakout.startedBar}-${breakout.lastTransition}-${breakout.triggerPrice}`;
 
   if (
     CONFIG.ALLOW_ONLY_ONE_ENTRY_PER_SETUP &&
