@@ -1,7 +1,13 @@
 import { CONFIG } from "./config.js";
-import { build3CommasEnterLongSignal, build3CommasExitLongSignal } from "./signalBuilder.js";
+import {
+  build3CommasEnterLongSignal,
+  build3CommasExitLongSignal,
+} from "./signalBuilder.js";
 import { sendSignalTo3Commas } from "./threeCommasClient.js";
-import { checkLiveEntryGuardrails, checkLiveExitGuardrails } from "./liveGuardrails.js";
+import {
+  checkLiveEntryGuardrails,
+  checkLiveExitGuardrails,
+} from "./liveGuardrails.js";
 
 export async function executeEnterLong(state) {
   const signal = build3CommasEnterLongSignal(state);
@@ -51,8 +57,8 @@ export async function executeEnterLong(state) {
   };
 }
 
-export async function executeExitLong(state) {
-  const signal = build3CommasExitLongSignal(state);
+export async function executeExitLong(state, exitReason = "exit_long") {
+  const signal = build3CommasExitLongSignal(state, exitReason);
 
   if (CONFIG.LOG_SIGNAL_PAYLOADS) {
     console.log(`📦 SIGNAL PREVIEW EXIT | ${JSON.stringify(signal)}`);
