@@ -107,6 +107,27 @@ export function validateBreakout(state) {
     reasons.push("did not hold above ema18");
   }
 
+  if (
+    CONFIG.BREAKOUT_REQUIRE_BOUNCE_BODY_MIN_ON_ENTRY &&
+    !hasQualityFlag(b, "bounce_body_ok")
+  ) {
+    reasons.push("bounce body too weak");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_CLOSE_IN_RANGE_MIN_ON_ENTRY &&
+    !hasQualityFlag(b, "bounce_close_strong")
+  ) {
+    reasons.push("bounce close not strong enough");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_RECLAIM_ABOVE_TRIGGER_MIN_ON_ENTRY &&
+    !hasQualityFlag(b, "reclaim_above_trigger_ok")
+  ) {
+    reasons.push("reclaim above trigger too weak");
+  }
+
   if (isBounce) {
     if (
       CONFIG.BREAKOUT_REQUIRE_BOUNCE_PCT_MIN_ON_BOUNCE_ENTRY &&
