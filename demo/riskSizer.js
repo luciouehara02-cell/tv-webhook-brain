@@ -8,14 +8,45 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-export function calcDynamicQuoteSize(state) {
+function getProspectiveEntryPrice(state) {
   const p = state.position;
   const f = state.features;
   const breakout = state.setups.breakout;
 
-  const entryPrice =
-    f.close ?? p.entryPrice ?? breakout.bouncePrice ?? breakout.triggerPrice;
-  const stopPrice = p.stopPrice;
+  return (
+    f.close ??
+    p.entryPrice ??
+    breakout.bouncePrice ??
+    breakout.triggerPrice ??
+    null
+  );
+}
+
+function getProspectiveStopPrice(state, entryPrice) {
+  const f = state.features;
+
+  if (!num(entryPrice)) return null;
+
+  const atr = f.atr ?? null;
+  const ema18 = f.ema18 ?? null;
+
+  const atrStop = num(atr)
+    ? entryPrice - atr * CONFIG.INIT_STOP_ATR_MULT
+    : null;
+
+  const emaStop = num(ema18)
+    ? ema18 - (num(atr) ? atr * CONFIG.INIT_STOP_EMA_BUFFER_ATR_MULT : 0)
+    : null;
+
+  const candidates = [atrStop, emaStop].filter(num);
+  if (!candidates.length) return null;
+
+  return Math.min(...candidates);
+}
+
+function calcDynamicQuoteSizeFromProspectiveStop(state) {
+  const entryPrice = getProspectiveEntryPrice(state);
+  const stopPrice = getProspectiveStopPrice(state, entryPrice);
 
   if (!num(entryPrice) || !num(stopPrice) || entryPrice <= stopPrice) {
     return null;
@@ -71,7 +102,7 @@ export function resolveEntryOrder(state) {
     };
   }
 
-  const dynamic = calcDynamicQuoteSize(state);
+  const dynamic = calcDynamicQuoteSizeFromProspectiveStop(state);
 
   if (!dynamic) {
     return {
