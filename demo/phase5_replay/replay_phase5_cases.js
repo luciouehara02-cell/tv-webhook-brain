@@ -10,7 +10,7 @@ const WEBHOOK_URL =
 const SECRET = "Demo_brainPhase5_secret_3x9KpL8zQ2mN7wR4tY6uF1";
 
 // Run ONE case at a time here
-const CASE_FILES = ["case1_clean_winner.json"];
+const CASE_FILES = ["case4_late_extension.json"];
 // const CASE_FILES = ["case1_clean_winner.json"];
 // const CASE_FILES = ["case2_fast_failure.json"];
 // const CASE_FILES = ["case4_late_extension.json"];
