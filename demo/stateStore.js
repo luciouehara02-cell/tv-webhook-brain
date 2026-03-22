@@ -1,6 +1,6 @@
 const state = {
   meta: {
-    brainVersion: "Brain Phase 5 v5.0",
+    brainVersion: "Brain Phase 5 v5.1",
     startedAt: new Date().toISOString(),
     lastEventAt: null,
     lastEventType: null,
@@ -58,6 +58,18 @@ const state = {
       reasons: [],
       lastTransition: null,
       updatedAt: null,
+
+      setupId: null,
+      retestLow: null,
+      invalidationPrice: null,
+      readySinceBar: null,
+      expiresAtBar: null,
+      bouncePct: null,
+      pullbackPct: null,
+      chasePct: null,
+      qualityFlags: [],
+      cancelReason: null,
+      consumedAtBar: null,
     },
   },
 
