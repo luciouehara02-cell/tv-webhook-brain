@@ -110,6 +110,7 @@ export function manageOpenPosition(state) {
 
 export function buildExitPatches(state, exitSignal) {
   const bar = state.meta.barIndex;
+  const exitReason = exitSignal?.reason ?? "exit_long";
 
   return {
     positionPatch: {
@@ -124,13 +125,14 @@ export function buildExitPatches(state, exitSignal) {
       breakEvenArmed: false,
       trailingActive: false,
       profitLockActive: false,
-      lastExitReason: exitSignal.reason,
+      lastExitReason: exitReason,
     },
     executionPatch: {
-      lastAction: "exit_long_dry_run",
+      lastAction:
+        CONFIG.EXECUTION_MODE === "dry_run" ? "exit_long_dry_run" : "exit_long",
       lastActionAt: state.market.time,
       cooldownUntilBar: bar + CONFIG.ENTRY_COOLDOWN_BARS,
     },
-    logLine: `🛑 EXIT | reason=${exitSignal.reason} | exit=${exitSignal.exitPrice}`,
+    logLine: `🛑 EXIT | reason=${exitReason} | exit=${exitSignal.exitPrice}`,
   };
 }
