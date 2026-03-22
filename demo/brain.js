@@ -229,9 +229,13 @@ export async function processEvent(payload) {
       bouncePct: null,
       pullbackPct: null,
       chasePct: null,
+      bounceBodyPct: null,
+      bounceCloseInRangePct: null,
+      reclaimPctFromTrigger: null,
       qualityFlags: [],
       cancelReason: null,
       consumedAtBar: null,
+      reentryCount: 0,
     });
 
     finalSetupNote = `reset after exit (${exitReason})`;
