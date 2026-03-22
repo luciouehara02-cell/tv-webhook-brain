@@ -111,7 +111,8 @@ function scoreBreakout(state, setup, options = {}) {
 
   if (
     num(setup.reclaimPctFromTrigger) &&
-    setup.reclaimPctFromTrigger >= (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+    setup.reclaimPctFromTrigger >=
+      (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
   ) {
     score += 1;
     reasons.push("reclaim above trigger ok");
@@ -120,7 +121,11 @@ function scoreBreakout(state, setup, options = {}) {
   return { score, reasons };
 }
 
-function resetPatch(bar, reason = "returned to idle", transition = "reset_to_idle") {
+function resetPatch(
+  bar,
+  reason = "returned to idle",
+  transition = "reset_to_idle"
+) {
   return {
     phase: "idle",
     startedBar: null,
@@ -193,7 +198,15 @@ export function runBreakoutSetup(state) {
   const impulsePct = pctChange(close, ema8) ?? 0;
   const retestTolerance = CONFIG.BREAKOUT_RETEST_TOLERANCE_PCT / 100;
 
-  if (s.phase !== "idle" && s.startedBar !== null) {
+  // Generic lifecycle expiry should only apply to active setup phases,
+  // not terminal states that should reset on the next bar.
+  if (
+    s.phase !== "idle" &&
+    s.phase !== "invalidated" &&
+    s.phase !== "expired" &&
+    s.phase !== "consumed" &&
+    s.startedBar !== null
+  ) {
     const ageBars = bar - s.startedBar;
     if (ageBars > CONFIG.BREAKOUT_SETUP_EXPIRY_BARS) {
       return {
@@ -274,7 +287,9 @@ export function runBreakoutSetup(state) {
     return {
       action: "noop",
       patch: null,
-      note: `idle no breakout | ${rejectReasons.join(", ") || "no specific reject reason"}`,
+      note: `idle no breakout | ${
+        rejectReasons.join(", ") || "no specific reject reason"
+      }`,
     };
   }
 
@@ -298,9 +313,11 @@ export function runBreakoutSetup(state) {
     const retestAboveEma18 = low >= ema18;
 
     const lowPullbackPct = pctChange(low, s.triggerPrice) ?? 0;
-    const meaningfulPullback = lowPullbackPct <= -CONFIG.BREAKOUT_MIN_PULLBACK_PCT;
+    const meaningfulPullback =
+      lowPullbackPct <= -CONFIG.BREAKOUT_MIN_PULLBACK_PCT;
 
-    const retestSeen = meaningfulPullback && retestNearEma8 && retestAboveEma18;
+    const retestSeen =
+      meaningfulPullback && retestNearEma8 && retestAboveEma18;
 
     if (barsSincePhase > CONFIG.BREAKOUT_MAX_RETEST_BARS) {
       return {
@@ -353,7 +370,8 @@ export function runBreakoutSetup(state) {
           ? "bounce_body_ok"
           : "bounce_body_weak",
         num(bounceCloseInRangePct) &&
-        bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+        bounceCloseInRangePct >=
+          (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
           ? "bounce_close_strong"
           : "bounce_close_weak",
         num(reclaimPctFromTrigger) &&
@@ -425,7 +443,9 @@ export function runBreakoutSetup(state) {
           phaseBar: bar,
           lastTransition: "invalidated",
           reasons: [
-            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(4)})`,
+            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(
+              4
+            )})`,
           ],
           score: 0,
           cancelReason: "lost_retest_low",
@@ -444,7 +464,8 @@ export function runBreakoutSetup(state) {
         ? "bounce_body_ok"
         : "bounce_body_weak",
       num(bounceCloseInRangePct) &&
-      bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+      bounceCloseInRangePct >=
+        (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
         ? "bounce_close_strong"
         : "bounce_close_weak",
       num(reclaimPctFromTrigger) &&
@@ -549,7 +570,9 @@ export function runBreakoutSetup(state) {
           phaseBar: bar,
           lastTransition: "invalidated",
           reasons: [
-            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(4)})`,
+            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(
+              4
+            )})`,
           ],
           score: 0,
           cancelReason: "lost_retest_low",
