@@ -61,22 +61,65 @@ function scoreBreakout(state, setup, options = {}) {
     reasons.push(provisional ? "bounce prelim confirmed" : "bounce confirmed");
   }
 
+  if (
+    num(setup.pullbackPct) &&
+    Math.abs(setup.pullbackPct) >= CONFIG.BREAKOUT_MIN_PULLBACK_PCT
+  ) {
+    score += 1;
+    reasons.push("meaningful pullback");
+  }
+
+  if (
+    num(setup.bouncePct) &&
+    setup.bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
+  ) {
+    score += 1;
+    reasons.push("bounce pct ok");
+  }
+
   return { score, reasons };
+}
+
+function resetPatch(bar, reason = "returned to idle", transition = "reset_to_idle") {
+  return {
+    phase: "idle",
+    startedBar: null,
+    phaseBar: bar,
+    triggerPrice: null,
+    breakoutLevel: null,
+    retestPrice: null,
+    bouncePrice: null,
+    score: 0,
+    reasons: [reason],
+    lastTransition: transition,
+
+    setupId: null,
+    retestLow: null,
+    invalidationPrice: null,
+    readySinceBar: null,
+    expiresAtBar: null,
+    bouncePct: null,
+    pullbackPct: null,
+    chasePct: null,
+    qualityFlags: [],
+    cancelReason: null,
+    consumedAtBar: null,
+  };
 }
 
 export function runBreakoutSetup(state) {
   const f = state.features;
   const c = state.context;
   const s = state.setups.breakout;
-  // 🔒 If already consumed, do nothing until reset
-if (s.phase === "consumed") {
-  return {
-    action: "noop",
-    patch: null,
-    note: "setup consumed",
-  };
-}
   const bar = state.meta.barIndex;
+
+  if (s.phase === "consumed") {
+    return {
+      action: "noop",
+      patch: null,
+      note: "setup consumed",
+    };
+  }
 
   const close = f.close;
   const low = f.low ?? close;
@@ -115,6 +158,7 @@ if (s.phase === "consumed") {
           lastTransition: "expired",
           reasons: [`expired after ${ageBars} bars`],
           score: 0,
+          cancelReason: "setup_expired",
         },
         note: "setup expired",
       };
@@ -160,6 +204,18 @@ if (s.phase === "consumed") {
           score: 0,
           reasons: ["breakout detected"],
           lastTransition: "breakout_detected",
+
+          setupId: `${bar}-${close}-breakout`,
+          retestLow: null,
+          invalidationPrice: null,
+          readySinceBar: null,
+          expiresAtBar: null,
+          bouncePct: null,
+          pullbackPct: null,
+          chasePct: null,
+          qualityFlags: [],
+          cancelReason: null,
+          consumedAtBar: null,
         },
         note: "breakout detected",
       };
@@ -187,9 +243,14 @@ if (s.phase === "consumed") {
 
   if (s.phase === "retest_pending") {
     const barsSincePhase = bar - (s.phaseBar ?? bar);
+
     const retestNearEma8 = Math.abs((low - ema8) / ema8) <= retestTolerance;
     const retestAboveEma18 = low >= ema18;
-    const retestSeen = retestNearEma8 || retestAboveEma18;
+
+    const lowPullbackPct = pctChange(low, s.triggerPrice) ?? 0;
+    const meaningfulPullback = lowPullbackPct <= -CONFIG.BREAKOUT_MIN_PULLBACK_PCT;
+
+    const retestSeen = meaningfulPullback && retestNearEma8 && retestAboveEma18;
 
     if (barsSincePhase > CONFIG.BREAKOUT_MAX_RETEST_BARS) {
       return {
@@ -200,6 +261,7 @@ if (s.phase === "consumed") {
           lastTransition: "invalidated",
           reasons: ["retest timeout"],
           score: 0,
+          cancelReason: "retest_timeout",
         },
         note: "retest timeout",
       };
@@ -214,18 +276,28 @@ if (s.phase === "consumed") {
           lastTransition: "invalidated",
           reasons: ["lost ema18 on retest"],
           score: 0,
+          cancelReason: "lost_ema18_on_retest",
         },
         note: "lost ema18 on retest",
       };
     }
 
     if (retestSeen) {
+      const invalidationPrice =
+        low * (1 - CONFIG.BREAKOUT_RETEST_LOW_BUFFER_PCT / 100);
+
+      const provisionalBouncePct = pctChange(close, low) ?? 0;
+
       const provisionalScore = scoreBreakout(
         state,
         {
           ...s,
           retestPrice: low,
           bouncePrice: close,
+          retestLow: low,
+          invalidationPrice,
+          pullbackPct: lowPullbackPct,
+          bouncePct: provisionalBouncePct,
         },
         { provisional: true }
       );
@@ -236,9 +308,18 @@ if (s.phase === "consumed") {
           phase: "bounce_confirmed",
           phaseBar: bar,
           retestPrice: low,
+          retestLow: low,
+          invalidationPrice,
           bouncePrice: close,
+          pullbackPct: lowPullbackPct,
+          bouncePct: provisionalBouncePct,
           score: provisionalScore.score,
           reasons: provisionalScore.reasons,
+          qualityFlags: [
+            "meaningful_pullback",
+            "retest_near_ema8",
+            "held_above_ema18",
+          ],
           lastTransition: "bounce_confirmed",
         },
         note: "retest seen",
@@ -255,12 +336,30 @@ if (s.phase === "consumed") {
   if (s.phase === "bounce_confirmed") {
     const bouncePct = pctChange(close, s.retestPrice) ?? 0;
 
+    if (s.invalidationPrice !== null && close < s.invalidationPrice) {
+      return {
+        action: "invalidate",
+        patch: {
+          phase: "invalidated",
+          phaseBar: bar,
+          lastTransition: "invalidated",
+          reasons: [
+            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(4)})`,
+          ],
+          score: 0,
+          cancelReason: "lost_retest_low",
+        },
+        note: "lost retest low",
+      };
+    }
+
     if (bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT) {
       const scored = scoreBreakout(
         state,
         {
           ...s,
           bouncePrice: close,
+          bouncePct,
         },
         { provisional: false }
       );
@@ -270,9 +369,18 @@ if (s.phase === "consumed") {
         patch: {
           phase: "ready",
           phaseBar: bar,
+          readySinceBar: bar,
+          expiresAtBar: bar + CONFIG.BREAKOUT_READY_EXPIRY_BARS,
           bouncePrice: close,
+          bouncePct,
           score: scored.score,
           reasons: scored.reasons,
+          qualityFlags: [
+            ...(s.qualityFlags ?? []),
+            bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT ? "bounce_pct_ok" : "bounce_pct_weak",
+            close >= s.triggerPrice ? "close_above_trigger" : "close_below_trigger",
+            ema8 > ema18 ? "ema8_above_ema18" : "ema8_not_above_ema18",
+          ],
           lastTransition: "ready",
         },
         note: "breakout ready",
@@ -288,6 +396,7 @@ if (s.phase === "consumed") {
           lastTransition: "invalidated",
           reasons: ["bounce failed under ema18"],
           score: 0,
+          cancelReason: "bounce_failed_under_ema18",
         },
         note: "bounce failed",
       };
@@ -298,6 +407,7 @@ if (s.phase === "consumed") {
       {
         ...s,
         bouncePrice: close,
+        bouncePct,
       },
       { provisional: true }
     );
@@ -309,12 +419,47 @@ if (s.phase === "consumed") {
         reasons: rescored.reasons,
         phaseBar: bar,
         bouncePrice: close,
+        bouncePct,
       },
       note: "bounce still forming",
     };
   }
 
   if (s.phase === "ready") {
+    const readyAgeBars = bar - (s.readySinceBar ?? s.phaseBar ?? bar);
+
+    if (s.invalidationPrice !== null && close < s.invalidationPrice) {
+      return {
+        action: "invalidate",
+        patch: {
+          phase: "invalidated",
+          phaseBar: bar,
+          lastTransition: "invalidated",
+          reasons: [
+            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(4)})`,
+          ],
+          score: 0,
+          cancelReason: "lost_retest_low",
+        },
+        note: "lost retest low",
+      };
+    }
+
+    if (readyAgeBars > CONFIG.BREAKOUT_READY_EXPIRY_BARS) {
+      return {
+        action: "expire",
+        patch: {
+          phase: "expired",
+          phaseBar: bar,
+          lastTransition: "ready_expired",
+          reasons: [`ready expired after ${readyAgeBars} bars`],
+          score: 0,
+          cancelReason: "ready_expired",
+        },
+        note: "ready expired",
+      };
+    }
+
     const rescored = scoreBreakout(
       state,
       {
@@ -337,18 +482,7 @@ if (s.phase === "consumed") {
   if (s.phase === "invalidated" || s.phase === "expired") {
     return {
       action: "reset",
-      patch: {
-        phase: "idle",
-        startedBar: null,
-        phaseBar: bar,
-        triggerPrice: null,
-        breakoutLevel: null,
-        retestPrice: null,
-        bouncePrice: null,
-        score: 0,
-        reasons: ["returned to idle"],
-        lastTransition: "reset_to_idle",
-      },
+      patch: resetPatch(bar),
       note: "reset to idle",
     };
   }
