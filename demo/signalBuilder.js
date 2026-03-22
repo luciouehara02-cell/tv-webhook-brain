@@ -54,8 +54,7 @@ export function build3CommasEnterLongSignal(state) {
       exec_mode: CONFIG.EXECUTION_MODE,
       replay_signal_mode: CONFIG.REPLAY_SIGNAL_MODE,
       sizing_mode: order.sizing_mode,
-      account_equity: CONFIG.ACCOUNT_EQUITY,
-      risk_per_trade_pct: CONFIG.RISK_PER_TRADE_PCT,
+      sizing_debug: order.sizing_debug,
     },
   };
 }
