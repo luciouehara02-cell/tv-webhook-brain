@@ -131,11 +131,12 @@ export async function processEvent(payload) {
     const tradePatch = onEntryPositionPatch(postEntryState);
     if (tradePatch) updatePosition(tradePatch);
 
-    updateBreakoutSetup({
-      phase: "consumed",
-      lastTransition: "consumed_after_entry",
-      reasons: ["setup consumed after entry"],
-    });
+updateBreakoutSetup({
+  phase: "consumed",
+  lastTransition: "consumed_after_entry",
+  reasons: ["setup consumed after entry"],
+  consumedAtBar: getState().meta.barIndex,
+});
 
     updateExecution({
       lastLiveSendOk: execModeResult.ok,
