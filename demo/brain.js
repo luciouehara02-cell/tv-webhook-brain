@@ -131,12 +131,12 @@ export async function processEvent(payload) {
     const tradePatch = onEntryPositionPatch(postEntryState);
     if (tradePatch) updatePosition(tradePatch);
 
-updateBreakoutSetup({
-  phase: "consumed",
-  lastTransition: "consumed_after_entry",
-  reasons: ["setup consumed after entry"],
-  consumedAtBar: getState().meta.barIndex,
-});
+    updateBreakoutSetup({
+      phase: "consumed",
+      lastTransition: "consumed_after_entry",
+      reasons: ["setup consumed after entry"],
+      consumedAtBar: getState().meta.barIndex,
+    });
 
     updateExecution({
       lastLiveSendOk: execModeResult.ok,
@@ -191,30 +191,31 @@ updateBreakoutSetup({
 
     const latestState = getState();
 
-updateBreakoutSetup({
-  phase: "idle",
-  startedBar: null,
-  phaseBar: latestState.meta.barIndex,
-  triggerPrice: null,
-  breakoutLevel: null,
-  retestPrice: null,
-  bouncePrice: null,
-  score: 0,
-  reasons: ["reset after exit"],
-  lastTransition: "reset_after_exit",
+    updateBreakoutSetup({
+      phase: "idle",
+      startedBar: null,
+      phaseBar: latestState.meta.barIndex,
+      triggerPrice: null,
+      breakoutLevel: null,
+      retestPrice: null,
+      bouncePrice: null,
+      score: 0,
+      reasons: ["reset after exit"],
+      lastTransition: "reset_after_exit",
 
-  setupId: null,
-  retestLow: null,
-  invalidationPrice: null,
-  readySinceBar: null,
-  expiresAtBar: null,
-  bouncePct: null,
-  pullbackPct: null,
-  chasePct: null,
-  qualityFlags: [],
-  cancelReason: null,
-  consumedAtBar: null,
-});
+      setupId: null,
+      retestLow: null,
+      invalidationPrice: null,
+      readySinceBar: null,
+      expiresAtBar: null,
+      bouncePct: null,
+      pullbackPct: null,
+      chasePct: null,
+      qualityFlags: [],
+      cancelReason: null,
+      consumedAtBar: null,
+    });
+  }
 
   const state4 = getState();
   const after = state4.setups.breakout.phase;
