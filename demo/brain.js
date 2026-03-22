@@ -131,13 +131,6 @@ export async function processEvent(payload) {
     const tradePatch = onEntryPositionPatch(postEntryState);
     if (tradePatch) updatePosition(tradePatch);
 
-    updateBreakoutSetup({
-      phase: "consumed",
-      lastTransition: "consumed_after_entry",
-      reasons: ["setup consumed after entry"],
-      consumedAtBar: getState().meta.barIndex,
-    });
-
     updateExecution({
       lastLiveSendOk: execModeResult.ok,
       lastLiveSendAt: state3.market.time,
@@ -146,6 +139,19 @@ export async function processEvent(payload) {
       lastLiveGuardrailReason: execModeResult.guardrailReason ?? null,
       lastSignalPayload: execModeResult.signalPayload ?? null,
     });
+
+    const enteredState = getState();
+
+    if (enteredState.position.inPosition) {
+      updateBreakoutSetup({
+        phase: "consumed",
+        lastTransition: "consumed_after_entry",
+        reasons: ["setup consumed after entry"],
+        consumedAtBar: enteredState.meta.barIndex,
+      });
+    } else {
+      console.log("⚠️ ENTRY NOT ACTIVATED | setup not consumed because inPosition=0");
+    }
   } else {
     console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
   }
