@@ -9,6 +9,22 @@ function pctChange(current, base) {
   return ((current - base) / base) * 100;
 }
 
+function calcBounceBodyPct(open, close) {
+  if (!num(open) || !num(close) || open === 0) return null;
+  return Math.abs(((close - open) / open) * 100);
+}
+
+function calcCloseInRangePct(low, high, close) {
+  if (!num(low) || !num(high) || !num(close)) return null;
+  const range = high - low;
+  if (range <= 0) return null;
+  return ((close - low) / range) * 100;
+}
+
+function uniqueFlags(arr) {
+  return [...new Set((arr ?? []).filter(Boolean))];
+}
+
 function scoreBreakout(state, setup, options = {}) {
   const { provisional = false } = options;
 
@@ -77,6 +93,30 @@ function scoreBreakout(state, setup, options = {}) {
     reasons.push("bounce pct ok");
   }
 
+  if (
+    num(setup.bounceBodyPct) &&
+    setup.bounceBodyPct >= (CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT ?? 0.08)
+  ) {
+    score += 1;
+    reasons.push("bounce body ok");
+  }
+
+  if (
+    num(setup.bounceCloseInRangePct) &&
+    setup.bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+  ) {
+    score += 1;
+    reasons.push("bounce close strong");
+  }
+
+  if (
+    num(setup.reclaimPctFromTrigger) &&
+    setup.reclaimPctFromTrigger >= (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+  ) {
+    score += 1;
+    reasons.push("reclaim above trigger ok");
+  }
+
   return { score, reasons };
 }
 
@@ -101,9 +141,13 @@ function resetPatch(bar, reason = "returned to idle", transition = "reset_to_idl
     bouncePct: null,
     pullbackPct: null,
     chasePct: null,
+    bounceBodyPct: null,
+    bounceCloseInRangePct: null,
+    reclaimPctFromTrigger: null,
     qualityFlags: [],
     cancelReason: null,
     consumedAtBar: null,
+    reentryCount: 0,
   };
 }
 
@@ -121,6 +165,8 @@ export function runBreakoutSetup(state) {
     };
   }
 
+  const open = f.open;
+  const high = f.high ?? f.close;
   const close = f.close;
   const low = f.low ?? close;
   const ema8 = f.ema8;
@@ -213,9 +259,13 @@ export function runBreakoutSetup(state) {
           bouncePct: null,
           pullbackPct: null,
           chasePct: null,
+          bounceBodyPct: null,
+          bounceCloseInRangePct: null,
+          reclaimPctFromTrigger: null,
           qualityFlags: [],
           cancelReason: null,
           consumedAtBar: null,
+          reentryCount: s.reentryCount ?? 0,
         },
         note: "breakout detected",
       };
@@ -287,6 +337,31 @@ export function runBreakoutSetup(state) {
         low * (1 - CONFIG.BREAKOUT_RETEST_LOW_BUFFER_PCT / 100);
 
       const provisionalBouncePct = pctChange(close, low) ?? 0;
+      const bounceBodyPct = calcBounceBodyPct(open, close);
+      const bounceCloseInRangePct = calcCloseInRangePct(low, high, close);
+      const reclaimPctFromTrigger = pctChange(close, s.triggerPrice) ?? 0;
+
+      const qualityFlags = uniqueFlags([
+        "meaningful_pullback",
+        retestNearEma8 ? "retest_near_ema8" : null,
+        retestAboveEma18 ? "held_above_ema18" : null,
+        provisionalBouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
+          ? "bounce_pct_ok"
+          : "bounce_pct_weak",
+        num(bounceBodyPct) &&
+        bounceBodyPct >= (CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT ?? 0.08)
+          ? "bounce_body_ok"
+          : "bounce_body_weak",
+        num(bounceCloseInRangePct) &&
+        bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+          ? "bounce_close_strong"
+          : "bounce_close_weak",
+        num(reclaimPctFromTrigger) &&
+        reclaimPctFromTrigger >=
+          (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+          ? "reclaim_above_trigger_ok"
+          : "reclaim_above_trigger_weak",
+      ]);
 
       const provisionalScore = scoreBreakout(
         state,
@@ -298,6 +373,10 @@ export function runBreakoutSetup(state) {
           invalidationPrice,
           pullbackPct: lowPullbackPct,
           bouncePct: provisionalBouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
         },
         { provisional: true }
       );
@@ -313,13 +392,12 @@ export function runBreakoutSetup(state) {
           bouncePrice: close,
           pullbackPct: lowPullbackPct,
           bouncePct: provisionalBouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
           score: provisionalScore.score,
           reasons: provisionalScore.reasons,
-          qualityFlags: [
-            "meaningful_pullback",
-            "retest_near_ema8",
-            "held_above_ema18",
-          ],
+          qualityFlags,
           lastTransition: "bounce_confirmed",
         },
         note: "retest seen",
@@ -335,6 +413,9 @@ export function runBreakoutSetup(state) {
 
   if (s.phase === "bounce_confirmed") {
     const bouncePct = pctChange(close, s.retestPrice) ?? 0;
+    const bounceBodyPct = calcBounceBodyPct(open, close);
+    const bounceCloseInRangePct = calcCloseInRangePct(low, high, close);
+    const reclaimPctFromTrigger = pctChange(close, s.triggerPrice) ?? 0;
 
     if (s.invalidationPrice !== null && close < s.invalidationPrice) {
       return {
@@ -353,6 +434,28 @@ export function runBreakoutSetup(state) {
       };
     }
 
+    const qualityFlags = uniqueFlags([
+      ...(s.qualityFlags ?? []),
+      bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
+        ? "bounce_pct_ok"
+        : "bounce_pct_weak",
+      num(bounceBodyPct) &&
+      bounceBodyPct >= (CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT ?? 0.08)
+        ? "bounce_body_ok"
+        : "bounce_body_weak",
+      num(bounceCloseInRangePct) &&
+      bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+        ? "bounce_close_strong"
+        : "bounce_close_weak",
+      num(reclaimPctFromTrigger) &&
+      reclaimPctFromTrigger >=
+        (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+        ? "reclaim_above_trigger_ok"
+        : "reclaim_above_trigger_weak",
+      close >= s.triggerPrice ? "close_above_trigger" : "close_below_trigger",
+      ema8 > ema18 ? "ema8_above_ema18" : "ema8_not_above_ema18",
+    ]);
+
     if (bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT) {
       const scored = scoreBreakout(
         state,
@@ -360,6 +463,10 @@ export function runBreakoutSetup(state) {
           ...s,
           bouncePrice: close,
           bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
         },
         { provisional: false }
       );
@@ -373,14 +480,12 @@ export function runBreakoutSetup(state) {
           expiresAtBar: bar + CONFIG.BREAKOUT_READY_EXPIRY_BARS,
           bouncePrice: close,
           bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
           score: scored.score,
           reasons: scored.reasons,
-          qualityFlags: [
-            ...(s.qualityFlags ?? []),
-            bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT ? "bounce_pct_ok" : "bounce_pct_weak",
-            close >= s.triggerPrice ? "close_above_trigger" : "close_below_trigger",
-            ema8 > ema18 ? "ema8_above_ema18" : "ema8_not_above_ema18",
-          ],
+          qualityFlags,
           lastTransition: "ready",
         },
         note: "breakout ready",
@@ -408,6 +513,10 @@ export function runBreakoutSetup(state) {
         ...s,
         bouncePrice: close,
         bouncePct,
+        bounceBodyPct,
+        bounceCloseInRangePct,
+        reclaimPctFromTrigger,
+        qualityFlags,
       },
       { provisional: true }
     );
@@ -420,6 +529,10 @@ export function runBreakoutSetup(state) {
         phaseBar: bar,
         bouncePrice: close,
         bouncePct,
+        bounceBodyPct,
+        bounceCloseInRangePct,
+        reclaimPctFromTrigger,
+        qualityFlags,
       },
       note: "bounce still forming",
     };
