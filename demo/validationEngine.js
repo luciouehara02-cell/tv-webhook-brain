@@ -52,6 +52,36 @@ export function validateBreakout(state) {
     reasons.push(`too extended from trigger (${extFromTrigger.toFixed(3)}%)`);
   }
 
+  if (
+    CONFIG.BREAKOUT_REQUIRE_CLOSE_BACK_ABOVE_TRIGGER &&
+    close < b.triggerPrice
+  ) {
+    reasons.push("close below trigger");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_EMA8_ABOVE_EMA18_ON_ENTRY &&
+    (f.ema8 ?? 0) <= (f.ema18 ?? 0)
+  ) {
+    reasons.push("ema8 not above ema18");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_RSI_MIN_ON_ENTRY &&
+    (f.rsi ?? 0) < CONFIG.BREAKOUT_RSI_MIN_ON_ENTRY
+  ) {
+    reasons.push(
+      `rsi below min (${f.rsi ?? 0} < ${CONFIG.BREAKOUT_RSI_MIN_ON_ENTRY})`
+    );
+  }
+
+  if (
+    b.readySinceBar !== null &&
+    (state.meta.barIndex - b.readySinceBar) > CONFIG.BREAKOUT_MAX_READY_AGE_BARS_FOR_ENTRY
+  ) {
+    reasons.push("ready setup too old");
+  }
+
   return {
     allowed: reasons.length === 0,
     reasons,
