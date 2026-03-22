@@ -1,88 +1,194 @@
-import fs from "fs/promises";
-
-const WEBHOOK_URL =
-  "https://demophase5-production.up.railway.app/webhook";
-const SECRET = "Demo_brainPhase5_secret_3x9KpL8zQ2mN7wR4tY6uF1";
-
-const CASE_FILES = [
-  "./case1_clean_winner.json",
-  "./case2_fast_failure.json",
-  "./case3_retest_no_bounce.json",
-  "./case4_late_extension.json",
-  "./case5_hostile_context.json",
-];
-
-const STEP_DELAY_MS = 1200;
-const CASE_DELAY_MS = 3000;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function loadCase(filePath) {
-  const raw = await fs.readFile(filePath, "utf8");
-  const arr = JSON.parse(raw);
-
-  if (!Array.isArray(arr)) {
-    throw new Error(`${filePath} must contain a JSON array`);
+[
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:30:00Z",
+    "open": 94.70,
+    "high": 95.20,
+    "low": 94.82,
+    "close": 95.12,
+    "ema8": 94.90,
+    "ema18": 94.55,
+    "ema50": 93.80,
+    "rsi": 61.4,
+    "atr": 0.42,
+    "atrPct": 0.44,
+    "adx": 24.5,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 1,
+    "priceDropPct": -0.15,
+    "patternAReady": 0,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:33:00Z",
+    "open": 95.10,
+    "high": 95.18,
+    "low": 94.91,
+    "close": 95.00,
+    "ema8": 94.92,
+    "ema18": 94.58,
+    "ema50": 93.84,
+    "rsi": 59.8,
+    "atr": 0.41,
+    "atrPct": 0.43,
+    "adx": 24.2,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 1,
+    "priceDropPct": -0.10,
+    "patternAReady": 0,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:36:00Z",
+    "open": 95.00,
+    "high": 95.24,
+    "low": 94.97,
+    "close": 95.16,
+    "ema8": 94.96,
+    "ema18": 94.61,
+    "ema50": 93.88,
+    "rsi": 62.2,
+    "atr": 0.41,
+    "atrPct": 0.43,
+    "adx": 24.8,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 1,
+    "priceDropPct": -0.05,
+    "patternAReady": 1,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:39:00Z",
+    "open": 95.16,
+    "high": 95.62,
+    "low": 95.12,
+    "close": 95.55,
+    "ema8": 95.08,
+    "ema18": 94.72,
+    "ema50": 93.98,
+    "rsi": 68.0,
+    "atr": 0.43,
+    "atrPct": 0.45,
+    "adx": 26.2,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 0,
+    "priceDropPct": 0.10,
+    "patternAReady": 1,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:42:00Z",
+    "open": 95.55,
+    "high": 95.90,
+    "low": 95.48,
+    "close": 95.82,
+    "ema8": 95.24,
+    "ema18": 94.86,
+    "ema50": 94.05,
+    "rsi": 71.0,
+    "atr": 0.44,
+    "atrPct": 0.46,
+    "adx": 27.0,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 0,
+    "priceDropPct": 0.18,
+    "patternAReady": 1,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:45:00Z",
+    "open": 95.82,
+    "high": 96.12,
+    "low": 95.76,
+    "close": 96.05,
+    "ema8": 95.44,
+    "ema18": 95.00,
+    "ema50": 94.14,
+    "rsi": 73.5,
+    "atr": 0.45,
+    "atrPct": 0.47,
+    "adx": 28.4,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 0,
+    "priceDropPct": 0.22,
+    "patternAReady": 1,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:48:00Z",
+    "open": 96.05,
+    "high": 96.08,
+    "low": 95.70,
+    "close": 95.74,
+    "ema8": 95.50,
+    "ema18": 95.08,
+    "ema50": 94.20,
+    "rsi": 64.0,
+    "atr": 0.45,
+    "atrPct": 0.47,
+    "adx": 27.5,
+    "oiTrend": 0,
+    "oiDeltaBias": 0,
+    "cvdTrend": 0,
+    "liqClusterBelow": 0,
+    "priceDropPct": -0.12,
+    "patternAReady": 0,
+    "patternAWatch": 1
+  },
+  {
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "3",
+    "time": "2026-03-21T01:51:00Z",
+    "open": 95.74,
+    "high": 95.76,
+    "low": 95.02,
+    "close": 95.10,
+    "ema8": 95.38,
+    "ema18": 95.16,
+    "ema50": 94.28,
+    "rsi": 52.0,
+    "atr": 0.47,
+    "atrPct": 0.49,
+    "adx": 25.2,
+    "oiTrend": -1,
+    "oiDeltaBias": -1,
+    "cvdTrend": -1,
+    "liqClusterBelow": 1,
+    "priceDropPct": -0.55,
+    "patternAReady": 0,
+    "patternAWatch": 0
   }
-
-  return arr.map((p) => ({
-    ...p,
-    secret: SECRET,
-  }));
-}
-
-async function sendPayload(payload, stepIndex, caseName) {
-  const res = await fetch(WEBHOOK_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const text = await res.text();
-
-  console.log(
-    `STEP ${stepIndex + 1} | case=${caseName} | status=${res.status} | response=${text}`
-  );
-}
-
-async function runCase(filePath) {
-  const payloads = await loadCase(filePath);
-  const caseName = filePath.replace("./", "").replace(".json", "");
-
-  console.log(`\n==============================`);
-  console.log(`▶ Running ${caseName}`);
-  console.log(`==============================`);
-
-  for (let i = 0; i < payloads.length; i += 1) {
-    const p = payloads[i];
-    console.log(
-      `📨 ${caseName} | step=${i + 1} | time=${p.time} | close=${p.close} | src=${p.src}`
-    );
-    await sendPayload(p, i, caseName);
-    await sleep(STEP_DELAY_MS);
-  }
-
-  console.log(`✅ Finished ${caseName}`);
-}
-
-async function main() {
-  console.log("▶ Starting Brain Phase 5 replay suite...");
-
-  for (let i = 0; i < CASE_FILES.length; i += 1) {
-    await runCase(CASE_FILES[i]);
-    if (i < CASE_FILES.length - 1) {
-      console.log(`⏳ Waiting ${CASE_DELAY_MS}ms before next case...\n`);
-      await sleep(CASE_DELAY_MS);
-    }
-  }
-
-  console.log("\n✅ Replay suite complete.");
-}
-
-main().catch((err) => {
-  console.error("❌ Replay suite failed:", err);
-});
+]
