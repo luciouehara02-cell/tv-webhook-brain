@@ -5,6 +5,10 @@ function pctDiff(a, b) {
   return ((a - b) / b) * 100;
 }
 
+function hasQualityFlag(breakout, flag) {
+  return Array.isArray(breakout.qualityFlags) && breakout.qualityFlags.includes(flag);
+}
+
 export function validateBreakout(state) {
   const reasons = [];
   const b = state.setups.breakout;
@@ -80,6 +84,52 @@ export function validateBreakout(state) {
     (state.meta.barIndex - b.readySinceBar) > CONFIG.BREAKOUT_MAX_READY_AGE_BARS_FOR_ENTRY
   ) {
     reasons.push("ready setup too old");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_MEANINGFUL_PULLBACK_ON_ENTRY &&
+    !hasQualityFlag(b, "meaningful_pullback")
+  ) {
+    reasons.push("pullback not meaningful");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_RETEST_NEAR_EMA8_ON_ENTRY &&
+    !hasQualityFlag(b, "retest_near_ema8")
+  ) {
+    reasons.push("retest not near ema8");
+  }
+
+  if (
+    CONFIG.BREAKOUT_REQUIRE_HELD_ABOVE_EMA18_ON_ENTRY &&
+    !hasQualityFlag(b, "held_above_ema18")
+  ) {
+    reasons.push("did not hold above ema18");
+  }
+
+  if (isBounce) {
+    if (
+      CONFIG.BREAKOUT_REQUIRE_BOUNCE_PCT_MIN_ON_BOUNCE_ENTRY &&
+      (b.bouncePct ?? 0) < CONFIG.BREAKOUT_MIN_BOUNCE_PCT_FOR_ENTRY
+    ) {
+      reasons.push(
+        `bounce pct too small (${(b.bouncePct ?? 0).toFixed(3)}% < ${CONFIG.BREAKOUT_MIN_BOUNCE_PCT_FOR_ENTRY})`
+      );
+    }
+
+    if (
+      CONFIG.BREAKOUT_REQUIRE_STRONG_OI_ON_BOUNCE_ENTRY &&
+      (f.oiTrend ?? 0) < 1
+    ) {
+      reasons.push("oiTrend not strong enough for bounce entry");
+    }
+
+    if (
+      CONFIG.BREAKOUT_REQUIRE_STRONG_CVD_ON_BOUNCE_ENTRY &&
+      (f.cvdTrend ?? 0) < 1
+    ) {
+      reasons.push("cvdTrend not strong enough for bounce entry");
+    }
   }
 
   return {
