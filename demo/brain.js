@@ -191,19 +191,30 @@ updateBreakoutSetup({
 
     const latestState = getState();
 
-    updateBreakoutSetup({
-      phase: "idle",
-      startedBar: null,
-      phaseBar: latestState.meta.barIndex,
-      triggerPrice: null,
-      breakoutLevel: null,
-      retestPrice: null,
-      bouncePrice: null,
-      score: 0,
-      reasons: ["reset after exit"],
-      lastTransition: "reset_after_exit",
-    });
-  }
+updateBreakoutSetup({
+  phase: "idle",
+  startedBar: null,
+  phaseBar: latestState.meta.barIndex,
+  triggerPrice: null,
+  breakoutLevel: null,
+  retestPrice: null,
+  bouncePrice: null,
+  score: 0,
+  reasons: ["reset after exit"],
+  lastTransition: "reset_after_exit",
+
+  setupId: null,
+  retestLow: null,
+  invalidationPrice: null,
+  readySinceBar: null,
+  expiresAtBar: null,
+  bouncePct: null,
+  pullbackPct: null,
+  chasePct: null,
+  qualityFlags: [],
+  cancelReason: null,
+  consumedAtBar: null,
+});
 
   const state4 = getState();
   const after = state4.setups.breakout.phase;
