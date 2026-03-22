@@ -4,13 +4,13 @@ const WEBHOOK_URL =
   "https://demophase5-production.up.railway.app/webhook";
 const SECRET = "Demo_brainPhase5_secret_3x9KpL8zQ2mN7wR4tY6uF1";
 
-const CASE_FILES = [
-  "./case1_clean_winner.json",
-  "./case2_fast_failure.json",
-  "./case3_retest_no_bounce.json",
-  "./case4_late_extension.json",
-  "./case5_hostile_context.json",
-];
+const CASE_FILES = [ "./case1_clean_winner.json",];
+  // "./case1_clean_winner.json",
+  //"./case2_fast_failure.json",
+  //"./case3_retest_no_bounce.json",
+  //"./case4_late_extension.json",
+  //"./case5_hostile_context.json",
+
 
 const STEP_DELAY_MS = 1200;
 const CASE_DELAY_MS = 3000;
