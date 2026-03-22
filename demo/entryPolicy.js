@@ -8,6 +8,12 @@ export function shouldEnterBreakout(state) {
   const bar = state.meta.barIndex;
   const close = state.features.close;
 
+  const isBounceEntry =
+    CONFIG.ALLOW_ENTRY_ON_BOUNCE_CONFIRMED &&
+    breakout.phase === "bounce_confirmed";
+
+  const isReadyEntry = breakout.phase === "ready";
+
   if (!CONFIG.DRY_RUN_EXECUTION_ENABLED && CONFIG.EXECUTION_MODE === "dry_run") {
     return { allowed: false, reasons: ["dry run execution disabled"] };
   }
@@ -27,10 +33,7 @@ export function shouldEnterBreakout(state) {
     return { allowed: false, reasons: ["validation not allowed"] };
   }
 
-  if (
-    breakout.phase !== "ready" &&
-    !(CONFIG.ALLOW_ENTRY_ON_BOUNCE_CONFIRMED && breakout.phase === "bounce_confirmed")
-  ) {
+  if (!isReadyEntry && !isBounceEntry) {
     return {
       allowed: false,
       reasons: [`phase not entry-capable (${breakout.phase})`],
@@ -61,7 +64,11 @@ export function shouldEnterBreakout(state) {
   ) {
     const chasePct = ((close - breakout.bouncePrice) / breakout.bouncePrice) * 100;
 
-    if (chasePct > CONFIG.BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT) {
+    const maxChasePct = isBounceEntry
+      ? CONFIG.BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_BOUNCE_ENTRY
+      : CONFIG.BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_READY_ENTRY;
+
+    if (chasePct > maxChasePct) {
       return {
         allowed: false,
         reasons: [`late entry chase too large (${chasePct.toFixed(3)}%)`],
