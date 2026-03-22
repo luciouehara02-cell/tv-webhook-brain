@@ -1,5 +1,9 @@
 import { CONFIG } from "./config.js";
 
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
 export function shouldEnterBreakout(state) {
   const breakout = state.setups.breakout;
   const validation = state.validation.breakout;
@@ -57,11 +61,7 @@ export function shouldEnterBreakout(state) {
     };
   }
 
-  if (
-    breakout.bouncePrice !== null &&
-    typeof close === "number" &&
-    Number.isFinite(close)
-  ) {
+  if (num(breakout.bouncePrice) && num(close)) {
     const chasePct = ((close - breakout.bouncePrice) / breakout.bouncePrice) * 100;
 
     const maxChasePct = isBounceEntry
@@ -76,6 +76,47 @@ export function shouldEnterBreakout(state) {
     }
   }
 
+  if (
+    isBounceEntry &&
+    CONFIG.BREAKOUT_REQUIRE_STRONGER_RULES_ON_BOUNCE_ENTRY
+  ) {
+    if (
+      num(breakout.bounceBodyPct) &&
+      breakout.bounceBodyPct < CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT
+    ) {
+      return {
+        allowed: false,
+        reasons: [
+          `bounce body too weak (${breakout.bounceBodyPct.toFixed(3)}% < ${CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT})`,
+        ],
+      };
+    }
+
+    if (
+      num(breakout.bounceCloseInRangePct) &&
+      breakout.bounceCloseInRangePct < CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT
+    ) {
+      return {
+        allowed: false,
+        reasons: [
+          `bounce close too weak in range (${breakout.bounceCloseInRangePct.toFixed(1)} < ${CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT})`,
+        ],
+      };
+    }
+
+    if (
+      num(breakout.reclaimPctFromTrigger) &&
+      breakout.reclaimPctFromTrigger < CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT
+    ) {
+      return {
+        allowed: false,
+        reasons: [
+          `reclaim above trigger too weak (${breakout.reclaimPctFromTrigger.toFixed(3)}% < ${CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT})`,
+        ],
+      };
+    }
+  }
+
   const setupId =
     breakout.setupId ||
     `${breakout.startedBar}-${breakout.lastTransition}-${breakout.triggerPrice}`;
@@ -86,6 +127,19 @@ export function shouldEnterBreakout(state) {
     execution.lastEnteredSetupId === setupId
   ) {
     return { allowed: false, reasons: ["already entered this setup"] };
+  }
+
+  if (
+    CONFIG.BREAKOUT_ALLOW_ONE_REENTRY_AFTER_FAST_FAILURE &&
+    execution.lastEnteredSetupId &&
+    execution.lastEnteredSetupId === setupId &&
+    state.position.lastExitReason === CONFIG.BREAKOUT_REENTRY_ALLOWED_EXIT_REASON
+  ) {
+    const reentryCount = breakout.reentryCount ?? 0;
+
+    if (reentryCount >= 1) {
+      return { allowed: false, reasons: ["reentry limit reached"] };
+    }
   }
 
   return {
