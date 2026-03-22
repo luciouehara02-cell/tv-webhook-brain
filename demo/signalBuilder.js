@@ -59,7 +59,7 @@ export function build3CommasEnterLongSignal(state) {
   };
 }
 
-export function build3CommasExitLongSignal(state) {
+export function build3CommasExitLongSignal(state, exitReason = "exit_long") {
   const market = state.market;
   const features = state.features;
 
@@ -77,7 +77,7 @@ export function build3CommasExitLongSignal(state) {
     action: "exit_long",
     meta: {
       brain: CONFIG.BRAIN_VERSION,
-      reason: "close_below_ema18",
+      reason: exitReason,
       tf: market.tf,
       symbol: market.symbol,
       exec_mode: CONFIG.EXECUTION_MODE,
