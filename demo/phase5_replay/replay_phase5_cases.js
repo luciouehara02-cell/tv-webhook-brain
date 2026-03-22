@@ -1,16 +1,20 @@
 import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const WEBHOOK_URL =
   "https://demophase5-production.up.railway.app/webhook";
 const SECRET = "Demo_brainPhase5_secret_3x9KpL8zQ2mN7wR4tY6uF1";
 
-const CASE_FILES = ["./case3_retest_no_bounce.json",];
-  // "./case1_clean_winner.json",
-  //"./case2_fast_failure.json",
-  //"./case3_retest_no_bounce.json",
-  //"./case4_late_extension.json",
-  //"./case5_hostile_context.json",
-
+// Run ONE case at a time here
+const CASE_FILES = ["case3_retest_no_bounce.json"];
+// const CASE_FILES = ["case1_clean_winner.json"];
+// const CASE_FILES = ["case2_fast_failure.json"];
+// const CASE_FILES = ["case4_late_extension.json"];
+// const CASE_FILES = ["case5_hostile_context.json"];
 
 const STEP_DELAY_MS = 1200;
 const CASE_DELAY_MS = 3000;
@@ -19,12 +23,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function loadCase(filePath) {
-  const raw = await fs.readFile(filePath, "utf8");
+async function loadCase(fileName) {
+  const fullPath = path.join(__dirname, fileName);
+  const raw = await fs.readFile(fullPath, "utf8");
   const arr = JSON.parse(raw);
 
   if (!Array.isArray(arr)) {
-    throw new Error(`${filePath} must contain a JSON array`);
+    throw new Error(`${fileName} must contain a JSON array`);
   }
 
   return arr.map((p) => ({
@@ -49,12 +54,16 @@ async function sendPayload(payload, stepIndex, caseName) {
   );
 }
 
-async function runCase(filePath) {
-  const payloads = await loadCase(filePath);
-  const caseName = filePath.replace("./", "").replace(".json", "");
+async function runCase(fileName) {
+  const payloads = await loadCase(fileName);
+  const caseName = fileName.replace(".json", "");
 
   console.log(`\n==============================`);
   console.log(`▶ Running ${caseName}`);
+  console.log(`USING FILE: ${fileName}`);
+  console.log(`FULL PATH: ${path.join(__dirname, fileName)}`);
+  console.log(`FIRST BAR TIME: ${payloads[0]?.time}`);
+  console.log(`LAST BAR TIME: ${payloads[payloads.length - 1]?.time}`);
   console.log(`==============================`);
 
   for (let i = 0; i < payloads.length; i += 1) {
