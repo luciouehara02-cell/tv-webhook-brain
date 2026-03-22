@@ -51,7 +51,13 @@ export const CONFIG = {
   C3_ENTRY_AMOUNT: process.env.C3_ENTRY_AMOUNT || "199",
   C3_ENTRY_CURRENCY_TYPE:
     process.env.C3_ENTRY_CURRENCY_TYPE || "quote",
-  C3_RISK_MODE: process.env.C3_RISK_MODE || "fixed",
+  C3_RISK_MODE: process.env.C3_RISK_MODE || "fixed", // fixed | dynamic
+
+  // Dynamic risk sizing
+  ACCOUNT_EQUITY: Number(process.env.ACCOUNT_EQUITY || 1000),
+  RISK_PER_TRADE_PCT: Number(process.env.RISK_PER_TRADE_PCT || 1.0),
+  MIN_POSITION_QUOTE: Number(process.env.MIN_POSITION_QUOTE || 25),
+  MAX_POSITION_QUOTE: Number(process.env.MAX_POSITION_QUOTE || 250),
 
   // Position management
   INIT_STOP_ATR_MULT: 1.8,
