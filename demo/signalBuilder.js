@@ -1,4 +1,5 @@
 import { CONFIG } from "./config.js";
+import { resolveEntryOrder } from "./riskSizer.js";
 
 function buildTiming(marketTime) {
   const useReplayTiming = CONFIG.REPLAY_SIGNAL_MODE === true;
@@ -25,6 +26,7 @@ export function build3CommasEnterLongSignal(state) {
     features.close ?? market.price ?? breakout.bouncePrice ?? breakout.triggerPrice;
 
   const { timestamp, maxLag } = buildTiming(market.time);
+  const order = resolveEntryOrder(state);
 
   return {
     secret: CONFIG.C3_SIGNAL_SECRET,
@@ -36,8 +38,8 @@ export function build3CommasEnterLongSignal(state) {
     tv_instrument: "SOLUSDT",
     action: "enter_long",
     order: {
-      amount: CONFIG.C3_ENTRY_AMOUNT,
-      currency_type: CONFIG.C3_ENTRY_CURRENCY_TYPE,
+      amount: order.amount,
+      currency_type: order.currency_type,
     },
     meta: {
       brain: CONFIG.BRAIN_VERSION,
@@ -51,6 +53,9 @@ export function build3CommasEnterLongSignal(state) {
       symbol: market.symbol,
       exec_mode: CONFIG.EXECUTION_MODE,
       replay_signal_mode: CONFIG.REPLAY_SIGNAL_MODE,
+      sizing_mode: order.sizing_mode,
+      account_equity: CONFIG.ACCOUNT_EQUITY,
+      risk_per_trade_pct: CONFIG.RISK_PER_TRADE_PCT,
     },
   };
 }
