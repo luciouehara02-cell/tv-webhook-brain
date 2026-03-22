@@ -52,7 +52,10 @@ function logBreakout(state) {
     console.log(`🧩 BREAKOUT reasons | ${b.reasons.join(", ")}`);
   }
 
-  if (v.reasons?.length) {
+  if (
+    (b.phase === "ready" || b.phase === "bounce_confirmed") &&
+    v.reasons?.length
+  ) {
     console.log(`🛡️ VALIDATION | ${v.reasons.join(", ")}`);
   }
 }
@@ -117,6 +120,12 @@ export async function processEvent(payload) {
   const state3 = getState();
   const execResult = routeExecution(state3);
 
+  const shouldLogBlockedEntry =
+    execResult.action === "noop" &&
+    execResult.reason &&
+    execResult.reason !== "already in position" &&
+    !execResult.reason.includes("not in entry-capable phase");
+
   if (execResult.action !== "noop") {
     const execModeResult = await executeEnterLong(state3);
     if (execModeResult.logLine) console.log(execModeResult.logLine);
@@ -152,7 +161,7 @@ export async function processEvent(payload) {
     } else {
       console.log("⚠️ ENTRY NOT ACTIVATED | setup not consumed because inPosition=0");
     }
-  } else {
+  } else if (shouldLogBlockedEntry) {
     console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
   }
 
@@ -173,8 +182,11 @@ export async function processEvent(payload) {
     manageResult.exitSignal
   );
 
+  let finalSetupNote = breakoutResult.note;
+
   if (exitDecision.allowed) {
-    const exitModeResult = await executeExitLong(latestManagedState);
+    const exitReason = manageResult.exitSignal?.reason ?? "exit_long";
+    const exitModeResult = await executeExitLong(latestManagedState, exitReason);
     if (exitModeResult.logLine) console.log(exitModeResult.logLine);
 
     const exitPatches = buildExitPatches(
@@ -221,14 +233,16 @@ export async function processEvent(payload) {
       cancelReason: null,
       consumedAtBar: null,
     });
+
+    finalSetupNote = `reset after exit (${exitReason})`;
   }
 
   const state4 = getState();
   const after = state4.setups.breakout.phase;
 
   logCore("FEATURES", state4);
-  console.log(`🔎 SETUP NOTE | ${breakoutResult.note}`);
-  logTransition(before, after, breakoutResult.note);
+  console.log(`🔎 SETUP NOTE | ${finalSetupNote}`);
+  logTransition(before, after, finalSetupNote);
   logBreakout(state4);
   logPosition(state4);
 
