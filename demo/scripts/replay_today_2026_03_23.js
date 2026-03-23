@@ -1,7 +1,6 @@
 import fs from "fs";
-import { createInitialState } from "../src/stateStore.js";
-import { processFeatureBar } from "../src/brain.js";
-// change the import above to match your actual project
+import { createInitialState } from "../stateStore.js";
+import { processFeatureBar } from "../brain.js";
 
 const INPUT = process.argv[2] || "./replay_today_2026_03_23.json";
 
@@ -59,7 +58,3 @@ for (const row of interesting) {
     ].join(" | ")
   );
 }
-
-console.log("\nFinal position:", state.position);
-console.log("Final breakout:", state.setups?.breakout);
-console.log("Final validation:", state.validation);
