@@ -1,3 +1,77 @@
+import { CONFIG } from "./config.js";
+import {
+  getState,
+  updateBreakoutSetup,
+  updateBreakoutValidation,
+  updateContext,
+  updateExecution,
+  updateFeatures,
+  updatePosition,
+  updateTick,
+} from "./stateStore.js";
+import { calculateRegime } from "./regimeEngine.js";
+import { validateBreakout } from "./validationEngine.js";
+import { runBreakoutSetup } from "./setupEngine.js";
+import { routeExecution } from "./executionRouter.js";
+import { applyExecutionResult } from "./positionEngine.js";
+import { executeEnterLong, executeExitLong } from "./executionModeRouter.js";
+import {
+  onEntryPositionPatch,
+  manageOpenPosition,
+  buildExitPatches,
+} from "./tradeManager.js";
+import { shouldExitPosition } from "./exitPolicy.js";
+
+function formatNum(v, digits = 2) {
+  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "na";
+}
+
+function logCore(tag, state) {
+  console.log(
+    `🧠 ${CONFIG.BRAIN_VERSION} | ${tag} | symbol=${state.market.symbol} tf=${state.market.tf} price=${formatNum(state.market.price, 4)} regime=${state.context.regime} conf=${formatNum(state.context.confidence, 2)} hostile=${state.context.hostile ? 1 : 0}`
+  );
+
+  console.log(
+    `📊 FEAT | close=${formatNum(state.features.close, 4)} ema8=${formatNum(state.features.ema8, 4)} ema18=${formatNum(state.features.ema18, 4)} ema50=${formatNum(state.features.ema50, 4)} rsi=${formatNum(state.features.rsi, 2)} adx=${formatNum(state.features.adx, 2)} atrPct=${formatNum(state.features.atrPct, 3)} oiTrend=${state.features.oiTrend ?? "na"} cvdTrend=${state.features.cvdTrend ?? "na"}`
+  );
+
+  if (state.context.reasons?.length) {
+    console.log(`🧭 CONTEXT | reasons=${state.context.reasons.join(", ")}`);
+  }
+}
+
+function logBreakout(state) {
+  const b = state.setups.breakout;
+  const v = state.validation.breakout;
+
+  console.log(
+    `🟦 BREAKOUT | phase=${b.phase} trigger=${formatNum(b.triggerPrice, 4)} retest=${formatNum(b.retestPrice, 4)} bounce=${formatNum(b.bouncePrice, 4)} score=${b.score} allowed=${v.allowed ? 1 : 0}`
+  );
+
+  if (b.reasons?.length) {
+    console.log(`🧩 BREAKOUT reasons | ${b.reasons.join(", ")}`);
+  }
+
+  if (
+    (b.phase === "ready" || b.phase === "bounce_confirmed") &&
+    v.reasons?.length
+  ) {
+    console.log(`🛡️ VALIDATION | ${v.reasons.join(", ")}`);
+  }
+}
+
+function logPosition(state) {
+  console.log(
+    `📍 POSITION | inPosition=${state.position.inPosition ? 1 : 0} side=${state.position.side ?? "na"} entry=${formatNum(state.position.entryPrice, 4)} stop=${formatNum(state.position.stopPrice, 4)} peak=${formatNum(state.position.peakPrice, 4)} be=${state.position.breakEvenArmed ? 1 : 0} trail=${state.position.trailingActive ? 1 : 0} pl=${state.position.profitLockActive ? 1 : 0} cooldownUntilBar=${state.execution.cooldownUntilBar ?? "na"}`
+  );
+}
+
+function logTransition(beforePhase, afterPhase, note) {
+  if (beforePhase !== afterPhase) {
+    console.log(`🔄 BREAKOUT transition | ${beforePhase} -> ${afterPhase} | ${note}`);
+  }
+}
+
 export async function processEvent(payload) {
   const src = payload?.src;
 
@@ -175,6 +249,10 @@ export async function processEvent(payload) {
       qualityFlags: [],
       cancelReason: null,
       consumedAtBar: null,
+      bounceBodyPct: null,
+      bounceCloseInRangePct: null,
+      reclaimPctFromTrigger: null,
+      reentryCount: 0,
     });
 
     finalSetupNote = `reset after exit (${exitReason})`;
@@ -189,10 +267,6 @@ export async function processEvent(payload) {
   logBreakout(state4);
   logPosition(state4);
 
-  export function getBrainState() {
-  return getState();
-}
-
   if (CONFIG.LOG_FULL_STATE_ON_TRANSITIONS && before !== after) {
     console.log(
       `📝 STATE SNAPSHOT ${JSON.stringify({
@@ -205,4 +279,8 @@ export async function processEvent(payload) {
       })}`
     );
   }
+}
+
+export function getBrainState() {
+  return getState();
 }
