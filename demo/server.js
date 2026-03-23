@@ -26,7 +26,7 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.post("/webhook", (req, res) => {
+app.post("/webhook", async (req, res) => {
   try {
     const payload = req.body;
 
@@ -34,7 +34,7 @@ app.post("/webhook", (req, res) => {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
-    processEvent(payload);
+    await processEvent(payload);
 
     return res.status(200).json({ ok: true });
   } catch (err) {
