@@ -1,26 +1,29 @@
 import fs from "fs";
-import { createInitialState } from "../stateStore.js";
-import { processFeatureBar } from "../brain.js";
+import { resetState } from "../stateStore.js";
+import { processEvent, getBrainState } from "../brain.js";
 
 const INPUT = process.argv[2] || "./replay_today_2026_03_23.json";
 
 const bars = JSON.parse(fs.readFileSync(INPUT, "utf8"));
-const state = createInitialState("BINANCE:SOLUSDT", "3");
+
+resetState();
 
 const interesting = [];
 
 for (let i = 0; i < bars.length; i++) {
   const bar = bars[i];
 
-  const beforePhase = state.setups?.breakout?.phase ?? null;
-  const beforeAllowed = state.validation?.allowed ?? null;
-  const beforeInPos = state.position?.inPosition ?? false;
+  const before = getBrainState();
+  const beforePhase = before.setups?.breakout?.phase ?? null;
+  const beforeAllowed = before.validation?.breakout?.allowed ?? null;
+  const beforeInPos = before.position?.inPosition ?? false;
 
-  processFeatureBar(state, bar);
+  await processEvent(bar);
 
-  const afterPhase = state.setups?.breakout?.phase ?? null;
-  const validation = state.validation ?? { allowed: null, reasons: [] };
-  const afterInPos = state.position?.inPosition ?? false;
+  const after = getBrainState();
+  const afterPhase = after.setups?.breakout?.phase ?? null;
+  const validation = after.validation?.breakout ?? { allowed: null, reasons: [] };
+  const afterInPos = after.position?.inPosition ?? false;
 
   const changed =
     beforePhase !== afterPhase ||
@@ -34,11 +37,11 @@ for (let i = 0; i < bars.length; i++) {
       time: bar.time,
       close: bar.close,
       phase: afterPhase,
-      score: state.setups?.breakout?.score ?? null,
+      score: after.setups?.breakout?.score ?? null,
       allowed: validation.allowed,
       reasons: validation.reasons ?? [],
       inPosition: afterInPos,
-      setupId: state.setups?.breakout?.setupId ?? null,
+      setupId: after.setups?.breakout?.setupId ?? null,
     });
   }
 }
@@ -58,3 +61,19 @@ for (const row of interesting) {
     ].join(" | ")
   );
 }
+
+const finalState = getBrainState();
+console.log("\n==== FINAL STATE ====");
+console.log(
+  JSON.stringify(
+    {
+      market: finalState.market,
+      breakout: finalState.setups?.breakout,
+      validation: finalState.validation?.breakout,
+      position: finalState.position,
+      execution: finalState.execution,
+    },
+    null,
+    2
+  )
+);
