@@ -1,1 +1,1001 @@
-
+2026-03-23T14:18:06.613726802Z [inf]  🟦 BREAKOUT | phase=breakout_detected trigger=91.5900 retest=na bounce=na score=0 allowed=0
+2026-03-23T14:18:06.613737732Z [inf]  🧩 BREAKOUT reasons | breakout detected
+2026-03-23T14:18:06.613740393Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:18:06.613744133Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:18:06.613751435Z [inf]  🔎 SETUP NOTE | breakout detected
+2026-03-23T14:18:06.613754766Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.59,"time":"2026-03-23T14:15:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T14:18:02.215Z"},"breakout":{"phase":"breakout_detected","startedBar":249,"phaseBar":249,"triggerPrice":91.59,"breakoutLevel":91.59,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["breakout detected"],"lastTransition":"breakout_detected","updatedAt":"2026-03-23T14:18:02.215Z","setupId":"249-91.59-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T14:18:02.215Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T14:15:00Z|91.59"}}
+2026-03-23T14:18:06.613760041Z [inf]  🔄 BREAKOUT transition | idle -> breakout_detected | breakout detected
+2026-03-23T14:21:07.198331141Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:21:07.198337741Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3800 regime=trend conf=0.80 hostile=0
+2026-03-23T14:21:07.198344754Z [inf]  📊 FEAT | close=91.3800 ema8=91.3221 ema18=91.0427 ema50=90.2266 rsi=60.99 adx=35.05 atrPct=0.407 oiTrend=-1 cvdTrend=1
+2026-03-23T14:21:07.198352591Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:21:07.198358990Z [inf]  🔎 SETUP NOTE | waiting retest
+2026-03-23T14:21:07.198365517Z [inf]  🔄 BREAKOUT transition | breakout_detected -> retest_pending | waiting retest
+2026-03-23T14:21:07.198382803Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=91.5900 retest=na bounce=na score=0 allowed=0
+2026-03-23T14:21:07.198388715Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T14:21:07.198394820Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:21:07.198401143Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.38,"time":"2026-03-23T14:18:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T14:21:03.414Z"},"breakout":{"phase":"retest_pending","startedBar":249,"phaseBar":250,"triggerPrice":91.59,"breakoutLevel":91.59,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["waiting retest"],"lastTransition":"retest_pending","updatedAt":"2026-03-23T14:21:03.414Z","setupId":"249-91.59-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T14:21:03.414Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T14:18:00Z|91.38"}}
+2026-03-23T14:24:08.568272618Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:24:08.568281944Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6200 regime=trend conf=0.80 hostile=0
+2026-03-23T14:24:08.568289453Z [inf]  📊 FEAT | close=91.6200 ema8=91.3883 ema18=91.1034 ema50=90.2813 rsi=64.27 adx=35.33 atrPct=0.403 oiTrend=-1 cvdTrend=1
+2026-03-23T14:24:08.568296493Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:24:08.568304199Z [inf]  🔎 SETUP NOTE | retest seen
+2026-03-23T14:24:08.568311492Z [inf]  🔄 BREAKOUT transition | retest_pending -> bounce_confirmed | retest seen
+2026-03-23T14:24:08.568318309Z [inf]  🟦 BREAKOUT | phase=bounce_confirmed trigger=91.5900 retest=91.3100 bounce=91.6200 score=13 allowed=0
+2026-03-23T14:24:08.568324884Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, healthy atrPct, cvd supportive, rsi supportive, bounce prelim confirmed, meaningful pullback, bounce pct ok, bounce body ok, bounce close strong, reclaim above trigger ok
+2026-03-23T14:24:08.568331681Z [inf]  🛡️ VALIDATION | oiTrend not supportive
+2026-03-23T14:24:08.568338386Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:24:08.568346251Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.62,"time":"2026-03-23T14:21:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T14:24:02.983Z"},"breakout":{"phase":"bounce_confirmed","startedBar":249,"phaseBar":251,"triggerPrice":91.59,"breakoutLevel":91.59,"retestPrice":91.31,"bouncePrice":91.62,"score":13,"reasons":["trend regime","good regime confidence","strong adx","healthy atrPct","cvd supportive","rsi supportive","bounce prelim confirmed","meaningful pullback","bounce pct ok","bounce body ok","bounce close strong","reclaim above trigger ok"],"lastTransition":"bounce_confirmed","updatedAt":"2026-03-23T14:24:02.983Z","setupId":"249-91.59-breakout","retestLow":91.31,"invalidationPrice":91.264345,"readySinceBar":null,"expiresAtBar":null,"bouncePct":0.33950279268426486,"pullbackPct":-0.3057102303744963,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_ok","bounce_body_ok","bounce_close_strong","reclaim_above_trigger_ok"],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":0.2736127831892306,"bounceCloseInRangePct":93.93939393939512,"reclaimPctFromTrigger":0.03275466754012571,"reentryCount":0},"validation":{"allowed":false,"reasons":["oiTrend not supportive"],"updatedAt":"2026-03-23T14:24:02.983Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T14:21:00Z|91.62"}}
+2026-03-23T14:27:09.726670132Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:27:09.726676712Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3700 regime=trend conf=0.80 hostile=0
+2026-03-23T14:27:09.726678517Z [inf]  🟦 BREAKOUT | phase=bounce_confirmed trigger=91.5900 retest=91.3100 bounce=91.3700 score=10 allowed=0
+2026-03-23T14:27:09.726682586Z [inf]  📊 FEAT | close=91.3700 ema8=91.3843 ema18=91.1315 ema50=90.3240 rsi=58.73 adx=35.82 atrPct=0.405 oiTrend=-1 cvdTrend=1
+2026-03-23T14:27:09.726687369Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:27:09.726698406Z [inf]  🔎 SETUP NOTE | bounce still forming
+2026-03-23T14:27:09.726701744Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, healthy atrPct, cvd supportive, rsi supportive, bounce prelim confirmed, meaningful pullback, bounce body ok
+2026-03-23T14:27:09.726708510Z [inf]  🛡️ VALIDATION | oiTrend not supportive, close below trigger, bounce pct too small (0.066% < 0.12)
+2026-03-23T14:27:09.726714276Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:30:10.840375624Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:30:10.840380895Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5300 regime=trend conf=0.80 hostile=0
+2026-03-23T14:30:10.840387169Z [inf]  📊 FEAT | close=91.5300 ema8=91.4166 ema18=91.1734 ema50=90.3713 rsi=61.04 adx=35.63 atrPct=0.404 oiTrend=-1 cvdTrend=1
+2026-03-23T14:30:10.840392435Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:30:10.840397057Z [inf]  🔎 SETUP NOTE | breakout ready
+2026-03-23T14:30:10.840402267Z [inf]  🔄 BREAKOUT transition | bounce_confirmed -> ready | breakout ready
+2026-03-23T14:30:10.840407290Z [inf]  🟦 BREAKOUT | phase=ready trigger=91.5900 retest=91.3100 bounce=91.5300 score=12 allowed=0
+2026-03-23T14:30:10.840412682Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, healthy atrPct, cvd supportive, rsi supportive, bounce confirmed, meaningful pullback, bounce pct ok, bounce body ok, bounce close strong
+2026-03-23T14:30:10.840419307Z [inf]  🛡️ VALIDATION | oiTrend not supportive, close below trigger
+2026-03-23T14:30:10.840424921Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:30:10.840432520Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.53,"time":"2026-03-23T14:27:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T14:30:09.470Z"},"breakout":{"phase":"ready","startedBar":249,"phaseBar":253,"triggerPrice":91.59,"breakoutLevel":91.59,"retestPrice":91.31,"bouncePrice":91.53,"score":12,"reasons":["trend regime","good regime confidence","strong adx","healthy atrPct","cvd supportive","rsi supportive","bounce confirmed","meaningful pullback","bounce pct ok","bounce body ok","bounce close strong"],"lastTransition":"ready","updatedAt":"2026-03-23T14:30:09.472Z","setupId":"249-91.59-breakout","retestLow":91.31,"invalidationPrice":91.264345,"readySinceBar":253,"expiresAtBar":256,"bouncePct":0.2409374657759269,"pullbackPct":-0.3057102303744963,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_ok","bounce_body_ok","bounce_close_strong","reclaim_above_trigger_ok","bounce_pct_weak","bounce_close_weak","reclaim_above_trigger_weak","close_below_trigger","ema8_above_ema18"],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":0.17511218124110384,"bounceCloseInRangePct":78.37837837837911,"reclaimPctFromTrigger":-0.06550933508025142,"reentryCount":0},"validation":{"allowed":false,"reasons":["oiTrend not supportive","close below trigger"],"updatedAt":"2026-03-23T14:30:09.472Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T14:27:00Z|91.53"}}
+2026-03-23T14:33:11.319773899Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:33:11.319778894Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4900 regime=trend conf=0.80 hostile=0
+2026-03-23T14:33:11.319784781Z [inf]  📊 FEAT | close=91.4900 ema8=91.4329 ema18=91.2068 ema50=90.4151 rsi=60.13 adx=35.56 atrPct=0.392 oiTrend=-1 cvdTrend=1
+2026-03-23T14:33:11.319790965Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:33:11.319795988Z [inf]  🔎 SETUP NOTE | ready rescored
+2026-03-23T14:33:11.319801143Z [inf]  🟦 BREAKOUT | phase=ready trigger=91.5900 retest=91.3100 bounce=91.5300 score=12 allowed=0
+2026-03-23T14:33:11.319806252Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, healthy atrPct, cvd supportive, rsi supportive, bounce confirmed, meaningful pullback, bounce pct ok, bounce body ok, bounce close strong
+2026-03-23T14:33:11.319812292Z [inf]  🛡️ VALIDATION | oiTrend not supportive, close below trigger
+2026-03-23T14:33:11.319817612Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:36:12.206466891Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:36:12.206476478Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4400 regime=trend conf=0.80 hostile=0
+2026-03-23T14:36:12.206482770Z [inf]  📊 FEAT | close=91.4400 ema8=91.4345 ema18=91.2313 ema50=90.4553 rsi=58.95 adx=34.44 atrPct=0.390 oiTrend=-1 cvdTrend=1
+2026-03-23T14:36:12.206489132Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:36:12.206496295Z [inf]  🔎 SETUP NOTE | ready rescored
+2026-03-23T14:36:12.206502744Z [inf]  🟦 BREAKOUT | phase=ready trigger=91.5900 retest=91.3100 bounce=91.5300 score=12 allowed=0
+2026-03-23T14:36:12.206508852Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, healthy atrPct, cvd supportive, rsi supportive, bounce confirmed, meaningful pullback, bounce pct ok, bounce body ok, bounce close strong
+2026-03-23T14:36:12.206515644Z [inf]  🛡️ VALIDATION | oiTrend not supportive, close below trigger
+2026-03-23T14:36:12.206527214Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:39:02.750467066Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.55,"time":"2026-03-23T14:36:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T14:39:02.272Z"},"breakout":{"phase":"expired","startedBar":249,"phaseBar":256,"triggerPrice":91.59,"breakoutLevel":91.59,"retestPrice":91.31,"bouncePrice":91.53,"score":0,"reasons":["expired after 7 bars"],"lastTransition":"expired","updatedAt":"2026-03-23T14:39:02.272Z","setupId":"249-91.59-breakout","retestLow":91.31,"invalidationPrice":91.264345,"readySinceBar":253,"expiresAtBar":256,"bouncePct":0.2409374657759269,"pullbackPct":-0.3057102303744963,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_ok","bounce_body_ok","bounce_close_strong","reclaim_above_trigger_ok","bounce_pct_weak","bounce_close_weak","reclaim_above_trigger_weak","close_below_trigger","ema8_above_ema18"],"cancelReason":"setup_expired","consumedAtBar":null,"bounceBodyPct":0.17511218124110384,"bounceCloseInRangePct":78.37837837837911,"reclaimPctFromTrigger":-0.06550933508025142,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T14:39:02.272Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T14:36:00Z|91.55"}}
+2026-03-23T14:39:02.750474217Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:39:02.750484072Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5500 regime=trend conf=0.80 hostile=0
+2026-03-23T14:39:02.750490735Z [inf]  📊 FEAT | close=91.5500 ema8=91.4602 ema18=91.2649 ema50=90.4982 rsi=60.78 adx=33.73 atrPct=0.394 oiTrend=-1 cvdTrend=1
+2026-03-23T14:39:02.750496600Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:39:02.750502206Z [inf]  🔎 SETUP NOTE | setup expired
+2026-03-23T14:39:02.750508469Z [inf]  🔄 BREAKOUT transition | ready -> expired | setup expired
+2026-03-23T14:39:02.750513810Z [inf]  🟦 BREAKOUT | phase=expired trigger=91.5900 retest=91.3100 bounce=91.5300 score=0 allowed=0
+2026-03-23T14:39:02.750520646Z [inf]  🧩 BREAKOUT reasons | expired after 7 bars
+2026-03-23T14:39:02.750526020Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:42:03.898521108Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4000 regime=trend conf=0.80 hostile=0
+2026-03-23T14:42:03.898530519Z [inf]  📊 FEAT | close=91.4000 ema8=91.4468 ema18=91.2791 ema50=90.5336 rsi=57.05 adx=33.07 atrPct=0.381 oiTrend=-1 cvdTrend=1
+2026-03-23T14:42:03.898536289Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:42:03.898541774Z [inf]  🔎 SETUP NOTE | reset to idle
+2026-03-23T14:42:03.898546878Z [inf]  🔄 BREAKOUT transition | expired -> idle | reset to idle
+2026-03-23T14:42:03.898552823Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T14:42:03.898560302Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T14:42:03.898565268Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:42:03.898570313Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.4,"time":"2026-03-23T14:39:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T14:42:02.957Z"},"breakout":{"phase":"idle","startedBar":null,"phaseBar":257,"triggerPrice":null,"breakoutLevel":null,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["returned to idle"],"lastTransition":"reset_to_idle","updatedAt":"2026-03-23T14:42:02.957Z","setupId":null,"retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T14:42:02.957Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T14:39:00Z|91.4"}}
+2026-03-23T14:42:03.898602175Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:45:04.984528023Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:45:04.984531287Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4400 regime=trend conf=0.80 hostile=0
+2026-03-23T14:45:04.984534572Z [inf]  📊 FEAT | close=91.4400 ema8=91.4453 ema18=91.2960 ema50=90.5692 rsi=57.79 adx=32.54 atrPct=0.367 oiTrend=-1 cvdTrend=1
+2026-03-23T14:45:04.984538189Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:45:04.984542645Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.006 < min=0.18
+2026-03-23T14:45:04.985080288Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T14:45:04.985091943Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T14:45:04.985098277Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:48:05.554671656Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:48:05.554675998Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4200 regime=trend conf=0.80 hostile=1
+2026-03-23T14:48:05.554681428Z [inf]  📊 FEAT | close=91.4200 ema8=91.4397 ema18=91.3091 ema50=90.6025 rsi=57.26 adx=30.52 atrPct=0.370 oiTrend=-1 cvdTrend=-1
+2026-03-23T14:48:05.554685702Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T14:48:05.554689872Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, impulsePct=-0.022 < min=0.18
+2026-03-23T14:48:05.554694979Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T14:48:05.554699332Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T14:48:05.554703438Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:51:06.798864189Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:51:06.798871084Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1100 regime=trend conf=0.80 hostile=1
+2026-03-23T14:51:06.798875595Z [inf]  📊 FEAT | close=91.1100 ema8=91.3664 ema18=91.2881 ema50=90.6224 rsi=49.62 adx=28.46 atrPct=0.372 oiTrend=-1 cvdTrend=-1
+2026-03-23T14:51:06.798880083Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T14:51:06.798885178Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, impulsePct=-0.281 < min=0.18
+2026-03-23T14:51:06.798889310Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T14:51:06.798893744Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T14:51:06.798897757Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:54:07.676092711Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:54:07.676096320Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.2000 regime=trend conf=0.80 hostile=1
+2026-03-23T14:54:07.676100391Z [inf]  📊 FEAT | close=91.2000 ema8=91.3294 ema18=91.2788 ema50=90.6451 rsi=51.63 adx=26.50 atrPct=0.363 oiTrend=-1 cvdTrend=-1
+2026-03-23T14:54:07.676105173Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T14:54:07.676109382Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, impulsePct=-0.142 < min=0.18
+2026-03-23T14:54:07.676113188Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T14:54:07.676117000Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T14:54:07.676121626Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T14:57:08.825125756Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T14:57:08.825132124Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4300 regime=trend conf=0.80 hostile=0
+2026-03-23T14:57:08.825137639Z [inf]  📊 FEAT | close=91.4300 ema8=91.3518 ema18=91.2948 ema50=90.6759 rsi=56.44 adx=25.27 atrPct=0.358 oiTrend=1 cvdTrend=-1
+2026-03-23T14:57:08.825142990Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T14:57:08.825150508Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.086 < min=0.18
+2026-03-23T14:57:08.825156003Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T14:57:08.825161626Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T14:57:08.825166719Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:00:20.224600232Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:00:20.224606950Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5100 regime=trend conf=0.80 hostile=0
+2026-03-23T15:00:20.224612786Z [inf]  📊 FEAT | close=91.5100 ema8=91.3869 ema18=91.3174 ema50=90.7086 rsi=58.00 adx=24.89 atrPct=0.352 oiTrend=1 cvdTrend=-1
+2026-03-23T15:00:20.224618700Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:00:20.224624432Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.135 < min=0.18
+2026-03-23T15:00:20.224629036Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:00:20.224633968Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:00:20.224639292Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:03:11.116336165Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:03:11.116341414Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=92.0800 regime=trend conf=0.80 hostile=0
+2026-03-23T15:03:11.116347380Z [inf]  📊 FEAT | close=92.0800 ema8=91.5410 ema18=91.3977 ema50=90.7623 rsi=67.07 adx=26.09 atrPct=0.377 oiTrend=1 cvdTrend=-1
+2026-03-23T15:03:11.116352036Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:03:11.116362515Z [inf]  🔎 SETUP NOTE | breakout detected
+2026-03-23T15:03:11.116367906Z [inf]  🔄 BREAKOUT transition | idle -> breakout_detected | breakout detected
+2026-03-23T15:03:11.116377669Z [inf]  🟦 BREAKOUT | phase=breakout_detected trigger=92.0800 retest=na bounce=na score=0 allowed=0
+2026-03-23T15:03:11.116382879Z [inf]  🧩 BREAKOUT reasons | breakout detected
+2026-03-23T15:03:11.116388599Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:03:11.116394021Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":92.08,"time":"2026-03-23T15:00:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T15:03:02.777Z"},"breakout":{"phase":"breakout_detected","startedBar":264,"phaseBar":264,"triggerPrice":92.08,"breakoutLevel":92.08,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["breakout detected"],"lastTransition":"breakout_detected","updatedAt":"2026-03-23T15:03:02.777Z","setupId":"264-92.08-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T15:03:02.777Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T15:00:00Z|92.08"}}
+2026-03-23T15:06:11.841375572Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:06:11.841380499Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=92.1000 regime=trend conf=0.80 hostile=0
+2026-03-23T15:06:11.841384899Z [inf]  📊 FEAT | close=92.1000 ema8=91.6652 ema18=91.4716 ema50=90.8148 rsi=67.33 adx=27.23 atrPct=0.371 oiTrend=1 cvdTrend=1
+2026-03-23T15:06:11.841389386Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:06:11.841393609Z [inf]  🔎 SETUP NOTE | waiting retest
+2026-03-23T15:06:11.841397198Z [inf]  🔄 BREAKOUT transition | breakout_detected -> retest_pending | waiting retest
+2026-03-23T15:06:11.841401340Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=92.0800 retest=na bounce=na score=0 allowed=0
+2026-03-23T15:06:11.841405193Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T15:06:11.841409246Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:06:11.841413178Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":92.1,"time":"2026-03-23T15:03:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T15:06:03.483Z"},"breakout":{"phase":"retest_pending","startedBar":264,"phaseBar":265,"triggerPrice":92.08,"breakoutLevel":92.08,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["waiting retest"],"lastTransition":"retest_pending","updatedAt":"2026-03-23T15:06:03.483Z","setupId":"264-92.08-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T15:06:03.483Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T15:03:00Z|92.1"}}
+2026-03-23T15:09:02.467828993Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:09:02.467832930Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=92.1000 regime=trend conf=0.80 hostile=0
+2026-03-23T15:09:02.467836508Z [inf]  📊 FEAT | close=92.1000 ema8=91.7618 ema18=91.5378 ema50=90.8652 rsi=67.33 adx=28.43 atrPct=0.362 oiTrend=1 cvdTrend=1
+2026-03-23T15:09:02.467841154Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:09:02.467845065Z [inf]  🔎 SETUP NOTE | still waiting retest
+2026-03-23T15:09:02.467849494Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=92.0800 retest=na bounce=na score=0 allowed=0
+2026-03-23T15:09:02.467853637Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T15:09:02.467857851Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:12:04.034443538Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:12:04.034449147Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.9500 regime=trend conf=0.80 hostile=0
+2026-03-23T15:12:04.034455574Z [inf]  📊 FEAT | close=91.9500 ema8=91.8036 ema18=91.5812 ema50=90.9077 rsi=62.91 adx=28.82 atrPct=0.357 oiTrend=1 cvdTrend=1
+2026-03-23T15:12:04.034460419Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:12:04.034465616Z [inf]  🔎 SETUP NOTE | retest seen
+2026-03-23T15:12:04.034471710Z [inf]  🔄 BREAKOUT transition | retest_pending -> bounce_confirmed | retest seen
+2026-03-23T15:12:04.034477071Z [inf]  🟦 BREAKOUT | phase=bounce_confirmed trigger=92.0800 retest=91.9100 bounce=91.9500 score=11 allowed=0
+2026-03-23T15:12:04.034481272Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, healthy atrPct, oi supportive, cvd supportive, rsi supportive, bounce prelim confirmed, meaningful pullback, bounce body ok
+2026-03-23T15:12:04.034486668Z [inf]  🛡️ VALIDATION | close below trigger, bounce close not strong enough, reclaim above trigger too weak, bounce pct too small (0.044% < 0.12)
+2026-03-23T15:12:04.034491966Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:12:04.034496925Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.95,"time":"2026-03-23T15:09:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T15:12:02.244Z"},"breakout":{"phase":"bounce_confirmed","startedBar":264,"phaseBar":267,"triggerPrice":92.08,"breakoutLevel":92.08,"retestPrice":91.91,"bouncePrice":91.95,"score":11,"reasons":["trend regime","good regime confidence","strong adx","healthy atrPct","oi supportive","cvd supportive","rsi supportive","bounce prelim confirmed","meaningful pullback","bounce body ok"],"lastTransition":"bounce_confirmed","updatedAt":"2026-03-23T15:12:02.244Z","setupId":"264-92.08-breakout","retestLow":91.91,"invalidationPrice":91.864045,"readySinceBar":null,"expiresAtBar":null,"bouncePct":0.04352083560005032,"pullbackPct":-0.18462206776716084,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_weak","bounce_body_ok","bounce_close_weak","reclaim_above_trigger_weak"],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":0.1628664495113914,"bounceCloseInRangePct":15.384615384617486,"reclaimPctFromTrigger":-0.1411815812337049,"reentryCount":0},"validation":{"allowed":false,"reasons":["close below trigger","bounce close not strong enough","reclaim above trigger too weak","bounce pct too small (0.044% < 0.12)"],"updatedAt":"2026-03-23T15:12:02.244Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T15:09:00Z|91.95"}}
+2026-03-23T15:15:15.125920561Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:15:15.125925818Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.7200 regime=trend conf=0.80 hostile=0
+2026-03-23T15:15:15.125930601Z [inf]  📊 FEAT | close=91.7200 ema8=91.7850 ema18=91.5958 ema50=90.9396 rsi=56.75 adx=28.14 atrPct=0.351 oiTrend=-1 cvdTrend=1
+2026-03-23T15:15:15.125935401Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:15:15.125940031Z [inf]  🔎 SETUP NOTE | lost retest low
+2026-03-23T15:15:15.125944835Z [inf]  🔄 BREAKOUT transition | bounce_confirmed -> invalidated | lost retest low
+2026-03-23T15:15:15.125949018Z [inf]  🟦 BREAKOUT | phase=invalidated trigger=92.0800 retest=91.9100 bounce=91.9500 score=0 allowed=0
+2026-03-23T15:15:15.125953262Z [inf]  🧩 BREAKOUT reasons | lost retest low (91.7200 < 91.8640)
+2026-03-23T15:15:15.125957461Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:15:15.125964711Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.72,"time":"2026-03-23T15:12:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T15:15:05.482Z"},"breakout":{"phase":"invalidated","startedBar":264,"phaseBar":268,"triggerPrice":92.08,"breakoutLevel":92.08,"retestPrice":91.91,"bouncePrice":91.95,"score":0,"reasons":["lost retest low (91.7200 < 91.8640)"],"lastTransition":"invalidated","updatedAt":"2026-03-23T15:15:05.482Z","setupId":"264-92.08-breakout","retestLow":91.91,"invalidationPrice":91.864045,"readySinceBar":null,"expiresAtBar":null,"bouncePct":0.04352083560005032,"pullbackPct":-0.18462206776716084,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_weak","bounce_body_ok","bounce_close_weak","reclaim_above_trigger_weak"],"cancelReason":"lost_retest_low","consumedAtBar":null,"bounceBodyPct":0.1628664495113914,"bounceCloseInRangePct":15.384615384617486,"reclaimPctFromTrigger":-0.1411815812337049,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T15:15:05.482Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T15:12:00Z|91.72"}}
+2026-03-23T15:18:05.645988745Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:18:05.645998269Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4600 regime=trend conf=0.80 hostile=0
+2026-03-23T15:18:05.646003534Z [inf]  📊 FEAT | close=91.4600 ema8=91.7128 ema18=91.5815 ema50=90.9600 rsi=50.70 adx=26.48 atrPct=0.354 oiTrend=-1 cvdTrend=1
+2026-03-23T15:18:05.646008152Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T15:18:05.646014317Z [inf]  🔎 SETUP NOTE | reset to idle
+2026-03-23T15:18:05.646019407Z [inf]  🔄 BREAKOUT transition | invalidated -> idle | reset to idle
+2026-03-23T15:18:05.646025200Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:18:05.646031292Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:18:05.646036753Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:18:05.646044038Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.46,"time":"2026-03-23T15:15:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T15:18:02.512Z"},"breakout":{"phase":"idle","startedBar":null,"phaseBar":269,"triggerPrice":null,"breakoutLevel":null,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["returned to idle"],"lastTransition":"reset_to_idle","updatedAt":"2026-03-23T15:18:02.512Z","setupId":null,"retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T15:18:02.512Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T15:15:00Z|91.46"}}
+2026-03-23T15:21:06.538735654Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:21:06.538741705Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3400 regime=trend conf=0.80 hostile=1
+2026-03-23T15:21:06.538745590Z [inf]  📊 FEAT | close=91.3400 ema8=91.6300 ema18=91.5561 ema50=90.9749 rsi=48.15 adx=24.72 atrPct=0.346 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:21:06.538749476Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T15:21:06.538753663Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, impulsePct=-0.316 < min=0.18
+2026-03-23T15:21:06.538758639Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:21:06.538763283Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:21:06.538767579Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:24:07.431305168Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:24:07.431312272Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4500 regime=trend conf=0.80 hostile=1
+2026-03-23T15:24:07.431317487Z [inf]  📊 FEAT | close=91.4500 ema8=91.5900 ema18=91.5449 ema50=90.9935 rsi=50.60 adx=23.70 atrPct=0.348 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:24:07.431323050Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T15:24:07.431328183Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, impulsePct=-0.153 < min=0.18
+2026-03-23T15:24:07.431333027Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:24:07.431342081Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:24:07.431346599Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:27:08.363535034Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:27:08.363539854Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1100 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:27:08.363544134Z [inf]  📊 FEAT | close=91.1100 ema8=91.4833 ema18=91.4991 ema50=90.9981 rsi=43.72 adx=22.91 atrPct=0.352 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:27:08.363547817Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:27:08.363552157Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.408 < min=0.18
+2026-03-23T15:27:08.363555964Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:27:08.363560733Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:27:08.363566648Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:30:09.550966832Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:30:09.550977045Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1500 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:30:09.550984395Z [inf]  📊 FEAT | close=91.1500 ema8=91.4092 ema18=91.4624 ema50=91.0041 rsi=44.67 adx=22.17 atrPct=0.339 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:30:09.550992897Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:30:09.550999015Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.284 < min=0.18
+2026-03-23T15:30:09.551005847Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:30:09.551012836Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:30:09.551019832Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:33:10.785836314Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:33:10.785842056Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1500 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:33:10.785846166Z [inf]  📊 FEAT | close=91.1500 ema8=91.3516 ema18=91.4295 ema50=91.0098 rsi=44.67 adx=21.56 atrPct=0.325 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:33:10.785851799Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:33:10.785856077Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.221 < min=0.18
+2026-03-23T15:33:10.785860742Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:33:10.785866855Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:33:10.785870910Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:36:11.809659420Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:36:11.809665265Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.8400 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:36:11.809671274Z [inf]  📊 FEAT | close=90.8400 ema8=91.2379 ema18=91.3674 ema50=91.0031 rsi=38.77 adx=22.16 atrPct=0.338 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:36:11.809677758Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:36:11.809682796Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.436 < min=0.18
+2026-03-23T15:36:11.809688734Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:36:11.809694788Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:36:11.809699759Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:39:02.782488889Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:39:02.782493461Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.6900 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:39:02.782497436Z [inf]  📊 FEAT | close=90.6900 ema8=91.1162 ema18=91.2961 ema50=90.9908 rsi=36.27 adx=22.87 atrPct=0.339 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:39:02.782503432Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:39:02.782508045Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.468 < min=0.18
+2026-03-23T15:39:02.782516387Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:39:02.782520526Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:39:02.782524681Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:42:03.770375221Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:42:03.770382443Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.6300 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:42:03.770389081Z [inf]  📊 FEAT | close=90.6300 ema8=91.0081 ema18=91.2260 ema50=90.9767 rsi=35.29 adx=23.95 atrPct=0.337 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:42:03.770396848Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:42:03.770403502Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.415 < min=0.18
+2026-03-23T15:42:03.770644318Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:42:03.770657143Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:42:03.770665808Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:45:14.909932004Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:45:14.909937664Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.5100 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:45:14.909943125Z [inf]  📊 FEAT | close=90.5100 ema8=90.8974 ema18=91.1506 ema50=90.9584 rsi=33.35 adx=25.22 atrPct=0.335 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:45:14.909950220Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:45:14.909957033Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.426 < min=0.18
+2026-03-23T15:45:14.909961422Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:45:14.909966165Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:45:14.909970360Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:48:05.735774431Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:48:05.735781898Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.4900 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:48:05.735790269Z [inf]  📊 FEAT | close=90.4900 ema8=90.8069 ema18=91.0811 ema50=90.9400 rsi=33.03 adx=26.60 atrPct=0.332 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:48:05.735796779Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:48:05.735802447Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.349 < min=0.18
+2026-03-23T15:48:05.735810467Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:48:05.735815992Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:48:05.735821706Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:51:06.764481558Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:51:06.764485417Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.7500 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:51:06.764489381Z [inf]  📊 FEAT | close=90.7500 ema8=90.7943 ema18=91.0462 ema50=90.9326 rsi=41.09 adx=26.30 atrPct=0.336 oiTrend=1 cvdTrend=-1
+2026-03-23T15:51:06.764493066Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:51:06.764496787Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.049 < min=0.18
+2026-03-23T15:51:06.764500654Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:51:06.764504485Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:51:06.764508332Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:54:08.061444542Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:54:08.061545496Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.1200 regime=mixed conf=0.60 hostile=0
+2026-03-23T15:54:08.061580883Z [inf]  📊 FEAT | close=90.1200 ema8=90.6444 ema18=90.9487 ema50=90.9007 rsi=31.27 adx=27.16 atrPct=0.382 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:54:08.061611862Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T15:54:08.061642915Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.579 < min=0.18
+2026-03-23T15:54:08.061674168Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:54:08.061706234Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:54:08.061738823Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T15:57:10.258901008Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T15:57:10.258908284Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.9000 regime=trend conf=0.80 hostile=1
+2026-03-23T15:57:10.258914148Z [inf]  📊 FEAT | close=89.9000 ema8=90.4790 ema18=90.8384 ema50=90.8615 rsi=28.69 adx=28.14 atrPct=0.379 oiTrend=-1 cvdTrend=-1
+2026-03-23T15:57:10.258921346Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T15:57:10.258928775Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, bullAligned=false, impulsePct=-0.640 < min=0.18
+2026-03-23T15:57:10.258936674Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T15:57:10.258943393Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T15:57:10.258949655Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:00:11.317731549Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:00:11.317737985Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.9500 regime=trend conf=0.80 hostile=1
+2026-03-23T16:00:11.317744006Z [inf]  📊 FEAT | close=89.9500 ema8=90.3614 ema18=90.7448 ema50=90.8257 rsi=30.10 adx=29.24 atrPct=0.372 oiTrend=-1 cvdTrend=-1
+2026-03-23T16:00:11.317752820Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T16:00:11.317759131Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, bullAligned=false, impulsePct=-0.455 < min=0.18
+2026-03-23T16:00:11.317765234Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:00:11.317770821Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:00:11.317777006Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:03:11.861636308Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:03:11.861641409Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.1600 regime=trend conf=0.80 hostile=0
+2026-03-23T16:03:11.861646411Z [inf]  📊 FEAT | close=90.1600 ema8=90.3167 ema18=90.6833 ema50=90.7996 rsi=35.84 adx=29.48 atrPct=0.366 oiTrend=1 cvdTrend=-1
+2026-03-23T16:03:11.861651022Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:03:11.861655651Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=-0.174 < min=0.18
+2026-03-23T16:03:11.861660611Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:03:11.861666409Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:03:11.861673406Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:06:12.592211829Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:06:12.592233393Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.1400 regime=trend conf=0.80 hostile=0
+2026-03-23T16:06:12.592249821Z [inf]  📊 FEAT | close=90.1400 ema8=90.2774 ema18=90.6261 ema50=90.7737 rsi=35.54 adx=29.44 atrPct=0.358 oiTrend=1 cvdTrend=-1
+2026-03-23T16:06:12.592256266Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:06:12.592260809Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=-0.152 < min=0.18
+2026-03-23T16:06:12.592265821Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:06:12.592270889Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:06:12.592275778Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:09:03.340881617Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:09:03.340887669Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.4100 regime=trend conf=0.80 hostile=0
+2026-03-23T16:09:03.340892060Z [inf]  📊 FEAT | close=90.4100 ema8=90.3069 ema18=90.6033 ema50=90.7595 rsi=42.52 adx=28.84 atrPct=0.360 oiTrend=1 cvdTrend=-1
+2026-03-23T16:09:03.340896526Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:09:03.340902661Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.114 < min=0.18
+2026-03-23T16:09:03.340908869Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:09:03.340913469Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:09:03.340917595Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:12:03.983667932Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:12:03.983672990Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.2600 regime=trend conf=0.80 hostile=0
+2026-03-23T16:12:03.983677256Z [inf]  📊 FEAT | close=90.2600 ema8=90.2965 ema18=90.5672 ema50=90.7399 rsi=39.94 adx=28.19 atrPct=0.356 oiTrend=1 cvdTrend=-1
+2026-03-23T16:12:03.983681425Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:12:03.983685686Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=-0.040 < min=0.18
+2026-03-23T16:12:03.983690139Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:12:03.983695892Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:12:03.983702287Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:15:14.866174600Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:15:14.866179497Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3400 regime=trend conf=0.80 hostile=0
+2026-03-23T16:15:14.866185302Z [inf]  📊 FEAT | close=90.3400 ema8=90.3061 ema18=90.5433 ema50=90.7242 rsi=41.96 adx=27.59 atrPct=0.344 oiTrend=1 cvdTrend=-1
+2026-03-23T16:15:14.866190098Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:15:14.866194993Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.038 < min=0.18
+2026-03-23T16:15:14.866198889Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:15:14.866202409Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:15:14.866205986Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:18:05.555047256Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:18:05.555051241Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.2100 regime=trend conf=0.80 hostile=0
+2026-03-23T16:18:05.555055099Z [inf]  📊 FEAT | close=90.2100 ema8=90.2848 ema18=90.5082 ema50=90.7040 rsi=39.62 adx=27.04 atrPct=0.343 oiTrend=1 cvdTrend=-1
+2026-03-23T16:18:05.555059088Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:18:05.555063533Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=-0.083 < min=0.18
+2026-03-23T16:18:05.555069073Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:18:05.555073331Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:18:05.555077300Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:21:05.930018210Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:21:05.930023278Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.9000 regime=trend conf=0.80 hostile=1
+2026-03-23T16:21:05.930027955Z [inf]  📊 FEAT | close=89.9000 ema8=90.1993 ema18=90.4442 ema50=90.6725 rsi=34.66 adx=27.30 atrPct=0.348 oiTrend=-1 cvdTrend=-1
+2026-03-23T16:21:05.930035813Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T16:21:05.930039954Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, bullAligned=false, impulsePct=-0.332 < min=0.18
+2026-03-23T16:21:05.930043827Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:21:05.930047798Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:21:05.930051620Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:24:06.981006335Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.8200 regime=trend conf=0.80 hostile=1
+2026-03-23T16:24:06.981015142Z [inf]  📊 FEAT | close=89.8200 ema8=90.1150 ema18=90.3785 ema50=90.6391 rsi=33.49 adx=27.97 atrPct=0.344 oiTrend=-1 cvdTrend=-1
+2026-03-23T16:24:06.981020965Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T16:24:06.981025853Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, bullAligned=false, impulsePct=-0.327 < min=0.18
+2026-03-23T16:24:06.981030431Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:24:06.981036143Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:24:06.981040700Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:24:06.981053014Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:27:07.610340017Z [inf]  🔎 SETUP NOTE | idle no breakout | hostile=true, bullAligned=false, impulsePct=-0.428 < min=0.18
+2026-03-23T16:27:07.610353588Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:27:07.610361187Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:27:07.610366956Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:27:07.610508922Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:27:07.610512562Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.6200 regime=trend conf=0.80 hostile=1
+2026-03-23T16:27:07.610516593Z [inf]  📊 FEAT | close=89.6200 ema8=90.0050 ema18=90.2986 ema50=90.5991 rsi=30.71 adx=28.97 atrPct=0.350 oiTrend=-1 cvdTrend=-1
+2026-03-23T16:27:07.610521507Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned, flow disagreement
+2026-03-23T16:30:18.472840840Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:30:18.472848577Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.5500 regime=trend conf=0.80 hostile=0
+2026-03-23T16:30:18.472853201Z [inf]  📊 FEAT | close=89.5500 ema8=89.9039 ema18=90.2198 ema50=90.5580 rsi=29.77 adx=30.08 atrPct=0.344 oiTrend=1 cvdTrend=-1
+2026-03-23T16:30:18.472857477Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:30:18.472862342Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=-0.394 < min=0.18
+2026-03-23T16:30:18.472868142Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:30:18.472872324Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:30:18.472877532Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:33:09.090509758Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:33:09.090518095Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.6700 regime=trend conf=0.80 hostile=0
+2026-03-23T16:33:09.090523362Z [inf]  📊 FEAT | close=89.6700 ema8=89.8519 ema18=90.1620 ema50=90.5232 rsi=33.50 adx=31.32 atrPct=0.345 oiTrend=1 cvdTrend=-1
+2026-03-23T16:33:09.090529677Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:33:09.090535879Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=-0.202 < min=0.18
+2026-03-23T16:33:09.090541397Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:33:09.090547968Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:33:09.090554323Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:36:09.490311648Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:36:09.490317035Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.8600 regime=trend conf=0.80 hostile=0
+2026-03-23T16:36:09.490323589Z [inf]  📊 FEAT | close=89.8600 ema8=89.8537 ema18=90.1302 ema50=90.4972 rsi=39.02 adx=31.67 atrPct=0.346 oiTrend=1 cvdTrend=-1
+2026-03-23T16:36:09.490329856Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:36:09.490336681Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.007 < min=0.18
+2026-03-23T16:36:09.490343005Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:36:09.490348755Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:36:09.490355211Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:39:10.256818628Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:39:10.256827725Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.9000 regime=trend conf=0.80 hostile=0
+2026-03-23T16:39:10.256834776Z [inf]  📊 FEAT | close=89.9000 ema8=89.8640 ema18=90.1059 ema50=90.4737 rsi=40.15 adx=31.25 atrPct=0.337 oiTrend=1 cvdTrend=-1
+2026-03-23T16:39:10.256844983Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:39:10.256852185Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.040 < min=0.18
+2026-03-23T16:39:10.256858688Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:39:10.256864304Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:39:10.256869940Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:42:10.672570217Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:42:10.672574383Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.9100 regime=trend conf=0.80 hostile=0
+2026-03-23T16:42:10.672578488Z [inf]  📊 FEAT | close=89.9100 ema8=89.8742 ema18=90.0853 ema50=90.4516 rsi=40.44 adx=30.93 atrPct=0.325 oiTrend=1 cvdTrend=-1
+2026-03-23T16:42:10.672582538Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:42:10.672586335Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.040 < min=0.18
+2026-03-23T16:42:10.672590521Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:42:10.672594231Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:42:10.672598765Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:45:11.365465984Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:45:11.365469942Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.0100 regime=trend conf=0.80 hostile=0
+2026-03-23T16:45:11.365474184Z [inf]  📊 FEAT | close=90.0100 ema8=89.9044 ema18=90.0774 ema50=90.4343 rsi=43.46 adx=29.94 atrPct=0.321 oiTrend=1 cvdTrend=-1
+2026-03-23T16:45:11.365478204Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:45:11.365481929Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.117 < min=0.18
+2026-03-23T16:45:11.365485252Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:45:11.365488958Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:45:11.365492240Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:48:12.033265822Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:48:12.033271518Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3100 regime=trend conf=0.80 hostile=0
+2026-03-23T16:48:12.033276265Z [inf]  📊 FEAT | close=90.3100 ema8=89.9945 ema18=90.1019 ema50=90.4294 rsi=51.40 adx=27.93 atrPct=0.328 oiTrend=1 cvdTrend=-1
+2026-03-23T16:48:12.033280972Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:48:12.033284736Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false
+2026-03-23T16:48:12.033288796Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:48:12.033292865Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:48:12.033297042Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:51:02.948273923Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:51:02.948284098Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:51:02.948290012Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:51:02.948368668Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:51:02.948374333Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3800 regime=trend conf=0.80 hostile=0
+2026-03-23T16:51:02.948379531Z [inf]  📊 FEAT | close=90.3800 ema8=90.0802 ema18=90.1312 ema50=90.4275 rsi=53.06 adx=26.45 atrPct=0.320 oiTrend=1 cvdTrend=-1
+2026-03-23T16:51:02.948386421Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:51:02.948399348Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false
+2026-03-23T16:54:04.221160098Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:54:04.221172512Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:54:04.221180709Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T16:54:04.221269627Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:54:04.221275443Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3200 regime=trend conf=0.80 hostile=0
+2026-03-23T16:54:04.221280430Z [inf]  📊 FEAT | close=90.3200 ema8=90.1335 ema18=90.1510 ema50=90.4233 rsi=51.44 adx=25.06 atrPct=0.309 oiTrend=1 cvdTrend=-1
+2026-03-23T16:54:04.221284603Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:54:04.221290290Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false
+2026-03-23T16:57:05.694837218Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T16:57:05.694841195Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.2600 regime=trend conf=0.80 hostile=0
+2026-03-23T16:57:05.694846626Z [inf]  📊 FEAT | close=90.2600 ema8=90.1616 ema18=90.1625 ema50=90.4169 rsi=49.80 adx=23.46 atrPct=0.299 oiTrend=1 cvdTrend=1
+2026-03-23T16:57:05.694851056Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T16:57:05.694855823Z [inf]  🔎 SETUP NOTE | idle no breakout | bullAligned=false, impulsePct=0.109 < min=0.18
+2026-03-23T16:57:05.694859925Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T16:57:05.694863803Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T16:57:05.694868195Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:00:06.339977862Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:00:06.339987982Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3500 regime=mixed conf=0.60 hostile=0
+2026-03-23T17:00:06.339995853Z [inf]  📊 FEAT | close=90.3500 ema8=90.2035 ema18=90.1822 ema50=90.4143 rsi=52.26 adx=22.11 atrPct=0.290 oiTrend=1 cvdTrend=1
+2026-03-23T17:00:06.340005487Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T17:00:06.340015096Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=0.162 < min=0.18
+2026-03-23T17:00:06.340023126Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:00:06.340030728Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:00:06.340038828Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:03:07.482775847Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:03:07.482782139Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3100 regime=mixed conf=0.60 hostile=0
+2026-03-23T17:03:07.482789772Z [inf]  📊 FEAT | close=90.3100 ema8=90.2271 ema18=90.1957 ema50=90.4102 rsi=51.06 adx=21.62 atrPct=0.292 oiTrend=1 cvdTrend=1
+2026-03-23T17:03:07.482796800Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T17:03:07.482803372Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=0.092 < min=0.18
+2026-03-23T17:03:07.482809892Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:03:07.482815736Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:03:07.482820835Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:06:08.428180149Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:06:08.428225341Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:06:08.428230233Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3400 regime=mixed conf=0.60 hostile=0
+2026-03-23T17:06:08.428234615Z [inf]  📊 FEAT | close=90.3400 ema8=90.2522 ema18=90.2109 ema50=90.4074 rsi=51.95 adx=21.02 atrPct=0.296 oiTrend=1 cvdTrend=1
+2026-03-23T17:06:08.428239298Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T17:06:08.428249606Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=0.097 < min=0.18
+2026-03-23T17:06:08.428254971Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:06:08.428259629Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:09:09.333523014Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:09:09.333530755Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.3500 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:09:09.333537110Z [inf]  📊 FEAT | close=90.3500 ema8=90.2739 ema18=90.2255 ema50=90.4052 rsi=52.26 adx=19.94 atrPct=0.299 oiTrend=1 cvdTrend=1
+2026-03-23T17:09:09.333543427Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:09:09.333548582Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=0.084 < min=0.18, adx=19.94 < min=20
+2026-03-23T17:09:09.333554159Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:09:09.333558949Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:09:09.333564795Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:12:10.314371690Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:12:10.314378890Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.4100 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:12:10.314386294Z [inf]  📊 FEAT | close=90.4100 ema8=90.3042 ema18=90.2449 ema50=90.4054 rsi=54.17 adx=18.94 atrPct=0.288 oiTrend=1 cvdTrend=1
+2026-03-23T17:12:10.314391946Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:12:10.314403652Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=0.117 < min=0.18, adx=18.94 < min=20
+2026-03-23T17:12:10.314410375Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:12:10.314419990Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:12:10.314428190Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:15:10.646474219Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:15:10.646479230Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.2500 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:15:10.646485221Z [inf]  📊 FEAT | close=90.2500 ema8=90.2921 ema18=90.2455 ema50=90.3993 rsi=48.58 adx=17.59 atrPct=0.284 oiTrend=-1 cvdTrend=1
+2026-03-23T17:15:10.646490645Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:15:10.646495561Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.047 < min=0.18, adx=17.59 < min=20
+2026-03-23T17:15:10.646501018Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:15:10.646505788Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:15:10.646511305Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:18:11.592743234Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:18:11.592749569Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.1300 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:18:11.592754434Z [inf]  📊 FEAT | close=90.1300 ema8=90.2561 ema18=90.2333 ema50=90.3887 rsi=44.84 adx=17.71 atrPct=0.293 oiTrend=-1 cvdTrend=1
+2026-03-23T17:18:11.592760679Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:18:11.592766422Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.140 < min=0.18, adx=17.71 < min=20
+2026-03-23T17:18:11.592771665Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:18:11.592777048Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:18:11.592783092Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:21:12.689880698Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:21:12.689888104Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.8800 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:21:12.689893574Z [inf]  📊 FEAT | close=89.8800 ema8=90.1725 ema18=90.1961 ema50=90.3688 rsi=38.23 adx=18.01 atrPct=0.299 oiTrend=-1 cvdTrend=1
+2026-03-23T17:21:12.689898155Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:21:12.689902466Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.324 < min=0.18, adx=18.01 < min=20
+2026-03-23T17:21:12.689906857Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:21:12.689910987Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:21:12.689916083Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:24:03.236724746Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:24:03.236732029Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.8000 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:24:03.236737914Z [inf]  📊 FEAT | close=89.8000 ema8=90.0897 ema18=90.1544 ema50=90.3464 rsi=36.39 adx=18.87 atrPct=0.296 oiTrend=-1 cvdTrend=-1
+2026-03-23T17:24:03.236743928Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:24:03.236749652Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.322 < min=0.18, adx=18.87 < min=20
+2026-03-23T17:24:03.236755787Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:24:03.236762603Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:24:03.236768074Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:27:04.161622723Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:27:04.161628249Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.0800 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:27:04.161633959Z [inf]  📊 FEAT | close=90.0800 ema8=90.0876 ema18=90.1466 ema50=90.3360 rsi=46.19 adx=18.78 atrPct=0.298 oiTrend=-1 cvdTrend=-1
+2026-03-23T17:27:04.161639475Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:27:04.161644075Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.008 < min=0.18, adx=18.78 < min=20
+2026-03-23T17:27:04.161649327Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:27:04.161655661Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:27:04.161660751Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:30:15.224856457Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:30:15.224862417Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=89.9900 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:30:15.224868581Z [inf]  📊 FEAT | close=89.9900 ema8=90.0659 ema18=90.1301 ema50=90.3224 rsi=43.85 adx=18.24 atrPct=0.292 oiTrend=-1 cvdTrend=-1
+2026-03-23T17:30:15.224873881Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:30:15.224879367Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.084 < min=0.18, adx=18.24 < min=20
+2026-03-23T17:30:15.224885307Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:30:15.224892047Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:30:15.224897783Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:33:05.713105183Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:33:05.713168982Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.1000 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:33:05.713174347Z [inf]  📊 FEAT | close=90.1000 ema8=90.0735 ema18=90.1269 ema50=90.3137 rsi=47.36 adx=17.82 atrPct=0.288 oiTrend=1 cvdTrend=-1
+2026-03-23T17:33:05.713183837Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:33:05.713188394Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=0.029 < min=0.18, adx=17.82 < min=20
+2026-03-23T17:33:05.713192854Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:33:05.713196321Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:33:05.713204643Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:36:06.739120993Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:36:06.739125456Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.8200 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:36:06.739129823Z [inf]  📊 FEAT | close=90.8200 ema8=90.2394 ema18=90.1999 ema50=90.3336 rsi=63.45 adx=18.18 atrPct=0.326 oiTrend=1 cvdTrend=-1
+2026-03-23T17:36:06.739134739Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:36:06.739139940Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, adx=18.18 < min=20
+2026-03-23T17:36:06.739146530Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:36:06.739151836Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:36:06.739156370Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:39:07.673978285Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:39:07.673982055Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.9800 regime=mixed conf=0.55 hostile=0
+2026-03-23T17:39:07.673986023Z [inf]  📊 FEAT | close=90.9800 ema8=90.4040 ema18=90.2820 ema50=90.3589 rsi=65.94 adx=19.23 atrPct=0.333 oiTrend=1 cvdTrend=1
+2026-03-23T17:39:07.673990342Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T17:39:07.673994895Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, adx=19.23 < min=20
+2026-03-23T17:39:07.674000855Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:39:07.674006938Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:39:07.674011763Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:42:08.624353932Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:42:08.624357809Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.8900 regime=mixed conf=0.60 hostile=0
+2026-03-23T17:42:08.624361066Z [inf]  📊 FEAT | close=90.8900 ema8=90.5120 ema18=90.3460 ema50=90.3797 rsi=63.33 adx=20.20 atrPct=0.330 oiTrend=1 cvdTrend=1
+2026-03-23T17:42:08.624365109Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema not aligned
+2026-03-23T17:42:08.624369849Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false
+2026-03-23T17:42:08.624372980Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T17:42:08.624376290Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T17:42:08.624379550Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:45:09.586462828Z [inf]  🔎 SETUP NOTE | breakout detected
+2026-03-23T17:45:09.586473228Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:45:09.586479241Z [inf]  🔄 BREAKOUT transition | idle -> breakout_detected | breakout detected
+2026-03-23T17:45:09.586481453Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=90.9500 regime=trend conf=0.80 hostile=0
+2026-03-23T17:45:09.586489180Z [inf]  📊 FEAT | close=90.9500 ema8=90.6093 ema18=90.4096 ema50=90.4021 rsi=64.34 adx=21.16 atrPct=0.327 oiTrend=1 cvdTrend=1
+2026-03-23T17:45:09.586491300Z [inf]  🟦 BREAKOUT | phase=breakout_detected trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T17:45:09.586497914Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T17:45:09.586500389Z [inf]  🧩 BREAKOUT reasons | breakout detected
+2026-03-23T17:45:09.586506828Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:45:09.586511722Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":90.95,"time":"2026-03-23T17:42:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T17:45:06.610Z"},"breakout":{"phase":"breakout_detected","startedBar":318,"phaseBar":318,"triggerPrice":90.95,"breakoutLevel":90.95,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["breakout detected"],"lastTransition":"breakout_detected","updatedAt":"2026-03-23T17:45:06.610Z","setupId":"318-90.95-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T17:45:06.610Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T17:42:00Z|90.95"}}
+2026-03-23T17:48:10.573407245Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:48:10.573412368Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.0600 regime=trend conf=0.80 hostile=0
+2026-03-23T17:48:10.573417964Z [inf]  📊 FEAT | close=91.0600 ema8=90.7095 ema18=90.4781 ema50=90.4279 rsi=66.19 adx=22.04 atrPct=0.322 oiTrend=1 cvdTrend=1
+2026-03-23T17:48:10.573423309Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T17:48:10.573427501Z [inf]  🔎 SETUP NOTE | waiting retest
+2026-03-23T17:48:10.573432729Z [inf]  🔄 BREAKOUT transition | breakout_detected -> retest_pending | waiting retest
+2026-03-23T17:48:10.573438262Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T17:48:10.573443094Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T17:48:10.573448659Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:48:10.573453843Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.06,"time":"2026-03-23T17:45:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T17:48:02.083Z"},"breakout":{"phase":"retest_pending","startedBar":318,"phaseBar":319,"triggerPrice":90.95,"breakoutLevel":90.95,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["waiting retest"],"lastTransition":"retest_pending","updatedAt":"2026-03-23T17:48:02.083Z","setupId":"318-90.95-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T17:48:02.083Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T17:45:00Z|91.06"}}
+2026-03-23T17:51:11.912969684Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:51:11.912974236Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.2000 regime=trend conf=0.80 hostile=0
+2026-03-23T17:51:11.912978834Z [inf]  📊 FEAT | close=91.2000 ema8=90.8185 ema18=90.5540 ema50=90.4582 rsi=68.43 adx=23.25 atrPct=0.320 oiTrend=1 cvdTrend=1
+2026-03-23T17:51:11.912982640Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T17:51:11.912986484Z [inf]  🔎 SETUP NOTE | still waiting retest
+2026-03-23T17:51:11.912990056Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T17:51:11.912993444Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T17:51:11.912997594Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:54:02.925998662Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:54:02.926003986Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3000 regime=trend conf=0.80 hostile=0
+2026-03-23T17:54:02.926010458Z [inf]  📊 FEAT | close=91.3000 ema8=90.9255 ema18=90.6326 ema50=90.4912 rsi=69.97 adx=24.45 atrPct=0.306 oiTrend=1 cvdTrend=1
+2026-03-23T17:54:02.926015330Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T17:54:02.926019888Z [inf]  🔎 SETUP NOTE | still waiting retest
+2026-03-23T17:54:02.926024053Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T17:54:02.926028055Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T17:54:02.926032402Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T17:57:04.158517284Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T17:57:04.158525984Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3200 regime=trend conf=0.80 hostile=0
+2026-03-23T17:57:04.158532764Z [inf]  📊 FEAT | close=91.3200 ema8=91.0131 ema18=90.7049 ema50=90.5237 rsi=70.28 adx=25.86 atrPct=0.295 oiTrend=1 cvdTrend=1
+2026-03-23T17:57:04.158539410Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T17:57:04.158545884Z [inf]  🔎 SETUP NOTE | still waiting retest
+2026-03-23T17:57:04.158552574Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T17:57:04.158559764Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T17:57:04.158566225Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:00:15.803727617Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:00:15.803731758Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.2800 regime=trend conf=0.80 hostile=0
+2026-03-23T18:00:15.803736359Z [inf]  📊 FEAT | close=91.2800 ema8=91.0724 ema18=90.7655 ema50=90.5534 rsi=68.74 adx=26.56 atrPct=0.284 oiTrend=-1 cvdTrend=1
+2026-03-23T18:00:15.803740264Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:00:15.803744137Z [inf]  🔎 SETUP NOTE | still waiting retest
+2026-03-23T18:00:15.803747571Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T18:00:15.803751726Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T18:00:15.803754905Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:03:06.825412163Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:03:06.825416840Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3500 regime=trend conf=0.80 hostile=0
+2026-03-23T18:03:06.825422882Z [inf]  📊 FEAT | close=91.3500 ema8=91.1341 ema18=90.8270 ema50=90.5846 rsi=69.98 adx=27.51 atrPct=0.279 oiTrend=-1 cvdTrend=1
+2026-03-23T18:03:06.825427047Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:03:06.825431740Z [inf]  🔎 SETUP NOTE | retest timeout
+2026-03-23T18:03:06.825436594Z [inf]  🔄 BREAKOUT transition | retest_pending -> invalidated | retest timeout
+2026-03-23T18:03:06.825441257Z [inf]  🟦 BREAKOUT | phase=invalidated trigger=90.9500 retest=na bounce=na score=0 allowed=0
+2026-03-23T18:03:06.825446163Z [inf]  🧩 BREAKOUT reasons | retest timeout
+2026-03-23T18:03:06.825451669Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:03:06.825456365Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.35,"time":"2026-03-23T18:00:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:03:02.023Z"},"breakout":{"phase":"invalidated","startedBar":318,"phaseBar":324,"triggerPrice":90.95,"breakoutLevel":90.95,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["retest timeout"],"lastTransition":"invalidated","updatedAt":"2026-03-23T18:03:02.023Z","setupId":"318-90.95-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":"retest_timeout","consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T18:03:02.023Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:00:00Z|91.35"}}
+2026-03-23T18:06:07.912536864Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:06:07.912541335Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3700 regime=trend conf=0.80 hostile=0
+2026-03-23T18:06:07.912545285Z [inf]  📊 FEAT | close=91.3700 ema8=91.1865 ema18=90.8842 ema50=90.6154 rsi=70.34 adx=28.40 atrPct=0.270 oiTrend=-1 cvdTrend=1
+2026-03-23T18:06:07.912549369Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:06:07.912552974Z [inf]  🔎 SETUP NOTE | reset to idle
+2026-03-23T18:06:07.912556522Z [inf]  🔄 BREAKOUT transition | invalidated -> idle | reset to idle
+2026-03-23T18:06:07.912559871Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:06:07.912563527Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:06:07.912567739Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:06:07.912571606Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.37,"time":"2026-03-23T18:03:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:06:03.318Z"},"breakout":{"phase":"idle","startedBar":null,"phaseBar":325,"triggerPrice":null,"breakoutLevel":null,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["returned to idle"],"lastTransition":"reset_to_idle","updatedAt":"2026-03-23T18:06:03.318Z","setupId":null,"retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T18:06:03.318Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:03:00Z|91.37"}}
+2026-03-23T18:09:09.155614676Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:09:09.155618661Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.0400 regime=trend conf=0.80 hostile=0
+2026-03-23T18:09:09.155623117Z [inf]  📊 FEAT | close=91.0400 ema8=91.1540 ema18=90.9006 ema50=90.6320 rsi=57.98 adx=27.43 atrPct=0.287 oiTrend=-1 cvdTrend=1
+2026-03-23T18:09:09.155626912Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:09:09.155630580Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.125 < min=0.18
+2026-03-23T18:09:09.155634180Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:09:09.155637650Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:09:09.155641132Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:12:09.955652819Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:12:09.955659137Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1800 regime=trend conf=0.80 hostile=0
+2026-03-23T18:12:09.955664964Z [inf]  📊 FEAT | close=91.1800 ema8=91.1598 ema18=90.9300 ema50=90.6535 rsi=61.10 adx=26.52 atrPct=0.283 oiTrend=-1 cvdTrend=1
+2026-03-23T18:12:09.955670033Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:12:09.955675330Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.022 < min=0.18
+2026-03-23T18:12:09.955681277Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:12:09.955685848Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:12:09.955691542Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:15:10.377965897Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:15:10.377969757Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1300 regime=trend conf=0.80 hostile=0
+2026-03-23T18:15:10.377973777Z [inf]  📊 FEAT | close=91.1300 ema8=91.1531 ema18=90.9510 ema50=90.6722 rsi=59.40 adx=25.95 atrPct=0.279 oiTrend=-1 cvdTrend=1
+2026-03-23T18:15:10.377980055Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:15:10.377984101Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.025 < min=0.18
+2026-03-23T18:15:10.377988622Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:15:10.377992855Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:15:10.377996473Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:18:11.650773327Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:18:11.650783661Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:18:11.650790631Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:18:11.650858695Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:18:11.650862415Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.2800 regime=trend conf=0.80 hostile=0
+2026-03-23T18:18:11.650866826Z [inf]  📊 FEAT | close=91.2800 ema8=91.1813 ema18=90.9857 ema50=90.6961 rsi=62.75 adx=25.41 atrPct=0.271 oiTrend=-1 cvdTrend=1
+2026-03-23T18:18:11.650873354Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:18:11.650881034Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.108 < min=0.18
+2026-03-23T18:21:02.814273493Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:21:02.814290943Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1500 regime=trend conf=0.80 hostile=0
+2026-03-23T18:21:02.814298914Z [inf]  📊 FEAT | close=91.1500 ema8=91.1744 ema18=91.0030 ema50=90.7139 rsi=58.27 adx=25.00 atrPct=0.265 oiTrend=-1 cvdTrend=1
+2026-03-23T18:21:02.814307200Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:21:02.814313248Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.027 < min=0.18
+2026-03-23T18:21:02.814320053Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:21:02.814334477Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:21:02.814343512Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:24:03.379970639Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:24:03.379976073Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.0900 regime=trend conf=0.80 hostile=0
+2026-03-23T18:24:03.379981401Z [inf]  📊 FEAT | close=91.0900 ema8=91.1556 ema18=91.0121 ema50=90.7286 rsi=56.27 adx=23.79 atrPct=0.259 oiTrend=-1 cvdTrend=1
+2026-03-23T18:24:03.379986686Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:24:03.379991611Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.072 < min=0.18
+2026-03-23T18:24:03.379997681Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:24:03.380003185Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:24:03.380009055Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:27:04.319762100Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:27:04.319768613Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.1100 regime=trend conf=0.80 hostile=0
+2026-03-23T18:27:04.319774196Z [inf]  📊 FEAT | close=91.1100 ema8=91.1455 ema18=91.0224 ema50=90.7436 rsi=56.80 adx=22.90 atrPct=0.252 oiTrend=-1 cvdTrend=1
+2026-03-23T18:27:04.319779955Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:27:04.319785340Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.039 < min=0.18
+2026-03-23T18:27:04.319791360Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:27:04.319797424Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:27:04.319803670Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:30:15.021624332Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:30:15.021633205Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.2800 regime=trend conf=0.80 hostile=0
+2026-03-23T18:30:15.021639475Z [inf]  📊 FEAT | close=91.2800 ema8=91.1754 ema18=91.0495 ema50=90.7646 rsi=61.13 adx=22.62 atrPct=0.252 oiTrend=1 cvdTrend=1
+2026-03-23T18:30:15.021644551Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:30:15.021651461Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.115 < min=0.18
+2026-03-23T18:30:15.021657321Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:30:15.021662522Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:30:15.021667408Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:33:05.444339659Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:33:05.444344322Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5000 regime=trend conf=0.80 hostile=0
+2026-03-23T18:33:05.444349027Z [inf]  📊 FEAT | close=91.5000 ema8=91.2475 ema18=91.0970 ema50=90.7934 rsi=65.89 adx=23.21 atrPct=0.256 oiTrend=1 cvdTrend=1
+2026-03-23T18:33:05.444355612Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:33:05.444360082Z [inf]  🔎 SETUP NOTE | breakout detected
+2026-03-23T18:33:05.444365552Z [inf]  🔄 BREAKOUT transition | idle -> breakout_detected | breakout detected
+2026-03-23T18:33:05.444371477Z [inf]  🟦 BREAKOUT | phase=breakout_detected trigger=91.5000 retest=na bounce=na score=0 allowed=0
+2026-03-23T18:33:05.444376292Z [inf]  🧩 BREAKOUT reasons | breakout detected
+2026-03-23T18:33:05.444380764Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:33:05.444385353Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.5,"time":"2026-03-23T18:30:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:33:03.800Z"},"breakout":{"phase":"breakout_detected","startedBar":334,"phaseBar":334,"triggerPrice":91.5,"breakoutLevel":91.5,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["breakout detected"],"lastTransition":"breakout_detected","updatedAt":"2026-03-23T18:33:03.800Z","setupId":"334-91.5-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T18:33:03.800Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:30:00Z|91.5"}}
+2026-03-23T18:36:05.853857548Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:36:05.853861368Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6600 regime=trend conf=0.80 hostile=0
+2026-03-23T18:36:05.853865805Z [inf]  📊 FEAT | close=91.6600 ema8=91.3392 ema18=91.1562 ema50=90.8274 rsi=68.87 adx=24.24 atrPct=0.256 oiTrend=1 cvdTrend=1
+2026-03-23T18:36:05.853870199Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:36:05.853876258Z [inf]  🔎 SETUP NOTE | waiting retest
+2026-03-23T18:36:05.853880748Z [inf]  🔄 BREAKOUT transition | breakout_detected -> retest_pending | waiting retest
+2026-03-23T18:36:05.853884974Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=91.5000 retest=na bounce=na score=0 allowed=0
+2026-03-23T18:36:05.853890217Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T18:36:05.853895337Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:36:05.853900134Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.66,"time":"2026-03-23T18:33:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:36:03.018Z"},"breakout":{"phase":"retest_pending","startedBar":334,"phaseBar":335,"triggerPrice":91.5,"breakoutLevel":91.5,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["waiting retest"],"lastTransition":"retest_pending","updatedAt":"2026-03-23T18:36:03.018Z","setupId":"334-91.5-breakout","retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T18:36:03.018Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:33:00Z|91.66"}}
+2026-03-23T18:39:06.022157889Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:39:06.022162593Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5700 regime=trend conf=0.80 hostile=0
+2026-03-23T18:39:06.022168127Z [inf]  📊 FEAT | close=91.5700 ema8=91.3905 ema18=91.1998 ema50=90.8565 rsi=65.40 adx=25.42 atrPct=0.256 oiTrend=1 cvdTrend=1
+2026-03-23T18:39:06.022174415Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:39:06.022179607Z [inf]  🔎 SETUP NOTE | still waiting retest
+2026-03-23T18:39:06.022184508Z [inf]  🟦 BREAKOUT | phase=retest_pending trigger=91.5000 retest=na bounce=na score=0 allowed=0
+2026-03-23T18:39:06.022189061Z [inf]  🧩 BREAKOUT reasons | waiting retest
+2026-03-23T18:39:06.022193011Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:42:06.159630170Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:42:06.159634078Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4300 regime=trend conf=0.80 hostile=0
+2026-03-23T18:42:06.159637702Z [inf]  📊 FEAT | close=91.4300 ema8=91.3993 ema18=91.2240 ema50=90.8790 rsi=60.32 adx=25.29 atrPct=0.255 oiTrend=-1 cvdTrend=1
+2026-03-23T18:42:06.159641401Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:42:06.159644821Z [inf]  🔎 SETUP NOTE | retest seen
+2026-03-23T18:42:06.159648445Z [inf]  🔄 BREAKOUT transition | retest_pending -> bounce_confirmed | retest seen
+2026-03-23T18:42:06.159652995Z [inf]  🟦 BREAKOUT | phase=bounce_confirmed trigger=91.5000 retest=91.3700 bounce=91.4300 score=9 allowed=0
+2026-03-23T18:42:06.159657711Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, cvd supportive, rsi supportive, bounce prelim confirmed, meaningful pullback, bounce body ok
+2026-03-23T18:42:06.159661440Z [inf]  🛡️ VALIDATION | oiTrend not supportive, close below trigger, bounce close not strong enough, reclaim above trigger too weak, bounce pct too small (0.066% < 0.12)
+2026-03-23T18:42:06.159665182Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:42:06.159669924Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.43,"time":"2026-03-23T18:39:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:42:02.148Z"},"breakout":{"phase":"bounce_confirmed","startedBar":334,"phaseBar":337,"triggerPrice":91.5,"breakoutLevel":91.5,"retestPrice":91.37,"bouncePrice":91.43,"score":9,"reasons":["trend regime","good regime confidence","strong adx","cvd supportive","rsi supportive","bounce prelim confirmed","meaningful pullback","bounce body ok"],"lastTransition":"bounce_confirmed","updatedAt":"2026-03-23T18:42:02.148Z","setupId":"334-91.5-breakout","retestLow":91.37,"invalidationPrice":91.32431500000001,"readySinceBar":null,"expiresAtBar":null,"bouncePct":0.06566706796541782,"pullbackPct":-0.14207650273223546,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_weak","bounce_body_ok","bounce_close_weak","reclaim_above_trigger_weak"],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":0.1528885006006185,"bounceCloseInRangePct":27.272727272728446,"reclaimPctFromTrigger":-0.0765027322404297,"reentryCount":0},"validation":{"allowed":false,"reasons":["oiTrend not supportive","close below trigger","bounce close not strong enough","reclaim above trigger too weak","bounce pct too small (0.066% < 0.12)"],"updatedAt":"2026-03-23T18:42:02.148Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:39:00Z|91.43"}}
+2026-03-23T18:45:16.314022997Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:45:16.314030308Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4800 regime=trend conf=0.80 hostile=0
+2026-03-23T18:45:16.314037847Z [inf]  📊 FEAT | close=91.4800 ema8=91.4172 ema18=91.2510 ema50=90.9026 rsi=61.47 adx=25.17 atrPct=0.248 oiTrend=-1 cvdTrend=1
+2026-03-23T18:45:16.314044497Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:45:16.314051813Z [inf]  🔎 SETUP NOTE | breakout ready
+2026-03-23T18:45:16.314060164Z [inf]  🔄 BREAKOUT transition | bounce_confirmed -> ready | breakout ready
+2026-03-23T18:45:16.314068598Z [inf]  🟦 BREAKOUT | phase=ready trigger=91.5000 retest=91.3700 bounce=91.4800 score=9 allowed=0
+2026-03-23T18:45:16.314076068Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, cvd supportive, rsi supportive, bounce confirmed, meaningful pullback, bounce pct ok
+2026-03-23T18:45:16.314083427Z [inf]  🛡️ VALIDATION | oiTrend not supportive, close below trigger, bounce close not strong enough, reclaim above trigger too weak
+2026-03-23T18:45:16.314090351Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:45:16.314097186Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.48,"time":"2026-03-23T18:42:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:45:06.722Z"},"breakout":{"phase":"ready","startedBar":334,"phaseBar":338,"triggerPrice":91.5,"breakoutLevel":91.5,"retestPrice":91.37,"bouncePrice":91.48,"score":9,"reasons":["trend regime","good regime confidence","strong adx","cvd supportive","rsi supportive","bounce confirmed","meaningful pullback","bounce pct ok"],"lastTransition":"ready","updatedAt":"2026-03-23T18:45:06.722Z","setupId":"334-91.5-breakout","retestLow":91.37,"invalidationPrice":91.32431500000001,"readySinceBar":338,"expiresAtBar":341,"bouncePct":0.12038962460326084,"pullbackPct":-0.14207650273223546,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_weak","bounce_body_ok","bounce_close_weak","reclaim_above_trigger_weak","bounce_pct_ok","bounce_body_weak","close_below_trigger","ema8_above_ema18"],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":0.06563115292058878,"bounceCloseInRangePct":50.00000000000507,"reclaimPctFromTrigger":-0.021857923497263412,"reentryCount":0},"validation":{"allowed":false,"reasons":["oiTrend not supportive","close below trigger","bounce close not strong enough","reclaim above trigger too weak"],"updatedAt":"2026-03-23T18:45:06.722Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:42:00Z|91.48"}}
+2026-03-23T18:48:06.269586769Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:48:06.269598745Z [inf]  🔎 SETUP NOTE | ready rescored
+2026-03-23T18:48:06.269605822Z [inf]  🟦 BREAKOUT | phase=ready trigger=91.5000 retest=91.3700 bounce=91.4800 score=9 allowed=0
+2026-03-23T18:48:06.269612701Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, cvd supportive, rsi supportive, bounce confirmed, meaningful pullback, bounce pct ok
+2026-03-23T18:48:06.269618389Z [inf]  🛡️ VALIDATION | oiTrend not supportive, bounce close not strong enough, reclaim above trigger too weak
+2026-03-23T18:48:06.269627378Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:48:06.269806784Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:48:06.269812096Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5200 regime=trend conf=0.80 hostile=0
+2026-03-23T18:48:06.269819103Z [inf]  📊 FEAT | close=91.5200 ema8=91.4400 ema18=91.2793 ema50=90.9268 rsi=62.41 adx=25.87 atrPct=0.257 oiTrend=-1 cvdTrend=1
+2026-03-23T18:51:06.175044621Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:51:06.175057000Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5900 regime=trend conf=0.80 hostile=0
+2026-03-23T18:51:06.175060932Z [inf]  📊 FEAT | close=91.5900 ema8=91.4734 ema18=91.3120 ema50=90.9528 rsi=64.06 adx=26.53 atrPct=0.248 oiTrend=-1 cvdTrend=1
+2026-03-23T18:51:06.175064824Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:51:06.175068083Z [inf]  🔎 SETUP NOTE | ready rescored
+2026-03-23T18:51:06.175071833Z [inf]  🟦 BREAKOUT | phase=ready trigger=91.5000 retest=91.3700 bounce=91.4800 score=9 allowed=0
+2026-03-23T18:51:06.175075188Z [inf]  🧩 BREAKOUT reasons | trend regime, good regime confidence, strong adx, cvd supportive, rsi supportive, bounce confirmed, meaningful pullback, bounce pct ok
+2026-03-23T18:51:06.175078642Z [inf]  🛡️ VALIDATION | oiTrend not supportive, bounce close not strong enough, reclaim above trigger too weak
+2026-03-23T18:51:06.175082991Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:54:06.272393590Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:54:06.272404385Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4200 regime=trend conf=0.80 hostile=0
+2026-03-23T18:54:06.272409861Z [inf]  📊 FEAT | close=91.4200 ema8=91.4615 ema18=91.3234 ema50=90.9711 rsi=57.45 adx=26.63 atrPct=0.246 oiTrend=-1 cvdTrend=1
+2026-03-23T18:54:06.272414532Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:54:06.272418645Z [inf]  🔎 SETUP NOTE | setup expired
+2026-03-23T18:54:06.272422844Z [inf]  🔄 BREAKOUT transition | ready -> expired | setup expired
+2026-03-23T18:54:06.272426938Z [inf]  🟦 BREAKOUT | phase=expired trigger=91.5000 retest=91.3700 bounce=91.4800 score=0 allowed=0
+2026-03-23T18:54:06.272430937Z [inf]  🧩 BREAKOUT reasons | expired after 7 bars
+2026-03-23T18:54:06.272435564Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:54:06.272441640Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.42,"time":"2026-03-23T18:51:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:54:01.999Z"},"breakout":{"phase":"expired","startedBar":334,"phaseBar":341,"triggerPrice":91.5,"breakoutLevel":91.5,"retestPrice":91.37,"bouncePrice":91.48,"score":0,"reasons":["expired after 7 bars"],"lastTransition":"expired","updatedAt":"2026-03-23T18:54:01.999Z","setupId":"334-91.5-breakout","retestLow":91.37,"invalidationPrice":91.32431500000001,"readySinceBar":338,"expiresAtBar":341,"bouncePct":0.12038962460326084,"pullbackPct":-0.14207650273223546,"chasePct":null,"qualityFlags":["meaningful_pullback","retest_near_ema8","held_above_ema18","bounce_pct_weak","bounce_body_ok","bounce_close_weak","reclaim_above_trigger_weak","bounce_pct_ok","bounce_body_weak","close_below_trigger","ema8_above_ema18"],"cancelReason":"setup_expired","consumedAtBar":null,"bounceBodyPct":0.06563115292058878,"bounceCloseInRangePct":50.00000000000507,"reclaimPctFromTrigger":-0.021857923497263412,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T18:54:01.999Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:51:00Z|91.42"}}
+2026-03-23T18:57:06.339132940Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T18:57:06.339137951Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5000 regime=trend conf=0.80 hostile=0
+2026-03-23T18:57:06.339143671Z [inf]  📊 FEAT | close=91.5000 ema8=91.4701 ema18=91.3419 ema50=90.9919 rsi=59.57 adx=26.80 atrPct=0.244 oiTrend=-1 cvdTrend=1
+2026-03-23T18:57:06.339149093Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T18:57:06.339153640Z [inf]  🔎 SETUP NOTE | reset to idle
+2026-03-23T18:57:06.339157931Z [inf]  🔄 BREAKOUT transition | expired -> idle | reset to idle
+2026-03-23T18:57:06.339162490Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T18:57:06.339166957Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T18:57:06.339174002Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T18:57:06.339179446Z [inf]  📝 STATE SNAPSHOT {"market":{"symbol":"BINANCE:SOLUSDT","tf":"3","price":91.5,"time":"2026-03-23T18:54:00Z"},"context":{"regime":"trend","confidence":0.8,"hostile":false,"reasons":["adx strong","atrPct healthy","ema aligned"],"updatedAt":"2026-03-23T18:57:02.252Z"},"breakout":{"phase":"idle","startedBar":null,"phaseBar":342,"triggerPrice":null,"breakoutLevel":null,"retestPrice":null,"bouncePrice":null,"score":0,"reasons":["returned to idle"],"lastTransition":"reset_to_idle","updatedAt":"2026-03-23T18:57:02.252Z","setupId":null,"retestLow":null,"invalidationPrice":null,"readySinceBar":null,"expiresAtBar":null,"bouncePct":null,"pullbackPct":null,"chasePct":null,"qualityFlags":[],"cancelReason":null,"consumedAtBar":null,"bounceBodyPct":null,"bounceCloseInRangePct":null,"reclaimPctFromTrigger":null,"reentryCount":0},"validation":{"allowed":false,"reasons":["not in entry-capable phase"],"updatedAt":"2026-03-23T18:57:02.252Z"},"position":{"inPosition":false,"side":null,"entryPrice":null,"entryTime":null,"entrySetupType":null,"entrySetupId":null,"peakPrice":null,"stopPrice":null,"breakEvenArmed":false,"trailingActive":false,"profitLockActive":false,"lastExitReason":null},"execution":{"lastAction":null,"lastActionAt":null,"lastEnteredSetupId":null,"cooldownUntilBar":null,"lastLiveSendOk":null,"lastLiveSendAt":null,"lastLiveResponse":null,"lastLiveEventKey":null,"lastLiveGuardrailReason":null,"lastSignalPayload":null,"lastFeatureEventKey":"BINANCE:SOLUSDT|3|2026-03-23T18:54:00Z|91.5"}}
+2026-03-23T19:00:16.248659100Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:00:16.248664590Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6200 regime=trend conf=0.80 hostile=0
+2026-03-23T19:00:16.248669716Z [inf]  📊 FEAT | close=91.6200 ema8=91.5034 ema18=91.3712 ema50=91.0165 rsi=62.57 adx=27.20 atrPct=0.246 oiTrend=-1 cvdTrend=1
+2026-03-23T19:00:16.248674664Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:00:16.248680026Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.127 < min=0.18
+2026-03-23T19:00:16.248685930Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:00:16.248691904Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:00:16.248697456Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:03:06.273610356Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:03:06.273634872Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6300 regime=trend conf=0.80 hostile=0
+2026-03-23T19:03:06.273642912Z [inf]  📊 FEAT | close=91.6300 ema8=91.5315 ema18=91.3985 ema50=91.0406 rsi=62.82 adx=27.73 atrPct=0.243 oiTrend=-1 cvdTrend=1
+2026-03-23T19:03:06.273651490Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:03:06.273660123Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.108 < min=0.18
+2026-03-23T19:03:06.273667453Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:03:06.273674387Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:03:06.273681422Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:06:06.143922502Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:06:06.143926956Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.7300 regime=trend conf=0.80 hostile=0
+2026-03-23T19:06:06.143932104Z [inf]  📊 FEAT | close=91.7300 ema8=91.5756 ema18=91.4334 ema50=91.0676 rsi=65.30 adx=28.40 atrPct=0.238 oiTrend=-1 cvdTrend=1
+2026-03-23T19:06:06.143935684Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:06:06.143938957Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.169 < min=0.18
+2026-03-23T19:06:06.143942072Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:06:06.143946330Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:06:06.143949880Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:09:05.989660981Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:09:05.989667467Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5600 regime=trend conf=0.80 hostile=0
+2026-03-23T19:09:05.989671036Z [inf]  📊 FEAT | close=91.5600 ema8=91.5722 ema18=91.4467 ema50=91.0869 rsi=58.20 adx=27.50 atrPct=0.262 oiTrend=-1 cvdTrend=1
+2026-03-23T19:09:05.989675062Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:09:05.989678538Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.013 < min=0.18
+2026-03-23T19:09:05.989681869Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:09:05.989685137Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:09:05.989688377Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:12:05.868585156Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:12:05.868590897Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5300 regime=trend conf=0.80 hostile=0
+2026-03-23T19:12:05.868596330Z [inf]  📊 FEAT | close=91.5300 ema8=91.5628 ema18=91.4555 ema50=91.1043 rsi=57.02 adx=26.66 atrPct=0.255 oiTrend=-1 cvdTrend=1
+2026-03-23T19:12:05.868601013Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:12:05.868605940Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.036 < min=0.18
+2026-03-23T19:12:05.868610488Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:12:05.868615910Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:12:05.868621846Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:15:05.641892549Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:15:05.641899740Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4800 regime=trend conf=0.80 hostile=0
+2026-03-23T19:15:05.641906022Z [inf]  📊 FEAT | close=91.4800 ema8=91.5444 ema18=91.4580 ema50=91.1190 rsi=55.03 adx=25.82 atrPct=0.246 oiTrend=-1 cvdTrend=1
+2026-03-23T19:15:05.641911728Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:15:05.641917108Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.070 < min=0.18
+2026-03-23T19:15:05.641921968Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:15:05.641926977Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:15:05.641932917Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:18:06.659671335Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:18:06.659676873Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4000 regime=trend conf=0.80 hostile=0
+2026-03-23T19:18:06.659683458Z [inf]  📊 FEAT | close=91.4000 ema8=91.5123 ema18=91.4519 ema50=91.1300 rsi=51.89 adx=24.08 atrPct=0.247 oiTrend=-1 cvdTrend=1
+2026-03-23T19:18:06.659690185Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:18:06.659697011Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.123 < min=0.18
+2026-03-23T19:18:06.659703912Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:18:06.659773548Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:18:06.659816919Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:21:06.750878831Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:21:06.750887422Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4500 regime=trend conf=0.80 hostile=0
+2026-03-23T19:21:06.750891225Z [inf]  📊 FEAT | close=91.4500 ema8=91.4985 ema18=91.4517 ema50=91.1426 rsi=53.67 adx=22.47 atrPct=0.240 oiTrend=-1 cvdTrend=1
+2026-03-23T19:21:06.750895156Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:21:06.750900005Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=-0.053 < min=0.18
+2026-03-23T19:21:06.750905066Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:21:06.750910041Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:21:06.750914774Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:24:07.248296245Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:24:07.248305899Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5200 regime=trend conf=0.80 hostile=0
+2026-03-23T19:24:07.248310969Z [inf]  📊 FEAT | close=91.5200 ema8=91.5032 ema18=91.4589 ema50=91.1574 rsi=56.11 adx=21.06 atrPct=0.235 oiTrend=-1 cvdTrend=1
+2026-03-23T19:24:07.248315428Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:24:07.248319708Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.018 < min=0.18
+2026-03-23T19:24:07.248324109Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:24:07.248328189Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:24:07.248332008Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:27:07.600022284Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:27:07.600029681Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6500 regime=trend conf=0.80 hostile=0
+2026-03-23T19:27:07.600033501Z [inf]  📊 FEAT | close=91.6500 ema8=91.5359 ema18=91.4790 ema50=91.1767 rsi=60.30 adx=20.76 atrPct=0.237 oiTrend=-1 cvdTrend=1
+2026-03-23T19:27:07.600037112Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:27:07.600040856Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.125 < min=0.18
+2026-03-23T19:27:07.600045829Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:27:07.600049584Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:27:07.600053895Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:30:17.518857447Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:30:17.518862758Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6800 regime=trend conf=0.80 hostile=0
+2026-03-23T19:30:17.518867964Z [inf]  📊 FEAT | close=91.6800 ema8=91.5679 ema18=91.5002 ema50=91.1964 rsi=61.22 adx=20.48 atrPct=0.228 oiTrend=-1 cvdTrend=1
+2026-03-23T19:30:17.518874303Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:30:17.518879491Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.122 < min=0.18
+2026-03-23T19:30:17.518883723Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:30:17.518889104Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:30:17.518894773Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:33:07.514697643Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:33:07.514702764Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6800 regime=trend conf=0.80 hostile=0
+2026-03-23T19:33:07.514707470Z [inf]  📊 FEAT | close=91.6800 ema8=91.5928 ema18=91.5191 ema50=91.2154 rsi=61.22 adx=20.38 atrPct=0.219 oiTrend=-1 cvdTrend=1
+2026-03-23T19:33:07.514712056Z [inf]  🧭 CONTEXT | reasons=adx strong, atrPct healthy, ema aligned
+2026-03-23T19:33:07.514717575Z [inf]  🔎 SETUP NOTE | idle no breakout | impulsePct=0.095 < min=0.18
+2026-03-23T19:33:07.514723021Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:33:07.514728461Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:33:07.514733784Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:36:08.402814868Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:36:08.402818284Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6300 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:36:08.402821918Z [inf]  📊 FEAT | close=91.6300 ema8=91.6011 ema18=91.5308 ema50=91.2317 rsi=58.59 adx=19.91 atrPct=0.212 oiTrend=-1 cvdTrend=1
+2026-03-23T19:36:08.402825705Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:36:08.402830545Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, impulsePct=0.032 < min=0.18, adx=19.91 < min=20
+2026-03-23T19:36:08.402837613Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:36:08.402843508Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:36:08.402848745Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:39:08.364571209Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:39:08.364577161Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6800 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:39:08.364582137Z [inf]  📊 FEAT | close=91.6800 ema8=91.6186 ema18=91.5465 ema50=91.2492 rsi=60.42 adx=19.31 atrPct=0.206 oiTrend=-1 cvdTrend=1
+2026-03-23T19:39:08.364587643Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:39:08.364593153Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, impulsePct=0.067 < min=0.18, adx=19.31 < min=20
+2026-03-23T19:39:08.364598385Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:39:08.364603329Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:39:08.364607692Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:42:08.247532068Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:42:08.247538135Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5500 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:42:08.247543763Z [inf]  📊 FEAT | close=91.5500 ema8=91.6034 ema18=91.5469 ema50=91.2610 rsi=53.78 adx=18.53 atrPct=0.203 oiTrend=-1 cvdTrend=1
+2026-03-23T19:42:08.247549995Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:42:08.247556738Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, impulsePct=-0.058 < min=0.18, adx=18.53 < min=20
+2026-03-23T19:42:08.247563542Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:42:08.247568657Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:42:08.247574351Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:45:08.303206033Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:45:08.303212524Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.6000 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:45:08.303221380Z [inf]  📊 FEAT | close=91.6000 ema8=91.6026 ema18=91.5525 ema50=91.2743 rsi=55.79 adx=17.64 atrPct=0.196 oiTrend=-1 cvdTrend=1
+2026-03-23T19:45:08.303228930Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:45:08.303235026Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, impulsePct=-0.003 < min=0.18, adx=17.64 < min=20
+2026-03-23T19:45:08.303241092Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:45:08.303246533Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:45:08.303252405Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:48:08.111122593Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:48:08.111131110Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5700 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:48:08.111135635Z [inf]  📊 FEAT | close=91.5700 ema8=91.5954 ema18=91.5543 ema50=91.2859 rsi=54.27 adx=17.66 atrPct=0.196 oiTrend=-1 cvdTrend=1
+2026-03-23T19:48:08.111140021Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:48:08.111144030Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, impulsePct=-0.028 < min=0.18, adx=17.66 < min=20
+2026-03-23T19:48:08.111149473Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:48:08.111153823Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:48:08.111157615Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:51:08.126727089Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:51:08.126732366Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4600 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:51:08.126737028Z [inf]  📊 FEAT | close=91.4600 ema8=91.5653 ema18=91.5444 ema50=91.2928 rsi=48.97 adx=16.67 atrPct=0.197 oiTrend=-1 cvdTrend=1
+2026-03-23T19:51:08.126742392Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:51:08.126748837Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, impulsePct=-0.115 < min=0.18, adx=16.67 < min=20
+2026-03-23T19:51:08.126754543Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:51:08.126759312Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:51:08.126764735Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:54:08.153202083Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:54:08.153208436Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3700 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:54:08.153213392Z [inf]  📊 FEAT | close=91.3700 ema8=91.5219 ema18=91.5260 ema50=91.2958 rsi=45.10 adx=15.94 atrPct=0.195 oiTrend=-1 cvdTrend=1
+2026-03-23T19:54:08.153221085Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:54:08.153227122Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.166 < min=0.18, adx=15.94 < min=20
+2026-03-23T19:54:08.153232894Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:54:08.153238700Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:54:08.153243818Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T19:57:08.354343734Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T19:57:08.354350613Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3300 regime=mixed conf=0.55 hostile=0
+2026-03-23T19:57:08.354356840Z [inf]  📊 FEAT | close=91.3300 ema8=91.4792 ema18=91.5054 ema50=91.2971 rsi=43.45 adx=15.51 atrPct=0.188 oiTrend=-1 cvdTrend=1
+2026-03-23T19:57:08.354363746Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T19:57:08.354369890Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.163 < min=0.18, adx=15.51 < min=20
+2026-03-23T19:57:08.354379940Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T19:57:08.354386820Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T19:57:08.354393467Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T20:00:09.243505789Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T20:00:09.243509928Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3900 regime=mixed conf=0.55 hostile=0
+2026-03-23T20:00:09.243514231Z [inf]  📊 FEAT | close=91.3900 ema8=91.4594 ema18=91.4932 ema50=91.3008 rsi=46.60 adx=14.60 atrPct=0.196 oiTrend=1 cvdTrend=1
+2026-03-23T20:00:09.243518158Z [inf]  🧭 CONTEXT | reasons=mid adx
+2026-03-23T20:00:09.243522361Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=mixed, bullAligned=false, impulsePct=-0.076 < min=0.18, adx=14.60 < min=20
+2026-03-23T20:00:09.243526260Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T20:00:09.243530018Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T20:00:09.243533744Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T20:03:10.036059990Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T20:03:10.036067019Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.3000 regime=range conf=0.75 hostile=0
+2026-03-23T20:03:10.036070816Z [inf]  📊 FEAT | close=91.3000 ema8=91.4240 ema18=91.4729 ema50=91.3007 rsi=42.76 adx=13.75 atrPct=0.199 oiTrend=-1 cvdTrend=1
+2026-03-23T20:03:10.036074852Z [inf]  🧭 CONTEXT | reasons=low adx
+2026-03-23T20:03:10.036078850Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=range, bullAligned=false, impulsePct=-0.136 < min=0.18, adx=13.75 < min=20
+2026-03-23T20:03:10.036083026Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T20:03:10.036087476Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T20:03:10.036092251Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T20:06:10.771094506Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T20:06:10.771098632Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4400 regime=range conf=0.75 hostile=0
+2026-03-23T20:06:10.771104309Z [inf]  📊 FEAT | close=91.4400 ema8=91.4275 ema18=91.4694 ema50=91.3062 rsi=49.71 adx=13.17 atrPct=0.203 oiTrend=1 cvdTrend=1
+2026-03-23T20:06:10.771108264Z [inf]  🧭 CONTEXT | reasons=low adx
+2026-03-23T20:06:10.771112722Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=range, bullAligned=false, impulsePct=0.014 < min=0.18, adx=13.17 < min=20
+2026-03-23T20:06:10.771116764Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T20:06:10.771120704Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T20:06:10.771126350Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T20:09:11.281755424Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T20:09:11.281760344Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.4700 regime=range conf=0.75 hostile=0
+2026-03-23T20:09:11.281765652Z [inf]  📊 FEAT | close=91.4700 ema8=91.4370 ema18=91.4695 ema50=91.3126 rsi=51.08 adx=12.63 atrPct=0.193 oiTrend=1 cvdTrend=1
+2026-03-23T20:09:11.281770461Z [inf]  🧭 CONTEXT | reasons=low adx
+2026-03-23T20:09:11.281774816Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=range, bullAligned=false, impulsePct=0.036 < min=0.18, adx=12.63 < min=20
+2026-03-23T20:09:11.281779485Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T20:09:11.281784283Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T20:09:11.281789988Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
+2026-03-23T20:12:12.577595224Z [inf]  🚫 ENTRY BLOCKED | validation not allowed
+2026-03-23T20:12:12.577603558Z [inf]  🧠 Brain Phase 5 v5.3 | FEATURES | symbol=BINANCE:SOLUSDT tf=3 price=91.5300 regime=range conf=0.75 hostile=0
+2026-03-23T20:12:12.577610979Z [inf]  📊 FEAT | close=91.5300 ema8=91.4577 ema18=91.4759 ema50=91.3211 rsi=53.79 adx=12.96 atrPct=0.191 oiTrend=1 cvdTrend=1
+2026-03-23T20:12:12.577618631Z [inf]  🧭 CONTEXT | reasons=low adx
+2026-03-23T20:12:12.577626105Z [inf]  🔎 SETUP NOTE | idle no breakout | regime=range, bullAligned=false, impulsePct=0.079 < min=0.18, adx=12.96 < min=20
+2026-03-23T20:12:12.577634030Z [inf]  🟦 BREAKOUT | phase=idle trigger=na retest=na bounce=na score=0 allowed=0
+2026-03-23T20:12:12.577639558Z [inf]  🧩 BREAKOUT reasons | returned to idle
+2026-03-23T20:12:12.577645048Z [inf]  📍 POSITION | inPosition=0 side=na entry=na stop=na peak=na be=0 trail=0 pl=0 cooldownUntilBar=na
