@@ -189,6 +189,10 @@ export async function processEvent(payload) {
   logBreakout(state4);
   logPosition(state4);
 
+  export function getBrainState() {
+  return getState();
+}
+
   if (CONFIG.LOG_FULL_STATE_ON_TRANSITIONS && before !== after) {
     console.log(
       `📝 STATE SNAPSHOT ${JSON.stringify({
