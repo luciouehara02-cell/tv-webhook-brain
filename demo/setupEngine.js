@@ -56,6 +56,8 @@ function scoreBreakout(state, setup, options = {}) {
   if ((f.oiTrend ?? 0) > 0) {
     score += 1;
     reasons.push("oi supportive");
+  } else if ((f.cvdTrend ?? 0) >= 0 && c.regime === "trend") {
+    reasons.push("oi weak but tolerated");
   }
 
   if ((f.cvdTrend ?? 0) >= 0) {
@@ -83,6 +85,14 @@ function scoreBreakout(state, setup, options = {}) {
   ) {
     score += 1;
     reasons.push("meaningful pullback");
+  }
+
+  if (
+    Array.isArray(setup.qualityFlags) &&
+    setup.qualityFlags.includes("shallow_pullback_ok")
+  ) {
+    score += 1;
+    reasons.push("shallow pullback acceptable");
   }
 
   if (
@@ -116,6 +126,14 @@ function scoreBreakout(state, setup, options = {}) {
   ) {
     score += 1;
     reasons.push("reclaim above trigger ok");
+  }
+
+  if (
+    Array.isArray(setup.qualityFlags) &&
+    setup.qualityFlags.includes("retest_near_trigger")
+  ) {
+    score += 1;
+    reasons.push("retest near trigger");
   }
 
   return { score, reasons };
@@ -195,11 +213,18 @@ export function runBreakoutSetup(state) {
   }
 
   const bullAligned = ema8 > ema18 && ema18 > ema50;
+  const softBullAligned =
+    ema8 > ema18 && close > ema18 && ema18 >= ema50 * (1 - 0.0015);
+
   const impulsePct = pctChange(close, ema8) ?? 0;
   const retestTolerance = CONFIG.BREAKOUT_RETEST_TOLERANCE_PCT / 100;
 
-  // Generic lifecycle expiry should only apply to active setup phases,
-  // not terminal states that should reset on the next bar.
+  const strongTrendContext =
+    c.regime === "trend" &&
+    !c.hostile &&
+    (f.adx ?? 0) >= CONFIG.REGIME_ADX_TREND_MIN &&
+    (f.atrPct ?? 0) >= 0.22;
+
   if (
     s.phase !== "idle" &&
     s.phase !== "invalidated" &&
@@ -229,7 +254,7 @@ export function runBreakoutSetup(state) {
 
     if (c.regime !== "trend") rejectReasons.push(`regime=${c.regime}`);
     if (c.hostile) rejectReasons.push("hostile=true");
-    if (!bullAligned) rejectReasons.push("bullAligned=false");
+    if (!(bullAligned || softBullAligned)) rejectReasons.push("bullAligned=false");
 
     if (impulsePct < CONFIG.BREAKOUT_MIN_IMPULSE_PCT) {
       rejectReasons.push(
@@ -244,11 +269,9 @@ export function runBreakoutSetup(state) {
     }
 
     if (
-      c.regime === "trend" &&
-      !c.hostile &&
-      bullAligned &&
-      impulsePct >= CONFIG.BREAKOUT_MIN_IMPULSE_PCT &&
-      (f.adx ?? 0) >= CONFIG.REGIME_ADX_TREND_MIN
+      strongTrendContext &&
+      (bullAligned || softBullAligned) &&
+      impulsePct >= CONFIG.BREAKOUT_MIN_IMPULSE_PCT
     ) {
       return {
         action: "transition",
@@ -309,15 +332,36 @@ export function runBreakoutSetup(state) {
   if (s.phase === "retest_pending") {
     const barsSincePhase = bar - (s.phaseBar ?? bar);
 
+    const lowPullbackPct = pctChange(low, s.triggerPrice) ?? 0;
+    const triggerDistancePct = Math.abs(pctChange(low, s.triggerPrice) ?? 0);
     const retestNearEma8 = Math.abs((low - ema8) / ema8) <= retestTolerance;
     const retestAboveEma18 = low >= ema18;
 
-    const lowPullbackPct = pctChange(low, s.triggerPrice) ?? 0;
     const meaningfulPullback =
       lowPullbackPct <= -CONFIG.BREAKOUT_MIN_PULLBACK_PCT;
 
-    const retestSeen =
+    const shallowPullback =
+      lowPullbackPct <= -(CONFIG.BREAKOUT_SHALLOW_PULLBACK_PCT ?? 0.08);
+
+    const nearTrigger =
+      triggerDistancePct <= (CONFIG.BREAKOUT_RETEST_NEAR_TRIGGER_PCT ?? 0.12);
+
+    const strongRetestTrendContext =
+      c.regime === "trend" &&
+      !c.hostile &&
+      (f.adx ?? 0) >= (CONFIG.BREAKOUT_SHALLOW_RETEST_MIN_ADX ?? 22) &&
+      (f.cvdTrend ?? 0) >= 0;
+
+    const strongRetestSeen =
       meaningfulPullback && retestNearEma8 && retestAboveEma18;
+
+    const shallowRetestSeen =
+      shallowPullback &&
+      retestAboveEma18 &&
+      strongRetestTrendContext &&
+      (retestNearEma8 || nearTrigger);
+
+    const retestSeen = strongRetestSeen || shallowRetestSeen;
 
     if (barsSincePhase > CONFIG.BREAKOUT_MAX_RETEST_BARS) {
       return {
@@ -359,8 +403,10 @@ export function runBreakoutSetup(state) {
       const reclaimPctFromTrigger = pctChange(close, s.triggerPrice) ?? 0;
 
       const qualityFlags = uniqueFlags([
-        "meaningful_pullback",
+        strongRetestSeen ? "meaningful_pullback" : null,
+        shallowRetestSeen ? "shallow_pullback_ok" : null,
         retestNearEma8 ? "retest_near_ema8" : null,
+        nearTrigger ? "retest_near_trigger" : null,
         retestAboveEma18 ? "held_above_ema18" : null,
         provisionalBouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
           ? "bounce_pct_ok"
@@ -418,7 +464,7 @@ export function runBreakoutSetup(state) {
           qualityFlags,
           lastTransition: "bounce_confirmed",
         },
-        note: "retest seen",
+        note: strongRetestSeen ? "retest seen" : "shallow retest seen",
       };
     }
 
@@ -477,7 +523,14 @@ export function runBreakoutSetup(state) {
       ema8 > ema18 ? "ema8_above_ema18" : "ema8_not_above_ema18",
     ]);
 
-    if (bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT) {
+    const bounceReady =
+      bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT ||
+      (bouncePct >= (CONFIG.BREAKOUT_MIN_READY_BOUNCE_PCT ?? 0.06) &&
+        close >= s.triggerPrice &&
+        ema8 > ema18 &&
+        (f.adx ?? 0) >= (CONFIG.BREAKOUT_SHALLOW_RETEST_MIN_ADX ?? 22));
+
+    if (bounceReady) {
       const scored = scoreBreakout(
         state,
         {
