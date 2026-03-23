@@ -1,197 +1,217 @@
-const state = {
-  meta: {
-    brainVersion: "Brain Phase 5 v5.1",
-    startedAt: new Date().toISOString(),
-    lastEventAt: null,
-    lastEventType: null,
-    barIndex: 0,
-  },
+import { CONFIG } from "./config.js";
 
-  market: {
-    symbol: "BINANCE:SOLUSDT",
-    tf: "3",
-    price: null,
-    time: null,
-  },
-
-  features: {
-    open: null,
-    high: null,
-    low: null,
-    close: null,
-
-    ema8: null,
-    ema18: null,
-    ema50: null,
-    rsi: null,
-    atr: null,
-    atrPct: null,
-    adx: null,
-
-    oiTrend: null,
-    oiDeltaBias: null,
-    cvdTrend: null,
-    liqClusterBelow: null,
-    priceDropPct: null,
-    patternAReady: null,
-    patternAWatch: null,
-  },
-
-  context: {
-    regime: "unknown",
-    confidence: 0,
-    hostile: false,
-    reasons: [],
-    updatedAt: null,
-  },
-
-  setups: {
-    breakout: {
-      phase: "idle",
-      startedBar: null,
-      phaseBar: null,
-      triggerPrice: null,
-      breakoutLevel: null,
-      retestPrice: null,
-      bouncePrice: null,
-      score: 0,
-      reasons: [],
-      lastTransition: null,
-      updatedAt: null,
-
-      setupId: null,
-      retestLow: null,
-      invalidationPrice: null,
-      readySinceBar: null,
-      expiresAtBar: null,
-      bouncePct: null,
-      pullbackPct: null,
-      chasePct: null,
-      qualityFlags: [],
-      cancelReason: null,
-      consumedAtBar: null,
+function createInitialState() {
+  return {
+    market: {
+      symbol: CONFIG.SYMBOL,
+      tf: CONFIG.TF,
+      price: null,
+      time: null,
     },
-  },
 
-  validation: {
-    breakout: {
-      allowed: false,
+    meta: {
+      barIndex: 0,
+      lastUpdatedAt: null,
+    },
+
+    features: {
+      open: null,
+      high: null,
+      low: null,
+      close: null,
+      ema8: null,
+      ema18: null,
+      ema50: null,
+      rsi: null,
+      atr: null,
+      atrPct: null,
+      adx: null,
+      oiTrend: null,
+      oiDeltaBias: null,
+      cvdTrend: null,
+      liqClusterBelow: null,
+      priceDropPct: null,
+      patternAReady: null,
+      patternAWatch: null,
+    },
+
+    context: {
+      regime: "unknown",
+      confidence: 0,
+      hostile: false,
       reasons: [],
       updatedAt: null,
     },
-  },
 
-  position: {
-    inPosition: false,
-    side: null,
-    entryPrice: null,
-    entryTime: null,
-    entrySetupType: null,
-    entrySetupId: null,
-    peakPrice: null,
-    stopPrice: null,
-    breakEvenArmed: false,
-    trailingActive: false,
-    profitLockActive: false,
-    lastExitReason: null,
-  },
+    setups: {
+      breakout: {
+        phase: "idle",
+        startedBar: null,
+        phaseBar: null,
+        triggerPrice: null,
+        breakoutLevel: null,
+        retestPrice: null,
+        bouncePrice: null,
+        score: 0,
+        reasons: [],
+        lastTransition: null,
+        updatedAt: null,
 
-  execution: {
-    lastAction: null,
-    lastActionAt: null,
-    lastEnteredSetupId: null,
-    cooldownUntilBar: null,
-    lastLiveSendOk: null,
-    lastLiveSendAt: null,
-    lastLiveResponse: null,
-    lastLiveEventKey: null,
-    lastLiveGuardrailReason: null,
-    lastSignalPayload: null,
-  },
-};
+        setupId: null,
+        retestLow: null,
+        invalidationPrice: null,
+        readySinceBar: null,
+        expiresAtBar: null,
+        bouncePct: null,
+        pullbackPct: null,
+        chasePct: null,
+        qualityFlags: [],
+        cancelReason: null,
+        consumedAtBar: null,
 
-function touchMeta(eventType) {
-  state.meta.lastEventAt = new Date().toISOString();
-  state.meta.lastEventType = eventType;
-}
+        bounceBodyPct: null,
+        bounceCloseInRangePct: null,
+        reclaimPctFromTrigger: null,
+        reentryCount: 0,
+      },
+    },
 
-export function updateTick(payload) {
-  if (payload?.symbol) state.market.symbol = payload.symbol;
-  if (payload?.tf) state.market.tf = String(payload.tf);
-  if (payload?.price !== undefined) state.market.price = Number(payload.price);
-  if (payload?.time) state.market.time = payload.time;
-  touchMeta("tick");
-}
+    validation: {
+      breakout: {
+        allowed: false,
+        reasons: ["not in entry-capable phase"],
+        updatedAt: null,
+      },
+    },
 
-export function updateFeatures(payload) {
-  if (payload?.symbol) state.market.symbol = payload.symbol;
-  if (payload?.tf) state.market.tf = String(payload.tf);
+    position: {
+      inPosition: false,
+      side: null,
+      entryPrice: null,
+      entryTime: null,
+      entrySetupType: null,
+      entrySetupId: null,
+      peakPrice: null,
+      stopPrice: null,
+      breakEvenArmed: false,
+      trailingActive: false,
+      profitLockActive: false,
+      lastExitReason: null,
+    },
 
-  if (payload?.open !== undefined) state.features.open = Number(payload.open);
-  if (payload?.high !== undefined) state.features.high = Number(payload.high);
-  if (payload?.low !== undefined) state.features.low = Number(payload.low);
-  if (payload?.close !== undefined) state.features.close = Number(payload.close);
+    execution: {
+      lastAction: null,
+      lastActionAt: null,
+      lastEnteredSetupId: null,
+      cooldownUntilBar: null,
 
-  if (payload?.ema8 !== undefined) state.features.ema8 = Number(payload.ema8);
-  if (payload?.ema18 !== undefined) state.features.ema18 = Number(payload.ema18);
-  if (payload?.ema50 !== undefined) state.features.ema50 = Number(payload.ema50);
-  if (payload?.rsi !== undefined) state.features.rsi = Number(payload.rsi);
-  if (payload?.atr !== undefined) state.features.atr = Number(payload.atr);
-  if (payload?.atrPct !== undefined) state.features.atrPct = Number(payload.atrPct);
-  if (payload?.adx !== undefined) state.features.adx = Number(payload.adx);
+      lastLiveSendOk: null,
+      lastLiveSendAt: null,
+      lastLiveResponse: null,
+      lastLiveEventKey: null,
+      lastLiveGuardrailReason: null,
+      lastSignalPayload: null,
 
-  if (payload?.oiTrend !== undefined) state.features.oiTrend = Number(payload.oiTrend);
-  if (payload?.oiDeltaBias !== undefined) state.features.oiDeltaBias = Number(payload.oiDeltaBias);
-  if (payload?.cvdTrend !== undefined) state.features.cvdTrend = Number(payload.cvdTrend);
-  if (payload?.liqClusterBelow !== undefined) state.features.liqClusterBelow = Number(payload.liqClusterBelow);
-  if (payload?.priceDropPct !== undefined) state.features.priceDropPct = Number(payload.priceDropPct);
-  if (payload?.patternAReady !== undefined) state.features.patternAReady = Number(payload.patternAReady);
-  if (payload?.patternAWatch !== undefined) state.features.patternAWatch = Number(payload.patternAWatch);
+      lastFeatureEventKey: null,
+    },
 
-  if (payload?.time) state.market.time = payload.time;
-
-  state.meta.barIndex += 1;
-  touchMeta("features");
-}
-
-export function updateContext(context) {
-  state.context = {
-    ...state.context,
-    ...context,
-    updatedAt: new Date().toISOString(),
+    tick: {
+      lastPrice: null,
+      lastTime: null,
+      count: 0,
+    },
   };
 }
 
-export function updateBreakoutSetup(patch) {
-  state.setups.breakout = {
-    ...state.setups.breakout,
-    ...patch,
-    updatedAt: new Date().toISOString(),
-  };
+let STATE = createInitialState();
+
+function stamp() {
+  return new Date().toISOString();
 }
 
-export function updateBreakoutValidation(patch) {
-  state.validation.breakout = {
-    ...state.validation.breakout,
-    ...patch,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-export function updatePosition(patch) {
-  state.position = {
-    ...state.position,
-    ...patch,
-  };
-}
-
-export function updateExecution(patch) {
-  state.execution = {
-    ...state.execution,
-    ...patch,
-  };
+function mergeInto(target, patch) {
+  if (!patch || typeof patch !== "object") return target;
+  Object.assign(target, patch);
+  return target;
 }
 
 export function getState() {
-  return state;
+  return STATE;
+}
+
+export function resetState() {
+  STATE = createInitialState();
+  return STATE;
+}
+
+export function updateTick(payload) {
+  STATE.tick.lastPrice = payload?.price ?? STATE.tick.lastPrice;
+  STATE.tick.lastTime = payload?.time ?? STATE.tick.lastTime;
+  STATE.tick.count = (STATE.tick.count ?? 0) + 1;
+
+  STATE.market.symbol = payload?.symbol ?? STATE.market.symbol;
+  STATE.market.tf = payload?.tf ?? STATE.market.tf;
+  STATE.market.price = payload?.price ?? STATE.market.price;
+  STATE.market.time = payload?.time ?? STATE.market.time;
+
+  STATE.meta.lastUpdatedAt = stamp();
+}
+
+export function updateFeatures(payload) {
+  mergeInto(STATE.features, {
+    open: payload?.open ?? null,
+    high: payload?.high ?? null,
+    low: payload?.low ?? null,
+    close: payload?.close ?? null,
+    ema8: payload?.ema8 ?? null,
+    ema18: payload?.ema18 ?? null,
+    ema50: payload?.ema50 ?? null,
+    rsi: payload?.rsi ?? null,
+    atr: payload?.atr ?? null,
+    atrPct: payload?.atrPct ?? null,
+    adx: payload?.adx ?? null,
+    oiTrend: payload?.oiTrend ?? null,
+    oiDeltaBias: payload?.oiDeltaBias ?? null,
+    cvdTrend: payload?.cvdTrend ?? null,
+    liqClusterBelow: payload?.liqClusterBelow ?? null,
+    priceDropPct: payload?.priceDropPct ?? null,
+    patternAReady: payload?.patternAReady ?? null,
+    patternAWatch: payload?.patternAWatch ?? null,
+  });
+
+  STATE.market.symbol = payload?.symbol ?? STATE.market.symbol;
+  STATE.market.tf = payload?.tf ?? STATE.market.tf;
+  STATE.market.price = payload?.close ?? STATE.market.price;
+  STATE.market.time = payload?.time ?? STATE.market.time;
+
+  STATE.meta.barIndex = (STATE.meta.barIndex ?? 0) + 1;
+  STATE.meta.lastUpdatedAt = stamp();
+}
+
+export function updateContext(patch) {
+  mergeInto(STATE.context, patch);
+  STATE.context.updatedAt = stamp();
+  STATE.meta.lastUpdatedAt = stamp();
+}
+
+export function updateBreakoutSetup(patch) {
+  mergeInto(STATE.setups.breakout, patch);
+  STATE.setups.breakout.updatedAt = stamp();
+  STATE.meta.lastUpdatedAt = stamp();
+}
+
+export function updateBreakoutValidation(patch) {
+  mergeInto(STATE.validation.breakout, patch);
+  STATE.validation.breakout.updatedAt = stamp();
+  STATE.meta.lastUpdatedAt = stamp();
+}
+
+export function updatePosition(patch) {
+  mergeInto(STATE.position, patch);
+  STATE.meta.lastUpdatedAt = stamp();
+}
+
+export function updateExecution(patch) {
+  mergeInto(STATE.execution, patch);
+  STATE.meta.lastUpdatedAt = stamp();
 }
