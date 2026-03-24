@@ -1,4 +1,3 @@
-// entryEngine.js
 import { CONFIG } from "./config.js";
 
 function num(v) {
@@ -11,7 +10,10 @@ function pctDiff(a, b) {
 }
 
 function hasQualityFlag(breakout, flag) {
-  return Array.isArray(breakout?.qualityFlags) && breakout.qualityFlags.includes(flag);
+  return (
+    Array.isArray(breakout?.qualityFlags) &&
+    breakout.qualityFlags.includes(flag)
+  );
 }
 
 function clamp(n, min, max) {
@@ -21,12 +23,14 @@ function clamp(n, min, max) {
 function inferEntryMode(state) {
   const b = state.setups.breakout;
   const f = state.features;
+  const barIndex = state.meta?.barIndex ?? 0;
+  const phaseBar = b.phaseBar ?? barIndex;
 
   if (b.phase === "ready") return "ready";
   if (b.phase === "bounce_confirmed") return "bounce";
 
   if (b.phase === "retest_pending") {
-    const barsSincePhase = (state.meta.barIndex ?? 0) - (b.phaseBar ?? state.meta.barIndex ?? 0);
+    const barsSincePhase = barIndex - phaseBar;
     const extFromTrigger = pctDiff(f.close, b.triggerPrice) ?? 0;
 
     const continuationStrong =
@@ -34,7 +38,8 @@ function inferEntryMode(state) {
       (f.rsi ?? 0) >= (CONFIG.BREAKOUT_CONTINUATION_RSI_MIN ?? 58) &&
       (f.ema8 ?? 0) > (f.ema18 ?? 0) &&
       (f.close ?? 0) > (b.triggerPrice ?? Number.POSITIVE_INFINITY) &&
-      extFromTrigger >= (CONFIG.BREAKOUT_CONTINUATION_MIN_EXTENSION_PCT ?? 0.12) &&
+      extFromTrigger >=
+        (CONFIG.BREAKOUT_CONTINUATION_MIN_EXTENSION_PCT ?? 0.12) &&
       barsSincePhase >= (CONFIG.BREAKOUT_CONTINUATION_MIN_BARS ?? 1);
 
     if (continuationStrong) return "continuation";
@@ -77,7 +82,9 @@ function buildHardAndSoftReasons(state, mode) {
     (f.rsi ?? 0) < CONFIG.BREAKOUT_RSI_MIN_ON_ENTRY
   ) {
     hardReasons.push(
-      `rsi below min (${(f.rsi ?? 0).toFixed(2)} < ${CONFIG.BREAKOUT_RSI_MIN_ON_ENTRY})`
+      `rsi below min (${(f.rsi ?? 0).toFixed(2)} < ${
+        CONFIG.BREAKOUT_RSI_MIN_ON_ENTRY
+      })`
     );
   }
 
@@ -94,11 +101,15 @@ function buildHardAndSoftReasons(state, mode) {
     extFromTrigger !== null &&
     extFromTrigger > CONFIG.MAX_ENTRY_EXTENSION_FROM_TRIGGER_PCT
   ) {
-    hardReasons.push(`too extended from trigger (${extFromTrigger.toFixed(3)}%)`);
+    hardReasons.push(
+      `too extended from trigger (${extFromTrigger.toFixed(3)}%)`
+    );
   }
 
   const triggerUnderPct =
-    num(close) && num(b.triggerPrice) ? ((b.triggerPrice - close) / b.triggerPrice) * 100 : null;
+    num(close) && num(b.triggerPrice)
+      ? ((b.triggerPrice - close) / b.triggerPrice) * 100
+      : null;
 
   if (
     CONFIG.BREAKOUT_REQUIRE_CLOSE_BACK_ABOVE_TRIGGER &&
@@ -108,9 +119,12 @@ function buildHardAndSoftReasons(state, mode) {
   ) {
     if (
       triggerUnderPct !== null &&
-      triggerUnderPct > (CONFIG.MAX_CLOSE_BELOW_TRIGGER_TOLERANCE_PCT ?? 0.10)
+      triggerUnderPct >
+        (CONFIG.MAX_CLOSE_BELOW_TRIGGER_TOLERANCE_PCT ?? 0.10)
     ) {
-      hardReasons.push(`close too far below trigger (${triggerUnderPct.toFixed(3)}%)`);
+      hardReasons.push(
+        `close too far below trigger (${triggerUnderPct.toFixed(3)}%)`
+      );
     } else {
       softReasons.push("close slightly below trigger");
     }
@@ -119,7 +133,8 @@ function buildHardAndSoftReasons(state, mode) {
   if (mode === "ready") {
     if (
       b.readySinceBar !== null &&
-      (state.meta.barIndex - b.readySinceBar) > CONFIG.BREAKOUT_MAX_READY_AGE_BARS_FOR_ENTRY
+      (state.meta.barIndex - b.readySinceBar) >
+        CONFIG.BREAKOUT_MAX_READY_AGE_BARS_FOR_ENTRY
     ) {
       hardReasons.push("ready setup too old");
     }
@@ -179,7 +194,9 @@ function buildHardAndSoftReasons(state, mode) {
       (b.bouncePct ?? 0) < CONFIG.BREAKOUT_MIN_BOUNCE_PCT_FOR_ENTRY
     ) {
       softReasons.push(
-        `bounce pct too small (${(b.bouncePct ?? 0).toFixed(3)}% < ${CONFIG.BREAKOUT_MIN_BOUNCE_PCT_FOR_ENTRY})`
+        `bounce pct too small (${(b.bouncePct ?? 0).toFixed(3)}% < ${
+          CONFIG.BREAKOUT_MIN_BOUNCE_PCT_FOR_ENTRY
+        })`
       );
     }
   }
@@ -215,11 +232,7 @@ function computeChasePct(state, mode) {
 
   if (!num(close)) return null;
 
-  if (mode === "bounce" && num(b.bouncePrice)) {
-    return pctDiff(close, b.bouncePrice);
-  }
-
-  if (mode === "ready" && num(b.bouncePrice)) {
+  if ((mode === "bounce" || mode === "ready") && num(b.bouncePrice)) {
     return pctDiff(close, b.bouncePrice);
   }
 
@@ -238,7 +251,9 @@ function chaseLimitForMode(mode) {
     return CONFIG.BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_READY_ENTRY ?? 0.35;
   }
   if (mode === "continuation") {
-    return CONFIG.BREAKOUT_MAX_CHASE_FROM_TRIGGER_PCT_CONTINUATION_ENTRY ?? 0.28;
+    return (
+      CONFIG.BREAKOUT_MAX_CHASE_FROM_TRIGGER_PCT_CONTINUATION_ENTRY ?? 0.28
+    );
   }
   return 0.25;
 }
@@ -268,14 +283,18 @@ export function validateBreakoutEntry(state) {
   const chaseLimit = chaseLimitForMode(mode);
 
   if (num(chasePct) && chasePct > chaseLimit) {
-    hardReasons.push(`chase too large (${chasePct.toFixed(3)}% > ${chaseLimit})`);
+    hardReasons.push(
+      `chase too large (${chasePct.toFixed(3)}% > ${chaseLimit})`
+    );
   }
 
   const effectiveScore = computeEntryScoreAdjustment(state, mode, softReasons);
 
   if (effectiveScore < (CONFIG.BREAKOUT_MIN_SCORE ?? 7)) {
     hardReasons.push(
-      `effective score too low (${effectiveScore} < ${CONFIG.BREAKOUT_MIN_SCORE ?? 7})`
+      `effective score too low (${effectiveScore} < ${
+        CONFIG.BREAKOUT_MIN_SCORE ?? 7
+      })`
     );
   }
 
@@ -297,7 +316,6 @@ export function validateBreakoutEntry(state) {
 
 export function buildEntryDecision(state) {
   const validation = validateBreakoutEntry(state);
-  const b = state.setups.breakout;
   const f = state.features;
 
   if (!validation.allowed) {
