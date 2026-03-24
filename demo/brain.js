@@ -10,7 +10,6 @@ import {
   updateTick,
 } from "./stateStore.js";
 import { calculateRegime } from "./regimeEngine.js";
-import { validateBreakout } from "./validationEngine.js";
 import { runBreakoutSetup } from "./setupEngine.js";
 import { routeExecution } from "./executionRouter.js";
 import { applyExecutionResult } from "./positionEngine.js";
@@ -21,6 +20,7 @@ import {
   buildExitPatches,
 } from "./tradeManager.js";
 import { shouldExitPosition } from "./exitPolicy.js";
+import { buildEntryDecision } from "./entryEngine.js";
 
 function formatNum(v, digits = 2) {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "na";
@@ -53,7 +53,9 @@ function logBreakout(state) {
   }
 
   if (
-    (b.phase === "ready" || b.phase === "bounce_confirmed") &&
+    (b.phase === "ready" ||
+      b.phase === "bounce_confirmed" ||
+      b.phase === "retest_pending") &&
     v.reasons?.length
   ) {
     console.log(`🛡️ VALIDATION | ${v.reasons.join(", ")}`);
@@ -68,7 +70,9 @@ function logPosition(state) {
 
 function logTransition(beforePhase, afterPhase, note) {
   if (beforePhase !== afterPhase) {
-    console.log(`🔄 BREAKOUT transition | ${beforePhase} -> ${afterPhase} | ${note}`);
+    console.log(
+      `🔄 BREAKOUT transition | ${beforePhase} -> ${afterPhase} | ${note}`
+    );
   }
 }
 
@@ -124,20 +128,18 @@ export async function processEvent(payload) {
 
   const state2 = getState();
 
-  if (
-    state2.setups.breakout.phase === "ready" ||
-    state2.setups.breakout.phase === "bounce_confirmed"
-  ) {
-    const validation = validateBreakout(state2);
-    updateBreakoutValidation(validation);
-  } else {
-    updateBreakoutValidation({
-      allowed: false,
-      reasons: ["not in entry-capable phase"],
-      hardReasons: [],
-      softReasons: [],
-    });
-  }
+  // v5.4 ENTRY ENGINE VALIDATION
+  const entryDecision = buildEntryDecision(state2);
+
+  updateBreakoutValidation({
+    allowed: entryDecision.allowed,
+    mode: entryDecision.mode ?? null,
+    score: entryDecision.score ?? null,
+    chasePct: entryDecision.patch?.chasePct ?? entryDecision.chasePct ?? null,
+    reasons: entryDecision.reasons ?? [],
+    hardReasons: entryDecision.hardReasons ?? [],
+    softReasons: entryDecision.softReasons ?? [],
+  });
 
   const state3 = getState();
   const execResult = routeExecution(state3);
@@ -159,6 +161,11 @@ export async function processEvent(payload) {
     if (applyResult.logLine) console.log(applyResult.logLine);
 
     const postEntryState = getState();
+
+    if (entryDecision.patch) {
+      updateBreakoutSetup(entryDecision.patch);
+    }
+
     const tradePatch = onEntryPositionPatch(postEntryState);
     if (tradePatch) updatePosition(tradePatch);
 
@@ -177,11 +184,14 @@ export async function processEvent(payload) {
       updateBreakoutSetup({
         phase: "consumed",
         lastTransition: "consumed_after_entry",
-        reasons: ["setup consumed after entry"],
+        reasons: [`setup consumed after ${entryDecision.mode ?? "entry"}`],
         consumedAtBar: enteredState.meta.barIndex,
+        lastEntryMode: entryDecision.mode ?? null,
       });
     } else {
-      console.log("⚠️ ENTRY NOT ACTIVATED | setup not consumed because inPosition=0");
+      console.log(
+        "⚠️ ENTRY NOT ACTIVATED | setup not consumed because inPosition=0"
+      );
     }
   } else if (shouldLogBlockedEntry) {
     console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
@@ -257,6 +267,8 @@ export async function processEvent(payload) {
       bounceCloseInRangePct: null,
       reclaimPctFromTrigger: null,
       reentryCount: 0,
+      lastEntryMode: null,
+      entryCandidatePrice: null,
     });
 
     finalSetupNote = `reset after exit (${exitReason})`;
