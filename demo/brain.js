@@ -32,7 +32,7 @@ function logCore(tag, state) {
   );
 
   console.log(
-    `📊 FEAT | close=${formatNum(state.features.close, 4)} ema8=${formatNum(state.features.ema8, 4)} ema18=${formatNum(state.features.ema18, 4)} ema50=${formatNum(state.features.ema50, 4)} rsi=${formatNum(state.features.rsi, 2)} adx=${formatNum(state.features.adx, 2)} atrPct=${formatNum(state.features.atrPct, 3)} oiTrend=${state.features.oiTrend ?? "na"} cvdTrend=${state.features.cvdTrend ?? "na"}`
+    `📊 FEAT | close=${formatNum(state..close, 4)} ema8=${formatNum(state..ema8, 4)} ema18=${formatNum(state..ema18, 4)} ema50=${formatNum(state..ema50, 4)} rsi=${formatNum(state..rsi, 2)} adx=${formatNum(state..adx, 2)} atrPct=${formatNum(state..atrPct, 3)} oiTrend=${state..oiTrend ?? "na"} cvdTrend=${state..cvdTrend ?? "na"}`
   );
 
   if (state.context.reasons?.length) {
@@ -88,7 +88,11 @@ export async function processEvent(payload) {
     console.log(`⚠️ Unknown src=${src ?? "undefined"}`);
     return;
   }
-
+  
+if (CONFIG.LOG_FULL_FEATURE_PAYLOADS) {
+  console.log(`📦 FEATURE PAYLOAD ${JSON.stringify(payload)}`);
+}
+  
   const featureEventKey = [
     payload.symbol ?? "na",
     payload.tf ?? "na",
