@@ -104,14 +104,16 @@ export function validateBreakout(state) {
 
   if (
     CONFIG.BREAKOUT_REQUIRE_MEANINGFUL_PULLBACK_ON_ENTRY &&
-    !hasQualityFlag(b, "meaningful_pullback")
+    !hasQualityFlag(b, "meaningful_pullback") &&
+    !hasQualityFlag(b, "shallow_pullback_ok")
   ) {
     softReasons.push("pullback not meaningful");
   }
 
   if (
     CONFIG.BREAKOUT_REQUIRE_RETEST_NEAR_EMA8_ON_ENTRY &&
-    !hasQualityFlag(b, "retest_near_ema8")
+    !hasQualityFlag(b, "retest_near_ema8") &&
+    !hasQualityFlag(b, "retest_near_trigger")
   ) {
     softReasons.push("retest not near ema8");
   }
