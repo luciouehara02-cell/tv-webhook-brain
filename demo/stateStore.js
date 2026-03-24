@@ -80,6 +80,8 @@ function createInitialState() {
       breakout: {
         allowed: false,
         reasons: ["not in entry-capable phase"],
+        hardReasons: [],
+        softReasons: [],
         updatedAt: null,
       },
     },
@@ -201,8 +203,14 @@ export function updateBreakoutSetup(patch) {
 }
 
 export function updateBreakoutValidation(patch) {
-  mergeInto(STATE.validation.breakout, patch);
-  STATE.validation.breakout.updatedAt = stamp();
+  STATE.validation.breakout = {
+    allowed: false,
+    reasons: [],
+    hardReasons: [],
+    softReasons: [],
+    ...patch,
+    updatedAt: stamp(),
+  };
   STATE.meta.lastUpdatedAt = stamp();
 }
 
