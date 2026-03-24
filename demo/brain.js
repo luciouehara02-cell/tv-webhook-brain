@@ -31,9 +31,10 @@ function logCore(tag, state) {
     `🧠 ${CONFIG.BRAIN_VERSION} | ${tag} | symbol=${state.market.symbol} tf=${state.market.tf} price=${formatNum(state.market.price, 4)} regime=${state.context.regime} conf=${formatNum(state.context.confidence, 2)} hostile=${state.context.hostile ? 1 : 0}`
   );
 
-  console.log(
-    `📊 FEAT | close=${formatNum(state..close, 4)} ema8=${formatNum(state..ema8, 4)} ema18=${formatNum(state..ema18, 4)} ema50=${formatNum(state..ema50, 4)} rsi=${formatNum(state..rsi, 2)} adx=${formatNum(state..adx, 2)} atrPct=${formatNum(state..atrPct, 3)} oiTrend=${state..oiTrend ?? "na"} cvdTrend=${state..cvdTrend ?? "na"}`
-  );
+
+    console.log(
+  `📊 FEAT | close=${formatNum(state.features.close, 4)} ema8=${formatNum(state.features.ema8, 4)} ema18=${formatNum(state.features.ema18, 4)} ema50=${formatNum(state.features.ema50, 4)} rsi=${formatNum(state.features.rsi, 2)} adx=${formatNum(state.features.adx, 2)} atrPct=${formatNum(state.features.atrPct, 3)} oiTrend=${state.features.oiTrend ?? "na"} cvdTrend=${state.features.cvdTrend ?? "na"}`
+    );
 
   if (state.context.reasons?.length) {
     console.log(`🧭 CONTEXT | reasons=${state.context.reasons.join(", ")}`);
