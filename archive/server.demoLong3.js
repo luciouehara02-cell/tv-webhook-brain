@@ -1,14 +1,17 @@
 /**
- * Brain v2.9.9-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * Brain v3.0.0-LONG
+ * READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * + Pending BUY buffer
  * + Re-entry window with loop protection
  * + READY freshness gate for entry
  * + Pending BUY freshness gate
- * + Improved READY replacement logging
- * + Consolidated tick logging (3m throttle)
- * + Compact 3m state snapshot
+ * + Consolidated tick logging
+ * + Compact state snapshot
  * + Entry drift logging
- * + READY TTL ignored while in position
+ * + Exit ladder:
+ *   Stage 1 = Fail Stop
+ *   Stage 2 = Breakeven
+ *   Stage 3 = Profit Lock
  */
 
 import express from "express";
@@ -16,7 +19,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.9-LONG";
+const BRAIN_VERSION = "v3.0.0-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -27,49 +30,45 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const EMERGENCY_BYPASS_COOLDOWN =
   String(process.env.EMERGENCY_BYPASS_COOLDOWN || "false").toLowerCase() === "true";
 
-// READY TTL (minutes). 0 = disabled
+// READY
 const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
-
-// READY must also be fresh enough at actual entry time
 const READY_ENTRY_MAX_AGE_SEC = Number(process.env.READY_ENTRY_MAX_AGE_SEC || "480");
-
-// accept legacy action:"ready" in addition to ready_long
 const READY_ACCEPT_LEGACY_READY =
   String(process.env.READY_ACCEPT_LEGACY_READY || "true").toLowerCase() === "true";
-
-// Base Entry drift gate (BUY must be within this % of latest READY price)
 const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
-
-// Optional per-regime drift overrides
 const READY_MAX_MOVE_PCT_TREND = toNumEnv(process.env.READY_MAX_MOVE_PCT_TREND);
 const READY_MAX_MOVE_PCT_RANGE = toNumEnv(process.env.READY_MAX_MOVE_PCT_RANGE);
-
-// Auto-expire drift gate
 const READY_AUTOEXPIRE_PCT = Number(process.env.READY_AUTOEXPIRE_PCT || String(READY_MAX_MOVE_PCT));
 const READY_AUTOEXPIRE_ENABLED =
   String(process.env.READY_AUTOEXPIRE_ENABLED || "true").toLowerCase() === "true";
 
-// Cooldown after exit (minutes). 0 = disabled
+// Cooldown / heartbeat / logging
 const EXIT_COOLDOWN_MIN = Number(process.env.EXIT_COOLDOWN_MIN || "0");
-
-// Heartbeat safety
 const REQUIRE_FRESH_HEARTBEAT =
   String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
-
-// Consolidated tick/state logging
-const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000"); // 3 min
+const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000");
 const STATE_LOG_EVERY_MS = Number(process.env.STATE_LOG_EVERY_MS || String(TICK_LOG_EVERY_MS));
 
-// Profit Lock
+// ===== Exit ladder =====
+
+// Stage 1: Fail stop
+const FAIL_STOP_ENABLED =
+  String(process.env.FAIL_STOP_ENABLED || "true").toLowerCase() === "true";
+const FAIL_STOP_PCT = Number(process.env.FAIL_STOP_PCT || "0.45");
+
+// Stage 2: Breakeven
+const BREAKEVEN_ENABLED =
+  String(process.env.BREAKEVEN_ENABLED || "true").toLowerCase() === "true";
+const BREAKEVEN_ARM_PCT = Number(process.env.BREAKEVEN_ARM_PCT || "0.35");
+const BREAKEVEN_LOCK_PCT = Number(process.env.BREAKEVEN_LOCK_PCT || "0.05");
+
+// Stage 3: Profit lock
 const PROFIT_LOCK_ENABLED =
   String(process.env.PROFIT_LOCK_ENABLED || "true").toLowerCase() === "true";
-
-// Fixed Profit Lock
 const PROFIT_LOCK_ARM_PCT = Number(process.env.PROFIT_LOCK_ARM_PCT || "0.6");
 const PROFIT_LOCK_GIVEBACK_PCT = Number(process.env.PROFIT_LOCK_GIVEBACK_PCT || "0.35");
 
-// Adaptive Profit Lock
 const PL_ADAPTIVE_ENABLED =
   String(process.env.PL_ADAPTIVE_ENABLED || "true").toLowerCase() === "true";
 
@@ -78,33 +77,26 @@ const PL_GIVEBACK_ATR_MULT_TREND = Number(process.env.PL_GIVEBACK_ATR_MULT_TREND
 const PL_START_ATR_MULT_RANGE = Number(process.env.PL_START_ATR_MULT_RANGE || "1.2");
 const PL_GIVEBACK_ATR_MULT_RANGE = Number(process.env.PL_GIVEBACK_ATR_MULT_RANGE || "0.7");
 
-// Profit Lock clamps
 const PL_MIN_ARM_PCT = Number(process.env.PL_MIN_ARM_PCT || "0");
 const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
 const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
 const PL_MAX_GIVEBACK_PCT = Number(process.env.PL_MAX_GIVEBACK_PCT || "0");
 
-// Optional exit profit filter
 const PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT = Number(
   process.env.PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT || "0"
 );
 
-// Regime switching
+// Regime
 const REGIME_ENABLED =
   String(process.env.REGIME_ENABLED || "true").toLowerCase() === "true";
-
 const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300");
 const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300");
 const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800");
 const REGIME_MIN_TICKS = Number(process.env.REGIME_MIN_TICKS || "10");
-
-// hysteresis thresholds
 const REGIME_TREND_SLOPE_ON_PCT = Number(process.env.REGIME_TREND_SLOPE_ON_PCT || "0.25");
 const REGIME_TREND_SLOPE_OFF_PCT = Number(process.env.REGIME_TREND_SLOPE_OFF_PCT || "0.18");
 const REGIME_RANGE_SLOPE_ON_PCT = Number(process.env.REGIME_RANGE_SLOPE_ON_PCT || "0.12");
 const REGIME_RANGE_SLOPE_OFF_PCT = Number(process.env.REGIME_RANGE_SLOPE_OFF_PCT || "0.16");
-
-// minimum volatility filter
 const REGIME_VOL_MIN_ATR_PCT = Number(process.env.REGIME_VOL_MIN_ATR_PCT || "0.20");
 
 // Crash protection
@@ -138,15 +130,13 @@ const REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT = Number(
   process.env.REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT || "-0.35"
 );
 
-// Pending BUY buffer
+// Pending BUY
 const PENDING_BUY_ENABLED =
   String(process.env.PENDING_BUY_ENABLED || "true").toLowerCase() === "true";
 const PENDING_BUY_WINDOW_SEC = Number(process.env.PENDING_BUY_WINDOW_SEC || "120");
 const PENDING_BUY_MAX_READY_DRIFT_PCT = Number(
   process.env.PENDING_BUY_MAX_READY_DRIFT_PCT || "0.3"
 );
-
-// pending buy must also be recent enough
 const PENDING_BUY_MAX_AGE_SEC = Number(process.env.PENDING_BUY_MAX_AGE_SEC || "60");
 
 // ENTER dedupe
@@ -180,7 +170,7 @@ const THREECOMMAS_TV_EXCHANGE = process.env.THREECOMMAS_TV_EXCHANGE || "";
 const THREECOMMAS_TV_INSTRUMENT = process.env.THREECOMMAS_TV_INSTRUMENT || "";
 
 // ====================
-// MEMORY (in-RAM)
+// MEMORY
 // ====================
 let readyOn = false;
 let readyAtMs = 0;
@@ -211,6 +201,10 @@ let entryPrice = null;
 let entrySymbol = "";
 let peakPrice = null;
 let profitLockArmed = false;
+
+// new stage memory
+let breakevenArmed = false;
+
 let entryMeta = { tv_exchange: null, tv_instrument: null };
 
 let reentry = {
@@ -270,7 +264,6 @@ function normalizeIntent(payload) {
 function logWebhook(payload) {
   const intent = normalizeIntent(payload);
   if (intent === "tick") return;
-
   console.log("==== NEW WEBHOOK ====");
   console.log(payload);
 }
@@ -351,7 +344,6 @@ function isReadyFresh(maxAgeMs) {
 function maybeLogTick(symbol, price, isoTime) {
   const now = nowMs();
   if (!TICK_LOG_EVERY_MS || TICK_LOG_EVERY_MS <= 0) return;
-
   if (!lastTickLogMs || now - lastTickLogMs >= TICK_LOG_EVERY_MS) {
     console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${isoTime}`);
     lastTickLogMs = now;
@@ -367,7 +359,7 @@ function maybeLogState(symbol) {
     const reg = getRegime(symbol);
     const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
     console.log(
-      `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeSec ?? "na"}s inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} lastAction=${lastAction}`
+      `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeSec ?? "na"}s inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} be=${breakevenArmed ? 1 : 0} pl=${profitLockArmed ? 1 : 0} lastAction=${lastAction}`
     );
     lastStateLogMs = now;
   }
@@ -389,6 +381,7 @@ function clearPositionContext(reason = "pos_cleared") {
   entrySymbol = "";
   peakPrice = null;
   profitLockArmed = false;
+  breakevenArmed = false;
   entryMeta = { tv_exchange: null, tv_instrument: null };
   positionWasReentry = false;
   console.log(`🧽 POSITION context cleared (${reason})`);
@@ -412,11 +405,9 @@ function startCrashLock(reason = "crash", minutesOverride = null) {
 function crashLockActive() {
   return crashLockUntilMs && nowMs() < crashLockUntilMs;
 }
-
 function cooldownActive() {
   return cooldownUntilMs && nowMs() < cooldownUntilMs;
 }
-
 function conservativeModeActive() {
   return conservativeUntilMs && nowMs() < conservativeUntilMs;
 }
@@ -455,6 +446,7 @@ function maybeAutoExpireReady(currentPrice, currentSymbol) {
   return false;
 }
 
+// tick analytics
 function pushTick(symbol, price, tMs) {
   if (!symbol || price == null) return;
   const arr = tickHistory.get(symbol) || [];
@@ -646,10 +638,7 @@ async function postTo3Commas(action, payload) {
     console.log(`📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`);
     return { ok: resp.ok, status: resp.status, resp: text };
   } catch (e) {
-    console.log(
-      "⛔ 3Commas POST failed:",
-      e?.name === "AbortError" ? "timeout" : e?.message || e
-    );
+    console.log("⛔ 3Commas POST failed:", e?.name === "AbortError" ? "timeout" : e?.message || e);
     return { ok: false, error: String(e?.message || e) };
   } finally {
     clearTimeout(t);
@@ -674,6 +663,76 @@ function noteExitForEquity(exitPrice) {
   } else if (lossStreak >= 2) {
     startCooldown("equity_loss_streak_2", ES_LOSS_STREAK_2_COOLDOWN_MIN);
   }
+}
+
+// ===== Exit ladder evaluators =====
+
+async function doManagedExit(reason, currentPrice, currentSymbol) {
+  lastAction = reason;
+
+  const fwd = await postTo3Commas("exit_long", {
+    time: new Date().toISOString(),
+    trigger_price: currentPrice,
+    symbol: entrySymbol || currentSymbol,
+    tv_exchange: entryMeta?.tv_exchange,
+    tv_instrument: entryMeta?.tv_instrument,
+  });
+
+  noteExitForEquity(currentPrice);
+  maybeStartOrKeepReentryWindow(currentSymbol || entrySymbol, currentPrice, reason, pctProfit(entryPrice, currentPrice));
+
+  clearReadyContext(reason);
+  clearPositionContext(reason);
+  startCooldown(reason);
+
+  return { exited: true, reason, threecommas: fwd };
+}
+
+async function maybeFailStopExit(currentPrice, currentSymbol) {
+  if (!FAIL_STOP_ENABLED) return false;
+  if (!inPosition) return false;
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) return false;
+  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
+  if (profitLockArmed || breakevenArmed) return false;
+
+  const stopPx = entryPrice * (1 - FAIL_STOP_PCT / 100);
+  if (currentPrice <= stopPx) {
+    console.log(
+      `🛑 FAIL STOP EXIT: price=${currentPrice} <= stop=${stopPx.toFixed(4)} | entry=${entryPrice} | failStop=${FAIL_STOP_PCT}%`
+    );
+    return doManagedExit("fail_stop_exit", currentPrice, currentSymbol);
+  }
+  return false;
+}
+
+async function maybeBreakevenExit(currentPrice, currentSymbol) {
+  if (!BREAKEVEN_ENABLED) return false;
+  if (!inPosition) return false;
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) return false;
+  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
+  if (profitLockArmed) return false;
+
+  const p = pctProfit(entryPrice, currentPrice);
+  if (p == null) return false;
+
+  if (!breakevenArmed && p >= BREAKEVEN_ARM_PCT) {
+    breakevenArmed = true;
+    console.log(
+      `🟡 BREAKEVEN ARMED at +${p.toFixed(3)}% (>= ${BREAKEVEN_ARM_PCT.toFixed(3)}%)`
+    );
+  }
+
+  if (!breakevenArmed) return false;
+
+  const beFloor = entryPrice * (1 + BREAKEVEN_LOCK_PCT / 100);
+  if (currentPrice <= beFloor) {
+    console.log(
+      `🟨 BREAKEVEN EXIT: price=${currentPrice} <= floor=${beFloor.toFixed(4)} | entry=${entryPrice} | lock=${BREAKEVEN_LOCK_PCT}%`
+    );
+    return doManagedExit("breakeven_exit", currentPrice, currentSymbol);
+  }
+
+  return false;
 }
 
 async function maybeProfitLockExit(currentPrice, currentSymbol) {
@@ -718,24 +777,7 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
     console.log(
       `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
     );
-
-    lastAction = "profit_lock_exit_long";
-
-    const fwd = await postTo3Commas("exit_long", {
-      time: new Date().toISOString(),
-      trigger_price: currentPrice,
-      symbol: entrySymbol,
-      tv_exchange: entryMeta?.tv_exchange,
-      tv_instrument: entryMeta?.tv_instrument,
-    });
-
-    noteExitForEquity(currentPrice);
-    maybeStartOrKeepReentryWindow(currentSymbol, currentPrice, "exit_profit_lock", p);
-
-    clearReadyContext("profit_lock_exit");
-    clearPositionContext("profit_lock_exit");
-    startCooldown("profit_lock_exit");
-    return { exited: true, threecommas: fwd };
+    return doManagedExit("profit_lock_exit", currentPrice, currentSymbol);
   }
 
   return false;
@@ -868,7 +910,6 @@ async function handleEnterLong(payload, res, sourceTag) {
   const px = getRayPrice(payload);
   const sym = getSymbolFromPayload(payload);
   const ts = nowMs();
-
   const emergency = isEmergency(payload);
 
   if (crashLockActive()) {
@@ -973,7 +1014,6 @@ async function handleEnterLong(payload, res, sourceTag) {
     }
 
     reentry.triesUsed += 1;
-
     console.log(
       `🟣 REENTRY allowed (${sourceTag}) ref=${reentry.ref} regime=${getRegime(sym)} tries=${reentry.triesUsed}/${reentry.triesMax}`
     );
@@ -1021,6 +1061,7 @@ async function handleEnterLong(payload, res, sourceTag) {
   entrySymbol = sym;
   peakPrice = px;
   profitLockArmed = false;
+  breakevenArmed = false;
 
   positionWasReentry = Boolean(reentryCandidate);
 
@@ -1160,8 +1201,16 @@ function statusPayload() {
     lastTickSymbol,
     lastTickPrice,
 
+    FAIL_STOP_ENABLED,
+    FAIL_STOP_PCT,
+    BREAKEVEN_ENABLED,
+    BREAKEVEN_ARM_PCT,
+    BREAKEVEN_LOCK_PCT,
+    breakevenArmed,
+
     PROFIT_LOCK_ENABLED,
     PL_ADAPTIVE_ENABLED,
+    profitLockArmed,
 
     REGIME_ENABLED,
     SLOPE_WINDOW_SEC,
@@ -1215,7 +1264,6 @@ function statusPayload() {
     entryPrice,
     entrySymbol,
     peakPrice,
-    profitLockArmed,
     entryMeta,
     positionWasReentry,
 
@@ -1268,7 +1316,11 @@ app.post("/webhook", async (req, res) => {
     const r = updateRegime(tickSym);
     const crash = maybeCrashLock(tickSym);
     const expired = maybeAutoExpireReady(tickPx, tickSym);
-    const pl = await maybeProfitLockExit(tickPx, tickSym);
+
+    // exit ladder order
+    const fail = await maybeFailStopExit(tickPx, tickSym);
+    const be = fail ? null : await maybeBreakevenExit(tickPx, tickSym);
+    const pl = fail || be ? null : await maybeProfitLockExit(tickPx, tickSym);
 
     maybeLogState(tickSym);
 
@@ -1278,6 +1330,8 @@ app.post("/webhook", async (req, res) => {
       regime: r || regimeState.get(tickSym) || null,
       crash: crash || null,
       expired,
+      fail_stop: fail || null,
+      breakeven: be || null,
       profit_lock: pl || null,
       readyOn,
       inPosition,
@@ -1407,7 +1461,6 @@ app.post("/webhook", async (req, res) => {
 // ====================
 app.listen(PORT, () => {
   console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
-
   console.log(`Emergency: EMERGENCY_BYPASS_COOLDOWN=${EMERGENCY_BYPASS_COOLDOWN}`);
   console.log(
     `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_ENTRY_MAX_AGE_SEC=${READY_ENTRY_MAX_AGE_SEC} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
@@ -1417,6 +1470,9 @@ app.listen(PORT, () => {
   );
   console.log(`TickLog: TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
   console.log(`StateLog: STATE_LOG_EVERY_MS=${STATE_LOG_EVERY_MS}`);
+  console.log(
+    `ExitLadder: FAIL_STOP_ENABLED=${FAIL_STOP_ENABLED} fail=${FAIL_STOP_PCT}% | BREAKEVEN_ENABLED=${BREAKEVEN_ENABLED} arm=${BREAKEVEN_ARM_PCT}% lock=${BREAKEVEN_LOCK_PCT}% | PROFIT_LOCK_ENABLED=${PROFIT_LOCK_ENABLED} adaptive=${PL_ADAPTIVE_ENABLED}`
+  );
   console.log(
     `Regime: ENABLED=${REGIME_ENABLED} | slopeWin=${SLOPE_WINDOW_SEC}s | atrWin=${ATR_WINDOW_SEC}s | trendOn=${REGIME_TREND_SLOPE_ON_PCT}% | trendOff=${REGIME_TREND_SLOPE_OFF_PCT}% | volMinATR=${REGIME_VOL_MIN_ATR_PCT}%`
   );
