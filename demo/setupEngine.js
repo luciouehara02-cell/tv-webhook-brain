@@ -113,7 +113,8 @@ function scoreBreakout(state, setup, options = {}) {
 
   if (
     num(setup.bounceCloseInRangePct) &&
-    setup.bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+    setup.bounceCloseInRangePct >=
+      (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
   ) {
     score += 1;
     reasons.push("bounce close strong");
@@ -217,12 +218,14 @@ export function runBreakoutSetup(state) {
     ema8 > ema18 && close > ema18 && ema18 >= ema50 * (1 - 0.0015);
 
   const impulsePct = pctChange(close, ema8) ?? 0;
-  const retestTolerance = CONFIG.BREAKOUT_RETEST_TOLERANCE_PCT / 100;
+  const retestTolerance = (CONFIG.BREAKOUT_RETEST_TOLERANCE_PCT ?? 0.15) / 100;
+  const setupAdxMin =
+    CONFIG.BREAKOUT_SETUP_ADX_MIN ?? CONFIG.REGIME_ADX_TREND_MIN ?? 20;
 
   const strongTrendContext =
     c.regime === "trend" &&
     !c.hostile &&
-    (f.adx ?? 0) >= CONFIG.REGIME_ADX_TREND_MIN &&
+    (f.adx ?? 0) >= setupAdxMin &&
     (f.atrPct ?? 0) >= 0.22;
 
   if (
@@ -262,9 +265,9 @@ export function runBreakoutSetup(state) {
       );
     }
 
-    if ((f.adx ?? 0) < CONFIG.REGIME_ADX_TREND_MIN) {
+    if ((f.adx ?? 0) < setupAdxMin) {
       rejectReasons.push(
-        `adx=${(f.adx ?? 0).toFixed(2)} < min=${CONFIG.REGIME_ADX_TREND_MIN}`
+        `adx=${(f.adx ?? 0).toFixed(2)} < min=${setupAdxMin}`
       );
     }
 
