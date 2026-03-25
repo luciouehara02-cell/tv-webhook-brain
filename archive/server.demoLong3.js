@@ -1,11 +1,14 @@
 /**
- * Brain v2.9.8-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * Brain v2.9.9-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * + Pending BUY buffer
  * + Re-entry window with loop protection
  * + READY freshness gate for entry
  * + Pending BUY freshness gate
  * + Improved READY replacement logging
  * + Consolidated tick logging (3m throttle)
+ * + Compact 3m state snapshot
+ * + Entry drift logging
+ * + READY TTL ignored while in position
  */
 
 import express from "express";
@@ -13,7 +16,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.8-LONG";
+const BRAIN_VERSION = "v2.9.9-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -54,8 +57,9 @@ const REQUIRE_FRESH_HEARTBEAT =
   String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
 
-// NEW: consolidated tick logging
+// Consolidated tick/state logging
 const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000"); // 3 min
+const STATE_LOG_EVERY_MS = Number(process.env.STATE_LOG_EVERY_MS || String(TICK_LOG_EVERY_MS));
 
 // Profit Lock
 const PROFIT_LOCK_ENABLED =
@@ -198,6 +202,7 @@ let lastTickMs = 0;
 let lastTickSymbol = "";
 let lastTickPrice = null;
 let lastTickLogMs = 0;
+let lastStateLogMs = 0;
 
 const tickHistory = new Map();
 const regimeState = new Map();
@@ -353,6 +358,21 @@ function maybeLogTick(symbol, price, isoTime) {
   }
 }
 
+function maybeLogState(symbol) {
+  const now = nowMs();
+  if (!STATE_LOG_EVERY_MS || STATE_LOG_EVERY_MS <= 0) return;
+  if (!symbol) return;
+
+  if (!lastStateLogMs || now - lastStateLogMs >= STATE_LOG_EVERY_MS) {
+    const reg = getRegime(symbol);
+    const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
+    console.log(
+      `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeSec ?? "na"}s inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} lastAction=${lastAction}`
+    );
+    lastStateLogMs = now;
+  }
+}
+
 function clearReadyContext(reason = "cleared") {
   readyOn = false;
   readyAtMs = 0;
@@ -402,6 +422,7 @@ function conservativeModeActive() {
 }
 
 function ttlExpired() {
+  if (inPosition) return false;
   if (!READY_TTL_MIN || READY_TTL_MIN <= 0) return false;
   return readyOn && nowMs() - readyAtMs > READY_TTL_MIN * 60 * 1000;
 }
@@ -970,6 +991,8 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "missing_price_or_symbol" });
   }
 
+  let entryDriftPct = null;
+
   if (!reentryCandidate && !emergency) {
     if (readyPrice == null) {
       lastAction = "enter_long_blocked_missing_ready_price";
@@ -982,6 +1005,7 @@ async function handleEnterLong(payload, res, sourceTag) {
       return res.json({ ok: false, blocked: "bad_price_diff" });
     }
 
+    entryDriftPct = dPct;
     const maxMove = effectiveReadyMaxMovePct(sym);
 
     if (dPct > maxMove) {
@@ -1011,8 +1035,9 @@ async function handleEnterLong(payload, res, sourceTag) {
   lastAction = "enter_long";
   lastEnterAcceptedTs = ts;
 
+  const readyPxForLog = readyPrice;
   console.log(
-    `🚀 ENTER LONG (${sourceTag}${reentryCandidate ? "+reentry" : ""}${emergency ? "+emergency" : ""}) | regime=${getRegime(entrySymbol)}`
+    `🚀 ENTER LONG (${sourceTag}${reentryCandidate ? "+reentry" : ""}${emergency ? "+emergency" : ""}) | regime=${getRegime(entrySymbol)} | ready=${readyPxForLog ?? "na"} entry=${px ?? "na"} drift=${entryDriftPct != null ? entryDriftPct.toFixed(3) + "%" : "na"}`
   );
 
   const fwd = await postTo3Commas("enter_long", {
@@ -1034,6 +1059,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     source: sourceTag,
     emergency,
     reentry: reentryCandidate ? true : false,
+    entryDriftPct,
     regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
     threecommas: fwd,
   });
@@ -1129,6 +1155,7 @@ function statusPayload() {
     REQUIRE_FRESH_HEARTBEAT,
     HEARTBEAT_MAX_AGE_SEC,
     TICK_LOG_EVERY_MS,
+    STATE_LOG_EVERY_MS,
     lastTickMs,
     lastTickSymbol,
     lastTickPrice,
@@ -1242,6 +1269,8 @@ app.post("/webhook", async (req, res) => {
     const crash = maybeCrashLock(tickSym);
     const expired = maybeAutoExpireReady(tickPx, tickSym);
     const pl = await maybeProfitLockExit(tickPx, tickSym);
+
+    maybeLogState(tickSym);
 
     return res.json({
       ok: true,
@@ -1387,6 +1416,7 @@ app.listen(PORT, () => {
     `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`
   );
   console.log(`TickLog: TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
+  console.log(`StateLog: STATE_LOG_EVERY_MS=${STATE_LOG_EVERY_MS}`);
   console.log(
     `Regime: ENABLED=${REGIME_ENABLED} | slopeWin=${SLOPE_WINDOW_SEC}s | atrWin=${ATR_WINDOW_SEC}s | trendOn=${REGIME_TREND_SLOPE_ON_PCT}% | trendOff=${REGIME_TREND_SLOPE_OFF_PCT}% | volMinATR=${REGIME_VOL_MIN_ATR_PCT}%`
   );
