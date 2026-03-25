@@ -1,22 +1,11 @@
 /**
- * Brain v2.9.7-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * Brain v2.9.8-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * + Pending BUY buffer
  * + Re-entry window with loop protection
  * + READY freshness gate for entry
  * + Pending BUY freshness gate
  * + Improved READY replacement logging
- *
- * Recommended envs for v11 READY:
- *   READY_TTL_MIN=6
- *   READY_ENTRY_MAX_AGE_SEC=420
- *   READY_MAX_MOVE_PCT=0.55
- *   READY_MAX_MOVE_PCT_TREND=0.70
- *   READY_MAX_MOVE_PCT_RANGE=0.45
- *   READY_AUTOEXPIRE_PCT=0.65
- *   PENDING_BUY_WINDOW_SEC=60
- *   PENDING_BUY_MAX_READY_DRIFT_PCT=0.20
- *   PENDING_BUY_MAX_AGE_SEC=60
- *   HEARTBEAT_MAX_AGE_SEC=90
+ * + Consolidated tick logging (3m throttle)
  */
 
 import express from "express";
@@ -24,7 +13,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.7-LONG";
+const BRAIN_VERSION = "v2.9.8-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -38,7 +27,7 @@ const EMERGENCY_BYPASS_COOLDOWN =
 // READY TTL (minutes). 0 = disabled
 const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
 
-// NEW: READY must also be fresh enough at actual entry time
+// READY must also be fresh enough at actual entry time
 const READY_ENTRY_MAX_AGE_SEC = Number(process.env.READY_ENTRY_MAX_AGE_SEC || "480");
 
 // accept legacy action:"ready" in addition to ready_long
@@ -48,11 +37,11 @@ const READY_ACCEPT_LEGACY_READY =
 // Base Entry drift gate (BUY must be within this % of latest READY price)
 const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
 
-// Optional per-regime drift overrides (if set, used when REGIME_ENABLED)
+// Optional per-regime drift overrides
 const READY_MAX_MOVE_PCT_TREND = toNumEnv(process.env.READY_MAX_MOVE_PCT_TREND);
 const READY_MAX_MOVE_PCT_RANGE = toNumEnv(process.env.READY_MAX_MOVE_PCT_RANGE);
 
-// Auto-expire drift gate (READY auto-clears if price drifts too far)
+// Auto-expire drift gate
 const READY_AUTOEXPIRE_PCT = Number(process.env.READY_AUTOEXPIRE_PCT || String(READY_MAX_MOVE_PCT));
 const READY_AUTOEXPIRE_ENABLED =
   String(process.env.READY_AUTOEXPIRE_ENABLED || "true").toLowerCase() === "true";
@@ -60,20 +49,23 @@ const READY_AUTOEXPIRE_ENABLED =
 // Cooldown after exit (minutes). 0 = disabled
 const EXIT_COOLDOWN_MIN = Number(process.env.EXIT_COOLDOWN_MIN || "0");
 
-// Heartbeat safety (ticks freshness)
+// Heartbeat safety
 const REQUIRE_FRESH_HEARTBEAT =
   String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
 
-// Profit Lock (trailing) protection
+// NEW: consolidated tick logging
+const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000"); // 3 min
+
+// Profit Lock
 const PROFIT_LOCK_ENABLED =
   String(process.env.PROFIT_LOCK_ENABLED || "true").toLowerCase() === "true";
 
-// Fixed Profit Lock (fallback)
+// Fixed Profit Lock
 const PROFIT_LOCK_ARM_PCT = Number(process.env.PROFIT_LOCK_ARM_PCT || "0.6");
 const PROFIT_LOCK_GIVEBACK_PCT = Number(process.env.PROFIT_LOCK_GIVEBACK_PCT || "0.35");
 
-// Adaptive Profit Lock (ATR%-scaled)
+// Adaptive Profit Lock
 const PL_ADAPTIVE_ENABLED =
   String(process.env.PL_ADAPTIVE_ENABLED || "true").toLowerCase() === "true";
 
@@ -88,16 +80,15 @@ const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
 const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
 const PL_MAX_GIVEBACK_PCT = Number(process.env.PL_MAX_GIVEBACK_PCT || "0");
 
-// Optional: ignore exit unless profit >= threshold (0 disables)
+// Optional exit profit filter
 const PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT = Number(
   process.env.PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT || "0"
 );
 
-// Regime switching (tick-derived)
+// Regime switching
 const REGIME_ENABLED =
   String(process.env.REGIME_ENABLED || "true").toLowerCase() === "true";
 
-// windows used for regime + ATR estimation
 const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300");
 const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300");
 const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800");
@@ -112,7 +103,7 @@ const REGIME_RANGE_SLOPE_OFF_PCT = Number(process.env.REGIME_RANGE_SLOPE_OFF_PCT
 // minimum volatility filter
 const REGIME_VOL_MIN_ATR_PCT = Number(process.env.REGIME_VOL_MIN_ATR_PCT || "0.20");
 
-// Crash protection layer
+// Crash protection
 const CRASH_PROTECT_ENABLED =
   String(process.env.CRASH_PROTECT_ENABLED || "true").toLowerCase() === "true";
 const CRASH_DUMP_1M_PCT = Number(process.env.CRASH_DUMP_1M_PCT || "2.0");
@@ -151,7 +142,7 @@ const PENDING_BUY_MAX_READY_DRIFT_PCT = Number(
   process.env.PENDING_BUY_MAX_READY_DRIFT_PCT || "0.3"
 );
 
-// NEW: pending buy must also be recent enough
+// pending buy must also be recent enough
 const PENDING_BUY_MAX_AGE_SEC = Number(process.env.PENDING_BUY_MAX_AGE_SEC || "60");
 
 // ENTER dedupe
@@ -206,6 +197,7 @@ let conservativeUntilMs = 0;
 let lastTickMs = 0;
 let lastTickSymbol = "";
 let lastTickPrice = null;
+let lastTickLogMs = 0;
 
 const tickHistory = new Map();
 const regimeState = new Map();
@@ -232,7 +224,6 @@ let reentry = {
 let positionWasReentry = false;
 let lastEnterAcceptedTs = 0;
 
-// Pending BUY
 function emptyPendingBuy() {
   return {
     active: false,
@@ -256,14 +247,27 @@ function toNumEnv(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function logWebhook(payload) {
-  console.log("==== NEW WEBHOOK ====");
-  console.log(payload);
-}
-
 function toNum(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeIntent(payload) {
+  const a = payload?.action ? String(payload.action).toLowerCase() : "";
+  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
+  const s = payload?.src ? String(payload.src).toLowerCase() : "";
+  if (a) return a;
+  if (i) return i;
+  if (s && s !== "ray") return s;
+  return "";
+}
+
+function logWebhook(payload) {
+  const intent = normalizeIntent(payload);
+  if (intent === "tick") return;
+
+  console.log("==== NEW WEBHOOK ====");
+  console.log(payload);
 }
 
 function checkSecret(payload) {
@@ -275,16 +279,6 @@ function checkSecret(payload) {
     payload?.passphrase ??
     "";
   return String(s) === String(WEBHOOK_SECRET);
-}
-
-function normalizeIntent(payload) {
-  const a = payload?.action ? String(payload.action).toLowerCase() : "";
-  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
-  const s = payload?.src ? String(payload.src).toLowerCase() : "";
-  if (a) return a;
-  if (i) return i;
-  if (s && s !== "ray") return s;
-  return "";
 }
 
 function isEmergency(payload) {
@@ -347,6 +341,16 @@ function readyAgeMs() {
 function isReadyFresh(maxAgeMs) {
   if (!readyOn || !readyAtMs) return false;
   return nowMs() - readyAtMs <= maxAgeMs;
+}
+
+function maybeLogTick(symbol, price, isoTime) {
+  const now = nowMs();
+  if (!TICK_LOG_EVERY_MS || TICK_LOG_EVERY_MS <= 0) return;
+
+  if (!lastTickLogMs || now - lastTickLogMs >= TICK_LOG_EVERY_MS) {
+    console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${isoTime}`);
+    lastTickLogMs = now;
+  }
 }
 
 function clearReadyContext(reason = "cleared") {
@@ -1124,6 +1128,7 @@ function statusPayload() {
 
     REQUIRE_FRESH_HEARTBEAT,
     HEARTBEAT_MAX_AGE_SEC,
+    TICK_LOG_EVERY_MS,
     lastTickMs,
     lastTickSymbol,
     lastTickPrice,
@@ -1225,6 +1230,8 @@ app.post("/webhook", async (req, res) => {
     lastTickSymbol = tickSym;
     lastTickPrice = tickPx;
 
+    maybeLogTick(tickSym, tickPx, payload?.time ?? new Date(lastTickMs).toISOString());
+
     pushTick(tickSym, tickPx, lastTickMs);
 
     if (pendingBuy.active && nowMs() > pendingBuy.untilMs) {
@@ -1297,6 +1304,7 @@ app.post("/webhook", async (req, res) => {
       timestamp: payload?.timestamp ?? payload?.time ?? null,
       tv_exchange: payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? null,
       tv_instrument: payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? null,
+      meta_ready_ver: payload?.meta_ready_ver ?? null,
     };
 
     lastAction = "ready_long_set";
@@ -1305,6 +1313,7 @@ app.post("/webhook", async (req, res) => {
       readyPrice,
       readySymbol,
       readyTf,
+      meta_ready_ver: payload?.meta_ready_ver ?? null,
       READY_ENTRY_MAX_AGE_SEC,
       READY_MAX_MOVE_PCT,
       READY_AUTOEXPIRE_ENABLED,
@@ -1377,6 +1386,7 @@ app.listen(PORT, () => {
   console.log(
     `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`
   );
+  console.log(`TickLog: TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
   console.log(
     `Regime: ENABLED=${REGIME_ENABLED} | slopeWin=${SLOPE_WINDOW_SEC}s | atrWin=${ATR_WINDOW_SEC}s | trendOn=${REGIME_TREND_SLOPE_ON_PCT}% | trendOff=${REGIME_TREND_SLOPE_OFF_PCT}% | volMinATR=${REGIME_VOL_MIN_ATR_PCT}%`
   );
