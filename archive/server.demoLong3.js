@@ -357,9 +357,9 @@ function maybeLogState(symbol) {
 
   if (!lastStateLogMs || now - lastStateLogMs >= STATE_LOG_EVERY_MS) {
     const reg = getRegime(symbol);
-    const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
-   const readyAgeStr = readyAgeSec != null ? `${readyAgeSec}s` : "na";
-
+    
+const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
+const readyAgeStr = readyAgeSec != null ? `${readyAgeSec}s` : "na";
 console.log(
   `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeStr} inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} be=${breakevenArmed ? 1 : 0} pl=${profitLockArmed ? 1 : 0} lastAction=${lastAction}`
 );
