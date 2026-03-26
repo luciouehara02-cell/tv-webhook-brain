@@ -128,7 +128,6 @@ export async function processEvent(payload) {
 
   const state2 = getState();
 
-  // v5.4 ENTRY ENGINE VALIDATION
   const entryDecision = buildEntryDecision(state2);
 
   updateBreakoutValidation({
@@ -147,8 +146,7 @@ export async function processEvent(payload) {
   const shouldLogBlockedEntry =
     execResult.action === "noop" &&
     execResult.reason &&
-    execResult.reason !== "already in position" &&
-    !execResult.reason.includes("not in entry-capable phase");
+    execResult.reason !== "already in position";
 
   if (execResult.action !== "noop") {
     const execModeResult = await executeEnterLong(state3);
@@ -160,12 +158,11 @@ export async function processEvent(payload) {
     if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
     if (applyResult.logLine) console.log(applyResult.logLine);
 
-    const postEntryState = getState();
-
     if (entryDecision.patch) {
       updateBreakoutSetup(entryDecision.patch);
     }
 
+    const postEntryState = getState();
     const tradePatch = onEntryPositionPatch(postEntryState);
     if (tradePatch) updatePosition(tradePatch);
 
