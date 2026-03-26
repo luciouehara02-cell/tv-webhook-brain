@@ -9,6 +9,21 @@ import {
   checkLiveExitGuardrails,
 } from "./liveGuardrails.js";
 
+function isDryRunMode() {
+  return CONFIG.EXECUTION_MODE !== "live" || !CONFIG.LIVE_EXECUTION_ENABLED;
+}
+
+function missingSignalFields(signal) {
+  const missing = [];
+  if (!signal?.secret) missing.push("secret");
+  if (!signal?.bot_uuid) missing.push("bot_uuid");
+  if (!signal?.action) missing.push("action");
+  if (!signal?.tv_exchange) missing.push("tv_exchange");
+  if (!signal?.tv_instrument) missing.push("tv_instrument");
+  if (!signal?.trigger_price) missing.push("trigger_price");
+  return missing;
+}
+
 export async function executeEnterLong(state) {
   const signal = build3CommasEnterLongSignal(state);
 
@@ -16,7 +31,7 @@ export async function executeEnterLong(state) {
     console.log(`📦 SIGNAL PREVIEW ENTER | ${JSON.stringify(signal)}`);
   }
 
-  if (CONFIG.EXECUTION_MODE === "dry_run") {
+  if (isDryRunMode()) {
     return {
       mode: "dry_run",
       ok: true,
@@ -24,6 +39,18 @@ export async function executeEnterLong(state) {
       guardrailReason: "dry_run_mode",
       signalPayload: signal,
       logLine: "🧪 EXEC MODE | dry_run | no live order sent",
+    };
+  }
+
+  const missing = missingSignalFields(signal);
+  if (missing.length) {
+    return {
+      mode: "live",
+      ok: false,
+      sent: false,
+      guardrailReason: `missing signal fields: ${missing.join(", ")}`,
+      signalPayload: signal,
+      logLine: `⚠️ LIVE ENTRY BLOCKED | missing signal fields: ${missing.join(", ")}`,
     };
   }
 
@@ -46,14 +73,16 @@ export async function executeEnterLong(state) {
   return {
     mode: "live",
     ok: result.ok,
-    sent: !result.skipped,
+    sent: !!result.ok && !result.skipped,
     result,
     guardrailReason: guard.reason,
     eventKey: guard.eventKey,
     signalPayload: signal,
     logLine: result.skipped
       ? `⚠️ LIVE ENTRY SKIPPED | ${result.reason}`
-      : `📨 LIVE ENTRY SENT | status=${result.status} | ok=${result.ok ? 1 : 0}`,
+      : result.ok
+        ? `📨 LIVE ENTRY SENT | status=${result.status} | ok=1`
+        : `❌ LIVE ENTRY FAILED | status=${result.status} | ok=0`,
   };
 }
 
@@ -64,7 +93,7 @@ export async function executeExitLong(state, exitReason = "exit_long") {
     console.log(`📦 SIGNAL PREVIEW EXIT | ${JSON.stringify(signal)}`);
   }
 
-  if (CONFIG.EXECUTION_MODE === "dry_run") {
+  if (isDryRunMode()) {
     return {
       mode: "dry_run",
       ok: true,
@@ -72,6 +101,18 @@ export async function executeExitLong(state, exitReason = "exit_long") {
       guardrailReason: "dry_run_mode",
       signalPayload: signal,
       logLine: "🧪 EXEC MODE | dry_run | no live exit sent",
+    };
+  }
+
+  const missing = missingSignalFields(signal);
+  if (missing.length) {
+    return {
+      mode: "live",
+      ok: false,
+      sent: false,
+      guardrailReason: `missing signal fields: ${missing.join(", ")}`,
+      signalPayload: signal,
+      logLine: `⚠️ LIVE EXIT BLOCKED | missing signal fields: ${missing.join(", ")}`,
     };
   }
 
@@ -94,13 +135,15 @@ export async function executeExitLong(state, exitReason = "exit_long") {
   return {
     mode: "live",
     ok: result.ok,
-    sent: !result.skipped,
+    sent: !!result.ok && !result.skipped,
     result,
     guardrailReason: guard.reason,
     eventKey: guard.eventKey,
     signalPayload: signal,
     logLine: result.skipped
       ? `⚠️ LIVE EXIT SKIPPED | ${result.reason}`
-      : `📨 LIVE EXIT SENT | status=${result.status} | ok=${result.ok ? 1 : 0}`,
+      : result.ok
+        ? `📨 LIVE EXIT SENT | status=${result.status} | ok=1`
+        : `❌ LIVE EXIT FAILED | status=${result.status} | ok=0`,
   };
 }
