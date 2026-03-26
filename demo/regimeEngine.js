@@ -26,10 +26,15 @@ export function calculateRegime(state) {
   let hostile = false;
 
   if (adx >= CONFIG.REGIME_ADX_TREND_MIN && atrPct >= CONFIG.REGIME_ATRPCT_MIN) {
-    if (bullAligned || bearAligned) {
+    if (bullAligned) {
       regime = "trend";
       confidence = 0.8;
-      reasons.push("adx strong", "atrPct healthy", "ema aligned");
+      reasons.push("adx strong", "atrPct healthy", "bull ema aligned");
+    } else if (bearAligned) {
+      regime = "mixed";
+      confidence = 0.65;
+      hostile = true;
+      reasons.push("adx strong", "atrPct healthy", "bear ema aligned");
     } else {
       regime = "mixed";
       confidence = 0.6;
@@ -53,8 +58,8 @@ export function calculateRegime(state) {
     reasons.push("volatility too low");
   }
 
-  if (state.features.cvdTrend !== null && state.features.oiTrend !== null) {
-    if (regime === "trend" && state.features.cvdTrend < 0 && state.features.oiTrend <= 0) {
+  if (f.cvdTrend !== null && f.oiTrend !== null) {
+    if (regime === "trend" && f.cvdTrend < 0 && f.oiTrend <= 0) {
       hostile = true;
       reasons.push("flow disagreement");
     }
