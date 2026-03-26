@@ -26,14 +26,6 @@ export function checkLiveEntryGuardrails(state) {
     };
   }
 
-  if (!CONFIG.LIVE_MANUAL_ARMING_ENABLED) {
-    return {
-      allowed: false,
-      reason: "manual arming disabled",
-      eventKey: null,
-    };
-  }
-
   if (!CONFIG.C3_SIGNAL_SECRET || !CONFIG.C3_BOT_UUID) {
     return {
       allowed: false,
@@ -72,14 +64,6 @@ export function checkLiveExitGuardrails(state) {
     return {
       allowed: false,
       reason: "live execution disabled",
-      eventKey: null,
-    };
-  }
-
-  if (!CONFIG.LIVE_MANUAL_ARMING_ENABLED) {
-    return {
-      allowed: false,
-      reason: "manual arming disabled",
       eventKey: null,
     };
   }
