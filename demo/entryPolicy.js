@@ -7,18 +7,45 @@ export function shouldEnterBreakout(state) {
   const breakout = state.setups.breakout;
   const bar = state.meta.barIndex;
 
-  if (!CONFIG.DRY_RUN_EXECUTION_ENABLED && CONFIG.EXECUTION_MODE === "dry_run") {
-    return { allowed: false, reasons: ["dry run execution disabled"] };
+  if (
+    !CONFIG.DRY_RUN_EXECUTION_ENABLED &&
+    CONFIG.EXECUTION_MODE === "dry_run"
+  ) {
+    return {
+      allowed: false,
+      mode: null,
+      score: 0,
+      reasons: ["dry run execution disabled"],
+      hardReasons: ["dry run execution disabled"],
+      softReasons: [],
+      patch: null,
+    };
   }
 
   if (position.inPosition) {
-    return { allowed: false, reasons: ["already in position"] };
-  }
-
-  if (execution.cooldownUntilBar !== null && bar < execution.cooldownUntilBar) {
     return {
       allowed: false,
+      mode: null,
+      score: 0,
+      reasons: ["already in position"],
+      hardReasons: ["already in position"],
+      softReasons: [],
+      patch: null,
+    };
+  }
+
+  if (
+    execution.cooldownUntilBar !== null &&
+    bar < execution.cooldownUntilBar
+  ) {
+    return {
+      allowed: false,
+      mode: null,
+      score: 0,
       reasons: [`cooldown active until bar ${execution.cooldownUntilBar}`],
+      hardReasons: [`cooldown active until bar ${execution.cooldownUntilBar}`],
+      softReasons: [],
+      patch: null,
     };
   }
 
@@ -45,7 +72,15 @@ export function shouldEnterBreakout(state) {
     execution.lastEnteredSetupId &&
     execution.lastEnteredSetupId === setupId
   ) {
-    return { allowed: false, reasons: ["already entered this setup"] };
+    return {
+      allowed: false,
+      mode: entryDecision.mode ?? null,
+      score: entryDecision.score ?? 0,
+      reasons: ["already entered this setup"],
+      hardReasons: ["already entered this setup"],
+      softReasons: [],
+      patch: null,
+    };
   }
 
   if (
@@ -57,7 +92,15 @@ export function shouldEnterBreakout(state) {
     const reentryCount = breakout.reentryCount ?? 0;
 
     if (reentryCount >= 1) {
-      return { allowed: false, reasons: ["reentry limit reached"] };
+      return {
+        allowed: false,
+        mode: entryDecision.mode ?? null,
+        score: entryDecision.score ?? 0,
+        reasons: ["reentry limit reached"],
+        hardReasons: ["reentry limit reached"],
+        softReasons: [],
+        patch: null,
+      };
     }
   }
 
