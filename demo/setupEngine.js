@@ -57,7 +57,7 @@ function scoreBreakout(state, setup, options = {}) {
     score += 1;
     reasons.push("oi supportive");
   } else if ((f.cvdTrend ?? 0) >= 0 && c.regime === "trend") {
-    reasons.push("oi weak but tolerated");
+    reasons.push("oi weak");
   }
 
   if ((f.cvdTrend ?? 0) >= 0) {
@@ -88,14 +88,6 @@ function scoreBreakout(state, setup, options = {}) {
   }
 
   if (
-    Array.isArray(setup.qualityFlags) &&
-    setup.qualityFlags.includes("shallow_pullback_ok")
-  ) {
-    score += 1;
-    reasons.push("shallow pullback acceptable");
-  }
-
-  if (
     num(setup.bouncePct) &&
     setup.bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
   ) {
@@ -114,7 +106,7 @@ function scoreBreakout(state, setup, options = {}) {
   if (
     num(setup.bounceCloseInRangePct) &&
     setup.bounceCloseInRangePct >=
-      (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+      (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60)
   ) {
     score += 1;
     reasons.push("bounce close strong");
@@ -123,7 +115,7 @@ function scoreBreakout(state, setup, options = {}) {
   if (
     num(setup.reclaimPctFromTrigger) &&
     setup.reclaimPctFromTrigger >=
-      (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+      (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05)
   ) {
     score += 1;
     reasons.push("reclaim above trigger ok");
@@ -266,9 +258,7 @@ export function runBreakoutSetup(state) {
     }
 
     if ((f.adx ?? 0) < setupAdxMin) {
-      rejectReasons.push(
-        `adx=${(f.adx ?? 0).toFixed(2)} < min=${setupAdxMin}`
-      );
+      rejectReasons.push(`adx=${(f.adx ?? 0).toFixed(2)} < min=${setupAdxMin}`);
     }
 
     if (
@@ -420,12 +410,12 @@ export function runBreakoutSetup(state) {
           : "bounce_body_weak",
         num(bounceCloseInRangePct) &&
         bounceCloseInRangePct >=
-          (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+          (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60)
           ? "bounce_close_strong"
           : "bounce_close_weak",
         num(reclaimPctFromTrigger) &&
         reclaimPctFromTrigger >=
-          (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+          (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05)
           ? "reclaim_above_trigger_ok"
           : "reclaim_above_trigger_weak",
       ]);
@@ -514,24 +504,161 @@ export function runBreakoutSetup(state) {
         : "bounce_body_weak",
       num(bounceCloseInRangePct) &&
       bounceCloseInRangePct >=
-        (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 55)
+        (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60)
         ? "bounce_close_strong"
         : "bounce_close_weak",
       num(reclaimPctFromTrigger) &&
       reclaimPctFromTrigger >=
-        (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.03)
+        (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05)
         ? "reclaim_above_trigger_ok"
         : "reclaim_above_trigger_weak",
       close >= s.triggerPrice ? "close_above_trigger" : "close_below_trigger",
       ema8 > ema18 ? "ema8_above_ema18" : "ema8_not_above_ema18",
     ]);
 
+    const strongReclaim =
+      num(reclaimPctFromTrigger) &&
+      reclaimPctFromTrigger >=
+        (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05);
+
+    if (!strongReclaim) {
+      const rescored = scoreBreakout(
+        state,
+        {
+          ...s,
+          bouncePrice: close,
+          bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
+        },
+        { provisional: true }
+      );
+
+      return {
+        action: "rescore",
+        patch: {
+          score: rescored.score,
+          reasons: ["no strong reclaim above trigger"],
+          phaseBar: bar,
+          bouncePrice: close,
+          bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
+        },
+        note: "blocked: weak reclaim",
+      };
+    }
+
+    if (CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE) {
+      if ((f.oiTrend ?? 0) <= 0) {
+        const rescored = scoreBreakout(
+          state,
+          {
+            ...s,
+            bouncePrice: close,
+            bouncePct,
+            bounceBodyPct,
+            bounceCloseInRangePct,
+            reclaimPctFromTrigger,
+            qualityFlags,
+          },
+          { provisional: true }
+        );
+
+        return {
+          action: "rescore",
+          patch: {
+            score: rescored.score,
+            reasons: ["oi not supportive"],
+            phaseBar: bar,
+            bouncePrice: close,
+            bouncePct,
+            bounceBodyPct,
+            bounceCloseInRangePct,
+            reclaimPctFromTrigger,
+            qualityFlags,
+          },
+          note: "blocked: weak OI",
+        };
+      }
+    }
+
+    const strongClose =
+      num(bounceCloseInRangePct) &&
+      bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60);
+
+    if (!strongClose) {
+      const rescored = scoreBreakout(
+        state,
+        {
+          ...s,
+          bouncePrice: close,
+          bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
+        },
+        { provisional: true }
+      );
+
+      return {
+        action: "rescore",
+        patch: {
+          score: rescored.score,
+          reasons: ["weak close in candle range"],
+          phaseBar: bar,
+          bouncePrice: close,
+          bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
+        },
+        note: "blocked: weak close",
+      };
+    }
+
+    if (ema8 <= ema18) {
+      const rescored = scoreBreakout(
+        state,
+        {
+          ...s,
+          bouncePrice: close,
+          bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
+        },
+        { provisional: true }
+      );
+
+      return {
+        action: "rescore",
+        patch: {
+          score: rescored.score,
+          reasons: ["ema8 not above ema18"],
+          phaseBar: bar,
+          bouncePrice: close,
+          bouncePct,
+          bounceBodyPct,
+          bounceCloseInRangePct,
+          reclaimPctFromTrigger,
+          qualityFlags,
+        },
+        note: "blocked: ema misalignment",
+      };
+    }
+
     const bounceReady =
-      bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT ||
-      (bouncePct >= (CONFIG.BREAKOUT_MIN_READY_BOUNCE_PCT ?? 0.06) &&
-        close >= s.triggerPrice &&
-        ema8 > ema18 &&
-        (f.adx ?? 0) >= (CONFIG.BREAKOUT_SHALLOW_RETEST_MIN_ADX ?? 22));
+      bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT &&
+      close >= s.triggerPrice &&
+      ema8 > ema18;
 
     if (bounceReady) {
       const scored = scoreBreakout(
