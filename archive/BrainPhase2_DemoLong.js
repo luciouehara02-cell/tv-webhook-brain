@@ -32,7 +32,7 @@ import express from "express";
 // Config
 // ---------------------------
 const PORT = process.env.PORT || 8080;
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.5";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong";
 
 // Debug toggle
 const DEBUG = (process.env.DEBUG || "1") === "1";
