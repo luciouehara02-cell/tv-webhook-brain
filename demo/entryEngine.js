@@ -133,7 +133,7 @@ function buildHardAndSoftReasons(state, mode) {
   if (mode === "ready") {
     if (
       b.readySinceBar !== null &&
-      (state.meta.barIndex - b.readySinceBar) >
+      state.meta.barIndex - b.readySinceBar >
         CONFIG.BREAKOUT_MAX_READY_AGE_BARS_FOR_ENTRY
     ) {
       hardReasons.push("ready setup too old");
@@ -201,11 +201,21 @@ function buildHardAndSoftReasons(state, mode) {
     }
   }
 
-  if ((f.oiTrend ?? 0) <= 0) {
+  if (
+    CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    (f.oiTrend ?? 0) <= 0
+  ) {
+    hardReasons.push("oiTrend not supportive");
+  } else if ((f.oiTrend ?? 0) <= 0) {
     softReasons.push("oiTrend not supportive");
   }
 
-  if ((f.cvdTrend ?? 0) < 0) {
+  if (
+    CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    (f.cvdTrend ?? 0) < 0
+  ) {
+    hardReasons.push("cvdTrend negative");
+  } else if ((f.cvdTrend ?? 0) < 0) {
     softReasons.push("cvdTrend negative");
   }
 
