@@ -151,3 +151,7 @@ export async function processEvent(payload) {
   logBreakout(state);
   logPosition(state);
 }
+
+export function getBrainState() {
+  return getState();
+}
