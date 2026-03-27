@@ -1,93 +1,96 @@
-import { CONFIG } from "./config.js";
-import {
-  getState,
-  updateBreakoutSetup,
-  updateBreakoutValidation,
-  updateContext,
-  updateExecution,
-  updateFeatures,
-  updatePosition,
-  updateTick,
-} from "./stateStore.js";
-import { calculateRegime } from "./regimeEngine.js";
-import { runBreakoutSetup } from "./setupEngine.js";
-import { routeExecution } from "./executionRouter.js";
-import { applyExecutionResult } from "./positionEngine.js";
-import { executeEnterLong, executeExitLong } from "./executionModeRouter.js";
-import {
-  onEntryPositionPatch,
-  manageOpenPosition,
-  buildExitPatches,
-} from "./tradeManager.js";
-import { shouldExitPosition } from "./exitPolicy.js";
-import { buildEntryDecision } from "./entryEngine.js";
-
-function formatNum(v, digits = 2) {
-  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "na";
-}
-
-function logCore(tag, state) {
-  console.log(
-    `🧠 ${CONFIG.BRAIN_VERSION} | ${tag} | symbol=${state.market.symbol} tf=${state.market.tf} price=${formatNum(state.market.price, 4)} regime=${state.context.regime} conf=${formatNum(state.context.confidence, 2)} hostile=${state.context.hostile ? 1 : 0}`
-  );
-
-  console.log(
-    `📊 FEAT | close=${formatNum(state.features.close, 4)} ema8=${formatNum(state.features.ema8, 4)} ema18=${formatNum(state.features.ema18, 4)} ema50=${formatNum(state.features.ema50, 4)} rsi=${formatNum(state.features.rsi, 2)} adx=${formatNum(state.features.adx, 2)} atrPct=${formatNum(state.features.atrPct, 3)} oiTrend=${state.features.oiTrend ?? "na"} cvdTrend=${state.features.cvdTrend ?? "na"}`
-  );
-
-  if (state.context.reasons?.length) {
-    console.log(`🧭 CONTEXT | reasons=${state.context.reasons.join(", ")}`);
-  }
-}
-
-function logBreakout(state) {
-  const b = state.setups.breakout;
-  const v = state.validation.breakout;
-
-  console.log(
-    `🟦 BREAKOUT | phase=${b.phase} trigger=${formatNum(b.triggerPrice, 4)} retest=${formatNum(b.retestPrice, 4)} bounce=${formatNum(b.bouncePrice, 4)} score=${b.score} allowed=${v.allowed ? 1 : 0}`
-  );
-
-  if (b.reasons?.length) {
-    console.log(`🧩 BREAKOUT reasons | ${b.reasons.join(", ")}`);
-  }
-
-  if (
-    (b.phase === "ready" ||
-      b.phase === "bounce_confirmed" ||
-      b.phase === "retest_pending") &&
-    v.reasons?.length
-  ) {
-    console.log(`🛡️ VALIDATION | ${v.reasons.join(", ")}`);
-  }
-}
-
-function logPosition(state) {
-  console.log(
-    `📍 POSITION | inPosition=${state.position.inPosition ? 1 : 0} side=${state.position.side ?? "na"} entry=${formatNum(state.position.entryPrice, 4)} stop=${formatNum(state.position.stopPrice, 4)} peak=${formatNum(state.position.peakPrice, 4)} be=${state.position.breakEvenArmed ? 1 : 0} trail=${state.position.trailingActive ? 1 : 0} pl=${state.position.profitLockActive ? 1 : 0} cooldownUntilBar=${state.execution.cooldownUntilBar ?? "na"}`
-  );
-}
-
-function logTransition(beforePhase, afterPhase, note) {
-  if (beforePhase !== afterPhase) {
-    console.log(
-      `🔄 BREAKOUT transition | ${beforePhase} -> ${afterPhase} | ${note}`
-    );
-  }
-}
-
 export async function processEvent(payload) {
   const src = payload?.src;
 
+  // =========================
+  // 🔵 TICK FLOW (ENTRY + EXIT)
+  // =========================
   if (src === "tick") {
     updateTick(payload);
+
     const state = getState();
-    logCore("TICK", state);
-    logBreakout(state);
-    logPosition(state);
+
+    // 🔥 ENTRY FROM TICK
+    const execResult = routeExecution(state);
+
+    if (execResult.action !== "noop") {
+      const execModeResult = await executeEnterLong(state);
+      if (execModeResult.logLine) console.log(execModeResult.logLine);
+
+      const applyResult = applyExecutionResult(state, execResult);
+
+      if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
+      if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
+      if (applyResult.logLine) console.log(applyResult.logLine);
+
+      const postEntryState = getState();
+
+      const tradePatch = onEntryPositionPatch(postEntryState);
+      if (tradePatch) updatePosition(tradePatch);
+
+      updateExecution({
+        lastLiveSendOk: execModeResult.ok,
+        lastLiveSendAt: state.market.time,
+        lastLiveResponse: execModeResult.result || execModeResult.logLine,
+        lastLiveEventKey: execModeResult.eventKey ?? null,
+      });
+
+      // ✅ mark consumed ONLY if actually entered
+      if (getState().position.inPosition) {
+        updateBreakoutSetup({
+          phase: "consumed",
+          lastTransition: "consumed_after_entry",
+          reasons: ["consumed via tick entry"],
+          consumedAtBar: state.meta.barIndex,
+        });
+      }
+    }
+
+    // 🔴 EXIT FROM TICK
+    const manageResult = manageOpenPosition(getState());
+
+    if (manageResult.positionPatch) {
+      updatePosition(manageResult.positionPatch);
+    }
+
+    for (const line of manageResult.logs) {
+      console.log(line);
+    }
+
+    const latestState = getState();
+    const exitDecision = shouldExitPosition(
+      latestState,
+      manageResult.exitSignal
+    );
+
+    if (exitDecision.allowed) {
+      const exitReason = manageResult.exitSignal?.reason ?? "exit_long";
+
+      const exitModeResult = await executeExitLong(latestState, exitReason);
+      if (exitModeResult.logLine) console.log(exitModeResult.logLine);
+
+      const exitPatches = buildExitPatches(
+        latestState,
+        manageResult.exitSignal
+      );
+
+      if (exitPatches.positionPatch) updatePosition(exitPatches.positionPatch);
+      if (exitPatches.executionPatch) updateExecution(exitPatches.executionPatch);
+
+      console.log(exitPatches.logLine);
+    }
+
+    // logs
+    const finalState = getState();
+    logCore("TICK", finalState);
+    logBreakout(finalState);
+    logPosition(finalState);
+
     return;
   }
 
+  // =========================
+  // 🟢 FEATURES FLOW (SETUP ONLY)
+  // =========================
   if (src !== "features") {
     console.log(`⚠️ Unknown src=${src ?? "undefined"}`);
     return;
@@ -102,9 +105,9 @@ export async function processEvent(payload) {
     payload.close ?? "na",
   ].join("|");
 
-  const preFeatureState = getState();
+  const preState = getState();
 
-  if (preFeatureState.execution?.lastFeatureEventKey === featureEventKey) {
+  if (preState.execution?.lastFeatureEventKey === featureEventKey) {
     console.log(`⏭️ DUPLICATE FEATURE IGNORED | ${featureEventKey}`);
     return;
   }
@@ -115,185 +118,36 @@ export async function processEvent(payload) {
     lastFeatureEventKey: featureEventKey,
   });
 
-  const state1 = getState();
-  const context = calculateRegime(state1);
+  // regime
+  const context = calculateRegime(getState());
   updateContext(context);
 
   const before = getState().setups.breakout.phase;
+
+  // setup engine
   const breakoutResult = runBreakoutSetup(getState());
 
   if (breakoutResult.patch) {
     updateBreakoutSetup(breakoutResult.patch);
   }
 
-  const state2 = getState();
-
-  const entryDecision = buildEntryDecision(state2);
+  // validation only
+  const entryDecision = buildEntryDecision(getState());
 
   updateBreakoutValidation({
     allowed: entryDecision.allowed,
     mode: entryDecision.mode ?? null,
     score: entryDecision.score ?? null,
-    chasePct: entryDecision.patch?.chasePct ?? entryDecision.chasePct ?? null,
+    chasePct: entryDecision.chasePct ?? null,
     reasons: entryDecision.reasons ?? [],
-    hardReasons: entryDecision.hardReasons ?? [],
-    softReasons: entryDecision.softReasons ?? [],
   });
 
-  const state3 = getState();
-  const execResult = routeExecution(state3);
+  const state = getState();
+  const after = state.setups.breakout.phase;
 
-  const shouldLogBlockedEntry =
-    execResult.action === "noop" &&
-    execResult.reason &&
-    execResult.reason !== "already in position";
-
-  if (execResult.action !== "noop") {
-    const execModeResult = await executeEnterLong(state3);
-    if (execModeResult.logLine) console.log(execModeResult.logLine);
-
-    const applyResult = applyExecutionResult(state3, execResult);
-
-    if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
-    if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
-    if (applyResult.logLine) console.log(applyResult.logLine);
-
-    if (entryDecision.patch) {
-      updateBreakoutSetup(entryDecision.patch);
-    }
-
-    const postEntryState = getState();
-    const tradePatch = onEntryPositionPatch(postEntryState);
-    if (tradePatch) updatePosition(tradePatch);
-
-    updateExecution({
-      lastLiveSendOk: execModeResult.ok,
-      lastLiveSendAt: state3.market.time,
-      lastLiveResponse: execModeResult.result || execModeResult.logLine,
-      lastLiveEventKey: execModeResult.eventKey ?? null,
-      lastLiveGuardrailReason: execModeResult.guardrailReason ?? null,
-      lastSignalPayload: execModeResult.signalPayload ?? null,
-    });
-
-    const enteredState = getState();
-
-    if (enteredState.position.inPosition) {
-      updateBreakoutSetup({
-        phase: "consumed",
-        lastTransition: "consumed_after_entry",
-        reasons: [`setup consumed after ${entryDecision.mode ?? "entry"}`],
-        consumedAtBar: enteredState.meta.barIndex,
-        lastEntryMode: entryDecision.mode ?? null,
-      });
-    } else {
-      console.log(
-        "⚠️ ENTRY NOT ACTIVATED | setup not consumed because inPosition=0"
-      );
-    }
-  } else if (shouldLogBlockedEntry) {
-    console.log(`🚫 ENTRY BLOCKED | ${execResult.reason}`);
-  }
-
-  const postExecState = getState();
-  const manageResult = manageOpenPosition(postExecState);
-
-  if (manageResult.positionPatch) {
-    updatePosition(manageResult.positionPatch);
-  }
-
-  for (const line of manageResult.logs) {
-    console.log(line);
-  }
-
-  const latestManagedState = getState();
-  const exitDecision = shouldExitPosition(
-    latestManagedState,
-    manageResult.exitSignal
-  );
-
-  let finalSetupNote = breakoutResult.note;
-
-  if (exitDecision.allowed) {
-    const exitReason = manageResult.exitSignal?.reason ?? "exit_long";
-    const exitModeResult = await executeExitLong(latestManagedState, exitReason);
-    if (exitModeResult.logLine) console.log(exitModeResult.logLine);
-
-    const exitPatches = buildExitPatches(
-      latestManagedState,
-      manageResult.exitSignal
-    );
-
-    if (exitPatches.positionPatch) updatePosition(exitPatches.positionPatch);
-    if (exitPatches.executionPatch) updateExecution(exitPatches.executionPatch);
-    if (exitPatches.logLine) console.log(exitPatches.logLine);
-
-    updateExecution({
-      lastLiveSendOk: exitModeResult.ok,
-      lastLiveSendAt: latestManagedState.market.time,
-      lastLiveResponse: exitModeResult.result || exitModeResult.logLine,
-      lastLiveEventKey: exitModeResult.eventKey ?? null,
-      lastLiveGuardrailReason: exitModeResult.guardrailReason ?? null,
-      lastSignalPayload: exitModeResult.signalPayload ?? null,
-    });
-
-    const latestState = getState();
-
-    updateBreakoutSetup({
-      phase: "idle",
-      startedBar: null,
-      phaseBar: latestState.meta.barIndex,
-      triggerPrice: null,
-      breakoutLevel: null,
-      retestPrice: null,
-      bouncePrice: null,
-      score: 0,
-      reasons: ["reset after exit"],
-      lastTransition: "reset_after_exit",
-      setupId: null,
-      retestLow: null,
-      invalidationPrice: null,
-      readySinceBar: null,
-      expiresAtBar: null,
-      bouncePct: null,
-      pullbackPct: null,
-      chasePct: null,
-      qualityFlags: [],
-      cancelReason: null,
-      consumedAtBar: null,
-      bounceBodyPct: null,
-      bounceCloseInRangePct: null,
-      reclaimPctFromTrigger: null,
-      reentryCount: 0,
-      lastEntryMode: null,
-      entryCandidatePrice: null,
-    });
-
-    finalSetupNote = `reset after exit (${exitReason})`;
-  }
-
-  const state4 = getState();
-  const after = state4.setups.breakout.phase;
-
-  logCore("FEATURES", state4);
-  console.log(`🔎 SETUP NOTE | ${finalSetupNote}`);
-  logTransition(before, after, finalSetupNote);
-  logBreakout(state4);
-  logPosition(state4);
-
-  if (CONFIG.LOG_FULL_STATE_ON_TRANSITIONS && before !== after) {
-    console.log(
-      `📝 STATE SNAPSHOT ${JSON.stringify({
-        market: state4.market,
-        context: state4.context,
-        breakout: state4.setups.breakout,
-        validation: state4.validation.breakout,
-        position: state4.position,
-        execution: state4.execution,
-      })}`
-    );
-  }
-}
-
-export function getBrainState() {
-  return getState();
+  logCore("FEATURES", state);
+  console.log(`🔎 SETUP NOTE | ${breakoutResult.note}`);
+  logTransition(before, after, breakoutResult.note);
+  logBreakout(state);
+  logPosition(state);
 }
