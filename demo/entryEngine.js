@@ -14,15 +14,6 @@
  *     hardReasons,
  *     softReasons
  *   }
- *
- * v5.5 LONG entry tightening:
- * - hard block if close below trigger
- * - hard block if reclaim is below minimum
- * - hard block if oiTrend <= 0 when flow blocking enabled
- * - keep ema8 > ema18 requirement
- * - keep trend regime requirement
- * - score cannot rescue weak reclaim / weak OI setup
- * - do not rely on "almost reclaimed" structure
  */
 
 export const BRAIN_VERSION = "Brain Phase 5 v5.5";
@@ -70,10 +61,6 @@ function posOf(state) {
   return state?.position ?? {};
 }
 
-function execOf(state) {
-  return state?.execution ?? {};
-}
-
 function isTrendRegime(regime) {
   return String(regime || "").toLowerCase() === "trend";
 }
@@ -105,7 +92,7 @@ function dlog(...args) {
 }
 
 // ---------------------------
-// public decision builder
+// NAMED EXPORT REQUIRED BY brain.js
 // ---------------------------
 export function buildEntryDecision(state) {
   const feat = featOf(state);
@@ -134,7 +121,6 @@ export function buildEntryDecision(state) {
 
   const chasePct = triggerPrice > 0 ? pctFrom(close, triggerPrice) : 0;
 
-  // default response
   const base = {
     allowed: false,
     mode: null,
@@ -164,9 +150,6 @@ export function buildEntryDecision(state) {
     return base;
   }
 
-  // ---------------------------
-  // hard blocks (v5.5)
-  // ---------------------------
   const minCloseAllowed =
     triggerPrice * (1 - ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
 
@@ -195,13 +178,11 @@ export function buildEntryDecision(state) {
     addUnique(hardReasons, "flow not supportive");
   }
 
-  // guard against excessive chase
   if (chasePct > MAX_CHASE_PCT) {
     addUnique(reasons, `entry_block_chase_too_high_${chasePct.toFixed(3)}`);
     addUnique(hardReasons, "chase too high");
   }
 
-  // score cannot rescue hard failures
   if (hardReasons.length > 0) {
     dlog(
       `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)} ` +
@@ -213,9 +194,6 @@ export function buildEntryDecision(state) {
     return base;
   }
 
-  // ---------------------------
-  // soft checks
-  // ---------------------------
   if (score < SCORE_ENTER_LONG) {
     addUnique(reasons, "entry_block_score_too_low");
     addUnique(softReasons, "score too low");
