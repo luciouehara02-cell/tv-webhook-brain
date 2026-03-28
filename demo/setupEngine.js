@@ -1,814 +1,490 @@
-import { CONFIG } from "./config.js";
+/**
+ * setupEngine.js
+ * Brain Phase 5 v5.5
+ *
+ * LONG breakout tightening:
+ * - READY long requires true reclaim
+ * - READY long blocked if OI flow not supportive (when enabled)
+ * - No positive score for shallow_pullback_ok
+ * - Stronger close quality required for READY
+ * - Contradictory weak/strong flags do not accumulate together
+ * - Score caps prevent weak reclaim / weak OI from being rescued
+ */
 
-function num(v) {
-  return typeof v === "number" && Number.isFinite(v);
+export const BRAIN_VERSION = "Brain Phase 5 v5.5";
+
+// ---------------------------
+// Helpers
+// ---------------------------
+function n(v, d = 0) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : d;
 }
 
-function pctChange(current, base) {
-  if (!num(current) || !num(base) || base === 0) return null;
-  return ((current - base) / base) * 100;
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-function calcBounceBodyPct(open, close) {
-  if (!num(open) || !num(close) || open === 0) return null;
-  return Math.abs(((close - open) / open) * 100);
+function pctFrom(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return 0;
+  return ((a - b) / b) * 100;
 }
 
-function calcCloseInRangePct(low, high, close) {
-  if (!num(low) || !num(high) || !num(close)) return null;
-  const range = high - low;
-  if (range <= 0) return null;
-  return ((close - low) / range) * 100;
+function addUnique(arr, item) {
+  if (!arr.includes(item)) arr.push(item);
 }
 
-function uniqueFlags(arr) {
-  return [...new Set((arr ?? []).filter(Boolean))];
+function removeByPrefix(arr, prefix) {
+  return arr.filter(x => !x.startsWith(prefix));
 }
 
-function scoreBreakout(state, setup, options = {}) {
-  const { provisional = false } = options;
+function setQualityFlag(arr, family, value) {
+  const next = removeByPrefix(arr, `${family}:`);
+  next.push(`${family}:${value}`);
+  return next;
+}
 
+function boolEnv(name, def = false) {
+  const raw = String(process.env[name] ?? (def ? "1" : "0")).trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function numEnv(name, def) {
+  const x = Number(process.env[name]);
+  return Number.isFinite(x) ? x : def;
+}
+
+// ---------------------------
+// Config
+// ---------------------------
+const DEBUG = boolEnv("DEBUG", true);
+
+const READY_RECLAIM_MIN_PCT = numEnv("READY_RECLAIM_MIN_PCT", 0.05);
+// Optional alternative if you later want softer reclaim:
+// const READY_RECLAIM_MIN_PCT = numEnv("READY_RECLAIM_MIN_PCT", 0.03);
+
+const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE = boolEnv(
+  "BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE",
+  true
+);
+
+const BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT = numEnv(
+  "BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT",
+  0.00
+);
+
+const READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT = numEnv(
+  "READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT",
+  60
+);
+
+const READY_MIN_BOUNCE_BODY_PCT = numEnv(
+  "READY_MIN_BOUNCE_BODY_PCT",
+  0.08
+);
+
+const SCORE_READY_LONG_MIN = numEnv("SCORE_READY_LONG_MIN", 6);
+
+// ---------------------------
+// Logging
+// ---------------------------
+function dlog(...args) {
+  if (DEBUG) console.log(...args);
+}
+
+// ---------------------------
+// Quality resolution
+// ---------------------------
+function resolveBreakoutQualityFlags({
+  bounceCloseInRangePct,
+  bounceBodyPct,
+  reclaimPctFromTrigger,
+  pullbackDepthPct,
+  retestRespectPct
+}) {
+  let flags = [];
+
+  // Close quality: exactly one family result
+  if (bounceCloseInRangePct >= 75) {
+    flags = setQualityFlag(flags, "close_quality", "strong");
+  } else if (bounceCloseInRangePct >= 60) {
+    flags = setQualityFlag(flags, "close_quality", "ok");
+  } else {
+    flags = setQualityFlag(flags, "close_quality", "weak");
+  }
+
+  // Body quality: exactly one family result
+  if (bounceBodyPct >= 0.15) {
+    flags = setQualityFlag(flags, "body_quality", "strong");
+  } else if (bounceBodyPct >= READY_MIN_BOUNCE_BODY_PCT) {
+    flags = setQualityFlag(flags, "body_quality", "ok");
+  } else {
+    flags = setQualityFlag(flags, "body_quality", "weak");
+  }
+
+  // Reclaim quality: exactly one family result
+  if (reclaimPctFromTrigger >= 0.10) {
+    flags = setQualityFlag(flags, "reclaim_quality", "strong");
+  } else if (reclaimPctFromTrigger >= READY_RECLAIM_MIN_PCT) {
+    flags = setQualityFlag(flags, "reclaim_quality", "ok");
+  } else {
+    flags = setQualityFlag(flags, "reclaim_quality", "weak");
+  }
+
+  // Pullback depth: informational only, not contradictory stack
+  if (Number.isFinite(pullbackDepthPct)) {
+    if (pullbackDepthPct <= 0.45) {
+      flags = setQualityFlag(flags, "pullback_depth", "shallow");
+    } else if (pullbackDepthPct <= 1.00) {
+      flags = setQualityFlag(flags, "pullback_depth", "normal");
+    } else {
+      flags = setQualityFlag(flags, "pullback_depth", "deep");
+    }
+  }
+
+  // Retest respect
+  if (Number.isFinite(retestRespectPct)) {
+    if (retestRespectPct >= 0.15) {
+      flags = setQualityFlag(flags, "retest_respect", "strong");
+    } else if (retestRespectPct >= 0.00) {
+      flags = setQualityFlag(flags, "retest_respect", "ok");
+    } else {
+      flags = setQualityFlag(flags, "retest_respect", "weak");
+    }
+  }
+
+  return flags;
+}
+
+function hasFlag(flags, exact) {
+  return flags.includes(exact);
+}
+
+// ---------------------------
+// Score engine
+// ---------------------------
+function computeBreakoutLongScore({ feat, setup, flags }) {
   let score = 0;
   const reasons = [];
-  const f = state.features;
-  const c = state.context;
 
-  if (c.regime === "trend") {
+  const regime = String(feat.regime || "range");
+  const adx = n(feat.adx);
+  const atrPct = n(feat.atrPct);
+  const ema8 = n(feat.ema8);
+  const ema18 = n(feat.ema18);
+  const ema50 = n(feat.ema50);
+  const close = n(feat.close);
+  const oiTrend = n(feat.oiTrend);
+  const cvdTrend = n(feat.cvdTrend);
+  const reclaimPctFromTrigger = n(setup.reclaimPctFromTrigger);
+
+  // Trend alignment
+  if (regime === "trend") {
     score += 2;
-    reasons.push("trend regime");
+    addUnique(reasons, "trend_regime");
+  } else {
+    score -= 2;
+    addUnique(reasons, "non_trend_regime");
   }
 
-  if ((c.confidence ?? 0) >= 0.75) {
+  if (ema8 > ema18 && ema18 >= ema50) {
+    score += 2;
+    addUnique(reasons, "ema_bull_aligned");
+  } else if (ema8 > ema18) {
     score += 1;
-    reasons.push("good regime confidence");
+    addUnique(reasons, "ema_short_bull");
+  } else {
+    score -= 2;
+    addUnique(reasons, "ema_not_bull");
   }
 
-  if ((f.adx ?? 0) >= 25) {
+  // ADX / ATR
+  if (adx >= 25) {
+    score += 2;
+    addUnique(reasons, "adx_strong");
+  } else if (adx >= 20) {
     score += 1;
-    reasons.push("strong adx");
+    addUnique(reasons, "adx_ok");
+  } else {
+    score -= 1;
+    addUnique(reasons, "adx_soft");
   }
 
-  if ((f.atrPct ?? 0) >= 0.30) {
+  if (atrPct >= 0.60) {
     score += 1;
-    reasons.push("healthy atrPct");
+    addUnique(reasons, "atr_expanded");
+  } else if (atrPct < 0.18) {
+    score -= 1;
+    addUnique(reasons, "atr_too_small");
   }
 
-  if ((f.oiTrend ?? 0) > 0) {
+  // Flow
+  if (oiTrend > 0) {
     score += 1;
-    reasons.push("oi supportive");
-  } else if ((f.cvdTrend ?? 0) >= 0 && c.regime === "trend") {
-    reasons.push("oi weak");
+    addUnique(reasons, "oi_supportive");
+  } else if (oiTrend < 0) {
+    score -= 2;
+    addUnique(reasons, "oi_negative");
+  } else {
+    score -= 1;
+    addUnique(reasons, "oi_flat");
   }
 
-  if ((f.cvdTrend ?? 0) >= 0) {
+  if (cvdTrend > 0) {
     score += 1;
-    reasons.push("cvd supportive");
+    addUnique(reasons, "cvd_supportive");
+  } else if (cvdTrend < 0) {
+    score -= 1;
+    addUnique(reasons, "cvd_negative");
   }
 
-  if ((f.rsi ?? 0) >= 52) {
+  // Quality flags
+  if (hasFlag(flags, "close_quality:strong")) {
+    score += 2;
+    addUnique(reasons, "close_quality_strong");
+  } else if (hasFlag(flags, "close_quality:ok")) {
     score += 1;
-    reasons.push("rsi supportive");
+    addUnique(reasons, "close_quality_ok");
+  } else if (hasFlag(flags, "close_quality:weak")) {
+    score -= 2;
+    addUnique(reasons, "close_quality_weak");
   }
 
-  if (
-    num(setup.retestPrice) &&
-    num(setup.bouncePrice) &&
-    setup.bouncePrice > setup.retestPrice
-  ) {
+  if (hasFlag(flags, "body_quality:strong")) {
     score += 1;
-    reasons.push(provisional ? "bounce prelim confirmed" : "bounce confirmed");
+    addUnique(reasons, "body_quality_strong");
+  } else if (hasFlag(flags, "body_quality:ok")) {
+    score += 0;
+    addUnique(reasons, "body_quality_ok");
+  } else if (hasFlag(flags, "body_quality:weak")) {
+    score -= 2;
+    addUnique(reasons, "body_quality_weak");
   }
 
-  if (
-    num(setup.pullbackPct) &&
-    Math.abs(setup.pullbackPct) >= CONFIG.BREAKOUT_MIN_PULLBACK_PCT
-  ) {
+  if (hasFlag(flags, "reclaim_quality:strong")) {
+    score += 2;
+    addUnique(reasons, "reclaim_quality_strong");
+  } else if (hasFlag(flags, "reclaim_quality:ok")) {
     score += 1;
-    reasons.push("meaningful pullback");
+    addUnique(reasons, "reclaim_quality_ok");
+  } else if (hasFlag(flags, "reclaim_quality:weak")) {
+    score -= 3;
+    addUnique(reasons, "reclaim_quality_weak");
   }
 
-  if (
-    num(setup.bouncePct) &&
-    setup.bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
-  ) {
-    score += 1;
-    reasons.push("bounce pct ok");
+  // IMPORTANT: shallow pullback no longer adds positive score
+  if (setup.shallowPullbackOk) {
+    addUnique(reasons, "shallow_pullback_ok");
   }
 
-  if (
-    num(setup.bounceBodyPct) &&
-    setup.bounceBodyPct >= (CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT ?? 0.08)
-  ) {
-    score += 1;
-    reasons.push("bounce body ok");
+  // If close is below trigger, penalize
+  if (close < n(setup.triggerPrice)) {
+    score -= 3;
+    addUnique(reasons, "close_below_trigger");
   }
 
-  if (
-    num(setup.bounceCloseInRangePct) &&
-    setup.bounceCloseInRangePct >=
-      (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60)
-  ) {
-    score += 1;
-    reasons.push("bounce close strong");
-  }
-
-  if (
-    num(setup.reclaimPctFromTrigger) &&
-    setup.reclaimPctFromTrigger >=
-      (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05)
-  ) {
-    score += 1;
-    reasons.push("reclaim above trigger ok");
-  }
-
-  if (
-    Array.isArray(setup.qualityFlags) &&
-    setup.qualityFlags.includes("retest_near_trigger")
-  ) {
-    score += 1;
-    reasons.push("retest near trigger");
+  // Small reclaim is explicitly weak
+  if (reclaimPctFromTrigger < READY_RECLAIM_MIN_PCT) {
+    score -= 2;
+    addUnique(reasons, "reclaim_below_min");
   }
 
   return { score, reasons };
 }
 
-function resetPatch(
-  bar,
-  reason = "returned to idle",
-  transition = "reset_to_idle"
-) {
-  return {
-    phase: "idle",
-    startedBar: null,
-    phaseBar: bar,
-    triggerPrice: null,
-    breakoutLevel: null,
-    retestPrice: null,
-    bouncePrice: null,
-    score: 0,
-    reasons: [reason],
-    lastTransition: transition,
+function applyBreakoutLongScoreCaps({ score, feat, setup }) {
+  let capped = score;
 
-    setupId: null,
-    retestLow: null,
-    invalidationPrice: null,
-    readySinceBar: null,
-    expiresAtBar: null,
-    bouncePct: null,
-    pullbackPct: null,
-    chasePct: null,
-    bounceBodyPct: null,
-    bounceCloseInRangePct: null,
-    reclaimPctFromTrigger: null,
-    qualityFlags: [],
-    cancelReason: null,
-    consumedAtBar: null,
-    reentryCount: 0,
-  };
+  const close = n(feat.close);
+  const triggerPrice = n(setup.triggerPrice);
+  const oiTrend = n(feat.oiTrend);
+  const reclaimPctFromTrigger = n(setup.reclaimPctFromTrigger);
+
+  // A weak reclaim or below-trigger close cannot be rescued by score inflation
+  if (close < triggerPrice) capped = Math.min(capped, 5);
+  if (reclaimPctFromTrigger < READY_RECLAIM_MIN_PCT) capped = Math.min(capped, 5);
+  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) capped = Math.min(capped, 5);
+
+  return capped;
 }
 
-export function runBreakoutSetup(state) {
-  const f = state.features;
-  const c = state.context;
-  const s = state.setups.breakout;
-  const bar = state.meta.barIndex;
+// ---------------------------
+// READY gating
+// ---------------------------
+function canPromoteBreakoutLongToReady({ feat, setup }) {
+  const reasons = [];
 
-  if (s.phase === "consumed") {
-    return {
-      action: "noop",
-      patch: null,
-      note: "setup consumed",
-    };
+  const close = n(feat.close);
+  const triggerPrice = n(setup.triggerPrice);
+  const oiTrend = n(feat.oiTrend);
+
+  const reclaimPctFromTrigger = Number.isFinite(setup.reclaimPctFromTrigger)
+    ? n(setup.reclaimPctFromTrigger)
+    : pctFrom(close, triggerPrice);
+
+  const bounceCloseInRangePct = n(setup.bounceCloseInRangePct);
+  const bounceBodyPct = n(setup.bounceBodyPct);
+
+  const minCloseAllowed =
+    triggerPrice * (1 - BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
+
+  // true reclaim required
+  if (close < minCloseAllowed) {
+    reasons.push("ready_block_close_below_trigger");
   }
 
-  const open = f.open;
-  const high = f.high ?? f.close;
-  const close = f.close;
-  const low = f.low ?? close;
-  const ema8 = f.ema8;
-  const ema18 = f.ema18;
-  const ema50 = f.ema50;
-
-  if (![close, ema8, ema18, ema50].every(num)) {
-    return {
-      action: "noop",
-      patch: null,
-      note: "missing required features",
-    };
+  if (reclaimPctFromTrigger < READY_RECLAIM_MIN_PCT) {
+    reasons.push("ready_block_reclaim_too_small");
   }
 
-  if (!CONFIG.BREAKOUT_ENABLED) {
-    return {
-      action: "noop",
-      patch: null,
-      note: "breakout disabled",
-    };
+  // OI flow support required when enabled
+  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) {
+    reasons.push("ready_block_flow_not_supportive");
   }
 
-  const bullAligned = ema8 > ema18 && ema18 > ema50;
-  const softBullAligned =
-    ema8 > ema18 && close > ema18 && ema18 >= ema50 * (1 - 0.0015);
-
-  const impulsePct = pctChange(close, ema8) ?? 0;
-  const retestTolerance = (CONFIG.BREAKOUT_RETEST_TOLERANCE_PCT ?? 0.15) / 100;
-  const setupAdxMin =
-    CONFIG.BREAKOUT_SETUP_ADX_MIN ?? CONFIG.REGIME_ADX_TREND_MIN ?? 20;
-
-  const strongTrendContext =
-    c.regime === "trend" &&
-    !c.hostile &&
-    (f.adx ?? 0) >= setupAdxMin &&
-    (f.atrPct ?? 0) >= 0.22;
-
-  if (
-    s.phase !== "idle" &&
-    s.phase !== "invalidated" &&
-    s.phase !== "expired" &&
-    s.phase !== "consumed" &&
-    s.startedBar !== null
-  ) {
-    const ageBars = bar - s.startedBar;
-    if (ageBars > CONFIG.BREAKOUT_SETUP_EXPIRY_BARS) {
-      return {
-        action: "expire",
-        patch: {
-          phase: "expired",
-          phaseBar: bar,
-          lastTransition: "expired",
-          reasons: [`expired after ${ageBars} bars`],
-          score: 0,
-          cancelReason: "setup_expired",
-        },
-        note: "setup expired",
-      };
-    }
+  // stronger candle quality required
+  if (bounceCloseInRangePct < READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
+    reasons.push("ready_block_weak_close_in_range");
   }
 
-  if (s.phase === "idle") {
-    const rejectReasons = [];
-
-    if (c.regime !== "trend") rejectReasons.push(`regime=${c.regime}`);
-    if (c.hostile) rejectReasons.push("hostile=true");
-    if (!(bullAligned || softBullAligned)) rejectReasons.push("bullAligned=false");
-
-    if (impulsePct < CONFIG.BREAKOUT_MIN_IMPULSE_PCT) {
-      rejectReasons.push(
-        `impulsePct=${impulsePct.toFixed(3)} < min=${CONFIG.BREAKOUT_MIN_IMPULSE_PCT}`
-      );
-    }
-
-    if ((f.adx ?? 0) < setupAdxMin) {
-      rejectReasons.push(`adx=${(f.adx ?? 0).toFixed(2)} < min=${setupAdxMin}`);
-    }
-
-    if (
-      strongTrendContext &&
-      (bullAligned || softBullAligned) &&
-      impulsePct >= CONFIG.BREAKOUT_MIN_IMPULSE_PCT
-    ) {
-      return {
-        action: "transition",
-        patch: {
-          phase: "breakout_detected",
-          startedBar: bar,
-          phaseBar: bar,
-          triggerPrice: close,
-          breakoutLevel: close,
-          retestPrice: null,
-          bouncePrice: null,
-          score: 0,
-          reasons: ["breakout detected"],
-          lastTransition: "breakout_detected",
-
-          setupId: `${bar}-${close}-breakout`,
-          retestLow: null,
-          invalidationPrice: null,
-          readySinceBar: null,
-          expiresAtBar: null,
-          bouncePct: null,
-          pullbackPct: null,
-          chasePct: null,
-          bounceBodyPct: null,
-          bounceCloseInRangePct: null,
-          reclaimPctFromTrigger: null,
-          qualityFlags: [],
-          cancelReason: null,
-          consumedAtBar: null,
-          reentryCount: s.reentryCount ?? 0,
-        },
-        note: "breakout detected",
-      };
-    }
-
-    return {
-      action: "noop",
-      patch: null,
-      note: `idle no breakout | ${
-        rejectReasons.join(", ") || "no specific reject reason"
-      }`,
-    };
-  }
-
-  if (s.phase === "breakout_detected") {
-    return {
-      action: "transition",
-      patch: {
-        phase: "retest_pending",
-        phaseBar: bar,
-        lastTransition: "retest_pending",
-        reasons: ["waiting retest"],
-      },
-      note: "waiting retest",
-    };
-  }
-
-  if (s.phase === "retest_pending") {
-    const barsSincePhase = bar - (s.phaseBar ?? bar);
-
-    const lowPullbackPct = pctChange(low, s.triggerPrice) ?? 0;
-    const triggerDistancePct = Math.abs(pctChange(low, s.triggerPrice) ?? 0);
-    const retestNearEma8 = Math.abs((low - ema8) / ema8) <= retestTolerance;
-    const retestAboveEma18 = low >= ema18;
-
-    const meaningfulPullback =
-      lowPullbackPct <= -CONFIG.BREAKOUT_MIN_PULLBACK_PCT;
-
-    const shallowPullback =
-      lowPullbackPct <= -(CONFIG.BREAKOUT_SHALLOW_PULLBACK_PCT ?? 0.08);
-
-    const nearTrigger =
-      triggerDistancePct <= (CONFIG.BREAKOUT_RETEST_NEAR_TRIGGER_PCT ?? 0.12);
-
-    const strongRetestTrendContext =
-      c.regime === "trend" &&
-      !c.hostile &&
-      (f.adx ?? 0) >= (CONFIG.BREAKOUT_SHALLOW_RETEST_MIN_ADX ?? 22) &&
-      (f.cvdTrend ?? 0) >= 0;
-
-    const strongRetestSeen =
-      meaningfulPullback && retestNearEma8 && retestAboveEma18;
-
-    const shallowRetestSeen =
-      shallowPullback &&
-      retestAboveEma18 &&
-      strongRetestTrendContext &&
-      (retestNearEma8 || nearTrigger);
-
-    const retestSeen = strongRetestSeen || shallowRetestSeen;
-
-    if (barsSincePhase > CONFIG.BREAKOUT_MAX_RETEST_BARS) {
-      return {
-        action: "invalidate",
-        patch: {
-          phase: "invalidated",
-          phaseBar: bar,
-          lastTransition: "invalidated",
-          reasons: ["retest timeout"],
-          score: 0,
-          cancelReason: "retest_timeout",
-        },
-        note: "retest timeout",
-      };
-    }
-
-    if (low < ema18) {
-      return {
-        action: "invalidate",
-        patch: {
-          phase: "invalidated",
-          phaseBar: bar,
-          lastTransition: "invalidated",
-          reasons: ["lost ema18 on retest"],
-          score: 0,
-          cancelReason: "lost_ema18_on_retest",
-        },
-        note: "lost ema18 on retest",
-      };
-    }
-
-    if (retestSeen) {
-      const invalidationPrice =
-        low * (1 - CONFIG.BREAKOUT_RETEST_LOW_BUFFER_PCT / 100);
-
-      const provisionalBouncePct = pctChange(close, low) ?? 0;
-      const bounceBodyPct = calcBounceBodyPct(open, close);
-      const bounceCloseInRangePct = calcCloseInRangePct(low, high, close);
-      const reclaimPctFromTrigger = pctChange(close, s.triggerPrice) ?? 0;
-
-      const qualityFlags = uniqueFlags([
-        strongRetestSeen ? "meaningful_pullback" : null,
-        shallowRetestSeen ? "shallow_pullback_ok" : null,
-        retestNearEma8 ? "retest_near_ema8" : null,
-        nearTrigger ? "retest_near_trigger" : null,
-        retestAboveEma18 ? "held_above_ema18" : null,
-        provisionalBouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
-          ? "bounce_pct_ok"
-          : "bounce_pct_weak",
-        num(bounceBodyPct) &&
-        bounceBodyPct >= (CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT ?? 0.08)
-          ? "bounce_body_ok"
-          : "bounce_body_weak",
-        num(bounceCloseInRangePct) &&
-        bounceCloseInRangePct >=
-          (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60)
-          ? "bounce_close_strong"
-          : "bounce_close_weak",
-        num(reclaimPctFromTrigger) &&
-        reclaimPctFromTrigger >=
-          (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05)
-          ? "reclaim_above_trigger_ok"
-          : "reclaim_above_trigger_weak",
-      ]);
-
-      const provisionalScore = scoreBreakout(
-        state,
-        {
-          ...s,
-          retestPrice: low,
-          bouncePrice: close,
-          retestLow: low,
-          invalidationPrice,
-          pullbackPct: lowPullbackPct,
-          bouncePct: provisionalBouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        { provisional: true }
-      );
-
-      return {
-        action: "transition",
-        patch: {
-          phase: "bounce_confirmed",
-          phaseBar: bar,
-          retestPrice: low,
-          retestLow: low,
-          invalidationPrice,
-          bouncePrice: close,
-          pullbackPct: lowPullbackPct,
-          bouncePct: provisionalBouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          score: provisionalScore.score,
-          reasons: provisionalScore.reasons,
-          qualityFlags,
-          lastTransition: "bounce_confirmed",
-        },
-        note: strongRetestSeen ? "retest seen" : "shallow retest seen",
-      };
-    }
-
-    return {
-      action: "noop",
-      patch: null,
-      note: "still waiting retest",
-    };
-  }
-
-  if (s.phase === "bounce_confirmed") {
-    const bouncePct = pctChange(close, s.retestPrice) ?? 0;
-    const bounceBodyPct = calcBounceBodyPct(open, close);
-    const bounceCloseInRangePct = calcCloseInRangePct(low, high, close);
-    const reclaimPctFromTrigger = pctChange(close, s.triggerPrice) ?? 0;
-
-    if (s.invalidationPrice !== null && close < s.invalidationPrice) {
-      return {
-        action: "invalidate",
-        patch: {
-          phase: "invalidated",
-          phaseBar: bar,
-          lastTransition: "invalidated",
-          reasons: [
-            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(
-              4
-            )})`,
-          ],
-          score: 0,
-          cancelReason: "lost_retest_low",
-        },
-        note: "lost retest low",
-      };
-    }
-
-    const qualityFlags = uniqueFlags([
-      ...(s.qualityFlags ?? []),
-      bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT
-        ? "bounce_pct_ok"
-        : "bounce_pct_weak",
-      num(bounceBodyPct) &&
-      bounceBodyPct >= (CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT ?? 0.08)
-        ? "bounce_body_ok"
-        : "bounce_body_weak",
-      num(bounceCloseInRangePct) &&
-      bounceCloseInRangePct >=
-        (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60)
-        ? "bounce_close_strong"
-        : "bounce_close_weak",
-      num(reclaimPctFromTrigger) &&
-      reclaimPctFromTrigger >=
-        (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05)
-        ? "reclaim_above_trigger_ok"
-        : "reclaim_above_trigger_weak",
-      close >= s.triggerPrice ? "close_above_trigger" : "close_below_trigger",
-      ema8 > ema18 ? "ema8_above_ema18" : "ema8_not_above_ema18",
-    ]);
-
-    const strongReclaim =
-      num(reclaimPctFromTrigger) &&
-      reclaimPctFromTrigger >=
-        (CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT ?? 0.05);
-
-    if (!strongReclaim) {
-      const rescored = scoreBreakout(
-        state,
-        {
-          ...s,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        { provisional: true }
-      );
-
-      return {
-        action: "rescore",
-        patch: {
-          score: rescored.score,
-          reasons: ["no strong reclaim above trigger"],
-          phaseBar: bar,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        note: "blocked: weak reclaim",
-      };
-    }
-
-    if (CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE) {
-      if ((f.oiTrend ?? 0) <= 0) {
-        const rescored = scoreBreakout(
-          state,
-          {
-            ...s,
-            bouncePrice: close,
-            bouncePct,
-            bounceBodyPct,
-            bounceCloseInRangePct,
-            reclaimPctFromTrigger,
-            qualityFlags,
-          },
-          { provisional: true }
-        );
-
-        return {
-          action: "rescore",
-          patch: {
-            score: rescored.score,
-            reasons: ["oi not supportive"],
-            phaseBar: bar,
-            bouncePrice: close,
-            bouncePct,
-            bounceBodyPct,
-            bounceCloseInRangePct,
-            reclaimPctFromTrigger,
-            qualityFlags,
-          },
-          note: "blocked: weak OI",
-        };
-      }
-    }
-
-    const strongClose =
-      num(bounceCloseInRangePct) &&
-      bounceCloseInRangePct >= (CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT ?? 60);
-
-    if (!strongClose) {
-      const rescored = scoreBreakout(
-        state,
-        {
-          ...s,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        { provisional: true }
-      );
-
-      return {
-        action: "rescore",
-        patch: {
-          score: rescored.score,
-          reasons: ["weak close in candle range"],
-          phaseBar: bar,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        note: "blocked: weak close",
-      };
-    }
-
-    if (ema8 <= ema18) {
-      const rescored = scoreBreakout(
-        state,
-        {
-          ...s,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        { provisional: true }
-      );
-
-      return {
-        action: "rescore",
-        patch: {
-          score: rescored.score,
-          reasons: ["ema8 not above ema18"],
-          phaseBar: bar,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        note: "blocked: ema misalignment",
-      };
-    }
-
-    const bounceReady =
-      bouncePct >= CONFIG.BREAKOUT_CONFIRM_BOUNCE_PCT &&
-      close >= s.triggerPrice &&
-      ema8 > ema18;
-
-    if (bounceReady) {
-      const scored = scoreBreakout(
-        state,
-        {
-          ...s,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          qualityFlags,
-        },
-        { provisional: false }
-      );
-
-      return {
-        action: "transition",
-        patch: {
-          phase: "ready",
-          phaseBar: bar,
-          readySinceBar: bar,
-          expiresAtBar: bar + CONFIG.BREAKOUT_READY_EXPIRY_BARS,
-          bouncePrice: close,
-          bouncePct,
-          bounceBodyPct,
-          bounceCloseInRangePct,
-          reclaimPctFromTrigger,
-          score: scored.score,
-          reasons: scored.reasons,
-          qualityFlags,
-          lastTransition: "ready",
-        },
-        note: "breakout ready",
-      };
-    }
-
-    if (close < ema18) {
-      return {
-        action: "invalidate",
-        patch: {
-          phase: "invalidated",
-          phaseBar: bar,
-          lastTransition: "invalidated",
-          reasons: ["bounce failed under ema18"],
-          score: 0,
-          cancelReason: "bounce_failed_under_ema18",
-        },
-        note: "bounce failed",
-      };
-    }
-
-    const rescored = scoreBreakout(
-      state,
-      {
-        ...s,
-        bouncePrice: close,
-        bouncePct,
-        bounceBodyPct,
-        bounceCloseInRangePct,
-        reclaimPctFromTrigger,
-        qualityFlags,
-      },
-      { provisional: true }
-    );
-
-    return {
-      action: "rescore",
-      patch: {
-        score: rescored.score,
-        reasons: rescored.reasons,
-        phaseBar: bar,
-        bouncePrice: close,
-        bouncePct,
-        bounceBodyPct,
-        bounceCloseInRangePct,
-        reclaimPctFromTrigger,
-        qualityFlags,
-      },
-      note: "bounce still forming",
-    };
-  }
-
-  if (s.phase === "ready") {
-    const readyAgeBars = bar - (s.readySinceBar ?? s.phaseBar ?? bar);
-
-    if (s.invalidationPrice !== null && close < s.invalidationPrice) {
-      return {
-        action: "invalidate",
-        patch: {
-          phase: "invalidated",
-          phaseBar: bar,
-          lastTransition: "invalidated",
-          reasons: [
-            `lost retest low (${close.toFixed(4)} < ${s.invalidationPrice.toFixed(
-              4
-            )})`,
-          ],
-          score: 0,
-          cancelReason: "lost_retest_low",
-        },
-        note: "lost retest low",
-      };
-    }
-
-    if (readyAgeBars > CONFIG.BREAKOUT_READY_EXPIRY_BARS) {
-      return {
-        action: "expire",
-        patch: {
-          phase: "expired",
-          phaseBar: bar,
-          lastTransition: "ready_expired",
-          reasons: [`ready expired after ${readyAgeBars} bars`],
-          score: 0,
-          cancelReason: "ready_expired",
-        },
-        note: "ready expired",
-      };
-    }
-
-    const rescored = scoreBreakout(
-      state,
-      {
-        ...s,
-      },
-      { provisional: false }
-    );
-
-    return {
-      action: "rescore",
-      patch: {
-        score: rescored.score,
-        reasons: rescored.reasons,
-        phaseBar: bar,
-      },
-      note: "ready rescored",
-    };
-  }
-
-  if (s.phase === "invalidated" || s.phase === "expired") {
-    return {
-      action: "reset",
-      patch: resetPatch(bar),
-      note: "reset to idle",
-    };
+  if (bounceBodyPct < READY_MIN_BOUNCE_BODY_PCT) {
+    reasons.push("ready_block_weak_bounce_body");
   }
 
   return {
-    action: "noop",
-    patch: null,
-    note: "no transition",
+    ok: reasons.length === 0,
+    reasons,
+    reclaimPctFromTrigger
   };
 }
+
+// ---------------------------
+// Main breakout evaluator
+// ---------------------------
+export function evaluateBreakoutLongSetup({ feat, setup }) {
+  const close = n(feat.close);
+  const triggerPrice = n(setup.triggerPrice);
+
+  const nextSetup = {
+    ...setup,
+    side: "long",
+    setupType: "breakout_long",
+    triggerPrice,
+    reclaimPctFromTrigger: Number.isFinite(setup.reclaimPctFromTrigger)
+      ? n(setup.reclaimPctFromTrigger)
+      : pctFrom(close, triggerPrice),
+    bounceCloseInRangePct: n(setup.bounceCloseInRangePct),
+    bounceBodyPct: n(setup.bounceBodyPct),
+    pullbackDepthPct: Number.isFinite(setup.pullbackDepthPct)
+      ? n(setup.pullbackDepthPct)
+      : undefined,
+    retestRespectPct: Number.isFinite(setup.retestRespectPct)
+      ? n(setup.retestRespectPct)
+      : undefined
+  };
+
+  const flags = resolveBreakoutQualityFlags({
+    bounceCloseInRangePct: nextSetup.bounceCloseInRangePct,
+    bounceBodyPct: nextSetup.bounceBodyPct,
+    reclaimPctFromTrigger: nextSetup.reclaimPctFromTrigger,
+    pullbackDepthPct: nextSetup.pullbackDepthPct,
+    retestRespectPct: nextSetup.retestRespectPct
+  });
+
+  const scorePack = computeBreakoutLongScore({
+    feat,
+    setup: nextSetup,
+    flags
+  });
+
+  const effectiveScore = applyBreakoutLongScoreCaps({
+    score: scorePack.score,
+    feat,
+    setup: nextSetup
+  });
+
+  const readyCheck = canPromoteBreakoutLongToReady({
+    feat,
+    setup: nextSetup
+  });
+
+  const readyEligible =
+    readyCheck.ok &&
+    String(feat.regime || "range") === "trend" &&
+    n(feat.ema8) > n(feat.ema18) &&
+    effectiveScore >= SCORE_READY_LONG_MIN;
+
+  const readyReasons = [...scorePack.reasons];
+  for (const f of flags) addUnique(readyReasons, f);
+  for (const r of readyCheck.reasons) addUnique(readyReasons, r);
+
+  dlog(
+    `🟦 READYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)} ` +
+      `reclaimPct=${nextSetup.reclaimPctFromTrigger.toFixed(3)} oiTrend=${n(feat.oiTrend)} ` +
+      `closeInRange=${nextSetup.bounceCloseInRangePct.toFixed(2)} ` +
+      `bodyPct=${nextSetup.bounceBodyPct.toFixed(3)} ` +
+      `scoreRaw=${scorePack.score} scoreEff=${effectiveScore} ` +
+      `ready=${readyEligible ? 1 : 0} reasons=${readyCheck.reasons.join(",") || "pass"}`
+  );
+
+  return {
+    ...nextSetup,
+    flags,
+    scoreRaw: scorePack.score,
+    score: effectiveScore,
+    reasons: readyReasons,
+    readyCheck,
+    readyEligible,
+    readyState: readyEligible ? "ready" : "watch"
+  };
+}
+
+// ---------------------------
+// State promotion helper
+// ---------------------------
+export function maybePromoteBreakoutLongReady({ state, feat, setupEval, nowMs }) {
+  const next = { ...state };
+
+  if (!setupEval?.readyEligible) {
+    next.readyOn = false;
+
+    // keep setup alive in watch state; do not consume here
+    next.setup = {
+      ...(next.setup || {}),
+      ...setupEval,
+      phase: "watch",
+      updatedAtMs: nowMs
+    };
+
+    return {
+      state: next,
+      promoted: false,
+      reasons: setupEval?.readyCheck?.reasons || ["not_ready"]
+    };
+  }
+
+  next.readyOn = true;
+  next.readySide = "long";
+  next.readyAtMs = nowMs;
+  next.readyTriggerPrice = n(setupEval.triggerPrice);
+  next.reclaimPctFromTrigger = n(setupEval.reclaimPctFromTrigger);
+
+  next.setup = {
+    ...(next.setup || {}),
+    ...setupEval,
+    phase: "ready",
+    updatedAtMs: nowMs
+  };
+
+  return {
+    state: next,
+    promoted: true,
+    reasons: ["ready_long_promoted"]
+  };
+}
+
+export default {
+  BRAIN_VERSION,
+  evaluateBreakoutLongSetup,
+  maybePromoteBreakoutLongReady
+};
