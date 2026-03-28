@@ -2,7 +2,7 @@
  * entryEngine.js
  * Brain Phase 5 v5.5
  *
- * Contract for current brain.js:
+ * Contract for current brain.js / entryPolicy.js:
  *   const entryDecision = buildEntryDecision(state)
  *   entryDecision => {
  *     allowed,
@@ -92,7 +92,7 @@ function dlog(...args) {
 }
 
 // ---------------------------
-// NAMED EXPORT REQUIRED BY brain.js
+// NAMED EXPORT REQUIRED
 // ---------------------------
 export function buildEntryDecision(state) {
   const feat = featOf(state);
