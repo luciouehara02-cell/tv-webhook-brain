@@ -9,6 +9,7 @@
  * - Stronger close quality required for READY
  * - Contradictory weak/strong flags do not accumulate together
  * - Score caps prevent weak reclaim / weak OI from being rescued
+ * - Backward-compatible export: runBreakoutSetup()
  */
 
 export const BRAIN_VERSION = "Brain Phase 5 v5.5";
@@ -19,10 +20,6 @@ export const BRAIN_VERSION = "Brain Phase 5 v5.5";
 function n(v, d = 0) {
   const x = Number(v);
   return Number.isFinite(x) ? x : d;
-}
-
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
 }
 
 function pctFrom(a, b) {
@@ -54,14 +51,16 @@ function numEnv(name, def) {
   return Number.isFinite(x) ? x : def;
 }
 
+function isTrendRegime(regime) {
+  return String(regime || "").toLowerCase() === "trend";
+}
+
 // ---------------------------
 // Config
 // ---------------------------
 const DEBUG = boolEnv("DEBUG", true);
 
 const READY_RECLAIM_MIN_PCT = numEnv("READY_RECLAIM_MIN_PCT", 0.05);
-// Optional alternative if you later want softer reclaim:
-// const READY_RECLAIM_MIN_PCT = numEnv("READY_RECLAIM_MIN_PCT", 0.03);
 
 const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE = boolEnv(
   "BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE",
@@ -104,16 +103,14 @@ function resolveBreakoutQualityFlags({
 }) {
   let flags = [];
 
-  // Close quality: exactly one family result
   if (bounceCloseInRangePct >= 75) {
     flags = setQualityFlag(flags, "close_quality", "strong");
-  } else if (bounceCloseInRangePct >= 60) {
+  } else if (bounceCloseInRangePct >= READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
     flags = setQualityFlag(flags, "close_quality", "ok");
   } else {
     flags = setQualityFlag(flags, "close_quality", "weak");
   }
 
-  // Body quality: exactly one family result
   if (bounceBodyPct >= 0.15) {
     flags = setQualityFlag(flags, "body_quality", "strong");
   } else if (bounceBodyPct >= READY_MIN_BOUNCE_BODY_PCT) {
@@ -122,7 +119,6 @@ function resolveBreakoutQualityFlags({
     flags = setQualityFlag(flags, "body_quality", "weak");
   }
 
-  // Reclaim quality: exactly one family result
   if (reclaimPctFromTrigger >= 0.10) {
     flags = setQualityFlag(flags, "reclaim_quality", "strong");
   } else if (reclaimPctFromTrigger >= READY_RECLAIM_MIN_PCT) {
@@ -131,22 +127,20 @@ function resolveBreakoutQualityFlags({
     flags = setQualityFlag(flags, "reclaim_quality", "weak");
   }
 
-  // Pullback depth: informational only, not contradictory stack
   if (Number.isFinite(pullbackDepthPct)) {
     if (pullbackDepthPct <= 0.45) {
       flags = setQualityFlag(flags, "pullback_depth", "shallow");
-    } else if (pullbackDepthPct <= 1.00) {
+    } else if (pullbackDepthPct <= 1.0) {
       flags = setQualityFlag(flags, "pullback_depth", "normal");
     } else {
       flags = setQualityFlag(flags, "pullback_depth", "deep");
     }
   }
 
-  // Retest respect
   if (Number.isFinite(retestRespectPct)) {
     if (retestRespectPct >= 0.15) {
       flags = setQualityFlag(flags, "retest_respect", "strong");
-    } else if (retestRespectPct >= 0.00) {
+    } else if (retestRespectPct >= 0.0) {
       flags = setQualityFlag(flags, "retest_respect", "ok");
     } else {
       flags = setQualityFlag(flags, "retest_respect", "weak");
@@ -178,8 +172,7 @@ function computeBreakoutLongScore({ feat, setup, flags }) {
   const cvdTrend = n(feat.cvdTrend);
   const reclaimPctFromTrigger = n(setup.reclaimPctFromTrigger);
 
-  // Trend alignment
-  if (regime === "trend") {
+  if (isTrendRegime(regime)) {
     score += 2;
     addUnique(reasons, "trend_regime");
   } else {
@@ -198,7 +191,6 @@ function computeBreakoutLongScore({ feat, setup, flags }) {
     addUnique(reasons, "ema_not_bull");
   }
 
-  // ADX / ATR
   if (adx >= 25) {
     score += 2;
     addUnique(reasons, "adx_strong");
@@ -218,7 +210,6 @@ function computeBreakoutLongScore({ feat, setup, flags }) {
     addUnique(reasons, "atr_too_small");
   }
 
-  // Flow
   if (oiTrend > 0) {
     score += 1;
     addUnique(reasons, "oi_supportive");
@@ -238,14 +229,13 @@ function computeBreakoutLongScore({ feat, setup, flags }) {
     addUnique(reasons, "cvd_negative");
   }
 
-  // Quality flags
   if (hasFlag(flags, "close_quality:strong")) {
     score += 2;
     addUnique(reasons, "close_quality_strong");
   } else if (hasFlag(flags, "close_quality:ok")) {
     score += 1;
     addUnique(reasons, "close_quality_ok");
-  } else if (hasFlag(flags, "close_quality:weak")) {
+  } else {
     score -= 2;
     addUnique(reasons, "close_quality_weak");
   }
@@ -254,9 +244,8 @@ function computeBreakoutLongScore({ feat, setup, flags }) {
     score += 1;
     addUnique(reasons, "body_quality_strong");
   } else if (hasFlag(flags, "body_quality:ok")) {
-    score += 0;
     addUnique(reasons, "body_quality_ok");
-  } else if (hasFlag(flags, "body_quality:weak")) {
+  } else {
     score -= 2;
     addUnique(reasons, "body_quality_weak");
   }
@@ -267,23 +256,21 @@ function computeBreakoutLongScore({ feat, setup, flags }) {
   } else if (hasFlag(flags, "reclaim_quality:ok")) {
     score += 1;
     addUnique(reasons, "reclaim_quality_ok");
-  } else if (hasFlag(flags, "reclaim_quality:weak")) {
+  } else {
     score -= 3;
     addUnique(reasons, "reclaim_quality_weak");
   }
 
-  // IMPORTANT: shallow pullback no longer adds positive score
+  // v5.5: informational only, not positive score
   if (setup.shallowPullbackOk) {
     addUnique(reasons, "shallow_pullback_ok");
   }
 
-  // If close is below trigger, penalize
   if (close < n(setup.triggerPrice)) {
     score -= 3;
     addUnique(reasons, "close_below_trigger");
   }
 
-  // Small reclaim is explicitly weak
   if (reclaimPctFromTrigger < READY_RECLAIM_MIN_PCT) {
     score -= 2;
     addUnique(reasons, "reclaim_below_min");
@@ -300,7 +287,6 @@ function applyBreakoutLongScoreCaps({ score, feat, setup }) {
   const oiTrend = n(feat.oiTrend);
   const reclaimPctFromTrigger = n(setup.reclaimPctFromTrigger);
 
-  // A weak reclaim or below-trigger close cannot be rescued by score inflation
   if (close < triggerPrice) capped = Math.min(capped, 5);
   if (reclaimPctFromTrigger < READY_RECLAIM_MIN_PCT) capped = Math.min(capped, 5);
   if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) capped = Math.min(capped, 5);
@@ -318,7 +304,7 @@ function canPromoteBreakoutLongToReady({ feat, setup }) {
   const triggerPrice = n(setup.triggerPrice);
   const oiTrend = n(feat.oiTrend);
 
-  const reclaimPctFromTrigger = Number.isFinite(setup.reclaimPctFromTrigger)
+  const reclaimPctFromTrigger = Number.isFinite(Number(setup.reclaimPctFromTrigger))
     ? n(setup.reclaimPctFromTrigger)
     : pctFrom(close, triggerPrice);
 
@@ -328,7 +314,6 @@ function canPromoteBreakoutLongToReady({ feat, setup }) {
   const minCloseAllowed =
     triggerPrice * (1 - BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
 
-  // true reclaim required
   if (close < minCloseAllowed) {
     reasons.push("ready_block_close_below_trigger");
   }
@@ -337,12 +322,10 @@ function canPromoteBreakoutLongToReady({ feat, setup }) {
     reasons.push("ready_block_reclaim_too_small");
   }
 
-  // OI flow support required when enabled
   if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) {
     reasons.push("ready_block_flow_not_supportive");
   }
 
-  // stronger candle quality required
   if (bounceCloseInRangePct < READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
     reasons.push("ready_block_weak_close_in_range");
   }
@@ -359,9 +342,9 @@ function canPromoteBreakoutLongToReady({ feat, setup }) {
 }
 
 // ---------------------------
-// Main breakout evaluator
+// Core evaluator
 // ---------------------------
-export function evaluateBreakoutLongSetup({ feat, setup }) {
+export function evaluateBreakoutLongSetup({ feat = {}, setup = {} }) {
   const close = n(feat.close);
   const triggerPrice = n(setup.triggerPrice);
 
@@ -370,15 +353,15 @@ export function evaluateBreakoutLongSetup({ feat, setup }) {
     side: "long",
     setupType: "breakout_long",
     triggerPrice,
-    reclaimPctFromTrigger: Number.isFinite(setup.reclaimPctFromTrigger)
+    reclaimPctFromTrigger: Number.isFinite(Number(setup.reclaimPctFromTrigger))
       ? n(setup.reclaimPctFromTrigger)
       : pctFrom(close, triggerPrice),
     bounceCloseInRangePct: n(setup.bounceCloseInRangePct),
     bounceBodyPct: n(setup.bounceBodyPct),
-    pullbackDepthPct: Number.isFinite(setup.pullbackDepthPct)
+    pullbackDepthPct: Number.isFinite(Number(setup.pullbackDepthPct))
       ? n(setup.pullbackDepthPct)
       : undefined,
-    retestRespectPct: Number.isFinite(setup.retestRespectPct)
+    retestRespectPct: Number.isFinite(Number(setup.retestRespectPct))
       ? n(setup.retestRespectPct)
       : undefined
   };
@@ -410,7 +393,7 @@ export function evaluateBreakoutLongSetup({ feat, setup }) {
 
   const readyEligible =
     readyCheck.ok &&
-    String(feat.regime || "range") === "trend" &&
+    isTrendRegime(feat.regime) &&
     n(feat.ema8) > n(feat.ema18) &&
     effectiveScore >= SCORE_READY_LONG_MIN;
 
@@ -440,15 +423,19 @@ export function evaluateBreakoutLongSetup({ feat, setup }) {
 }
 
 // ---------------------------
-// State promotion helper
+// Promotion helper
 // ---------------------------
-export function maybePromoteBreakoutLongReady({ state, feat, setupEval, nowMs }) {
+export function maybePromoteBreakoutLongReady({
+  state = {},
+  feat = {},
+  setupEval = {},
+  nowMs = Date.now()
+}) {
   const next = { ...state };
 
   if (!setupEval?.readyEligible) {
     next.readyOn = false;
 
-    // keep setup alive in watch state; do not consume here
     next.setup = {
       ...(next.setup || {}),
       ...setupEval,
@@ -483,8 +470,45 @@ export function maybePromoteBreakoutLongReady({ state, feat, setupEval, nowMs })
   };
 }
 
+// ---------------------------
+// Backward-compatible export
+// brain.js currently expects this name
+//
+// This wrapper is intentionally tolerant because I do not yet have
+// your exact v5.4 runBreakoutSetup() call contract.
+// It returns both setup evaluation and updated state.
+// ---------------------------
+export function runBreakoutSetup(args = {}) {
+  const state = args.state || {};
+  const feat = args.feat || args.features || {};
+  const nowMs = Number.isFinite(Number(args.nowMs)) ? Number(args.nowMs) : Date.now();
+
+  // Accept either explicit setup candidate or current state.setup
+  const setupInput = args.setup || state.setup || {};
+
+  const setupEval = evaluateBreakoutLongSetup({
+    feat,
+    setup: setupInput
+  });
+
+  const promo = maybePromoteBreakoutLongReady({
+    state,
+    feat,
+    setupEval,
+    nowMs
+  });
+
+  return {
+    ...setupEval,
+    state: promo.state,
+    promoted: promo.promoted,
+    promotionReasons: promo.reasons
+  };
+}
+
 export default {
   BRAIN_VERSION,
   evaluateBreakoutLongSetup,
-  maybePromoteBreakoutLongReady
+  maybePromoteBreakoutLongReady,
+  runBreakoutSetup
 };
