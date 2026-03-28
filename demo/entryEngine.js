@@ -14,6 +14,12 @@
  *     hardReasons,
  *     softReasons
  *   }
+ *
+ * v5.5:
+ * - strict READY path remains
+ * - add EARLY TREND LONG path from bounce_confirmed
+ * - weak reclaim / below-trigger still hard-block
+ * - negative OI no longer always kills a strong trend continuation
  */
 
 export const BRAIN_VERSION = "Brain Phase 5 v5.5";
@@ -67,6 +73,10 @@ function isTrendRegime(regime) {
   return String(regime || "").toLowerCase() === "trend";
 }
 
+function isBullAligned(feat) {
+  return n(feat.ema8) > n(feat.ema18) && n(feat.ema18) >= n(feat.ema50);
+}
+
 // ---------------------------
 // config
 // ---------------------------
@@ -78,14 +88,19 @@ const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE = boolEnv(
 );
 
 const ENTRY_RECLAIM_MIN_PCT = numEnv("ENTRY_RECLAIM_MIN_PCT", 0.05);
-
 const ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT = numEnv(
   "ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT",
-  0.0
+  0.00
 );
 
 const SCORE_ENTER_LONG = numEnv("SCORE_ENTER_LONG", 6);
+const SCORE_EARLY_TREND_LONG_MIN = numEnv("SCORE_EARLY_TREND_LONG_MIN", 5);
+
 const MAX_CHASE_PCT = numEnv("MAX_CHASE_PCT", 0.25);
+
+const ALLOW_EARLY_TREND_ENTRY = boolEnv("ALLOW_EARLY_TREND_ENTRY", true);
+const EARLY_ENTRY_ALLOW_NEGATIVE_OI = boolEnv("EARLY_ENTRY_ALLOW_NEGATIVE_OI", true);
+const EARLY_ENTRY_MAX_BODY_WEAKNESS_ALLOW = boolEnv("EARLY_ENTRY_MAX_BODY_WEAKNESS_ALLOW", true);
 
 // ---------------------------
 // logging
@@ -109,6 +124,7 @@ export function buildEntryDecision(state) {
   const close = n(feat.close);
   const ema8 = n(feat.ema8);
   const ema18 = n(feat.ema18);
+  const ema50 = n(feat.ema50);
   const oiTrend = n(feat.oiTrend);
   const regime = String(ctxOf(state).regime ?? feat.regime ?? "range");
 
@@ -121,6 +137,7 @@ export function buildEntryDecision(state) {
     : pctFrom(close, triggerPrice);
 
   const score = n(breakout.score);
+  const phase = String(breakout.phase ?? "idle");
 
   const entryCandidatePrice = Number.isFinite(
     Number(breakout.entryCandidatePrice)
@@ -129,6 +146,8 @@ export function buildEntryDecision(state) {
     : close;
 
   const chasePct = triggerPrice > 0 ? pctFrom(close, triggerPrice) : 0;
+  const bounceBodyPct = n(breakout.bounceBodyPct);
+  const bounceCloseInRangePct = n(breakout.bounceCloseInRangePct);
 
   const base = {
     allowed: false,
@@ -147,12 +166,6 @@ export function buildEntryDecision(state) {
     return base;
   }
 
-  if (breakout.phase !== "ready") {
-    addUnique(reasons, `breakout phase=${breakout.phase}`);
-    addUnique(hardReasons, "not in ready phase");
-    return base;
-  }
-
   if (!(triggerPrice > 0)) {
     addUnique(reasons, "missing trigger price");
     addUnique(hardReasons, "missing trigger price");
@@ -162,10 +175,18 @@ export function buildEntryDecision(state) {
   const minCloseAllowed =
     triggerPrice * (1 - ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
 
-  // hard blocks
-  if (!isTrendRegime(regime)) {
+  const trendOk = isTrendRegime(regime);
+  const bullAligned = isBullAligned(feat);
+
+  // universal hard blocks
+  if (!trendOk) {
     addUnique(reasons, "entry_block_not_trend_regime");
     addUnique(hardReasons, "not trend regime");
+  }
+
+  if (!bullAligned) {
+    addUnique(reasons, "entry_block_ema_not_bull_aligned");
+    addUnique(hardReasons, "ema not bull aligned");
   }
 
   if (!(ema8 > ema18)) {
@@ -183,62 +204,135 @@ export function buildEntryDecision(state) {
     addUnique(hardReasons, "reclaim too small");
   }
 
-  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) {
-    addUnique(reasons, "entry_block_flow_not_supportive");
-    addUnique(hardReasons, "flow not supportive");
-  }
-
   if (chasePct > MAX_CHASE_PCT) {
     addUnique(reasons, `entry_block_chase_too_high_${chasePct.toFixed(3)}`);
     addUnique(hardReasons, "chase too high");
   }
 
-  if (hardReasons.length > 0) {
+  // ---------------------------
+  // STRICT READY PATH
+  // ---------------------------
+  if (phase === "ready") {
+    if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) {
+      addUnique(reasons, "entry_block_flow_not_supportive");
+      addUnique(hardReasons, "flow not supportive");
+    }
+
+    if (hardReasons.length > 0) {
+      dlog(
+        `🚦 ENTRYCHK LONG | mode=ready close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
+          4
+        )} reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
+          `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} ema50=${ema50.toFixed(4)} ` +
+          `regime=${regime} ok=0 reasons=${reasons.join(",")} score=${score}`
+      );
+      return base;
+    }
+
+    if (score < SCORE_ENTER_LONG) {
+      addUnique(reasons, "entry_block_score_too_low");
+      addUnique(softReasons, "score too low");
+      return base;
+    }
+
+    addUnique(reasons, "entry_allowed");
+
     dlog(
-      `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
+      `🚦 ENTRYCHK LONG | mode=ready close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
         4
-      )} ` +
-        `reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
-        `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} regime=${regime} ` +
-        `ok=0 reasons=${reasons.join(",")} score=${score}`
+      )} reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
+        `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} ema50=${ema50.toFixed(4)} ` +
+        `regime=${regime} ok=1 reasons=${reasons.join(",")} score=${score}`
     );
 
-    return base;
-  }
-
-  // soft block
-  if (score < SCORE_ENTER_LONG) {
-    addUnique(reasons, "entry_block_score_too_low");
-    addUnique(softReasons, "score too low");
-    return base;
-  }
-
-  addUnique(reasons, "entry_allowed");
-
-  dlog(
-    `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
-      4
-    )} ` +
-      `reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
-      `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} regime=${regime} ` +
-      `ok=1 reasons=${reasons.join(",")} score=${score}`
-  );
-
-  return {
-    allowed: true,
-    mode: "breakout_ready_long",
-    score,
-    chasePct,
-    reasons,
-    hardReasons,
-    softReasons,
-    patch: {
-      lastEntryMode: "breakout_ready_long",
-      entryCandidatePrice,
+    return {
+      allowed: true,
+      mode: "breakout_ready_long",
+      score,
       chasePct,
-      reasons: [`entry allowed | mode=breakout_ready_long score=${score}`],
-    },
-  };
+      reasons,
+      hardReasons,
+      softReasons,
+      patch: {
+        lastEntryMode: "breakout_ready_long",
+        entryCandidatePrice,
+        chasePct,
+        reasons: [`entry allowed | mode=breakout_ready_long score=${score}`],
+      },
+    };
+  }
+
+  // ---------------------------
+  // EARLY TREND LONG PATH
+  // ---------------------------
+  if (phase === "bounce_confirmed" && ALLOW_EARLY_TREND_ENTRY) {
+    if (
+      BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+      !EARLY_ENTRY_ALLOW_NEGATIVE_OI &&
+      oiTrend <= 0
+    ) {
+      addUnique(reasons, "early_block_flow_not_supportive");
+      addUnique(hardReasons, "flow not supportive");
+    }
+
+    // weaker body tolerated for early trend path
+    if (!EARLY_ENTRY_MAX_BODY_WEAKNESS_ALLOW && bounceBodyPct < 0.08) {
+      addUnique(reasons, "early_block_weak_bounce_body");
+      addUnique(hardReasons, "weak bounce body");
+    }
+
+    if (bounceCloseInRangePct > 0 && bounceCloseInRangePct < 15) {
+      addUnique(reasons, "early_block_very_weak_close_in_range");
+      addUnique(hardReasons, "very weak close in range");
+    }
+
+    if (hardReasons.length > 0) {
+      dlog(
+        `🚦 ENTRYCHK LONG | mode=early close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
+          4
+        )} reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
+          `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} ema50=${ema50.toFixed(4)} ` +
+          `regime=${regime} ok=0 reasons=${reasons.join(",")} score=${score}`
+      );
+      return base;
+    }
+
+    if (score < SCORE_EARLY_TREND_LONG_MIN) {
+      addUnique(reasons, "early_block_score_too_low");
+      addUnique(softReasons, "score too low");
+      return base;
+    }
+
+    addUnique(reasons, "entry_allowed");
+
+    dlog(
+      `🚦 ENTRYCHK LONG | mode=early close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
+        4
+      )} reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
+        `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} ema50=${ema50.toFixed(4)} ` +
+        `regime=${regime} ok=1 reasons=${reasons.join(",")} score=${score}`
+    );
+
+    return {
+      allowed: true,
+      mode: "early_trend_long",
+      score,
+      chasePct,
+      reasons,
+      hardReasons,
+      softReasons,
+      patch: {
+        lastEntryMode: "early_trend_long",
+        entryCandidatePrice,
+        chasePct,
+        reasons: [`entry allowed | mode=early_trend_long score=${score}`],
+      },
+    };
+  }
+
+  addUnique(reasons, `breakout phase=${phase}`);
+  addUnique(hardReasons, "not in ready/early-entry phase");
+  return base;
 }
 
 export default {
