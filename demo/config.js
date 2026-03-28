@@ -9,7 +9,7 @@ const bool = (v, d = false) => {
 };
 
 export const CONFIG = {
-  BRAIN_VERSION: process.env.BRAIN_VERSION || "Brain Phase 5 v5.4",
+  BRAIN_VERSION: process.env.BRAIN_VERSION || "Brain Phase 5 v5.5",
   SYMBOL: process.env.SYMBOL || "BINANCE:SOLUSDT",
   TF: process.env.TF || "3",
 
