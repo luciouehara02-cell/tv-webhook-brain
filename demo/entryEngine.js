@@ -8,6 +8,7 @@
  * - keep ema8 > ema18 requirement
  * - keep trend regime requirement
  * - effective score cannot rescue weak reclaim / weak OI setup
+ * - backward-compatible export: buildEntryDecision()
  * - do not consume setup unless entry is truly activated / confirmed
  */
 
@@ -40,6 +41,10 @@ function addUnique(arr, item) {
   if (!arr.includes(item)) arr.push(item);
 }
 
+function isTrendRegime(regime) {
+  return String(regime || "").toLowerCase() === "trend";
+}
+
 // ---------------------------
 // Config
 // ---------------------------
@@ -51,6 +56,7 @@ const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE = boolEnv(
 );
 
 const ENTRY_RECLAIM_MIN_PCT = numEnv("ENTRY_RECLAIM_MIN_PCT", 0.05);
+
 const ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT = numEnv(
   "ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT",
   0.00
@@ -67,9 +73,33 @@ function dlog(...args) {
 }
 
 // ---------------------------
-// Hard gate
+// Shared state readers
 // ---------------------------
-export function canEnterReadyLong({ state, feat }) {
+function getTriggerPrice(state = {}) {
+  return n(
+    state.readyTriggerPrice ??
+      state?.setup?.triggerPrice ??
+      state?.triggerPrice
+  );
+}
+
+function getReclaimPct(state = {}, feat = {}) {
+  const explicit = state?.reclaimPctFromTrigger ?? state?.setup?.reclaimPctFromTrigger;
+  if (Number.isFinite(Number(explicit))) return n(explicit);
+
+  const close = n(feat.close);
+  const triggerPrice = getTriggerPrice(state);
+  return pctFrom(close, triggerPrice);
+}
+
+function getSetupScore(state = {}) {
+  return n(state?.setup?.score ?? state?.score ?? 0);
+}
+
+// ---------------------------
+// Hard gate for LONG ready entry
+// ---------------------------
+export function canEnterReadyLong({ state = {}, feat = {} }) {
   const reasons = [];
 
   const close = n(feat.close);
@@ -78,15 +108,8 @@ export function canEnterReadyLong({ state, feat }) {
   const oiTrend = n(feat.oiTrend);
   const regime = String(feat.regime || "range");
 
-  const triggerPrice = n(
-    state.readyTriggerPrice ??
-      state?.setup?.triggerPrice ??
-      state?.triggerPrice
-  );
-
-  const reclaimPctFromTrigger = Number.isFinite(state?.reclaimPctFromTrigger)
-    ? n(state.reclaimPctFromTrigger)
-    : pctFrom(close, triggerPrice);
+  const triggerPrice = getTriggerPrice(state);
+  const reclaimPctFromTrigger = getReclaimPct(state, feat);
 
   const minCloseAllowed =
     triggerPrice * (1 - ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
@@ -96,8 +119,13 @@ export function canEnterReadyLong({ state, feat }) {
     reasons.push("entry_block_not_ready_long");
   }
 
+  // Must have a valid trigger
+  if (!(triggerPrice > 0)) {
+    reasons.push("entry_block_missing_trigger");
+  }
+
   // Keep trend regime requirement
-  if (regime !== "trend") {
+  if (!isTrendRegime(regime)) {
     reasons.push("entry_block_not_trend_regime");
   }
 
@@ -106,8 +134,8 @@ export function canEnterReadyLong({ state, feat }) {
     reasons.push("entry_block_ema8_not_above_ema18");
   }
 
-  // Hard block: below trigger
-  if (close < minCloseAllowed) {
+  // Hard block: close below trigger
+  if (triggerPrice > 0 && close < minCloseAllowed) {
     reasons.push("entry_block_close_below_trigger");
   }
 
@@ -125,41 +153,42 @@ export function canEnterReadyLong({ state, feat }) {
     ok: reasons.length === 0,
     reasons,
     triggerPrice,
-    reclaimPctFromTrigger
+    reclaimPctFromTrigger,
+    minCloseAllowed
   };
 }
 
 // ---------------------------
-// Effective score gate
+// Score safety
 // ---------------------------
-export function getEffectiveEntryScore({ state, feat }) {
-  let score = n(state?.setup?.score ?? state?.score ?? 0);
+export function getEffectiveEntryScore({ state = {}, feat = {} }) {
+  let score = getSetupScore(state);
 
   const close = n(feat.close);
-  const triggerPrice = n(
-    state.readyTriggerPrice ??
-      state?.setup?.triggerPrice ??
-      state?.triggerPrice
-  );
-
-  const reclaimPctFromTrigger = Number.isFinite(state?.reclaimPctFromTrigger)
-    ? n(state.reclaimPctFromTrigger)
-    : pctFrom(close, triggerPrice);
-
+  const triggerPrice = getTriggerPrice(state);
+  const reclaimPctFromTrigger = getReclaimPct(state, feat);
   const oiTrend = n(feat.oiTrend);
 
-  // Extra safety: weak reclaim / weak OI can never be rescued by score
-  if (close < triggerPrice) score = Math.min(score, 5);
-  if (reclaimPctFromTrigger < ENTRY_RECLAIM_MIN_PCT) score = Math.min(score, 5);
-  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) score = Math.min(score, 5);
+  // weak reclaim / weak OI cannot be rescued by score
+  if (triggerPrice > 0 && close < triggerPrice) {
+    score = Math.min(score, 5);
+  }
+
+  if (reclaimPctFromTrigger < ENTRY_RECLAIM_MIN_PCT) {
+    score = Math.min(score, 5);
+  }
+
+  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) {
+    score = Math.min(score, 5);
+  }
 
   return score;
 }
 
 // ---------------------------
-// Entry decision
+// Primary decision function
 // ---------------------------
-export function decideLongEntry({ state, feat, nowMs }) {
+export function decideLongEntry({ state = {}, feat = {}, nowMs = Date.now() }) {
   const gate = canEnterReadyLong({ state, feat });
 
   const triggerPrice = gate.triggerPrice;
@@ -171,7 +200,7 @@ export function decideLongEntry({ state, feat, nowMs }) {
 
   const reasons = [];
 
-  // First line: hard vetoes
+  // Hard vetoes first
   if (!gate.ok) {
     for (const r of gate.reasons) addUnique(reasons, r);
 
@@ -185,26 +214,34 @@ export function decideLongEntry({ state, feat, nowMs }) {
     return {
       enter: false,
       blocked: true,
+      allowed: false,
+      side: "long",
       reasons,
       gate,
-      score: getEffectiveEntryScore({ state, feat })
+      score: getEffectiveEntryScore({ state, feat }),
+      nowMs
     };
   }
 
   // Dedupe
   if (n(state.lastEnterAttemptMs) > 0 && nowMs - n(state.lastEnterAttemptMs) < ENTER_DEDUP_MS) {
     addUnique(reasons, "entry_block_dedup");
+
     return {
       enter: false,
       blocked: true,
+      allowed: false,
+      side: "long",
       reasons,
       gate,
-      score: getEffectiveEntryScore({ state, feat })
+      score: getEffectiveEntryScore({ state, feat }),
+      nowMs
     };
   }
 
-  // Score only matters after hard structural / flow validation
+  // Score only after hard structure / flow checks
   const effectiveScore = getEffectiveEntryScore({ state, feat });
+
   if (effectiveScore < SCORE_ENTER_LONG) {
     addUnique(reasons, "entry_block_score_too_low");
 
@@ -218,9 +255,12 @@ export function decideLongEntry({ state, feat, nowMs }) {
     return {
       enter: false,
       blocked: true,
+      allowed: false,
+      side: "long",
       reasons,
       gate,
-      score: effectiveScore
+      score: effectiveScore,
+      nowMs
     };
   }
 
@@ -236,18 +276,29 @@ export function decideLongEntry({ state, feat, nowMs }) {
   return {
     enter: true,
     blocked: false,
+    allowed: true,
+    side: "long",
     reasons,
     gate,
-    score: effectiveScore
+    score: effectiveScore,
+    nowMs
   };
 }
 
 // ---------------------------
-// State transition on send attempt
-// IMPORTANT:
-// Do not consume setup unless entry is truly activated / confirmed
+// Backward-compatible export
+// entryPolicy.js currently expects this name
 // ---------------------------
-export function markEntryAttemptPending({ state, nowMs, plannedPrice }) {
+export function buildEntryDecision(args = {}) {
+  return decideLongEntry(args);
+}
+
+// ---------------------------
+// State transition helpers
+// IMPORTANT:
+// do not consume setup unless entry truly activated / confirmed
+// ---------------------------
+export function markEntryAttemptPending({ state = {}, nowMs = Date.now(), plannedPrice }) {
   const next = { ...state };
 
   next.lastEnterAttemptMs = nowMs;
@@ -255,19 +306,14 @@ export function markEntryAttemptPending({ state, nowMs, plannedPrice }) {
   next.entryPendingSinceMs = nowMs;
   next.entryPlannedPrice = n(plannedPrice);
 
-  // DO NOT consume setup here
-  // DO NOT set inPosition here
-  // DO NOT clear ready here
+  // do NOT consume setup here
+  // do NOT clear ready here
+  // do NOT set inPosition here
 
   return next;
 }
 
-// ---------------------------
-// Mark success after executor/webhook accepted
-// Still conservative: setup can be consumed here,
-// or you can postpone until true exchange confirmation if available.
-// ---------------------------
-export function markEntryActivated({ state, nowMs, actualPrice }) {
+export function markEntryActivated({ state = {}, nowMs = Date.now(), actualPrice }) {
   const next = { ...state };
 
   next.entryPending = true;
@@ -275,17 +321,13 @@ export function markEntryActivated({ state, nowMs, actualPrice }) {
   next.entryActivatedAtMs = nowMs;
   next.entryPrice = n(actualPrice, n(state.entryPlannedPrice));
 
-  // setup is now truly activated
+  // now truly activated
   next.setupConsumed = true;
 
   return next;
 }
 
-// ---------------------------
-// Mark confirmed position
-// Best place to finalize state if you have position confirmation
-// ---------------------------
-export function markPositionConfirmedLong({ state, nowMs, actualPrice }) {
+export function markPositionConfirmedLong({ state = {}, nowMs = Date.now(), actualPrice }) {
   const next = { ...state };
 
   next.inPosition = true;
@@ -312,11 +354,7 @@ export function markPositionConfirmedLong({ state, nowMs, actualPrice }) {
   return next;
 }
 
-// ---------------------------
-// Mark failed entry attempt
-// Keep setup alive because no true activation happened
-// ---------------------------
-export function markEntryFailed({ state, nowMs, reason = "entry_send_failed" }) {
+export function markEntryFailed({ state = {}, nowMs = Date.now(), reason = "entry_send_failed" }) {
   const next = { ...state };
 
   next.entryPending = false;
@@ -324,7 +362,7 @@ export function markEntryFailed({ state, nowMs, reason = "entry_send_failed" }) 
   next.lastEntryFailureAtMs = nowMs;
   next.lastEntryFailureReason = reason;
 
-  // DO NOT consume setup
+  // keep setup alive
   next.setupConsumed = false;
 
   if (next.setup) {
@@ -340,13 +378,13 @@ export function markEntryFailed({ state, nowMs, reason = "entry_send_failed" }) 
 }
 
 // ---------------------------
-// Optional helper for full execution path
+// Optional execution helper
 // sendEnterLongFn should return { ok: true/false, price? }
 // ---------------------------
 export async function tryActivateLongEntry({
-  state,
-  feat,
-  nowMs,
+  state = {},
+  feat = {},
+  nowMs = Date.now(),
   sendEnterLongFn
 }) {
   const decision = decideLongEntry({ state, feat, nowMs });
@@ -405,6 +443,7 @@ export default {
   canEnterReadyLong,
   getEffectiveEntryScore,
   decideLongEntry,
+  buildEntryDecision,
   markEntryAttemptPending,
   markEntryActivated,
   markPositionConfirmedLong,
