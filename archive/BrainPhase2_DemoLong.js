@@ -1,1182 +1,1148 @@
 /**
- * Brain v3.5 — Breakout Confirmation Entry + Better Trend Exit
- * ✅ No external OI API
- * ✅ Duplicate enter/exit protection
- * ✅ Tick path only handles execution timing
- * ✅ Features path handles regime/setup/scoring
- * ✅ TV-derived flow:
- *    - oiTrend
- *    - oiDeltaBias
- *    - cvdTrend
- * ✅ Pattern A fields:
- *    - liqClusterBelow
- *    - priceDropPct
- *    - patternAReady
- *    - patternAWatch
- * ✅ Breakout confirmation entry:
- *    breakout -> retest -> bounce -> enter
- * ✅ Breakout retest expiry
- * ✅ Washout stale logic
- * ✅ Trend stop delay
- * ✅ Trend stop uses wider of:
- *    - ATR trail
- *    - minimum % trail
- * ✅ Score-based amount table
- * ✅ Adaptive breakout entry distance by ATR
- * ✅ Optional trend dead-trade exit
+ * BrainPhase2_DemoLong_v3.6b
+ *
+ * Merged from:
+ * - BrainPhase2_DemoLong v3.5 direction
+ * - v3.6 structure improvements
+ * - log-backed tuning from logs20260317_Phase2.log
+ *
+ * Key points:
+ * - FEATURES path handles regime/setup/scoring
+ * - TICK path handles timing + active trade management
+ * - Warmup reduced vs prior version
+ * - Breakout confirmation kept strict
+ * - Retest stale cleanup kept and made explicit
+ * - Washout reclaim path preserved
+ * - Flow-aware scoring preserved
+ * - Full script, no partial patch
  */
 
 import express from "express";
 
-// ---------------------------
-// Config
-// ---------------------------
-const PORT = process.env.PORT || 8080;
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong";
+// --------------------------------------------------
+// App / config helpers
+// --------------------------------------------------
+const app = express();
+app.use(express.json({ limit: "1mb" }));
 
-// Debug toggle
-const DEBUG = (process.env.DEBUG || "1") === "1";
-function dlog(...args) { if (DEBUG) console.log(...args); }
+const PORT = Number(process.env.PORT || 8080);
+const DEBUG = String(process.env.DEBUG || "1") === "1";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.6b";
 
-// Tick log throttling
-const TICK_LOG_EVERY_MS = parseInt(
-  process.env.TICK_LOG_EVERY_MS || String(3 * 60 * 1000),
-  10
-);
-
-// Minimum bars before setup detection
-const MIN_BARS_FOR_SETUPS = parseInt(process.env.MIN_BARS_FOR_SETUPS || "40", 10);
-
-// Signal freshness TTLs
-const RAY_SIGNAL_TTL_MS = parseInt(process.env.RAY_SIGNAL_TTL_MS || String(15 * 60 * 1000), 10);
-const FWO_SIGNAL_TTL_MS = parseInt(process.env.FWO_SIGNAL_TTL_MS || String(15 * 60 * 1000), 10);
-
-// Setup aging
-const BREAKOUT_MAX_AGE_MIN = parseInt(process.env.BREAKOUT_MAX_AGE_MIN || "12", 10);
-const BREAKOUT_STALE_MIN_SCORE = parseInt(process.env.BREAKOUT_STALE_MIN_SCORE || "5", 10);
-const BREAKOUT_RETEST_MAX_MIN = parseInt(process.env.BREAKOUT_RETEST_MAX_MIN || "4", 10);
-const WASHOUT_MAX_AGE_MIN = parseInt(process.env.WASHOUT_MAX_AGE_MIN || "12", 10);
-
-// Reject log throttling
-const NO_ENTER_LOG_EVERY_MS = parseInt(process.env.NO_ENTER_LOG_EVERY_MS || "60000", 10);
-
-// Trend stop delay
-const TREND_STOP_ACTIVATE_MIN = parseInt(process.env.TREND_STOP_ACTIVATE_MIN || "9", 10);
-
-// Trend minimum trailing %
-const TREND_MIN_TRAIL_PCT = parseFloat(process.env.TREND_MIN_TRAIL_PCT || "0.5");
-
-// Optional trend dead-trade exit
-const TREND_TIME_STOP_MIN = parseInt(process.env.TREND_TIME_STOP_MIN || "60", 10);
-const TREND_MIN_PROGRESS_PCT = parseFloat(process.env.TREND_MIN_PROGRESS_PCT || "0.15");
-
-// Breakout confirmation bounce %
-const BREAKOUT_CONFIRM_BOUNCE_PCT = parseFloat(process.env.BREAKOUT_CONFIRM_BOUNCE_PCT || "0.08");
-
-// Breakout minimum ADX
-const BREAKOUT_MIN_ADX = parseFloat(process.env.BREAKOUT_MIN_ADX || "20");
-
-// Entry score tuning by setup type
-const BREAKOUT_MIN_SCORE = parseInt(process.env.BREAKOUT_MIN_SCORE || "7", 10);
-const WASHOUT_MIN_SCORE = parseInt(process.env.WASHOUT_MIN_SCORE || "6", 10);
-
-// Secrets
-const BRAIN_SECRET = process.env.WEBHOOK_SECRET || "";
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
 
-// 3Commas
 const C3_SIGNAL_URL =
   process.env.C3_SIGNAL_URL || "https://api.3commas.io/signal_bots/webhooks";
 const C3_SIGNAL_SECRET = process.env.C3_SIGNAL_SECRET || "";
-const C3_TIMEOUT_MS = parseInt(process.env.C3_TIMEOUT_MS || "8000", 10);
-const MAX_LAG_SEC = parseInt(process.env.MAX_LAG_SEC || "300", 10);
+const C3_TIMEOUT_MS = Number(process.env.C3_TIMEOUT_MS || 8000);
+const MAX_LAG_SEC = Number(process.env.MAX_LAG_SEC || 300);
 
-// Routing: symbol -> bot_uuid
-let SYMBOL_BOT_MAP = {};
-try {
-  SYMBOL_BOT_MAP = JSON.parse(process.env.SYMBOL_BOT_MAP || "{}");
-} catch (e) {
-  console.error("❌ SYMBOL_BOT_MAP invalid JSON:", e?.message || e);
-  SYMBOL_BOT_MAP = {};
-}
+const SYMBOL_BOT_MAP = safeJson(process.env.SYMBOL_BOT_MAP || "{}", {});
+const ALLOW_SYMBOLS = Object.keys(SYMBOL_BOT_MAP);
 
-// Decision tuning
-const TICK_MAX_AGE_SEC = parseInt(process.env.TICK_MAX_AGE_SEC || "60", 10);
-const SETUP_TTL_SEC = parseInt(process.env.SETUP_TTL_SEC || "1800", 10);
-const COOLDOWN_SEC = parseInt(process.env.COOLDOWN_SEC || "180", 10);
+// warmup / setup lifecycle
+const MIN_BARS_FOR_SETUPS = Number(process.env.MIN_BARS_FOR_SETUPS || 20);
+const SETUP_TTL_SEC = Number(process.env.SETUP_TTL_SEC || 1800);
+const BREAKOUT_MAX_AGE_MIN = Number(process.env.BREAKOUT_MAX_AGE_MIN || 12);
+const BREAKOUT_RETEST_MAX_MIN = Number(process.env.BREAKOUT_RETEST_MAX_MIN || 4);
+const WASHOUT_MAX_AGE_MIN = Number(process.env.WASHOUT_MAX_AGE_MIN || 12);
 
-const PUMP_BLOCK_PCT = parseFloat(process.env.PUMP_BLOCK_PCT || "1.8");
-const PUMP_BLOCK_WINDOW_BARS = parseInt(process.env.PUMP_BLOCK_WINDOW_BARS || "3", 10);
+// freshness / signals
+const REQUIRE_FRESH_HEARTBEAT =
+  String(process.env.REQUIRE_FRESH_HEARTBEAT || "1") === "1";
+const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || 90);
+const TICK_MAX_AGE_SEC = Number(process.env.TICK_MAX_AGE_SEC || 60);
+const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || 180000);
+const RAY_SIGNAL_TTL_MS = Number(process.env.RAY_SIGNAL_TTL_MS || 900000);
+const FWO_SIGNAL_TTL_MS = Number(process.env.FWO_SIGNAL_TTL_MS || 900000);
 
-const ENTER_DEDUP_MS = parseInt(process.env.ENTER_DEDUP_MS || "60000", 10);
-const EXIT_DEDUP_MS = parseInt(process.env.EXIT_DEDUP_MS || "30000", 10);
+// dedupe / cooldown
+const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || 25);
+const EXIT_DEDUP_SEC = Number(process.env.EXIT_DEDUP_SEC || 20);
+const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 180);
 
-// ---------------------------
-// Risk-based sizing
-// ---------------------------
-const BOT_MAX_NOTIONAL_USDT = parseFloat(process.env.BOT_MAX_NOTIONAL_USDT || "3000");
+// scoring / entry thresholds
+const BREAKOUT_MIN_SCORE = Number(process.env.BREAKOUT_MIN_SCORE || 7);
+const WASHOUT_MIN_SCORE = Number(process.env.WASHOUT_MIN_SCORE || 6);
 
-// Adaptive risk bounds as % of bot allocation
-const BASE_RISK_PCT = parseFloat(process.env.BASE_RISK_PCT || "0.35");
-const MIN_RISK_PCT = parseFloat(process.env.MIN_RISK_PCT || "0.20");
-const MAX_RISK_PCT = parseFloat(process.env.MAX_RISK_PCT || "0.70");
+const BREAKOUT_MIN_ADX = Number(process.env.BREAKOUT_MIN_ADX || 20);
+const BREAKOUT_CONFIRM_BOUNCE_PCT = Number(
+  process.env.BREAKOUT_CONFIRM_BOUNCE_PCT || 0.08
+);
+const BREAKOUT_NEAR_LEVEL_MAX_PCT = Number(
+  process.env.BREAKOUT_NEAR_LEVEL_MAX_PCT || 0.35
+);
+const BREAKOUT_NEAR_EMA8_MAX_PCT = Number(
+  process.env.BREAKOUT_NEAR_EMA8_MAX_PCT || 0.20
+);
+const BREAKOUT_STALE_MIN_SCORE = Number(
+  process.env.BREAKOUT_STALE_MIN_SCORE || 5
+);
+const ALLOW_EARLY_TREND_ENTRY =
+  String(process.env.ALLOW_EARLY_TREND_ENTRY || "1") === "1";
+const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE =
+  String(process.env.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE || "1") === "1";
 
-// Optional score sizing
-const USE_SCORE_SIZE_MULT = (process.env.USE_SCORE_SIZE_MULT || "1") === "1";
+// risk / sizing
+const BOT_MAX_NOTIONAL_USDT = Number(process.env.BOT_MAX_NOTIONAL_USDT || 3000);
+const ACCOUNT_EQUITY = Number(process.env.ACCOUNT_EQUITY || 3000);
+const BASE_RISK_PCT = Number(process.env.BASE_RISK_PCT || 0.35);
+const MIN_RISK_PCT = Number(process.env.MIN_RISK_PCT || 0.2);
+const MAX_RISK_PCT = Number(process.env.MAX_RISK_PCT || 0.7);
+const MIN_VOLUME_PCT = Number(process.env.MIN_VOLUME_PCT || 5);
+const MAX_VOLUME_PCT = Number(process.env.MAX_VOLUME_PCT || 100);
 
-// Safety caps on webhook volume %
-const MIN_VOLUME_PCT = parseFloat(process.env.MIN_VOLUME_PCT || "10");
-const MAX_VOLUME_PCT = parseFloat(process.env.MAX_VOLUME_PCT || "100");
+// pump / anti-chase
+const PUMP_BLOCK_PCT = Number(process.env.PUMP_BLOCK_PCT || 1.8);
+const PUMP_BLOCK_WINDOW_BARS = Number(process.env.PUMP_BLOCK_WINDOW_BARS || 3);
+const MAX_CHASE_PCT_WASHOUT = Number(process.env.MAX_CHASE_PCT_WASHOUT || 0.20);
+const MAX_CHASE_PCT_BREAKOUT = Number(process.env.MAX_CHASE_PCT_BREAKOUT || 0.35);
 
-// ---------------------------
-// App
-// ---------------------------
-const app = express();
-app.use(express.json({ limit: "512kb" }));
+// trade management
+const TREND_STOP_ACTIVATE_MIN = Number(
+  process.env.TREND_STOP_ACTIVATE_MIN || 9
+);
+const TREND_MIN_TRAIL_PCT = Number(process.env.TREND_MIN_TRAIL_PCT || 0.5);
+const TREND_TIME_STOP_MIN = Number(process.env.TREND_TIME_STOP_MIN || 60);
+const TREND_MIN_PROGRESS_PCT = Number(
+  process.env.TREND_MIN_PROGRESS_PCT || 0.15
+);
+const TRAIL_ATR_MULT = Number(process.env.TRAIL_ATR_MULT || 2.0);
 
-// ---------------------------
-// State
-// ---------------------------
-const state = new Map();
-
-function nowMs() { return Date.now(); }
-
-function n(x, fallback = null) {
-  const v = Number(x);
-  return Number.isFinite(v) ? v : fallback;
-}
-
-function recently(ts, windowMs) {
-  return ts > 0 && (nowMs() - ts) < windowMs;
-}
-
-function tvParts(symbol) {
-  const [ex, inst] = symbol.includes(":") ? symbol.split(":") : ["BINANCE", symbol];
-  return { tv_exchange: ex || "BINANCE", tv_instrument: inst || symbol };
-}
-
-function botUuidForSymbol(symbol) {
-  return SYMBOL_BOT_MAP?.[symbol] || null;
-}
-
-function signalFresh(ts, ttlMs) {
-  return ts > 0 && (nowMs() - ts) < ttlMs;
-}
-
-function setupAgeMin(setup) {
-  if (!setup?.armedMs) return 0;
-  return (nowMs() - setup.armedMs) / 60000;
-}
-
-function logNoEnter(s, msg) {
-  const now = nowMs();
-  if (s.lastNoEnterReason !== msg || (now - (s.lastNoEnterLogMs || 0)) >= NO_ENTER_LOG_EVERY_MS) {
-    dlog(msg);
-    s.lastNoEnterReason = msg;
-    s.lastNoEnterLogMs = now;
+// --------------------------------------------------
+// Utilities
+// --------------------------------------------------
+function safeJson(s, fallback) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return fallback;
   }
 }
 
-function ensureSymbol(symbol) {
-  if (!state.has(symbol)) {
-    state.set(symbol, {
-      lastTickMs: 0,
+function n(v) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+}
+
+function nowMs() {
+  return Date.now();
+}
+
+function ageSec(ts) {
+  if (!ts) return 999999;
+  return (nowMs() - ts) / 1000;
+}
+
+function ageMin(ts) {
+  return ageSec(ts) / 60;
+}
+
+function pctChange(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return 0;
+  return ((a - b) / b) * 100;
+}
+
+function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+function fmt(x, d = 4) {
+  return Number.isFinite(x) ? Number(x).toFixed(d) : "na";
+}
+
+function dlog(...args) {
+  if (DEBUG) console.log(...args);
+}
+
+function verifySecret(req, isTick = false) {
+  const supplied =
+    req.headers["x-webhook-secret"] ||
+    req.body?.secret ||
+    req.query?.secret ||
+    "";
+  const expected = isTick ? TICKROUTER_SECRET : WEBHOOK_SECRET;
+  if (!expected) return true;
+  return String(supplied) === String(expected);
+}
+
+// --------------------------------------------------
+// State
+// --------------------------------------------------
+const S = {};
+
+function ensureState(symbol) {
+  if (!S[symbol]) {
+    S[symbol] = {
+      symbol,
+
+      // market
       lastPrice: null,
+      lastTickMs: 0,
       tickCount: 0,
       lastTickLogMs: 0,
 
-      bars: [],
-      regime: { mode: "unknown", confidence: 0 },
+      // features
+      tf: "3",
+      close: null,
+      ema8: null,
+      ema18: null,
+      ema50: null,
+      rsi: null,
+      adx: null,
+      atr: null,
+      atrPct: null,
+      heartbeat: 0,
+      lastHeartbeatMs: 0,
 
-      setup: {
-        armed: false,
-        setupType: null,
-        armedMs: 0,
-        ttlMs: SETUP_TTL_SEC * 1000,
-        score: 0,
-        invalidationPrice: null,
-        level: null,
+      // external signal freshness
+      rayFresh: 0,
+      fwoFresh: 0,
+      raySignal: "",
+      fwoSignal: "",
+      lastRayBullMs: 0,
+      lastRayBearMs: 0,
+      lastFwoBullMs: 0,
+      lastFwoBearMs: 0,
 
-        // washout memory
-        lastWashoutInv: null,
-        lastWashoutArmMs: 0,
+      // flow / pattern features
+      oiTrend: 0,
+      oiDeltaBias: 0,
+      cvdTrend: 0,
+      liqClusterBelow: 0,
+      priceDropPct: 0,
+      patternAReady: 0,
+      patternAWatch: 0,
 
-        // breakout confirmation state
-        retestSeen: false,
-        retestSeenMs: 0,
-        retestPrice: null,
-      },
+      // rolling bars
+      barsSeen: 0,
+      closeHist: [],
 
-      position: {
-        inPosition: false,
-        entry: null,
-        peak: null,
-        stop: null,
-        sizeMult: 0,
-        volumePercent: 0,
-        adaptiveRiskPct: 0,
-        enteredMs: 0,
-      },
+      // regime
+      regime: "range",
+      regimeConf: 0.4,
 
+      // setup
+      armed: false,
+      setupType: "",
+      setupPhase: "idle", // idle | breakout_triggered | breakout_retest | breakout_bounce_confirmed | washout_reclaim
+      setupTs: 0,
+      setupScore: 0,
+      setupReasons: [],
+      level: null,
+      triggerPrice: null,
+      retestPrice: null,
+      bouncePrice: null,
+      invalidation: null,
+
+      // position
+      inPosition: false,
+      entryPrice: null,
+      entryTs: 0,
+      peakPrice: null,
+      stopPrice: null,
+      trailingStop: null,
+
+      // dedupe / cooldown
+      enterInFlight: false,
+      exitInFlight: false,
+      lastEnterMs: 0,
+      lastExitMs: 0,
       cooldownUntilMs: 0,
 
-      signals: {
-        lastRayBuyMs: 0,
-        lastRayBuySignal: "",
-        lastFwoBuyMs: 0,
-        lastFwoBuySignal: "",
-      },
-
-      orderLock: {
-        enterInFlight: false,
-        exitInFlight: false,
-        lastEnterMs: 0,
-        lastExitMs: 0,
-      },
-
-      lastNoEnterReason: "",
-      lastNoEnterLogMs: 0,
-    });
+      // last action
+      lastAction: "none",
+    };
   }
-  return state.get(symbol);
+  return S[symbol];
 }
 
-function pruneBars(s, maxBars = 800) {
-  if (s.bars.length > maxBars) s.bars.splice(0, s.bars.length - maxBars);
+// --------------------------------------------------
+// Core helpers
+// --------------------------------------------------
+function updateCloseHistory(st, close) {
+  if (!Number.isFinite(close)) return;
+  st.closeHist.push(close);
+  if (st.closeHist.length > 20) st.closeHist.shift();
 }
 
-function isInCooldown(s) {
-  return nowMs() < s.cooldownUntilMs;
+function recentPumpPct(st) {
+  if (st.closeHist.length < PUMP_BLOCK_WINDOW_BARS + 1) return 0;
+  const from = st.closeHist[st.closeHist.length - 1 - PUMP_BLOCK_WINDOW_BARS];
+  const to = st.closeHist[st.closeHist.length - 1];
+  return pctChange(to, from);
 }
 
-function startCooldown(s, reason) {
-  s.cooldownUntilMs = nowMs() + COOLDOWN_SEC * 1000;
-  console.log(`⏳ Cooldown ${COOLDOWN_SEC}s reason=${reason}`);
+function isFreshTick(st) {
+  return ageSec(st.lastTickMs) <= TICK_MAX_AGE_SEC;
 }
 
-function clearSetup(s, why) {
-  if (s.setup.armed) console.log(`🧹 Setup cleared (${why}) type=${s.setup.setupType}`);
-  s.setup.armed = false;
-  s.setup.setupType = null;
-  s.setup.armedMs = 0;
-  s.setup.score = 0;
-  s.setup.invalidationPrice = null;
-  s.setup.level = null;
-  s.setup.retestSeen = false;
-  s.setup.retestSeenMs = 0;
-  s.setup.retestPrice = null;
+function isFreshHeartbeat(st) {
+  if (!REQUIRE_FRESH_HEARTBEAT) return true;
+  return ageSec(st.lastHeartbeatMs) <= HEARTBEAT_MAX_AGE_SEC;
 }
 
-function canUseTick(s) {
-  return s.lastPrice != null && (nowMs() - s.lastTickMs) <= TICK_MAX_AGE_SEC * 1000;
+function inCooldown(st) {
+  return nowMs() < st.cooldownUntilMs;
 }
 
-// ---------------------------
-// Engines
-// ---------------------------
-function computeRegime(lastBar) {
-  const ema8 = lastBar.ema8, ema18 = lastBar.ema18, ema50 = lastBar.ema50;
-  const adx = lastBar.adx, atrPct = lastBar.atrPct;
+function shouldDedupeEnter(st) {
+  if (st.enterInFlight) return true;
+  return ageSec(st.lastEnterMs) < ENTER_DEDUP_SEC;
+}
 
+function shouldDedupeExit(st) {
+  if (st.exitInFlight) return true;
+  return ageSec(st.lastExitMs) < EXIT_DEDUP_SEC;
+}
+
+function clearSetup(st, reason = "") {
+  if (reason) {
+    dlog(`🧹 Setup cleared (${reason}) type=${st.setupType || "na"}`);
+  }
+  st.armed = false;
+  st.setupType = "";
+  st.setupPhase = "idle";
+  st.setupTs = 0;
+  st.setupScore = 0;
+  st.setupReasons = [];
+  st.level = null;
+  st.triggerPrice = null;
+  st.retestPrice = null;
+  st.bouncePrice = null;
+  st.invalidation = null;
+}
+
+function resetPosition(st) {
+  st.inPosition = false;
+  st.entryPrice = null;
+  st.entryTs = 0;
+  st.peakPrice = null;
+  st.stopPrice = null;
+  st.trailingStop = null;
+}
+
+function computeRegime(st) {
   let score = 0;
-  if (ema8 != null && ema18 != null && ema50 != null) {
-    if (ema8 > ema18 && ema18 > ema50) score += 2;
-    const spread = (ema8 - ema50) / ema50;
-    if (spread > 0.003) score += 1;
-  }
-  if (adx != null && adx >= 18) score += 1;
-  if (atrPct != null && atrPct >= 0.5) score += 1;
+  const bullAligned =
+    st.ema8 != null &&
+    st.ema18 != null &&
+    st.ema50 != null &&
+    st.ema8 > st.ema18 &&
+    st.ema18 > st.ema50;
 
-  if (score >= 4) return { mode: "trend", confidence: 0.8 };
-  if (score >= 3) return { mode: "trend", confidence: 0.6 };
-  if (score >= 2) return { mode: "range", confidence: 0.55 };
-  return { mode: "range", confidence: 0.4 };
+  if (bullAligned) score += 2;
+  if ((st.adx || 0) >= 18) score += 1;
+  if ((st.adx || 0) >= 25) score += 1;
+  if ((st.atrPct || 0) >= 0.25) score += 1;
+
+  if (score >= 4) return { mode: "trend", conf: 0.8 };
+  if (score >= 3) return { mode: "trend", conf: 0.6 };
+  return { mode: "range", conf: 0.4 };
 }
 
-function detectSetups(s) {
-  if (s.position.inPosition) return;
-  if (s.setup.armed) return;
+function computeSignalFreshness(st) {
+  st.rayFresh =
+    Math.max(st.lastRayBullMs, st.lastRayBearMs) &&
+    nowMs() - Math.max(st.lastRayBullMs, st.lastRayBearMs) <= RAY_SIGNAL_TTL_MS
+      ? 1
+      : 0;
 
-  const bars = s.bars;
-  if (bars.length < MIN_BARS_FOR_SETUPS) {
-    dlog(`⏳ detectSetups waiting bars=${bars.length}/${MIN_BARS_FOR_SETUPS}`);
-    return;
-  }
-
-  const last = bars[bars.length - 1];
-  const prev = bars[bars.length - 2];
-
-  // Setup A: Washout -> Reclaim
-  const lookback = 20;
-  let localLow = Infinity;
-  for (let i = bars.length - lookback; i < bars.length; i++) {
-    if (i < 0) continue;
-    localLow = Math.min(localLow, bars[i].low);
-  }
-
-  const canUseEma = (last.ema18 != null && prev.ema18 != null);
-  const wasBelowEma18 = canUseEma ? (prev.close < prev.ema18) : false;
-  const reclaimed = canUseEma ? (last.close > last.ema18 && wasBelowEma18) : false;
-  const washout = (last.ema50 != null) ? (localLow < last.ema50 * 0.995) : false;
-  const rsiUp = (last.rsi != null && prev.rsi != null) ? (last.rsi > prev.rsi) : false;
-
-  dlog(
-    `🔎 SETUPCHK localLow=${Number.isFinite(localLow) ? localLow.toFixed(4) : localLow} ` +
-    `ema50=${last.ema50 != null ? last.ema50.toFixed(4) : "null"} ` +
-    `washout=${washout ? 1 : 0} reclaimed=${reclaimed ? 1 : 0} rsiUp=${rsiUp ? 1 : 0}`
-  );
-
-  if (washout && reclaimed && rsiUp) {
-    const candidateInv = localLow * 0.999;
-    const recentlyArmedSameWashout =
-      s.setup.lastWashoutInv != null &&
-      Math.abs(candidateInv - s.setup.lastWashoutInv) / s.setup.lastWashoutInv < 0.0015 &&
-      (nowMs() - (s.setup.lastWashoutArmMs || 0)) < 20 * 60 * 1000;
-
-    if (recentlyArmedSameWashout) {
-      dlog(`🚫 skip washout re-arm: same invalidation recently used inv=${candidateInv}`);
-      return;
-    }
-
-    s.setup.armed = true;
-    s.setup.setupType = "washout_reclaim";
-    s.setup.armedMs = nowMs();
-    s.setup.invalidationPrice = candidateInv;
-    s.setup.level = last.ema18;
-
-    s.setup.lastWashoutInv = candidateInv;
-    s.setup.lastWashoutArmMs = nowMs();
-
-    console.log(`🟡 Armed washout_reclaim inv=${s.setup.invalidationPrice}`);
-    return;
-  }
-
-  // Setup B: Breakout -> Pullback
-  if (s.regime.mode === "trend") {
-    const swingLb = 30;
-    let swingHigh = -Infinity;
-    for (let i = bars.length - swingLb; i < bars.length - 1; i++) {
-      if (i < 0) continue;
-      swingHigh = Math.max(swingHigh, bars[i].high);
-    }
-    const breakout = last.close > swingHigh;
-
-    dlog(`🔎 BRKCHK swingHigh=${Number.isFinite(swingHigh) ? swingHigh.toFixed(4) : swingHigh} breakout=${breakout ? 1 : 0}`);
-
-    if (breakout) {
-      s.setup.armed = true;
-      s.setup.setupType = "breakout_pullback";
-      s.setup.armedMs = nowMs();
-      s.setup.level = swingHigh;
-      s.setup.invalidationPrice = (last.ema50 != null) ? (last.ema50 * 0.995) : null;
-
-      s.setup.retestSeen = false;
-      s.setup.retestSeenMs = 0;
-      s.setup.retestPrice = null;
-
-      console.log(`🟡 Armed breakout_pullback level=${s.setup.level}`);
-      return;
-    }
-  }
+  st.fwoFresh =
+    Math.max(st.lastFwoBullMs, st.lastFwoBearMs) &&
+    nowMs() - Math.max(st.lastFwoBullMs, st.lastFwoBearMs) <= FWO_SIGNAL_TTL_MS
+      ? 1
+      : 0;
 }
 
-function expireSetup(s) {
-  if (!s.setup.armed) return;
+function computeStopDistancePct(entry, stop) {
+  if (!Number.isFinite(entry) || !Number.isFinite(stop) || stop >= entry) return 0.5;
+  return ((entry - stop) / entry) * 100;
+}
 
-  const ageMs = nowMs() - s.setup.armedMs;
-  if (ageMs > s.setup.ttlMs) {
-    dlog(`⌛ Setup TTL expired ageSec=${(ageMs / 1000).toFixed(0)}`);
-    clearSetup(s, "ttl");
-    return;
+function computeRiskVolumePct(st, entryPrice, stopPrice) {
+  const stopDistPct = computeStopDistancePct(entryPrice, stopPrice);
+  if (stopDistPct <= 0) return MIN_VOLUME_PCT;
+
+  let riskPct = BASE_RISK_PCT;
+  if ((st.atrPct || 0) < 0.15) riskPct -= 0.05;
+  if ((st.atrPct || 0) > 0.30) riskPct += 0.05;
+  if (st.regime === "trend" && (st.adx || 0) > 22) riskPct += 0.05;
+  riskPct = clamp(riskPct, MIN_RISK_PCT, MAX_RISK_PCT);
+
+  let sizeMult = 1.0;
+  if (st.setupScore >= 8) sizeMult = 1.15;
+  else if (st.setupScore >= 7) sizeMult = 1.0;
+  else if (st.setupScore >= 6) sizeMult = 0.85;
+  else sizeMult = 0.7;
+
+  const riskUsd = ACCOUNT_EQUITY * (riskPct / 100) * sizeMult;
+  const maxNotionalByRisk = riskUsd / (stopDistPct / 100);
+  const cappedNotional = Math.min(maxNotionalByRisk, BOT_MAX_NOTIONAL_USDT);
+
+  let volumePct = (cappedNotional / BOT_MAX_NOTIONAL_USDT) * 100;
+  volumePct = clamp(volumePct, MIN_VOLUME_PCT, MAX_VOLUME_PCT);
+
+  return {
+    riskPct,
+    riskUsd,
+    stopDistPct,
+    sizeMult,
+    volumePct: Number(volumePct.toFixed(2)),
+  };
+}
+
+// --------------------------------------------------
+// Setup scoring
+// --------------------------------------------------
+function scoreBreakout(st) {
+  let score = 0;
+  const reasons = [];
+
+  const bullAligned =
+    st.ema8 != null &&
+    st.ema18 != null &&
+    st.ema50 != null &&
+    st.ema8 > st.ema18 &&
+    st.ema18 > st.ema50;
+
+  if (st.regime === "trend") {
+    score += 2;
+    reasons.push("regime(trend)+2");
+  } else {
+    reasons.push("regime(range)+0");
   }
 
-  const ageMin = setupAgeMin(s.setup);
-
-  if (s.setup.setupType === "breakout_pullback" && ageMin > BREAKOUT_MAX_AGE_MIN) {
-    dlog(`⌛ Breakout setup stale ageMin=${ageMin.toFixed(1)} > ${BREAKOUT_MAX_AGE_MIN}`);
-    clearSetup(s, "breakout_stale");
-    return;
+  if (bullAligned) {
+    score += 2;
+    reasons.push("bull aligned +2");
   }
 
-  if (s.setup.setupType === "washout_reclaim" && ageMin > WASHOUT_MAX_AGE_MIN) {
-    dlog(`⌛ Washout setup stale ageMin=${ageMin.toFixed(1)} > ${WASHOUT_MAX_AGE_MIN}`);
-    clearSetup(s, "washout_stale");
-    return;
+  if ((st.adx || 0) >= BREAKOUT_MIN_ADX) {
+    score += 1;
+    reasons.push("adx ok +1");
+  }
+
+  if ((st.rsi || 0) >= 55) {
+    score += 1;
+    reasons.push("rsi strength +1");
+  }
+
+  if (st.rayFresh) {
+    score += 1;
+    reasons.push("fresh ray +1");
+  }
+
+  if (st.fwoFresh) {
+    score += 1;
+    reasons.push("fresh fwo +1");
+  }
+
+  if (st.oiTrend > 0) {
+    score += 1;
+    reasons.push("oi trend up +1");
+  }
+
+  if (st.oiDeltaBias > 0) {
+    score += 1;
+    reasons.push("oi expansion +1");
+  }
+
+  if (st.cvdTrend > 0) {
+    score += 1;
+    reasons.push("cvd bullish +1");
+  }
+
+  const pumpPct = recentPumpPct(st);
+  if (pumpPct > PUMP_BLOCK_PCT) {
+    score -= 3;
+    reasons.push(`pump>${PUMP_BLOCK_PCT}% -3`);
   }
 
   if (
-    s.setup.setupType === "breakout_pullback" &&
-    s.setup.retestSeen &&
-    s.setup.retestSeenMs > 0
+    BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    st.oiTrend <= 0 &&
+    st.oiDeltaBias <= 0 &&
+    st.cvdTrend <= 0
   ) {
-    const retestAgeMin = (nowMs() - s.setup.retestSeenMs) / 60000;
-    if (retestAgeMin > BREAKOUT_RETEST_MAX_MIN) {
-      dlog(`⌛ Breakout retest stale retestAgeMin=${retestAgeMin.toFixed(1)} > ${BREAKOUT_RETEST_MAX_MIN}`);
-      clearSetup(s, "breakout_retest_stale");
-      return;
-    }
+    score -= 2;
+    reasons.push("flow weak -2");
   }
 
-  if (s.setup.armed && s.setup.setupType === "washout_reclaim" && s.bars.length >= 2) {
-    const last = s.bars[s.bars.length - 1];
-    const prev = s.bars[s.bars.length - 2];
-
-    const badFlowNow = last.cvdTrend === -1 && last.oiDeltaBias <= 0;
-    const badFlowPrev = prev.cvdTrend === -1 && prev.oiDeltaBias <= 0;
-
-    if (badFlowNow && badFlowPrev) {
-      dlog("⌛ Washout setup cleared: bearish flow persisted 2 bars");
-      clearSetup(s, "washout_bad_flow");
-      return;
-    }
-  }
+  return { score, reasons };
 }
 
-function scoreSetup(s) {
-  if (!s.setup.armed) return 0;
-  const bars = s.bars;
-  if (bars.length < 3) return 0;
-
-  const last = bars[bars.length - 1];
-  const prev = bars[bars.length - 2];
-
+function scoreWashout(st) {
   let score = 0;
-  const add = (nn, label) => {
-    score += nn;
-    dlog(`   ➕ ${label} +${nn} => ${score}`);
-  };
+  const reasons = [];
 
-  const rayFresh = signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS);
-  const fwoFresh = signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS);
+  if (st.regime === "range") {
+    score += 1;
+    reasons.push("regime(range) +1");
+  } else {
+    score += 1;
+    reasons.push("regime(trend) +1");
+  }
+
+  if ((st.rsi || 0) > 0 && (st.rsi || 0) <= 45) {
+    score += 1;
+    reasons.push("rsi recovering +1");
+  }
+
+  if (st.fwoFresh) {
+    score += 2;
+    reasons.push("fresh fwo sniper +2");
+  }
+
+  if (st.rayFresh) {
+    score += 1;
+    reasons.push("fresh ray +1");
+  }
+
+  if (st.oiTrend > 0) {
+    score += 1;
+    reasons.push("oi trend up +1");
+  }
+
+  if (st.oiDeltaBias > 0) {
+    score += 1;
+    reasons.push("oi expansion +1");
+  }
+
+  if (st.cvdTrend > 0) {
+    score += 1;
+    reasons.push("cvd bullish +1");
+  }
+
+  if (st.liqClusterBelow) {
+    score += 1;
+    reasons.push("liq below +1");
+  }
+
+  if ((st.priceDropPct || 0) <= -0.2) {
+    score += 1;
+    reasons.push("recent flush +1");
+  }
+
+  return { score, reasons };
+}
+
+// --------------------------------------------------
+// Setup detection
+// --------------------------------------------------
+function detectBreakoutSetup(st) {
+  if (st.regime !== "trend") return null;
+  if (
+    st.close == null ||
+    st.ema8 == null ||
+    st.ema18 == null ||
+    st.ema50 == null
+  ) {
+    return null;
+  }
+
+  const bullAligned = st.ema8 > st.ema18 && st.ema18 > st.ema50;
+  if (!bullAligned) return null;
+  if ((st.adx || 0) < BREAKOUT_MIN_ADX) return null;
+
+  const swingHigh = Math.max(...st.closeHist.slice(-10), st.close || -Infinity);
+  const breakout = st.close >= swingHigh * 0.999;
 
   dlog(
-    `🧠 SIGNAL TTL rayFresh=${rayFresh ? 1 : 0} ` +
-    `fwoFresh=${fwoFresh ? 1 : 0} ` +
-    `raySignal=${s.signals.lastRayBuySignal || ""} ` +
-    `fwoSignal=${s.signals.lastFwoBuySignal || ""}`
+    `🔎 BRKCHK swingHigh=${fmt(swingHigh)} breakout=${breakout ? 1 : 0}`
   );
 
-  if (s.regime.mode === "trend") add(Math.round(3 * s.regime.confidence), "regime(trend)");
-  else add(Math.round(2 * s.regime.confidence), "regime(range)");
+  if (!breakout) return null;
 
-  if (last.atrPct != null) {
-    if (last.atrPct >= 0.6) add(2, "atrPct>=0.6");
-    else if (last.atrPct >= 0.4) add(1, "atrPct>=0.4");
-  }
-
-  if (last.rsi != null && prev.rsi != null && last.rsi > prev.rsi) add(1, "rsi rising");
-
-  if (rayFresh) {
-    if (s.signals.lastRayBuySignal === "bullish_trend_change") add(3, "fresh ray trend change");
-    else if (s.signals.lastRayBuySignal === "bullish_bos") add(2, "fresh ray bos");
-    else add(2, "fresh ray_buy");
-  }
-
-  if (fwoFresh) {
-    if (s.signals.lastFwoBuySignal === "sniper_buy") add(2, "fresh fwo sniper");
-    else add(2, "fresh fwo_buy");
-  }
-
-  if (last.oiTrend === 1) add(1, "oi trend up");
-  if (last.oiDeltaBias === 1) add(1, "oi expansion");
-  if (last.cvdTrend === 1) add(1, "cvd bullish");
-
-  if (last.oiDeltaBias === -1) {
-    score -= 1;
-    dlog(`   ➖ oi contraction -1 => ${score}`);
-  }
-
-  if (last.cvdTrend === -1) {
-    score -= 2;
-    dlog(`   ➖ cvd bearish -2 => ${score}`);
-  }
-
-  if (last.liqClusterBelow === 1) add(1, "liq cluster below");
-  if (last.priceDropPct <= -0.35) add(1, "flush down");
-  if (last.patternAWatch === 1) add(1, "pattern A watch");
-  if (last.patternAReady === 1) add(2, "pattern A ready");
-
-  const nBars = PUMP_BLOCK_WINDOW_BARS;
-  if (bars.length > nBars) {
-    const past = bars[bars.length - 1 - nBars];
-    const movePct = ((last.close - past.close) / past.close) * 100;
-    if (movePct > PUMP_BLOCK_PCT) {
-      score -= 3;
-      dlog(`   ➖ pump penalty -3 => ${score}`);
-    }
-  }
-
-  score = Math.max(0, Math.min(10, score));
-  s.setup.score = score;
-  dlog(`📊 SCORE final=${score}`);
-  return score;
-}
-
-// ---------------------------
-// Adaptive risk + size helpers
-// ---------------------------
-function scoreTargetAmountPct(score) {
-  if (!USE_SCORE_SIZE_MULT) return 100;
-  if (score >= 10) return 100;
-  if (score >= 9) return 90;
-  if (score >= 8) return 80;
-  if (score >= 7) return 60;
-  if (score >= 6) return 40;
-  return 0;
-}
-
-function computeAdaptiveRiskPct(s, lastBar) {
-  const atrPct = lastBar?.atrPct ?? 0;
-  const adx = lastBar?.adx ?? 0;
-  const regime = s.regime.mode;
-
-  let risk = BASE_RISK_PCT;
-
-  if (atrPct < 0.15) risk -= 0.2;
-  else if (atrPct > 0.60) risk += 0.2;
-  else if (atrPct > 0.35) risk += 0.1;
-
-  if (regime === "trend" && adx > 22) risk += 0.2;
-  if (regime === "range" && adx < 18) risk -= 0.1;
-
-  risk = Math.max(MIN_RISK_PCT, Math.min(MAX_RISK_PCT, risk));
-  return Math.round(risk * 1000) / 1000;
-}
-
-function computeRiskBasedSize(s, entryPrice) {
-  const lastBar = s.bars[s.bars.length - 1];
-  const stop = s.setup.invalidationPrice;
-
-  if (!entryPrice || !stop || entryPrice <= stop) {
-    return { sizeMult: 0, volumePercent: 0, riskUsd: 0, stopDistance: 0, adaptiveRiskPct: 0, targetAmountPct: 0 };
-  }
-
-  const adaptiveRiskPct = computeAdaptiveRiskPct(s, lastBar);
-  const stopDistance = entryPrice - stop;
-  const riskUsdBase = BOT_MAX_NOTIONAL_USDT * (adaptiveRiskPct / 100.0);
-
-  const qty = riskUsdBase / stopDistance;
-  const notionalUsd = qty * entryPrice;
-
-  let riskBasedVolumePercent = (notionalUsd / BOT_MAX_NOTIONAL_USDT) * 100.0;
-  const targetAmountPct = scoreTargetAmountPct(s.setup.score);
-
-  let volumePercent = Math.min(riskBasedVolumePercent, targetAmountPct);
-  volumePercent = Math.max(MIN_VOLUME_PCT, Math.min(MAX_VOLUME_PCT, volumePercent));
-
-  const sizeMult = volumePercent / 100.0;
+  const scored = scoreBreakout(st);
+  if (scored.score < BREAKOUT_MIN_SCORE) return null;
 
   return {
-    sizeMult: Math.round(sizeMult * 1000) / 1000,
-    volumePercent: Math.round(volumePercent * 100) / 100,
-    targetAmountPct,
-    riskUsd: Math.round(riskUsdBase * 100) / 100,
-    stopDistance: Math.round(stopDistance * 100000) / 100000,
-    adaptiveRiskPct,
+    type: "breakout_pullback",
+    phase: "breakout_triggered",
+    level: st.ema8,
+    triggerPrice: st.close,
+    retestPrice: null,
+    bouncePrice: null,
+    invalidation: st.ema18 * 0.997,
+    score: scored.score,
+    reasons: scored.reasons,
   };
 }
 
-function breakoutMaxDistPct(last) {
-  if ((last.atrPct ?? 0) >= 0.25) return 0.35;
-  if ((last.atrPct ?? 0) >= 0.18) return 0.28;
-  return 0.20;
-}
+function detectWashoutSetup(st) {
+  if (
+    st.close == null ||
+    st.ema18 == null ||
+    st.ema50 == null ||
+    st.rsi == null
+  ) {
+    return null;
+  }
 
-function hasSupportiveFlowOrConfirmation(s, last) {
-  return (
-    last.cvdTrend === 1 ||
-    last.oiDeltaBias === 1 ||
-    signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS) ||
-    signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS)
+  const localLow = Math.min(...st.closeHist.slice(-12), st.close || Infinity);
+  const washout = localLow < st.ema50 * 0.995;
+  const reclaimed = st.close > st.ema18;
+  const prev1 = st.closeHist.length >= 2 ? st.closeHist[st.closeHist.length - 2] : null;
+  const rsiUp = prev1 != null ? st.close > prev1 : false;
+
+  dlog(
+    `🔎 SETUPCHK localLow=${fmt(localLow)} ema50=${fmt(st.ema50)} washout=${washout ? 1 : 0} reclaimed=${reclaimed ? 1 : 0} rsiUp=${rsiUp ? 1 : 0}`
   );
-}
 
-function shouldEnter(s) {
-  if (!s.setup.armed) return false;
-  if (s.position.inPosition) return false;
-  if (isInCooldown(s)) return false;
-  if (!canUseTick(s)) return false;
-  if (s.orderLock.enterInFlight) return false;
-  if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return false;
+  if (!washout || !reclaimed || !rsiUp) return null;
 
-  const price = s.lastPrice;
-  const last = s.bars[s.bars.length - 1];
-  const ageMin = setupAgeMin(s.setup);
+  const scored = scoreWashout(st);
+  if (scored.score < WASHOUT_MIN_SCORE) return null;
 
-  if (s.setup.invalidationPrice != null && price <= s.setup.invalidationPrice) {
-    clearSetup(s, "invalidation");
-    return false;
-  }
-
-  if (last.cvdTrend === -1 && last.oiDeltaBias <= 0) {
-    logNoEnter(s, "🚫 no enter: bearish flow + no oi expansion");
-    return false;
-  }
-
-  if (s.setup.setupType === "washout_reclaim" && ageMin > WASHOUT_MAX_AGE_MIN) {
-    dlog(`🚫 no washout enter: setup stale ageMin=${ageMin.toFixed(1)} > ${WASHOUT_MAX_AGE_MIN}`);
-    clearSetup(s, "washout_stale");
-    return false;
-  }
-
-  if (s.setup.setupType === "washout_reclaim") {
-    if (s.setup.score < WASHOUT_MIN_SCORE) {
-      logNoEnter(s, `🚫 no washout enter: score ${s.setup.score} < ${WASHOUT_MIN_SCORE}`);
-      return false;
-    }
-
-    const level = s.setup.level ?? last.ema18;
-    if (!level) {
-      logNoEnter(s, "🚫 no washout enter: missing washout level");
-      return false;
-    }
-
-    if (s.regime.mode === "range") {
-      if (!hasSupportiveFlowOrConfirmation(s, last)) {
-        logNoEnter(s, "🚫 no washout enter: range mode needs supportive flow or confirmation");
-        return false;
-      }
-    }
-
-    const chasePct = ((price - level) / level) * 100;
-
-    dlog(
-      `🎯 washout entry check: ` +
-      `ageMin=${ageMin.toFixed(1)} ` +
-      `price=${price} level=${level} ` +
-      `aboveLevel=${price > level ? 1 : 0} ` +
-      `chasePct=${chasePct.toFixed(3)}% ` +
-      `score=${s.setup.score}`
-    );
-
-    if (!(price > level)) {
-      logNoEnter(s, "🚫 no washout enter: price not above reclaim level");
-      return false;
-    }
-
-    if (!(chasePct <= 0.25)) {
-      logNoEnter(s, "🚫 no washout enter: chasePct too high");
-      return false;
-    }
-
-    return true;
-  }
-
-  if (s.setup.setupType === "breakout_pullback") {
-    const level = s.setup.level;
-    if (!level || last.ema8 == null) {
-      logNoEnter(s, "🚫 no breakout enter: missing level or ema8");
-      return false;
-    }
-
-    if (s.setup.score < BREAKOUT_MIN_SCORE) {
-      logNoEnter(s, `🚫 no breakout enter: score ${s.setup.score} < ${BREAKOUT_MIN_SCORE}`);
-      return false;
-    }
-
-    if ((last.adx ?? 0) < BREAKOUT_MIN_ADX) {
-      logNoEnter(s, `🚫 breakout rejected: ADX ${last.adx} < ${BREAKOUT_MIN_ADX}`);
-      return false;
-    }
-
-    if ((last.atrPct ?? 0) < 0.15) {
-      logNoEnter(s, "🚫 no breakout enter: atrPct too low");
-      return false;
-    }
-
-    const nearLevelPct = Math.abs((price - level) / level) * 100;
-    const nearEma8Pct = Math.abs((price - last.ema8) / last.ema8) * 100;
-    const maxEntryDistPct = breakoutMaxDistPct(last);
-
-    dlog(
-      `🎯 breakout entry check ` +
-      `ageMin=${ageMin.toFixed(1)} ` +
-      `nearLevelPct=${nearLevelPct.toFixed(3)} ` +
-      `nearEma8Pct=${nearEma8Pct.toFixed(3)} ` +
-      `maxDist=${maxEntryDistPct.toFixed(2)} ` +
-      `score=${s.setup.score}`
-    );
-
-    if (ageMin > BREAKOUT_MAX_AGE_MIN) {
-      dlog(`🚫 no breakout enter: setup stale ageMin=${ageMin.toFixed(1)} > ${BREAKOUT_MAX_AGE_MIN}`);
-      clearSetup(s, "breakout_stale");
-      return false;
-    }
-
-    if (ageMin > Math.max(3, BREAKOUT_MAX_AGE_MIN * 0.5) && s.setup.score < BREAKOUT_STALE_MIN_SCORE) {
-      logNoEnter(
-        s,
-        `🚫 no breakout enter: aged setup needs higher score score=${s.setup.score} < ${BREAKOUT_STALE_MIN_SCORE}`
-      );
-      return false;
-    }
-
-    // step 1: retest touch
-    if (!s.setup.retestSeen) {
-      if ((nearLevelPct <= maxEntryDistPct) || (nearEma8Pct <= maxEntryDistPct)) {
-        s.setup.retestSeen = true;
-        s.setup.retestSeenMs = nowMs();
-        s.setup.retestPrice = price;
-        dlog(`✅ breakout retest seen price=${price} level=${level} ema8=${last.ema8}`);
-      } else {
-        logNoEnter(s, "🚫 no breakout enter: too far from level/ema8");
-      }
-      return false;
-    }
-
-    // step 2: bounce confirmation
-    const bounceRef = s.setup.retestPrice ?? price;
-    const bouncePct = ((price - bounceRef) / bounceRef) * 100;
-    const aboveLevel = price >= level;
-    const aboveEma8 = price >= last.ema8;
-
-    dlog(
-      `🎯 breakout confirm ` +
-      `bouncePct=${bouncePct.toFixed(3)} ` +
-      `need=${BREAKOUT_CONFIRM_BOUNCE_PCT.toFixed(3)} ` +
-      `aboveLevel=${aboveLevel ? 1 : 0} aboveEma8=${aboveEma8 ? 1 : 0}`
-    );
-
-    if (!(aboveLevel && aboveEma8)) {
-      logNoEnter(s, "🚫 no breakout confirm: price not back above level/ema8");
-      return false;
-    }
-
-    if (!(bouncePct >= BREAKOUT_CONFIRM_BOUNCE_PCT)) {
-      logNoEnter(s, "🚫 no breakout confirm: bounce too small");
-      return false;
-    }
-
-    return true;
-  }
-
-  return false;
-}
-
-// ---------------------------
-// Regime-aware exit logic
-// ---------------------------
-function exitCheck(s) {
-  if (!s.position.inPosition) return null;
-  if (!canUseTick(s)) return null;
-  if (s.orderLock.exitInFlight) return null;
-  if (recently(s.orderLock.lastExitMs, EXIT_DEDUP_MS)) return null;
-
-  const price = s.lastPrice;
-  const last = s.bars[s.bars.length - 1];
-  const entry = s.position.entry ?? price;
-
-  s.position.peak = Math.max(s.position.peak ?? entry, price);
-
-  const pnlPct = ((price - entry) / entry) * 100;
-  const peakGainPct = ((s.position.peak - entry) / entry) * 100;
-  const atr = last.atr ?? 0;
-  const minsInTrade = (nowMs() - (s.position.enteredMs || nowMs())) / 60000;
-
-  const shouldLogExitCheck =
-    price <= (s.position.stop ?? -Infinity) ||
-    (s.regime.mode === "range" && pnlPct >= 0.35) ||
-    (s.regime.mode === "trend" && last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18);
-
-  if (shouldLogExitCheck) {
-    dlog(
-      `🛡️ EXITCHK price=${price} entry=${entry} peak=${s.position.peak} ` +
-      `stop=${s.position.stop} pnlPct=${pnlPct.toFixed(3)} reg=${s.regime.mode}`
-    );
-  }
-
-  if (s.regime.mode === "trend") {
-    let trendTrailMult = 2.4;
-    if ((last.atrPct ?? 0) < 0.10) trendTrailMult = 3.2;
-    else if ((last.atrPct ?? 0) < 0.15) trendTrailMult = 2.8;
-
-    if (atr > 0 && s.position.peak != null) {
-      const atrStop = s.position.peak - atr * trendTrailMult;
-      const pctStop = s.position.peak * (1 - TREND_MIN_TRAIL_PCT / 100.0);
-      const newStop = Math.max(atrStop, pctStop);
-      if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
-    }
-
-    if (last.ema8 != null && last.ema18 != null && last.ema8 < last.ema18) {
-      return "trend_fail_ema_cross";
-    }
-
-    const trendStopActive = minsInTrade >= TREND_STOP_ACTIVATE_MIN;
-    if (trendStopActive && s.position.stop != null && price <= s.position.stop) {
-      return "atr_trail_stop_trend";
-    }
-
-    if (minsInTrade >= TREND_TIME_STOP_MIN && peakGainPct < TREND_MIN_PROGRESS_PCT) {
-      return "trend_time_stop_no_progress";
-    }
-  } else {
-    if (atr > 0 && s.position.peak != null) {
-      const rangeTrailMult = 1.3;
-      const newStop = s.position.peak - atr * rangeTrailMult;
-      if (s.position.stop == null || newStop > s.position.stop) s.position.stop = newStop;
-    }
-
-    if (pnlPct >= 0.35) {
-      return "range_take_profit";
-    }
-
-    if (s.position.stop != null && price <= s.position.stop) {
-      return "atr_trail_stop_range";
-    }
-
-    if (minsInTrade >= 30 && pnlPct < 0.10) {
-      return "time_stop_no_progress";
-    }
-  }
-
-  return null;
-}
-
-// ---------------------------
-// 3Commas sender
-// ---------------------------
-async function post3C({ action, symbol, price, comment, volumePercent = null }) {
-  if (!C3_SIGNAL_SECRET) throw new Error("Missing C3_SIGNAL_SECRET");
-
-  const bot_uuid = botUuidForSymbol(symbol);
-  if (!bot_uuid) throw new Error(`No bot_uuid mapping for symbol=${symbol}`);
-
-  const { tv_exchange, tv_instrument } = tvParts(symbol);
-
-  const payload = {
-    secret: C3_SIGNAL_SECRET,
-    bot_uuid,
-    max_lag: String(MAX_LAG_SEC),
-    timestamp: new Date().toISOString(),
-    trigger_price: String(price),
-    tv_exchange,
-    tv_instrument,
-    action,
-    comment,
+  return {
+    type: "washout_reclaim",
+    phase: "washout_reclaim",
+    level: st.ema18,
+    triggerPrice: st.close,
+    retestPrice: null,
+    bouncePrice: st.close,
+    invalidation: localLow * 0.999,
+    score: scored.score,
+    reasons: scored.reasons,
   };
-
-  if (volumePercent != null && action === "enter_long") {
-    payload.order = {
-      amount: String(volumePercent),
-      currency_type: "margin_percent",
-      order_type: "market",
-    };
-  }
-
-  dlog(`📦 3C PAYLOAD ${JSON.stringify(payload)}`);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), C3_TIMEOUT_MS);
-
-  try {
-    const resp = await fetch(C3_SIGNAL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    const body = await resp.text();
-    dlog(`📦 3C RESPONSE status=${resp.status} body=${body}`);
-    return { status: resp.status, body, payload };
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
-// ---------------------------
-// Main decision runner
-// ---------------------------
-async function runDecision(symbol, source) {
-  const s = ensureSymbol(symbol);
-  if (s.bars.length < 3) return;
-
-  const lastBar = s.bars[s.bars.length - 1];
-
-  if (source === "features") {
-    s.regime = computeRegime(lastBar);
-    dlog(`🧭 REGIME ${symbol} mode=${s.regime.mode} conf=${s.regime.confidence}`);
-    expireSetup(s);
-    detectSetups(s);
-    scoreSetup(s);
-
-    dlog(
-      `📌 STATE ${symbol} ` +
-      `reg=${s.regime.mode} armed=${s.setup.armed ? 1 : 0} type=${s.setup.setupType || ""} ` +
-      `setupAgeMin=${s.setup.armed ? setupAgeMin(s.setup).toFixed(1) : 0} ` +
-      `score=${s.setup.score} inPos=${s.position.inPosition ? 1 : 0} cooldown=${isInCooldown(s) ? 1 : 0} ` +
-      `rayFresh=${signalFresh(s.signals.lastRayBuyMs, RAY_SIGNAL_TTL_MS) ? 1 : 0} ` +
-      `fwoFresh=${signalFresh(s.signals.lastFwoBuyMs, FWO_SIGNAL_TTL_MS) ? 1 : 0}`
-    );
-  }
-
-  const exitReason = exitCheck(s);
-  if (exitReason) {
-    const price = s.lastPrice ?? lastBar.close;
-
-    if (s.orderLock.exitInFlight) return;
-    if (recently(s.orderLock.lastExitMs, EXIT_DEDUP_MS)) return;
-
-    s.orderLock.exitInFlight = true;
-
-    console.log(`📤 EXIT ${symbol} reason=${exitReason} price=${price}`);
-    try {
-      const r = await post3C({ action: "exit_long", symbol, price, comment: exitReason });
-      console.log(`📨 3Commas exit_long status=${r.status}`);
-      s.orderLock.lastExitMs = nowMs();
-    } catch (e) {
-      console.error("Exit error:", e?.message || e);
-      return;
-    } finally {
-      s.orderLock.exitInFlight = false;
-    }
-
-    s.position = {
-      inPosition: false,
-      entry: null,
-      peak: null,
-      stop: null,
-      sizeMult: 0,
-      volumePercent: 0,
-      adaptiveRiskPct: 0,
-      enteredMs: 0,
-    };
-    clearSetup(s, exitReason);
-    startCooldown(s, exitReason);
+function maybeArmSetup(st) {
+  if (st.inPosition || inCooldown(st)) return;
+  if (st.barsSeen < MIN_BARS_FOR_SETUPS) {
+    dlog(`⏳ detectSetups waiting bars=${st.barsSeen}/${MIN_BARS_FOR_SETUPS}`);
     return;
   }
 
-  if (source !== "tick") return;
+  const wash = detectWashoutSetup(st);
+  if (wash) {
+    st.armed = true;
+    st.setupType = wash.type;
+    st.setupPhase = wash.phase;
+    st.setupTs = nowMs();
+    st.setupScore = wash.score;
+    st.setupReasons = wash.reasons;
+    st.level = wash.level;
+    st.triggerPrice = wash.triggerPrice;
+    st.retestPrice = wash.retestPrice;
+    st.bouncePrice = wash.bouncePrice;
+    st.invalidation = wash.invalidation;
+    dlog(
+      `📌 STATE ${st.symbol} reg=${st.regime} armed=1 type=${st.setupType} setupAgeMin=0.0 score=${st.setupScore} inPos=0 cooldown=0 rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
+    );
+    dlog(`🟡 Armed washout_reclaim inv=${st.invalidation}`);
+    return;
+  }
 
-  if (shouldEnter(s)) {
-    const price = s.lastPrice ?? lastBar.close;
+  const brk = detectBreakoutSetup(st);
+  if (brk) {
+    st.armed = true;
+    st.setupType = brk.type;
+    st.setupPhase = brk.phase;
+    st.setupTs = nowMs();
+    st.setupScore = brk.score;
+    st.setupReasons = brk.reasons;
+    st.level = brk.level;
+    st.triggerPrice = brk.triggerPrice;
+    st.retestPrice = brk.retestPrice;
+    st.bouncePrice = brk.bouncePrice;
+    st.invalidation = brk.invalidation;
+    dlog(
+      `📌 STATE ${st.symbol} reg=${st.regime} armed=1 type=${st.setupType} setupAgeMin=0.0 score=${st.setupScore} inPos=0 cooldown=0 rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
+    );
+    dlog(
+      `🟦 Armed breakout_pullback trigger=${fmt(st.triggerPrice)} level=${fmt(st.level)} inv=${fmt(st.invalidation)} score=${st.setupScore}`
+    );
+    return;
+  }
 
-    if (s.orderLock.enterInFlight) return;
-    if (recently(s.orderLock.lastEnterMs, ENTER_DEDUP_MS)) return;
+  dlog(
+    `📌 STATE ${st.symbol} reg=${st.regime} armed=0 type= setupAgeMin=0 score=0 inPos=${st.inPosition ? 1 : 0} cooldown=${inCooldown(st) ? 1 : 0} rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
+  );
+}
 
-    const sizing = computeRiskBasedSize(s, price);
-    if (sizing.volumePercent <= 0) {
-      dlog("🚫 no enter: sizing returned 0");
+function manageSetupLifecycle(st) {
+  if (!st.armed) return;
+
+  const sAgeMin = ageMin(st.setupTs);
+
+  if (ageSec(st.setupTs) > SETUP_TTL_SEC) {
+    clearSetup(st, "setup_ttl");
+    return;
+  }
+
+  if (st.setupType === "washout_reclaim" && sAgeMin > WASHOUT_MAX_AGE_MIN) {
+    clearSetup(st, "washout_stale");
+    return;
+  }
+
+  if (st.setupType === "breakout_pullback") {
+    if (sAgeMin > BREAKOUT_MAX_AGE_MIN) {
+      clearSetup(st, "breakout_stale");
       return;
     }
 
-    s.orderLock.enterInFlight = true;
+    if (st.setupPhase === "breakout_triggered") {
+      const pullbackHappened =
+        st.close != null &&
+        st.triggerPrice != null &&
+        st.close <= st.triggerPrice * 0.9995;
 
-    const comment =
-      `${BRAIN_NAME}|${s.setup.setupType}|score=${s.setup.score}|reg=${s.regime.mode}` +
-      `|riskPct=${sizing.adaptiveRiskPct}|riskUsd=${sizing.riskUsd}` +
-      `|stopDist=${sizing.stopDistance}|volPct=${sizing.volumePercent}|targetPct=${sizing.targetAmountPct}` +
-      `|oiT=${lastBar.oiTrend}|oiD=${lastBar.oiDeltaBias}|cvd=${lastBar.cvdTrend}` +
-      `|liq=${lastBar.liqClusterBelow}|drop=${lastBar.priceDropPct}|pA=${lastBar.patternAReady}`;
+      if (pullbackHappened) {
+        st.setupPhase = "breakout_retest";
+        st.retestPrice = st.close;
+        dlog(`🔁 breakout retest price=${fmt(st.retestPrice)}`);
+      }
+    }
 
-    console.log(
-      `📥 ENTER ${symbol} ${comment} price=${price} sizeMult=${sizing.sizeMult} volumePercent=${sizing.volumePercent}`
+    if (st.setupPhase === "breakout_retest") {
+      const retestAgeMin = ageMin(st.setupTs);
+      if (retestAgeMin > BREAKOUT_RETEST_MAX_MIN) {
+        dlog(
+          `⌛ Breakout retest stale retestAgeMin=${fmt(retestAgeMin, 1)} > ${BREAKOUT_RETEST_MAX_MIN}`
+        );
+        clearSetup(st, "breakout_retest_stale");
+        return;
+      }
+    }
+
+    if (st.invalidation != null && st.close != null && st.close <= st.invalidation) {
+      clearSetup(st, "breakout_invalidated");
+      return;
+    }
+  }
+}
+
+// --------------------------------------------------
+// Entry checks
+// --------------------------------------------------
+function canEnter(st) {
+  if (st.inPosition) return { ok: false, note: "already in position" };
+  if (!st.armed) return { ok: false, note: "no setup" };
+  if (inCooldown(st)) return { ok: false, note: "cooldown" };
+  if (!isFreshTick(st)) return { ok: false, note: "tick stale" };
+  if (!isFreshHeartbeat(st)) return { ok: false, note: "heartbeat stale" };
+  if (shouldDedupeEnter(st)) return { ok: false, note: "enter dedupe" };
+  return { ok: true, note: "ok" };
+}
+
+function breakoutEntryDecision(st, price) {
+  if (st.setupType !== "breakout_pullback") return { ok: false, note: "not breakout" };
+  if (st.level == null || st.ema8 == null) return { ok: false, note: "missing level" };
+
+  const nearLevelPct = Math.abs(pctChange(price, st.level));
+  const nearEma8Pct = Math.abs(pctChange(price, st.ema8));
+  const bounceBase = st.retestPrice ?? st.triggerPrice ?? price;
+  const bouncePct = pctChange(price, bounceBase);
+  const aboveLevel = price >= st.level ? 1 : 0;
+  const aboveEma8 = price >= st.ema8 ? 1 : 0;
+  const maxDist = BREAKOUT_NEAR_LEVEL_MAX_PCT;
+
+  dlog(
+    `🎯 breakout entry check ageMin=${fmt(ageMin(st.setupTs), 1)} nearLevelPct=${fmt(
+      nearLevelPct,
+      3
+    )} nearEma8Pct=${fmt(nearEma8Pct, 3)} maxDist=${fmt(maxDist, 2)} score=${st.setupScore}`
+  );
+  dlog(
+    `🎯 breakout confirm bouncePct=${fmt(
+      bouncePct,
+      3
+    )} need=${fmt(BREAKOUT_CONFIRM_BOUNCE_PCT, 3)} aboveLevel=${aboveLevel} aboveEma8=${aboveEma8}`
+  );
+
+  if (nearLevelPct > BREAKOUT_NEAR_LEVEL_MAX_PCT && nearEma8Pct > BREAKOUT_NEAR_EMA8_MAX_PCT) {
+    return { ok: false, note: "too far from breakout level" };
+  }
+
+  if (st.setupScore < BREAKOUT_MIN_SCORE) {
+    if (ageMin(st.setupTs) > BREAKOUT_RETEST_MAX_MIN && st.setupScore < BREAKOUT_STALE_MIN_SCORE) {
+      clearSetup(st, "breakout_score_stale");
+    }
+    return { ok: false, note: "breakout score low" };
+  }
+
+  // keep strict confirmation per log findings
+  if (!(aboveLevel && aboveEma8 && bouncePct >= BREAKOUT_CONFIRM_BOUNCE_PCT)) {
+    dlog(`🚫 no breakout confirm: price not back above level/ema8`);
+    return { ok: false, note: "no breakout confirm" };
+  }
+
+  const chasePct = Math.abs(pctChange(price, st.level));
+  if (chasePct > MAX_CHASE_PCT_BREAKOUT) {
+    return { ok: false, note: "breakout chase too far" };
+  }
+
+  st.setupPhase = "breakout_bounce_confirmed";
+  st.bouncePrice = price;
+  return { ok: true, note: "breakout confirmed" };
+}
+
+function washoutEntryDecision(st, price) {
+  if (st.setupType !== "washout_reclaim") return { ok: false, note: "not washout" };
+  if (st.level == null) return { ok: false, note: "missing level" };
+
+  const aboveLevel = price >= st.level ? 1 : 0;
+  const chasePct = Math.abs(pctChange(price, st.level));
+
+  dlog(
+    `🎯 washout entry check: ageMin=${fmt(ageMin(st.setupTs), 1)} price=${fmt(
+      price
+    )} level=${fmt(st.level)} aboveLevel=${aboveLevel} chasePct=${fmt(
+      chasePct,
+      3
+    )}% score=${st.setupScore}`
+  );
+
+  if (!aboveLevel) return { ok: false, note: "washout below level" };
+  if (chasePct > MAX_CHASE_PCT_WASHOUT) return { ok: false, note: "washout chase too far" };
+  if (st.setupScore < WASHOUT_MIN_SCORE) return { ok: false, note: "washout score low" };
+
+  return { ok: true, note: "washout confirmed" };
+}
+
+// --------------------------------------------------
+// 3Commas
+// --------------------------------------------------
+async function send3CommasSignal(st, action, price, extra = {}) {
+  const botUuid = SYMBOL_BOT_MAP[st.symbol];
+  if (!botUuid) return { ok: false, err: "missing bot uuid" };
+  if (!C3_SIGNAL_SECRET) return { ok: false, err: "missing 3c secret" };
+
+  const stopPrice = st.invalidation || price * 0.995;
+  const sizing = computeRiskVolumePct(st, price, stopPrice);
+
+  const comment =
+    `${BRAIN_NAME}|${st.setupType || "na"}|score=${st.setupScore}|reg=${st.regime}` +
+    `|riskPct=${fmt(sizing.riskPct, 2)}|riskUsd=${fmt(sizing.riskUsd, 2)}` +
+    `|stopDist=${fmt(sizing.stopDistPct, 5)}|volPct=${fmt(sizing.volumePct, 2)}` +
+    `|oiT=${st.oiTrend}|oiD=${st.oiDeltaBias}|cvd=${st.cvdTrend}` +
+    `|liq=${st.liqClusterBelow}|drop=${st.priceDropPct}|pA=${st.patternAReady}`;
+
+  const payload = {
+    secret: C3_SIGNAL_SECRET,
+    bot_uuid: botUuid,
+    max_lag: String(MAX_LAG_SEC),
+    timestamp: new Date().toISOString(),
+    trigger_price: String(price),
+    tv_exchange: st.symbol.split(":")[0] || "BINANCE",
+    tv_instrument: st.symbol.split(":")[1] || st.symbol,
+    action,
+    comment,
+    ...(action === "enter_long"
+      ? {
+          order: {
+            amount: String(sizing.volumePct),
+            currency_type: "margin_percent",
+            order_type: "market",
+          },
+        }
+      : {}),
+    ...extra,
+  };
+
+  dlog(`📦 3C PAYLOAD ${JSON.stringify(payload)}`);
+
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), C3_TIMEOUT_MS);
+
+    const res = await fetch(C3_SIGNAL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ac.signal,
+    }).finally(() => clearTimeout(timer));
+
+    const text = await res.text().catch(() => "");
+    dlog(`📦 3C RESPONSE status=${res.status} body=${text}`);
+    dlog(`📨 3Commas ${action} status=${res.status}`);
+    return { ok: res.ok, status: res.status, body: text, payload };
+  } catch (err) {
+    dlog(`❌ 3Commas ${action} error=${err?.message || err}`);
+    return { ok: false, err: err?.message || String(err) };
+  }
+}
+
+// --------------------------------------------------
+// Entry / exit execution
+// --------------------------------------------------
+async function tryEnterOnTick(st, price) {
+  const gate = canEnter(st);
+  if (!gate.ok) return { ok: false, note: gate.note };
+
+  let decision = { ok: false, note: "unknown setup" };
+  if (st.setupType === "breakout_pullback") {
+    decision = breakoutEntryDecision(st, price);
+  } else if (st.setupType === "washout_reclaim") {
+    decision = washoutEntryDecision(st, price);
+  }
+
+  if (!decision.ok) return decision;
+
+  st.enterInFlight = true;
+  try {
+    const stopPrice = st.invalidation || price * 0.995;
+    const sizing = computeRiskVolumePct(st, price, stopPrice);
+
+    dlog(
+      `📥 ENTER ${st.symbol} ${BRAIN_NAME}|${st.setupType}|score=${st.setupScore}|reg=${st.regime}|riskPct=${fmt(
+        sizing.riskPct,
+        2
+      )}|riskUsd=${fmt(sizing.riskUsd, 1)}|stopDist=${fmt(
+        sizing.stopDistPct,
+        5
+      )}|volPct=${fmt(sizing.volumePct, 2)}|oiT=${st.oiTrend}|oiD=${st.oiDeltaBias}|cvd=${st.cvdTrend}|liq=${st.liqClusterBelow}|drop=${st.priceDropPct}|pA=${st.patternAReady} price=${price} sizeMult=${fmt(sizing.sizeMult, 2)} volumePercent=${fmt(sizing.volumePct, 2)}`
     );
 
-    try {
-      const r = await post3C({
-        action: "enter_long",
-        symbol,
-        price,
-        comment,
-        volumePercent: sizing.volumePercent,
-      });
-      console.log(`📨 3Commas enter_long status=${r.status}`);
-      s.orderLock.lastEnterMs = nowMs();
-    } catch (e) {
-      console.error("Entry error:", e?.message || e);
-      return;
-    } finally {
-      s.orderLock.enterInFlight = false;
-    }
+    const sent = await send3CommasSignal(st, "enter_long", price);
+    if (!sent.ok) return { ok: false, note: sent.err || "3c failed" };
 
-    s.position.inPosition = true;
-    s.position.entry = price;
-    s.position.peak = price;
-    s.position.sizeMult = sizing.sizeMult;
-    s.position.volumePercent = sizing.volumePercent;
-    s.position.adaptiveRiskPct = sizing.adaptiveRiskPct;
-    s.position.enteredMs = nowMs();
+    st.inPosition = true;
+    st.entryPrice = price;
+    st.entryTs = nowMs();
+    st.peakPrice = price;
+    st.stopPrice = stopPrice;
+    st.trailingStop = stopPrice;
+    st.lastEnterMs = nowMs();
+    st.lastAction = "enter_long";
 
-    clearSetup(s, "entered");
+    clearSetup(st, "entered");
+    return { ok: true, note: "entered" };
+  } finally {
+    st.enterInFlight = false;
   }
 }
 
-// ---------------------------
-// Auth
-// ---------------------------
-function authOk(body) {
-  if (body?.src === "tick" && TICKROUTER_SECRET) return body.secret === TICKROUTER_SECRET;
-  if (body?.src === "features" && BRAIN_SECRET) return body.secret === BRAIN_SECRET;
-  if ((body?.src === "ray_buy" || body?.src === "fwo_buy") && BRAIN_SECRET) return body.secret === BRAIN_SECRET;
-  if (BRAIN_SECRET || TICKROUTER_SECRET) return body.secret === (BRAIN_SECRET || TICKROUTER_SECRET);
-  return true;
+function updateTrailingStop(st, price) {
+  if (!st.inPosition || !Number.isFinite(st.entryPrice)) return;
+  if (!Number.isFinite(st.peakPrice) || price > st.peakPrice) st.peakPrice = price;
+
+  const atrTrail =
+    Number.isFinite(st.atr) && Number.isFinite(st.peakPrice)
+      ? st.peakPrice - st.atr * TRAIL_ATR_MULT
+      : st.stopPrice;
+
+  const minPctTrail =
+    Number.isFinite(st.peakPrice)
+      ? st.peakPrice * (1 - TREND_MIN_TRAIL_PCT / 100)
+      : st.stopPrice;
+
+  const wideTrail = Math.min(atrTrail ?? Infinity, minPctTrail ?? Infinity);
+  st.trailingStop = Math.max(st.stopPrice || -Infinity, wideTrail || -Infinity);
 }
 
-// ---------------------------
-// Webhook handler
-// ---------------------------
-async function handleWebhook(req, res) {
+async function tryExitOnTick(st, price) {
+  if (!st.inPosition) return { ok: false, note: "not in position" };
+  if (shouldDedupeExit(st)) return { ok: false, note: "exit dedupe" };
+
+  updateTrailingStop(st, price);
+
+  const pnlPct = pctChange(price, st.entryPrice);
+  const timeInMin = ageMin(st.entryTs);
+  const belowTrail =
+    Number.isFinite(st.trailingStop) && price <= st.trailingStop;
+  const trendStopActive = timeInMin >= TREND_STOP_ACTIVATE_MIN;
+  const weakProgress =
+    timeInMin >= TREND_TIME_STOP_MIN && pnlPct < TREND_MIN_PROGRESS_PCT;
+
+  let exitReason = "";
+  if (belowTrail) exitReason = "trail_hit";
+  else if (trendStopActive && st.close != null && st.ema18 != null && st.close < st.ema18)
+    exitReason = "trend_lost";
+  else if (weakProgress) exitReason = "time_stop";
+  else if (st.raySignal === "bearish_trend_change" && st.rayFresh) exitReason = "ray_bear";
+
+  if (!exitReason) return { ok: false, note: "hold" };
+
+  st.exitInFlight = true;
   try {
-    const body = req.body || {};
-    if (!authOk(body)) return res.status(401).json({ ok: false, err: "bad secret" });
+    const sent = await send3CommasSignal(st, "exit_long", price, {
+      comment: `${BRAIN_NAME}|exit|reason=${exitReason}`,
+    });
+    if (!sent.ok) return { ok: false, note: sent.err || "3c exit failed" };
 
-    if (body.src !== "tick") {
-      dlog(`📩 WEBHOOK src=${body.src || ""} signal=${body.signal || ""} symbol=${body.symbol || ""}`);
-    }
-
-    const symbol = body.symbol;
-    if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
-
-    if (body.action === "ready" || body.src === "enter_long" || body.intent === "exit_long") {
-      return res.json({ ok: true, ignored: "legacy_pine_decision" });
-    }
-
-    const s = ensureSymbol(symbol);
-
-    if (body.src === "tick") {
-      const price = n(body.price);
-      if (price == null) return res.status(400).json({ ok: false, err: "bad price" });
-
-      s.lastPrice = price;
-      s.lastTickMs = nowMs();
-      s.tickCount++;
-
-      if (s.tickCount % 50 === 0) {
-        console.log(`🟦 LIVE TICKS ${body.symbol} count=${s.tickCount} px=${price}`);
-      }
-
-      const now = nowMs();
-      if ((now - (s.lastTickLogMs || 0)) >= TICK_LOG_EVERY_MS) {
-        console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${body.time || body.timestamp || ""}`);
-        s.lastTickLogMs = now;
-      }
-
-      await runDecision(symbol, "tick");
-      return res.json({ ok: true });
-    }
-
-    if (body.src === "features") {
-      const timeMs =
-        body.timestamp ? Date.parse(body.timestamp) :
-        body.time ? Date.parse(body.time) :
-        nowMs();
-
-      const bar = {
-        timeMs,
-        close: n(body.close),
-        high: n(body.high),
-        low: n(body.low),
-        ema8: n(body.ema8),
-        ema18: n(body.ema18),
-        ema50: n(body.ema50),
-        rsi: n(body.rsi),
-        adx: n(body.adx),
-        atr: n(body.atr),
-        atrPct: n(body.atrPct),
-        oiTrend: n(body.oiTrend, 0),
-        oiDeltaBias: n(body.oiDeltaBias, 0),
-        cvdTrend: n(body.cvdTrend, 0),
-        liqClusterBelow: n(body.liqClusterBelow, 0),
-        priceDropPct: n(body.priceDropPct, 0),
-        patternAReady: n(body.patternAReady, 0),
-        patternAWatch: n(body.patternAWatch, 0),
-      };
-
-      if (bar.close == null || bar.high == null || bar.low == null) {
-        return res.status(400).json({ ok: false, err: "bad OHLC" });
-      }
-
-      console.log(
-        `🟩 FEAT rx ${symbol} close=${bar.close} ema8=${bar.ema8} ema18=${bar.ema18} ema50=${bar.ema50} ` +
-        `rsi=${bar.rsi} atr=${bar.atr} atrPct=${bar.atrPct} adx=${bar.adx} ` +
-        `oiTrend=${bar.oiTrend} oiDeltaBias=${bar.oiDeltaBias} cvdTrend=${bar.cvdTrend} ` +
-        `liqClusterBelow=${bar.liqClusterBelow} priceDropPct=${bar.priceDropPct} ` +
-        `patternAReady=${bar.patternAReady} patternAWatch=${bar.patternAWatch}`
-      );
-
-      s.bars.push(bar);
-      pruneBars(s);
-
-      if (s.lastPrice == null) s.lastPrice = bar.close;
-
-      await runDecision(symbol, "features");
-      return res.json({ ok: true });
-    }
-
-    if (body.src === "ray_buy") {
-      s.signals.lastRayBuyMs = nowMs();
-      s.signals.lastRayBuySignal = body.signal || "";
-      console.log(`🟪 RAY BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
-      dlog(`🧠 RAY state lastRayBuyMs=${s.signals.lastRayBuyMs}`);
-      return res.json({ ok: true });
-    }
-
-    if (body.src === "fwo_buy") {
-      s.signals.lastFwoBuyMs = nowMs();
-      s.signals.lastFwoBuySignal = body.signal || "";
-      console.log(`🟪 FWO BUY rx ${symbol} signal=${body.signal || ""} price=${body.price || ""}`);
-      dlog(`🧠 FWO state lastFwoBuyMs=${s.signals.lastFwoBuyMs}`);
-      return res.json({ ok: true });
-    }
-
-    console.log(`🟪 IGNORE src=${body.src} symbol=${symbol}`);
-    return res.json({ ok: true, ignored: "src_not_supported" });
-  } catch (e) {
-    console.error("handleWebhook error:", e?.stack || e);
-    return res.status(500).json({ ok: false, err: "server error" });
+    st.lastExitMs = nowMs();
+    st.lastAction = "exit_long";
+    st.cooldownUntilMs = nowMs() + COOLDOWN_SEC * 1000;
+    resetPosition(st);
+    clearSetup(st, "after_exit");
+    dlog(
+      `📤 EXIT ${st.symbol} reason=${exitReason} price=${fmt(price)} cooldownSec=${COOLDOWN_SEC}`
+    );
+    return { ok: true, note: exitReason };
+  } finally {
+    st.exitInFlight = false;
   }
 }
 
-// ---------------------------
+// --------------------------------------------------
 // Routes
-// ---------------------------
-app.get("/", (_, res) => {
+// --------------------------------------------------
+app.get("/", (_req, res) => {
   res.json({
     ok: true,
     brain: BRAIN_NAME,
-    symbolsMapped: Object.keys(SYMBOL_BOT_MAP).length,
-    hasBrainSecret: Boolean(BRAIN_SECRET),
-    hasTickRouterSecret: Boolean(TICKROUTER_SECRET),
-    debug: DEBUG,
-    minBarsForSetups: MIN_BARS_FOR_SETUPS,
-    tickLogEveryMs: TICK_LOG_EVERY_MS,
-    raySignalTtlMs: RAY_SIGNAL_TTL_MS,
-    fwoSignalTtlMs: FWO_SIGNAL_TTL_MS,
-    breakoutMaxAgeMin: BREAKOUT_MAX_AGE_MIN,
-    breakoutStaleMinScore: BREAKOUT_STALE_MIN_SCORE,
-    breakoutRetestMaxMin: BREAKOUT_RETEST_MAX_MIN,
-    washoutMaxAgeMin: WASHOUT_MAX_AGE_MIN,
-    botMaxNotionalUsd: BOT_MAX_NOTIONAL_USDT,
-    baseRiskPct: BASE_RISK_PCT,
-    minRiskPct: MIN_RISK_PCT,
-    maxRiskPct: MAX_RISK_PCT,
-    trendStopActivateMin: TREND_STOP_ACTIVATE_MIN,
-    trendMinTrailPct: TREND_MIN_TRAIL_PCT,
-    trendTimeStopMin: TREND_TIME_STOP_MIN,
-    trendMinProgressPct: TREND_MIN_PROGRESS_PCT,
-    breakoutConfirmBouncePct: BREAKOUT_CONFIRM_BOUNCE_PCT,
-    breakoutMinAdx: BREAKOUT_MIN_ADX,
-    breakoutMinScore: BREAKOUT_MIN_SCORE,
-    washoutMinScore: WASHOUT_MIN_SCORE,
+    symbols: ALLOW_SYMBOLS,
   });
 });
 
-app.post("/tv", handleWebhook);
-app.post("/webhook", handleWebhook);
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, brain: BRAIN_NAME, ts: nowMs() });
+});
 
-// ---------------------------
-// Safety
-// ---------------------------
-process.on("unhandledRejection", (reason) => console.error("unhandledRejection:", reason));
-process.on("uncaughtException", (err) => console.error("uncaughtException:", err));
+app.get("/state", (req, res) => {
+  const symbol = req.query.symbol;
+  if (symbol && S[symbol]) return res.json({ ok: true, state: S[symbol] });
+  return res.json({ ok: true, states: S });
+});
 
-// ---------------------------
+app.post("/webhook", async (req, res) => {
+  const body = req.body || {};
+  const src = String(body.src || "").toLowerCase();
+
+  // ---------------- TICK ----------------
+  if (src === "tick") {
+    if (!verifySecret(req, true)) {
+      return res.status(401).json({ ok: false, err: "bad tick secret" });
+    }
+
+    const symbol = body.symbol;
+    const price = n(body.price);
+
+    if (!symbol || !Number.isFinite(price)) {
+      return res.status(400).json({ ok: false, err: "bad tick payload" });
+    }
+
+    if (!SYMBOL_BOT_MAP[symbol]) {
+      return res.status(400).json({ ok: false, err: "symbol not mapped" });
+    }
+
+    const st = ensureState(symbol);
+    st.lastPrice = price;
+    st.lastTickMs = nowMs();
+    st.tickCount++;
+
+    if (nowMs() - st.lastTickLogMs >= TICK_LOG_EVERY_MS) {
+      st.lastTickLogMs = nowMs();
+      dlog(
+        `🟦 TICK(3m) ${symbol} price=${price} time=${new Date(st.lastTickMs).toISOString()}`
+      );
+    }
+
+    if (st.tickCount % 50 === 0) {
+      dlog(`🟦 LIVE TICKS ${symbol} count=${st.tickCount} px=${price}`);
+    }
+
+    if (st.inPosition) {
+      const ex = await tryExitOnTick(st, price);
+      return res.json({ ok: true, path: "tick-exit", result: ex });
+    }
+
+    const en = await tryEnterOnTick(st, price);
+    return res.json({ ok: true, path: "tick-entry", result: en });
+  }
+
+  // ---------------- FEATURES ----------------
+  if (!verifySecret(req, false)) {
+    return res.status(401).json({ ok: false, err: "bad webhook secret" });
+  }
+
+  const symbol = body.symbol;
+  if (!symbol) return res.status(400).json({ ok: false, err: "missing symbol" });
+  if (!SYMBOL_BOT_MAP[symbol]) {
+    return res.status(400).json({ ok: false, err: "symbol not mapped" });
+  }
+
+  const st = ensureState(symbol);
+
+  dlog(`📩 WEBHOOK src=${src || "features"} signal=${body.signal || ""} symbol=${symbol}`);
+
+  st.tf = String(body.tf || st.tf || "3");
+  st.close = n(body.close ?? body.price);
+  st.ema8 = n(body.ema8);
+  st.ema18 = n(body.ema18);
+  st.ema50 = n(body.ema50);
+  st.rsi = n(body.rsi);
+  st.adx = n(body.adx);
+  st.atr = n(body.atr);
+  st.atrPct = n(body.atrPct);
+
+  st.heartbeat = n(body.heartbeat) || 0;
+  if (st.heartbeat) st.lastHeartbeatMs = nowMs();
+
+  st.oiTrend = n(body.oiTrend) || 0;
+  st.oiDeltaBias = n(body.oiDeltaBias) || 0;
+  st.cvdTrend = n(body.cvdTrend) || 0;
+  st.liqClusterBelow = n(body.liqClusterBelow) || 0;
+  st.priceDropPct = n(body.priceDropPct) || 0;
+  st.patternAReady = n(body.patternAReady) || 0;
+  st.patternAWatch = n(body.patternAWatch) || 0;
+
+  // external signals
+  st.raySignal = String(body.raySignal || st.raySignal || "");
+  st.fwoSignal = String(body.fwoSignal || st.fwoSignal || "");
+  const rayBuy = n(body.rayBuy) || 0;
+  const raySell = n(body.raySell) || 0;
+  const fwo = n(body.fwo) || 0;
+
+  if (rayBuy) st.lastRayBullMs = nowMs();
+  if (raySell) st.lastRayBearMs = nowMs();
+  if (fwo > 0) st.lastFwoBullMs = nowMs();
+  if (fwo < 0) st.lastFwoBearMs = nowMs();
+
+  computeSignalFreshness(st);
+
+  st.barsSeen += 1;
+  updateCloseHistory(st, st.close);
+
+  dlog(
+    `🟩 FEAT rx ${symbol} close=${st.close} ema8=${st.ema8} ema18=${st.ema18} ema50=${st.ema50} rsi=${st.rsi} atr=${st.atr} atrPct=${st.atrPct} adx=${st.adx} oiTrend=${st.oiTrend} oiDeltaBias=${st.oiDeltaBias} cvdTrend=${st.cvdTrend} liqClusterBelow=${st.liqClusterBelow} priceDropPct=${st.priceDropPct} patternAReady=${st.patternAReady} patternAWatch=${st.patternAWatch}`
+  );
+
+  const rg = computeRegime(st);
+  st.regime = rg.mode;
+  st.regimeConf = rg.conf;
+
+  dlog(`🧭 REGIME ${symbol} mode=${st.regime} conf=${st.regimeConf}`);
+
+  manageSetupLifecycle(st);
+
+  if (!st.armed && !st.inPosition) {
+    maybeArmSetup(st);
+  } else {
+    dlog(
+      `📌 STATE ${symbol} reg=${st.regime} armed=${st.armed ? 1 : 0} type=${st.setupType} setupAgeMin=${st.armed ? fmt(ageMin(st.setupTs), 1) : 0} score=${st.setupScore} inPos=${st.inPosition ? 1 : 0} cooldown=${inCooldown(st) ? 1 : 0} rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
+    );
+  }
+
+  return res.json({
+    ok: true,
+    symbol,
+    regime: st.regime,
+    regimeConf: st.regimeConf,
+    armed: st.armed,
+    setupType: st.setupType,
+    setupScore: st.setupScore,
+    inPosition: st.inPosition,
+    barsSeen: st.barsSeen,
+  });
+});
+
+app.post("/tv", async (req, res) => {
+  req.body = req.body || {};
+  if (!req.body.src) req.body.src = "features";
+  return app._router.handle(req, res, () => {});
+});
+
+// --------------------------------------------------
 // Start
-// ---------------------------
+// --------------------------------------------------
 app.listen(PORT, () => {
   console.log(`✅ ${BRAIN_NAME} listening on :${PORT}`);
-  console.log(`🧭 SYMBOL_BOT_MAP keys=${Object.keys(SYMBOL_BOT_MAP).length}`);
+  console.log(`🧭 SYMBOL_BOT_MAP keys=${ALLOW_SYMBOLS.length}`);
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
   console.log(`📚 MIN_BARS_FOR_SETUPS=${MIN_BARS_FOR_SETUPS}`);
   console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
@@ -1195,7 +1161,4 @@ app.listen(PORT, () => {
   console.log(`⏳ TREND_TIME_STOP_MIN=${TREND_TIME_STOP_MIN}`);
   console.log(`📉 TREND_MIN_PROGRESS_PCT=${TREND_MIN_PROGRESS_PCT}`);
   console.log(`✅ BREAKOUT_CONFIRM_BOUNCE_PCT=${BREAKOUT_CONFIRM_BOUNCE_PCT}`);
-  console.log(`✅ BREAKOUT_MIN_ADX=${BREAKOUT_MIN_ADX}`);
-  console.log(`✅ BREAKOUT_MIN_SCORE=${BREAKOUT_MIN_SCORE}`);
-  console.log(`✅ WASHOUT_MIN_SCORE=${WASHOUT_MIN_SCORE}`);
 });
