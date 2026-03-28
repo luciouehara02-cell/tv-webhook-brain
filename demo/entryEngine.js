@@ -27,7 +27,9 @@ function n(v, d = 0) {
 }
 
 function boolEnv(name, def = false) {
-  const raw = String(process.env[name] ?? (def ? "1" : "0")).trim().toLowerCase();
+  const raw = String(process.env[name] ?? (def ? "1" : "0"))
+    .trim()
+    .toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
@@ -76,9 +78,10 @@ const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE = boolEnv(
 );
 
 const ENTRY_RECLAIM_MIN_PCT = numEnv("ENTRY_RECLAIM_MIN_PCT", 0.05);
+
 const ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT = numEnv(
   "ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT",
-  0.00
+  0.0
 );
 
 const SCORE_ENTER_LONG = numEnv("SCORE_ENTER_LONG", 6);
@@ -92,7 +95,7 @@ function dlog(...args) {
 }
 
 // ---------------------------
-// NAMED EXPORT REQUIRED
+// named export required by brain.js / entryPolicy.js
 // ---------------------------
 export function buildEntryDecision(state) {
   const feat = featOf(state);
@@ -110,12 +113,18 @@ export function buildEntryDecision(state) {
   const regime = String(ctxOf(state).regime ?? feat.regime ?? "range");
 
   const triggerPrice = n(breakout.triggerPrice);
-  const reclaimPctFromTrigger = Number.isFinite(Number(breakout.reclaimPctFromTrigger))
+
+  const reclaimPctFromTrigger = Number.isFinite(
+    Number(breakout.reclaimPctFromTrigger)
+  )
     ? n(breakout.reclaimPctFromTrigger)
     : pctFrom(close, triggerPrice);
 
   const score = n(breakout.score);
-  const entryCandidatePrice = Number.isFinite(Number(breakout.entryCandidatePrice))
+
+  const entryCandidatePrice = Number.isFinite(
+    Number(breakout.entryCandidatePrice)
+  )
     ? n(breakout.entryCandidatePrice)
     : close;
 
@@ -153,6 +162,7 @@ export function buildEntryDecision(state) {
   const minCloseAllowed =
     triggerPrice * (1 - ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
 
+  // hard blocks
   if (!isTrendRegime(regime)) {
     addUnique(reasons, "entry_block_not_trend_regime");
     addUnique(hardReasons, "not trend regime");
@@ -185,7 +195,9 @@ export function buildEntryDecision(state) {
 
   if (hardReasons.length > 0) {
     dlog(
-      `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)} ` +
+      `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
+        4
+      )} ` +
         `reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
         `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} regime=${regime} ` +
         `ok=0 reasons=${reasons.join(",")} score=${score}`
@@ -194,6 +206,7 @@ export function buildEntryDecision(state) {
     return base;
   }
 
+  // soft block
   if (score < SCORE_ENTER_LONG) {
     addUnique(reasons, "entry_block_score_too_low");
     addUnique(softReasons, "score too low");
@@ -203,7 +216,9 @@ export function buildEntryDecision(state) {
   addUnique(reasons, "entry_allowed");
 
   dlog(
-    `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)} ` +
+    `🚦 ENTRYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(
+      4
+    )} ` +
       `reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
       `ema8=${ema8.toFixed(4)} ema18=${ema18.toFixed(4)} regime=${regime} ` +
       `ok=1 reasons=${reasons.join(",")} score=${score}`
