@@ -2,24 +2,28 @@
 /**
  * replay_with_mock_3c.js
  *
- * Starts a local mock 3Commas webhook endpoint on :9999
- * so the brain can send enter/exit requests safely during replay.
+ * ESM version
  *
  * Usage:
  *   node replay_with_mock_3c.js
  */
 
-const http = require("http");
+import http from "http";
 
 const server = http.createServer((req, res) => {
   if (req.method === "POST" && req.url === "/signal") {
     let body = "";
-    req.on("data", (chunk) => (body += chunk));
+
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+
     req.on("end", () => {
       console.log("📦 MOCK 3C:", body);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, mock: true }));
     });
+
     return;
   }
 
