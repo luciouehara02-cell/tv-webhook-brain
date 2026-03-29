@@ -2,18 +2,13 @@
 /**
  * replay_json_to_brain.js
  *
- * Replays extracted events into a running brain server.
+ * ESM version
  *
  * Usage:
  *   node replay_json_to_brain.js replay_20260328.json http://127.0.0.1:8080/webhook
- *
- * Notes:
- * - Sends events in original order
- * - Does not preserve real-time delays unless REPLAY_DELAY_MS is set
- * - Prints replay summary
  */
 
-const fs = require("fs");
+import fs from "fs";
 
 const replayPath = process.argv[2];
 const webhookUrl = process.argv[3] || "http://127.0.0.1:8080/webhook";
@@ -30,14 +25,16 @@ const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
 const events = JSON.parse(fs.readFileSync(replayPath, "utf8"));
 
 function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function postEvent(evt) {
   const body = { ...evt.body };
-
   const isTick = body.src === "tick";
-  const headers = { "Content-Type": "application/json" };
+
+  const headers = {
+    "Content-Type": "application/json",
+  };
 
   if (isTick && TICKROUTER_SECRET) {
     headers["x-webhook-secret"] = TICKROUTER_SECRET;
@@ -51,15 +48,20 @@ async function postEvent(evt) {
     body: JSON.stringify(body),
   });
 
-  let json = null;
+  let payload = null;
   let text = "";
+
   try {
-    json = await res.json();
+    payload = await res.json();
   } catch {
     text = await res.text().catch(() => "");
   }
 
-  return { status: res.status, json, text };
+  return {
+    status: res.status,
+    payload,
+    text,
+  };
 }
 
 (async () => {
@@ -68,6 +70,7 @@ async function postEvent(evt) {
 
   for (let i = 0; i < events.length; i++) {
     const evt = events[i];
+
     try {
       const out = await postEvent(evt);
 
@@ -75,7 +78,10 @@ async function postEvent(evt) {
         okCount++;
       } else {
         failCount++;
-        console.error(`❌ ${i} ${evt.type} ${evt.ts} status=${out.status}`, out.json || out.text);
+        console.error(
+          `❌ ${i} ${evt.type} ${evt.ts} status=${out.status}`,
+          out.payload || out.text
+        );
       }
 
       if ((i + 1) % 100 === 0) {
