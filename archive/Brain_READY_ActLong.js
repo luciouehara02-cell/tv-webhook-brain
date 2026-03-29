@@ -1,18 +1,19 @@
 /**
- * Brain v2.9.6-LONG — READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
- * + Pending BUY buffer (pink fix)
- * + Re-entry window (yellow fix) with loop protection (restored)
- *
- * Key fixes in v2.9.6:
- * ✅ 3Commas payload uses the exact working structure you validated.
- * ✅ tv_exchange / tv_instrument derived from symbol: BINANCE:SOLUSDT if missing (prevents UNKNOWN).
- * ✅ READY symbol normalization consistency (prevents ready_symbol_mismatch).
- * ✅ Reentry loop protection: ENTER dedupe + "one reentry per exit" latch + fixed reentryCandidate logic.
- * ✅ EMERGENCY enter bypasses READY (already) + now can bypass cooldown with EMERGENCY_BYPASS_COOLDOWN=true
- * ✅ EMERGENCY exit skips EquityStab cooldown/conservative (already) but still applies normal EXIT_COOLDOWN_MIN (as before)
- *
- * New optional Railway var:
- *   EMERGENCY_BYPASS_COOLDOWN="true"  // allows emergency enter_long to ignore cooldownActive
+ * Brain v3.1.0-LONG
+ * READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
+ * + Pending BUY buffer
+ * + Re-entry window with loop protection
+ * + READY freshness gate for entry
+ * + Pending BUY freshness gate
+ * + Consolidated tick logging
+ * + Compact state snapshot
+ * + Entry drift logging
+ * + Exit ladder:
+ *   Stage 1 = Fail Stop
+ *   Stage 2 = Breakeven
+ *   Stage 3 = Profit Lock
+ * + READY cleanup after successful enter
+ * + Progressive Profit Lock tightening by peak profit tiers
  */
 
 import express from "express";
@@ -20,7 +21,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v2.9.6-LONG";
+const BRAIN_VERSION = "v3.1.0-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -28,46 +29,48 @@ const BRAIN_VERSION = "v2.9.6-LONG";
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
-// ✅ NEW (optional)
 const EMERGENCY_BYPASS_COOLDOWN =
   String(process.env.EMERGENCY_BYPASS_COOLDOWN || "false").toLowerCase() === "true";
 
-// READY TTL (minutes). 0 = disabled
+// READY
 const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
-
-// accept legacy action:"ready" in addition to ready_long
+const READY_ENTRY_MAX_AGE_SEC = Number(process.env.READY_ENTRY_MAX_AGE_SEC || "480");
 const READY_ACCEPT_LEGACY_READY =
   String(process.env.READY_ACCEPT_LEGACY_READY || "true").toLowerCase() === "true";
-
-// Base Entry drift gate (BUY must be within this % of latest READY price)
 const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
-
-// Optional per-regime drift overrides (if set, used when REGIME_ENABLED)
 const READY_MAX_MOVE_PCT_TREND = toNumEnv(process.env.READY_MAX_MOVE_PCT_TREND);
 const READY_MAX_MOVE_PCT_RANGE = toNumEnv(process.env.READY_MAX_MOVE_PCT_RANGE);
-
-// Auto-expire drift gate (READY auto-clears if price drifts too far)
 const READY_AUTOEXPIRE_PCT = Number(process.env.READY_AUTOEXPIRE_PCT || String(READY_MAX_MOVE_PCT));
 const READY_AUTOEXPIRE_ENABLED =
   String(process.env.READY_AUTOEXPIRE_ENABLED || "true").toLowerCase() === "true";
 
-// Cooldown after exit (minutes). 0 = disabled
+// Cooldown / heartbeat / logging
 const EXIT_COOLDOWN_MIN = Number(process.env.EXIT_COOLDOWN_MIN || "0");
-
-// Heartbeat safety (ticks freshness)
 const REQUIRE_FRESH_HEARTBEAT =
   String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
+const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000");
+const STATE_LOG_EVERY_MS = Number(process.env.STATE_LOG_EVERY_MS || String(TICK_LOG_EVERY_MS));
 
-// Profit Lock (trailing) protection
+// ===== Exit ladder =====
+
+// Stage 1: Fail stop
+const FAIL_STOP_ENABLED =
+  String(process.env.FAIL_STOP_ENABLED || "true").toLowerCase() === "true";
+const FAIL_STOP_PCT = Number(process.env.FAIL_STOP_PCT || "0.45");
+
+// Stage 2: Breakeven
+const BREAKEVEN_ENABLED =
+  String(process.env.BREAKEVEN_ENABLED || "true").toLowerCase() === "true";
+const BREAKEVEN_ARM_PCT = Number(process.env.BREAKEVEN_ARM_PCT || "0.35");
+const BREAKEVEN_LOCK_PCT = Number(process.env.BREAKEVEN_LOCK_PCT || "0.05");
+
+// Stage 3: Profit lock
 const PROFIT_LOCK_ENABLED =
   String(process.env.PROFIT_LOCK_ENABLED || "true").toLowerCase() === "true";
-
-// Fixed Profit Lock (fallback)
 const PROFIT_LOCK_ARM_PCT = Number(process.env.PROFIT_LOCK_ARM_PCT || "0.6");
 const PROFIT_LOCK_GIVEBACK_PCT = Number(process.env.PROFIT_LOCK_GIVEBACK_PCT || "0.35");
 
-// Adaptive Profit Lock (ATR%-scaled)
 const PL_ADAPTIVE_ENABLED =
   String(process.env.PL_ADAPTIVE_ENABLED || "true").toLowerCase() === "true";
 
@@ -76,37 +79,42 @@ const PL_GIVEBACK_ATR_MULT_TREND = Number(process.env.PL_GIVEBACK_ATR_MULT_TREND
 const PL_START_ATR_MULT_RANGE = Number(process.env.PL_START_ATR_MULT_RANGE || "1.2");
 const PL_GIVEBACK_ATR_MULT_RANGE = Number(process.env.PL_GIVEBACK_ATR_MULT_RANGE || "0.7");
 
-// Profit Lock clamps
 const PL_MIN_ARM_PCT = Number(process.env.PL_MIN_ARM_PCT || "0");
 const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
 const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
 const PL_MAX_GIVEBACK_PCT = Number(process.env.PL_MAX_GIVEBACK_PCT || "0");
 
-// Optional: ignore exit unless profit >= threshold (0 disables)
+// Progressive PL tightening
+const PL_TIGHTEN_ENABLED =
+  String(process.env.PL_TIGHTEN_ENABLED || "true").toLowerCase() === "true";
+
+const PL_TIGHTEN_TIER1_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER1_PROFIT_PCT || "0.80");
+const PL_TIGHTEN_TIER2_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER2_PROFIT_PCT || "1.20");
+const PL_TIGHTEN_TIER3_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER3_PROFIT_PCT || "1.80");
+
+const PL_TIGHTEN_TIER1_MULT = Number(process.env.PL_TIGHTEN_TIER1_MULT || "1.00");
+const PL_TIGHTEN_TIER2_MULT = Number(process.env.PL_TIGHTEN_TIER2_MULT || "0.85");
+const PL_TIGHTEN_TIER3_MULT = Number(process.env.PL_TIGHTEN_TIER3_MULT || "0.70");
+const PL_TIGHTEN_TIER4_MULT = Number(process.env.PL_TIGHTEN_TIER4_MULT || "0.55");
+
 const PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT = Number(
   process.env.PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT || "0"
 );
 
-// Regime switching (tick-derived)
+// Regime
 const REGIME_ENABLED =
   String(process.env.REGIME_ENABLED || "true").toLowerCase() === "true";
-
-// windows used for regime + ATR estimation
-const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300"); // default 5m
-const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300"); // default 5m
-const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800"); // default 30m
+const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300");
+const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300");
+const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800");
 const REGIME_MIN_TICKS = Number(process.env.REGIME_MIN_TICKS || "10");
-
-// hysteresis thresholds (slope is absolute pct move over window)
 const REGIME_TREND_SLOPE_ON_PCT = Number(process.env.REGIME_TREND_SLOPE_ON_PCT || "0.25");
 const REGIME_TREND_SLOPE_OFF_PCT = Number(process.env.REGIME_TREND_SLOPE_OFF_PCT || "0.18");
 const REGIME_RANGE_SLOPE_ON_PCT = Number(process.env.REGIME_RANGE_SLOPE_ON_PCT || "0.12");
 const REGIME_RANGE_SLOPE_OFF_PCT = Number(process.env.REGIME_RANGE_SLOPE_OFF_PCT || "0.16");
-
-// minimum volatility filter (ATR% must be above this for TREND to engage)
 const REGIME_VOL_MIN_ATR_PCT = Number(process.env.REGIME_VOL_MIN_ATR_PCT || "0.20");
 
-// Crash protection layer
+// Crash protection
 const CRASH_PROTECT_ENABLED =
   String(process.env.CRASH_PROTECT_ENABLED || "true").toLowerCase() === "true";
 const CRASH_DUMP_1M_PCT = Number(process.env.CRASH_DUMP_1M_PCT || "2.0");
@@ -137,18 +145,19 @@ const REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT = Number(
   process.env.REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT || "-0.35"
 );
 
-// Pending BUY buffer
+// Pending BUY
 const PENDING_BUY_ENABLED =
   String(process.env.PENDING_BUY_ENABLED || "true").toLowerCase() === "true";
 const PENDING_BUY_WINDOW_SEC = Number(process.env.PENDING_BUY_WINDOW_SEC || "120");
 const PENDING_BUY_MAX_READY_DRIFT_PCT = Number(
   process.env.PENDING_BUY_MAX_READY_DRIFT_PCT || "0.3"
 );
+const PENDING_BUY_MAX_AGE_SEC = Number(process.env.PENDING_BUY_MAX_AGE_SEC || "60");
 
-// ENTER dedupe (prevents spam loop). Default 25s.
+// ENTER dedupe
 const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || "25");
 
-// 3Commas (accept both THREECOMMAS_* and C3_* aliases)
+// 3Commas
 const THREECOMMAS_WEBHOOK_URL =
   process.env.THREECOMMAS_WEBHOOK_URL ||
   process.env.C3_WEBHOOK_URL ||
@@ -172,12 +181,11 @@ const THREECOMMAS_TIMEOUT_MS = Number(
   process.env.THREECOMMAS_TIMEOUT_MS || process.env.C3_TIMEOUT_MS || "8000"
 );
 
-// Optional fallbacks if TV doesn't send these
 const THREECOMMAS_TV_EXCHANGE = process.env.THREECOMMAS_TV_EXCHANGE || "";
 const THREECOMMAS_TV_INSTRUMENT = process.env.THREECOMMAS_TV_INSTRUMENT || "";
 
 // ====================
-// MEMORY (in-RAM)
+// MEMORY
 // ====================
 let readyOn = false;
 let readyAtMs = 0;
@@ -190,37 +198,28 @@ let readySymbol = "";
 let readyTf = "";
 let readyMeta = {};
 
-// Cooldown state
 let cooldownUntilMs = 0;
-
-// Crash lock state
 let crashLockUntilMs = 0;
-
-// Equity stabilizer state
 let lossStreak = 0;
 let conservativeUntilMs = 0;
 
-// Heartbeat / price cache
 let lastTickMs = 0;
 let lastTickSymbol = "";
 let lastTickPrice = null;
+let lastTickLogMs = 0;
+let lastStateLogMs = 0;
 
-// Per-symbol tick history
 const tickHistory = new Map();
-
-// Regime state per symbol
 const regimeState = new Map();
 
-// Trade tracking for profit lock
 let entryPrice = null;
 let entrySymbol = "";
 let peakPrice = null;
 let profitLockArmed = false;
+let breakevenArmed = false;
 
-// store entry meta so exits know correct pair
 let entryMeta = { tv_exchange: null, tv_instrument: null };
 
-// Re-entry state
 let reentry = {
   active: false,
   untilMs: 0,
@@ -231,16 +230,12 @@ let reentry = {
   triesUsed: 0,
   triesMax: REENTRY_MAX_TRIES,
   exitTs: 0,
-  consumed: false, // one reentry per exit
+  consumed: false,
 };
 
-// Key loop-prevention flag: was the CURRENT position opened via re-entry?
 let positionWasReentry = false;
-
-// ENTER signal dedupe state
 let lastEnterAcceptedTs = 0;
 
-// Pending BUY
 function emptyPendingBuy() {
   return {
     active: false,
@@ -248,6 +243,7 @@ function emptyPendingBuy() {
     symbol: "",
     price: null,
     payload: null,
+    createdMs: 0,
   };
 }
 let pendingBuy = emptyPendingBuy();
@@ -263,14 +259,26 @@ function toNumEnv(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function logWebhook(payload) {
-  console.log("==== NEW WEBHOOK ====");
-  console.log(payload);
-}
-
 function toNum(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeIntent(payload) {
+  const a = payload?.action ? String(payload.action).toLowerCase() : "";
+  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
+  const s = payload?.src ? String(payload.src).toLowerCase() : "";
+  if (a) return a;
+  if (i) return i;
+  if (s && s !== "ray") return s;
+  return "";
+}
+
+function logWebhook(payload) {
+  const intent = normalizeIntent(payload);
+  if (intent === "tick") return;
+  console.log("==== NEW WEBHOOK ====");
+  console.log(payload);
 }
 
 function checkSecret(payload) {
@@ -282,16 +290,6 @@ function checkSecret(payload) {
     payload?.passphrase ??
     "";
   return String(s) === String(WEBHOOK_SECRET);
-}
-
-function normalizeIntent(payload) {
-  const a = payload?.action ? String(payload.action).toLowerCase() : "";
-  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
-  const s = payload?.src ? String(payload.src).toLowerCase() : "";
-  if (a) return a;
-  if (i) return i;
-  if (s && s !== "ray") return s; // tick etc
-  return "";
 }
 
 function isEmergency(payload) {
@@ -347,6 +345,40 @@ function getTickPrice(payload) {
   return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
 }
 
+function readyAgeMs() {
+  return readyAtMs ? nowMs() - readyAtMs : null;
+}
+
+function isReadyFresh(maxAgeMs) {
+  if (!readyOn || !readyAtMs) return false;
+  return nowMs() - readyAtMs <= maxAgeMs;
+}
+
+function maybeLogTick(symbol, price, isoTime) {
+  const now = nowMs();
+  if (!TICK_LOG_EVERY_MS || TICK_LOG_EVERY_MS <= 0) return;
+  if (!lastTickLogMs || now - lastTickLogMs >= TICK_LOG_EVERY_MS) {
+    console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${isoTime}`);
+    lastTickLogMs = now;
+  }
+}
+
+function maybeLogState(symbol) {
+  const now = nowMs();
+  if (!STATE_LOG_EVERY_MS || STATE_LOG_EVERY_MS <= 0) return;
+  if (!symbol) return;
+
+  if (!lastStateLogMs || now - lastStateLogMs >= STATE_LOG_EVERY_MS) {
+    const reg = getRegime(symbol);
+    const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
+    const readyAgeStr = readyAgeSec != null ? `${readyAgeSec}s` : "na";
+    console.log(
+      `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeStr} inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} be=${breakevenArmed ? 1 : 0} pl=${profitLockArmed ? 1 : 0} lastAction=${lastAction}`
+    );
+    lastStateLogMs = now;
+  }
+}
+
 function clearReadyContext(reason = "cleared") {
   readyOn = false;
   readyAtMs = 0;
@@ -363,6 +395,7 @@ function clearPositionContext(reason = "pos_cleared") {
   entrySymbol = "";
   peakPrice = null;
   profitLockArmed = false;
+  breakevenArmed = false;
   entryMeta = { tv_exchange: null, tv_instrument: null };
   positionWasReentry = false;
   console.log(`🧽 POSITION context cleared (${reason})`);
@@ -386,16 +419,15 @@ function startCrashLock(reason = "crash", minutesOverride = null) {
 function crashLockActive() {
   return crashLockUntilMs && nowMs() < crashLockUntilMs;
 }
-
 function cooldownActive() {
   return cooldownUntilMs && nowMs() < cooldownUntilMs;
 }
-
 function conservativeModeActive() {
   return conservativeUntilMs && nowMs() < conservativeUntilMs;
 }
 
 function ttlExpired() {
+  if (inPosition) return false;
   if (!READY_TTL_MIN || READY_TTL_MIN <= 0) return false;
   return readyOn && nowMs() - readyAtMs > READY_TTL_MIN * 60 * 1000;
 }
@@ -428,7 +460,7 @@ function maybeAutoExpireReady(currentPrice, currentSymbol) {
   return false;
 }
 
-// ---- Tick analytics buffer
+// tick analytics
 function pushTick(symbol, price, tMs) {
   if (!symbol || price == null) return;
   const arr = tickHistory.get(symbol) || [];
@@ -447,7 +479,6 @@ function priceAtOrBefore(symbol, targetMs) {
   return arr[0]?.p ?? null;
 }
 
-// ATR proxy
 function atrPctFromTicks(symbol, windowSec) {
   const arr = tickHistory.get(symbol);
   if (!arr || arr.length < 3) return null;
@@ -470,7 +501,6 @@ function atrPctFromTicks(symbol, windowSec) {
   return (atr / last) * 100.0;
 }
 
-// slope
 function slopePct(symbol, windowSec) {
   const now = nowMs();
   const pNow = priceAtOrBefore(symbol, now);
@@ -528,7 +558,6 @@ function effectiveReadyMaxMovePct(symbol) {
   return READY_MAX_MOVE_PCT;
 }
 
-// Crash detection
 function maybeCrashLock(symbol) {
   if (!CRASH_PROTECT_ENABLED) return false;
   if (!symbol) return false;
@@ -563,14 +592,21 @@ function maybeCrashLock(symbol) {
   return false;
 }
 
-// ---- 3Commas forwarder
+function plTightenMultiplier(peakProfitPct) {
+  if (!PL_TIGHTEN_ENABLED || !Number.isFinite(peakProfitPct)) return 1.0;
+
+  if (peakProfitPct >= PL_TIGHTEN_TIER3_PROFIT_PCT) return PL_TIGHTEN_TIER4_MULT;
+  if (peakProfitPct >= PL_TIGHTEN_TIER2_PROFIT_PCT) return PL_TIGHTEN_TIER3_MULT;
+  if (peakProfitPct >= PL_TIGHTEN_TIER1_PROFIT_PCT) return PL_TIGHTEN_TIER2_MULT;
+  return PL_TIGHTEN_TIER1_MULT;
+}
+
 async function postTo3Commas(action, payload) {
   if (!THREECOMMAS_BOT_UUID || !THREECOMMAS_SECRET) {
     console.log("⚠️ 3Commas not configured (missing BOT_UUID/SECRET) — skipping");
     return { skipped: true };
   }
 
-  // derive tv fields from symbol if missing
   const sym = getSymbolFromPayload(payload) || entrySymbol || readySymbol || "";
   const derived = deriveTvFromSymbol(sym);
 
@@ -625,10 +661,7 @@ async function postTo3Commas(action, payload) {
     console.log(`📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`);
     return { ok: resp.ok, status: resp.status, resp: text };
   } catch (e) {
-    console.log(
-      "⛔ 3Commas POST failed:",
-      e?.name === "AbortError" ? "timeout" : e?.message || e
-    );
+    console.log("⛔ 3Commas POST failed:", e?.name === "AbortError" ? "timeout" : e?.message || e);
     return { ok: false, error: String(e?.message || e) };
   } finally {
     clearTimeout(t);
@@ -655,7 +688,81 @@ function noteExitForEquity(exitPrice) {
   }
 }
 
-// Profit lock evaluator
+// ===== Exit ladder evaluators =====
+
+async function doManagedExit(reason, currentPrice, currentSymbol) {
+  lastAction = reason;
+
+  const fwd = await postTo3Commas("exit_long", {
+    time: new Date().toISOString(),
+    trigger_price: currentPrice,
+    symbol: entrySymbol || currentSymbol,
+    tv_exchange: entryMeta?.tv_exchange,
+    tv_instrument: entryMeta?.tv_instrument,
+  });
+
+  noteExitForEquity(currentPrice);
+  maybeStartOrKeepReentryWindow(
+    currentSymbol || entrySymbol,
+    currentPrice,
+    reason,
+    pctProfit(entryPrice, currentPrice)
+  );
+
+  clearReadyContext(reason);
+  clearPositionContext(reason);
+  startCooldown(reason);
+
+  return { exited: true, reason, threecommas: fwd };
+}
+
+async function maybeFailStopExit(currentPrice, currentSymbol) {
+  if (!FAIL_STOP_ENABLED) return false;
+  if (!inPosition) return false;
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) return false;
+  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
+  if (profitLockArmed || breakevenArmed) return false;
+
+  const stopPx = entryPrice * (1 - FAIL_STOP_PCT / 100);
+  if (currentPrice <= stopPx) {
+    console.log(
+      `🛑 FAIL STOP EXIT: price=${currentPrice} <= stop=${stopPx.toFixed(4)} | entry=${entryPrice} | failStop=${FAIL_STOP_PCT}%`
+    );
+    return doManagedExit("fail_stop_exit", currentPrice, currentSymbol);
+  }
+  return false;
+}
+
+async function maybeBreakevenExit(currentPrice, currentSymbol) {
+  if (!BREAKEVEN_ENABLED) return false;
+  if (!inPosition) return false;
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) return false;
+  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
+  if (profitLockArmed) return false;
+
+  const p = pctProfit(entryPrice, currentPrice);
+  if (p == null) return false;
+
+  if (!breakevenArmed && p >= BREAKEVEN_ARM_PCT) {
+    breakevenArmed = true;
+    console.log(
+      `🟡 BREAKEVEN ARMED at +${p.toFixed(3)}% (>= ${BREAKEVEN_ARM_PCT.toFixed(3)}%)`
+    );
+  }
+
+  if (!breakevenArmed) return false;
+
+  const beFloor = entryPrice * (1 + BREAKEVEN_LOCK_PCT / 100);
+  if (currentPrice <= beFloor) {
+    console.log(
+      `🟨 BREAKEVEN EXIT: price=${currentPrice} <= floor=${beFloor.toFixed(4)} | entry=${entryPrice} | lock=${BREAKEVEN_LOCK_PCT}%`
+    );
+    return doManagedExit("breakeven_exit", currentPrice, currentSymbol);
+  }
+
+  return false;
+}
+
 async function maybeProfitLockExit(currentPrice, currentSymbol) {
   if (!PROFIT_LOCK_ENABLED) return false;
   if (!inPosition) return false;
@@ -665,7 +772,8 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
   peakPrice = peakPrice == null ? currentPrice : Math.max(peakPrice, currentPrice);
 
   const p = pctProfit(entryPrice, currentPrice);
-  if (p == null) return false;
+  const peakProfitPct = pctProfit(entryPrice, peakPrice);
+  if (p == null || peakProfitPct == null) return false;
 
   let armPct = PROFIT_LOCK_ARM_PCT;
   let givebackPct = PROFIT_LOCK_GIVEBACK_PCT;
@@ -693,38 +801,26 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
   }
   if (!profitLockArmed) return false;
 
-  const floor = peakPrice * (1 - givebackPct / 100);
+  const tightenMult = plTightenMultiplier(peakProfitPct);
+  let effectiveGivebackPct = givebackPct * tightenMult;
+
+  if (PL_MIN_GIVEBACK_PCT > 0) effectiveGivebackPct = Math.max(effectiveGivebackPct, PL_MIN_GIVEBACK_PCT);
+  if (PL_MAX_GIVEBACK_PCT > 0) effectiveGivebackPct = Math.min(effectiveGivebackPct, PL_MAX_GIVEBACK_PCT);
+
+  const floor = peakPrice * (1 - effectiveGivebackPct / 100);
+
   if (currentPrice <= floor) {
     console.log(
-      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
+      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | baseGiveback=${givebackPct.toFixed(3)}% | tightenMult=${tightenMult.toFixed(2)} | effectiveGiveback=${effectiveGivebackPct.toFixed(3)}% | peakProfit=${peakProfitPct.toFixed(3)}%`
     );
-
-    lastAction = "profit_lock_exit_long";
-
-    const fwd = await postTo3Commas("exit_long", {
-      time: new Date().toISOString(),
-      trigger_price: currentPrice,
-      symbol: entrySymbol,
-      tv_exchange: entryMeta?.tv_exchange,
-      tv_instrument: entryMeta?.tv_instrument,
-    });
-
-    noteExitForEquity(currentPrice);
-
-    // Re-entry window starts only if this position was NOT a re-entry
-    maybeStartOrKeepReentryWindow(currentSymbol, currentPrice, "exit_profit_lock", p);
-
-    clearReadyContext("profit_lock_exit");
-    clearPositionContext("profit_lock_exit");
-    startCooldown("profit_lock_exit");
-    return { exited: true, threecommas: fwd };
+    return doManagedExit("profit_lock_exit", currentPrice, currentSymbol);
   }
 
   return false;
 }
 
 // ====================
-// RE-ENTRY helpers (loop-safe)
+// RE-ENTRY helpers
 // ====================
 function reentryActive() {
   return reentry.active && nowMs() < reentry.untilMs;
@@ -756,13 +852,11 @@ function maybeStartOrKeepReentryWindow(symbol, exitPrice, reason, exitPnlPct) {
   if (!REENTRY_ENABLED) return;
   if (!symbol || !Number.isFinite(exitPrice)) return;
 
-  // Prevent infinite loops: do NOT start new re-entry window if the exited position was itself a re-entry.
   if (positionWasReentry) {
     console.log("🟣 REENTRY not started (exit from re-entry trade)");
     return;
   }
 
-  // Optional: skip starting reentry window on big losses
   if (Number.isFinite(exitPnlPct) && exitPnlPct <= REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT) {
     console.log(
       `🟣 REENTRY not started (exitPnL ${exitPnlPct.toFixed(3)}% <= ${REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT}%)`
@@ -773,20 +867,18 @@ function maybeStartOrKeepReentryWindow(symbol, exitPrice, reason, exitPnlPct) {
   const now = nowMs();
   const regAtExit = symbol ? getRegime(symbol) : "RANGE";
 
-  // If already active for same symbol, keep but update reference
   if (reentry.active && now < reentry.untilMs && reentry.symbol === symbol) {
     reentry.ref = exitPrice;
     reentry.regimeAtExit = regAtExit;
     reentry.reason = reason;
     reentry.exitTs = now;
-    reentry.consumed = false; // new exit => allow one reentry after THIS exit
+    reentry.consumed = false;
     console.log(
       `🟣 REENTRY window kept | until=${new Date(reentry.untilMs).toISOString()} | ref=${exitPrice} tries=${reentry.triesUsed}/${reentry.triesMax} reason=${reason}`
     );
     return;
   }
 
-  // Start new window
   reentry = {
     active: true,
     untilMs: now + REENTRY_WINDOW_MIN * 60 * 1000,
@@ -825,6 +917,7 @@ function pendingStore(symbol, price, payload) {
     symbol,
     price,
     payload,
+    createdMs: nowMs(),
   };
   console.log(`🩷 PendingBUY stored (${PENDING_BUY_WINDOW_SEC}s) symbol=${symbol} price=${price}`);
 }
@@ -833,6 +926,9 @@ function pendingCanConsumeWithReady(readySym, readyPx) {
   if (!pendingActive()) return false;
   if (!readySym || pendingBuy.symbol !== readySym) return false;
   if (!Number.isFinite(readyPx) || !Number.isFinite(pendingBuy.price)) return false;
+  if (!pendingBuy.createdMs) return false;
+  if (nowMs() - pendingBuy.createdMs > PENDING_BUY_MAX_AGE_SEC * 1000) return false;
+
   const d = pctDiff(readyPx, pendingBuy.price);
   return d != null && d <= PENDING_BUY_MAX_READY_DRIFT_PCT;
 }
@@ -850,7 +946,6 @@ async function handleEnterLong(payload, res, sourceTag) {
   const px = getRayPrice(payload);
   const sym = getSymbolFromPayload(payload);
   const ts = nowMs();
-
   const emergency = isEmergency(payload);
 
   if (crashLockActive()) {
@@ -868,17 +963,18 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "stale_heartbeat" });
   }
 
-  // ✅ ENTER dedupe prevents Pine spam loop
   if (enterDedupeActive(ts)) {
     lastAction = "enter_long_deduped";
     return res.json({ ok: true, ignored: "enter_dedup", window_sec: ENTER_DEDUP_SEC });
   }
 
-  // Re-entry candidate (only when FLAT)
   const reentryCandidate =
-    REENTRY_ENABLED && reentryActive() && reentryTriesLeft() && !reentry.consumed && (!REENTRY_REQUIRE_READY || readyOn);
+    REENTRY_ENABLED &&
+    reentryActive() &&
+    reentryTriesLeft() &&
+    !reentry.consumed &&
+    (!REENTRY_REQUIRE_READY || readyOn);
 
-  // ✅ NEW: Emergency can bypass cooldown if EMERGENCY_BYPASS_COOLDOWN=true
   const emergencyBypassCooldown = emergency && EMERGENCY_BYPASS_COOLDOWN;
 
   if (cooldownActive() && !reentryCandidate && !emergencyBypassCooldown) {
@@ -898,7 +994,6 @@ async function handleEnterLong(payload, res, sourceTag) {
     }
   }
 
-  // If not re-entry, require READY (unless emergency)
   if (!reentryCandidate && !emergency) {
     if (!readyOn) {
       lastAction = "enter_long_blocked_not_ready";
@@ -907,14 +1002,23 @@ async function handleEnterLong(payload, res, sourceTag) {
       }
       return res.json({ ok: false, blocked: "not_ready" });
     }
+
+    if (!isReadyFresh(READY_ENTRY_MAX_AGE_SEC * 1000)) {
+      lastAction = "enter_long_blocked_ready_too_old";
+      clearReadyContext("ready_too_old_for_entry");
+      return res.json({
+        ok: false,
+        blocked: "ready_too_old",
+        readyAgeSec: readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null,
+        maxAgeSec: READY_ENTRY_MAX_AGE_SEC,
+      });
+    }
   }
 
-  // Emergency logs (so you can see why it went through)
   if (emergency && !reentryCandidate) {
     console.log("🧨 EMERGENCY: ENTER_LONG bypassing READY requirement");
   }
 
-  // Re-entry logic checks
   if (reentryCandidate) {
     if (reentry.symbol && sym && reentry.symbol !== sym) {
       lastAction = "enter_long_blocked_reentry_symbol_mismatch";
@@ -949,15 +1053,12 @@ async function handleEnterLong(payload, res, sourceTag) {
       }
     }
 
-    // consume a try NOW
     reentry.triesUsed += 1;
-
     console.log(
       `🟣 REENTRY allowed (${sourceTag}) ref=${reentry.ref} regime=${getRegime(sym)} tries=${reentry.triesUsed}/${reentry.triesMax}`
     );
   }
 
-  // READY symbol match (normal entry only; emergency bypasses)
   if (!reentryCandidate && !emergency) {
     if (readySymbol && sym && readySymbol !== sym) {
       lastAction = "enter_long_blocked_symbol_mismatch";
@@ -970,7 +1071,8 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({ ok: false, blocked: "missing_price_or_symbol" });
   }
 
-  // Drift gate for normal entry only (emergency bypasses)
+  let entryDriftPct = null;
+
   if (!reentryCandidate && !emergency) {
     if (readyPrice == null) {
       lastAction = "enter_long_blocked_missing_ready_price";
@@ -983,6 +1085,7 @@ async function handleEnterLong(payload, res, sourceTag) {
       return res.json({ ok: false, blocked: "bad_price_diff" });
     }
 
+    entryDriftPct = dPct;
     const maxMove = effectiveReadyMaxMovePct(sym);
 
     if (dPct > maxMove) {
@@ -993,16 +1096,15 @@ async function handleEnterLong(payload, res, sourceTag) {
     }
   }
 
-  // Approve entry
   inPosition = true;
   entryPrice = px;
   entrySymbol = sym;
   peakPrice = px;
   profitLockArmed = false;
+  breakevenArmed = false;
 
   positionWasReentry = Boolean(reentryCandidate);
 
-  // store proper tv meta
   const derived = deriveTvFromSymbol(sym);
   entryMeta = {
     tv_exchange:
@@ -1014,8 +1116,9 @@ async function handleEnterLong(payload, res, sourceTag) {
   lastAction = "enter_long";
   lastEnterAcceptedTs = ts;
 
+  const readyPxForLog = readyPrice;
   console.log(
-    `🚀 ENTER LONG (${sourceTag}${reentryCandidate ? "+reentry" : ""}${emergency ? "+emergency" : ""}) | regime=${getRegime(entrySymbol)}`
+    `🚀 ENTER LONG (${sourceTag}${reentryCandidate ? "+reentry" : ""}${emergency ? "+emergency" : ""}) | regime=${getRegime(entrySymbol)} | ready=${readyPxForLog ?? "na"} entry=${px ?? "na"} drift=${entryDriftPct != null ? entryDriftPct.toFixed(3) + "%" : "na"}`
   );
 
   const fwd = await postTo3Commas("enter_long", {
@@ -1026,7 +1129,8 @@ async function handleEnterLong(payload, res, sourceTag) {
     tv_instrument: entryMeta?.tv_instrument,
   });
 
-  // one reentry per exit: after accepted entry, close reentry window
+  clearReadyContext("entered_long");
+
   if (reentryCandidate) {
     reentry.consumed = true;
     reentry.active = false;
@@ -1038,6 +1142,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     source: sourceTag,
     emergency,
     reentry: reentryCandidate ? true : false,
+    entryDriftPct,
     regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
     threecommas: fwd,
   });
@@ -1082,7 +1187,6 @@ async function handleExitLong(payload, res, sourceTag) {
   if (exitPx != null) {
     pnlPct = pctProfit(entryPrice, exitPx);
 
-    // ✅ Emergency exit should NOT trigger equity cooldown / conservative
     if (emergency) {
       console.log("🧨 EMERGENCY EXIT: skipping EquityStab cooldown/conservative");
     } else {
@@ -1090,15 +1194,12 @@ async function handleExitLong(payload, res, sourceTag) {
     }
   }
 
-  // re-entry window management (kept even for emergency exits, as per your logs)
   if (exitPx != null) {
     maybeStartOrKeepReentryWindow(sym, exitPx, `exit_${sourceTag}`, pnlPct);
   }
 
   clearReadyContext("exit_long");
   clearPositionContext("exit_long");
-
-  // Normal exit cooldown always applies (keeps your existing behavior)
   startCooldown(sourceTag);
 
   console.log(`✅ EXIT LONG (${sourceTag}${emergency ? "+emergency" : ""})`);
@@ -1112,7 +1213,6 @@ function statusPayload() {
   return {
     brain: BRAIN_VERSION,
 
-    // new
     EMERGENCY_BYPASS_COOLDOWN,
 
     readyOn,
@@ -1120,6 +1220,9 @@ function statusPayload() {
     lastAction,
 
     READY_TTL_MIN,
+    READY_ENTRY_MAX_AGE_SEC,
+    readyAgeMs: readyAgeMs(),
+
     READY_MAX_MOVE_PCT,
     READY_MAX_MOVE_PCT_TREND,
     READY_MAX_MOVE_PCT_RANGE,
@@ -1134,12 +1237,31 @@ function statusPayload() {
 
     REQUIRE_FRESH_HEARTBEAT,
     HEARTBEAT_MAX_AGE_SEC,
+    TICK_LOG_EVERY_MS,
+    STATE_LOG_EVERY_MS,
     lastTickMs,
     lastTickSymbol,
     lastTickPrice,
 
+    FAIL_STOP_ENABLED,
+    FAIL_STOP_PCT,
+    BREAKEVEN_ENABLED,
+    BREAKEVEN_ARM_PCT,
+    BREAKEVEN_LOCK_PCT,
+    breakevenArmed,
+
     PROFIT_LOCK_ENABLED,
     PL_ADAPTIVE_ENABLED,
+    profitLockArmed,
+
+    PL_TIGHTEN_ENABLED,
+    PL_TIGHTEN_TIER1_PROFIT_PCT,
+    PL_TIGHTEN_TIER2_PROFIT_PCT,
+    PL_TIGHTEN_TIER3_PROFIT_PCT,
+    PL_TIGHTEN_TIER1_MULT,
+    PL_TIGHTEN_TIER2_MULT,
+    PL_TIGHTEN_TIER3_MULT,
+    PL_TIGHTEN_TIER4_MULT,
 
     REGIME_ENABLED,
     SLOPE_WINDOW_SEC,
@@ -1177,11 +1299,13 @@ function statusPayload() {
     PENDING_BUY_ENABLED,
     PENDING_BUY_WINDOW_SEC,
     PENDING_BUY_MAX_READY_DRIFT_PCT,
+    PENDING_BUY_MAX_AGE_SEC,
     pendingBuy: {
       active: pendingActive(),
       untilMs: pendingBuy.untilMs,
       symbol: pendingBuy.symbol,
       price: pendingBuy.price,
+      createdMs: pendingBuy.createdMs,
     },
 
     readyPrice,
@@ -1191,7 +1315,6 @@ function statusPayload() {
     entryPrice,
     entrySymbol,
     peakPrice,
-    profitLockArmed,
     entryMeta,
     positionWasReentry,
 
@@ -1220,7 +1343,6 @@ app.post("/webhook", async (req, res) => {
 
   const intent = normalizeIntent(payload);
 
-  // ---- TICK
   if (intent === "tick") {
     const tickPx = getTickPrice(payload);
     const tickSym = getSymbolFromPayload(payload);
@@ -1234,9 +1356,10 @@ app.post("/webhook", async (req, res) => {
     lastTickSymbol = tickSym;
     lastTickPrice = tickPx;
 
+    maybeLogTick(tickSym, tickPx, payload?.time ?? new Date(lastTickMs).toISOString());
+
     pushTick(tickSym, tickPx, lastTickMs);
 
-    // Pending expiry hygiene
     if (pendingBuy.active && nowMs() > pendingBuy.untilMs) {
       pendingClear("expired");
     }
@@ -1244,7 +1367,12 @@ app.post("/webhook", async (req, res) => {
     const r = updateRegime(tickSym);
     const crash = maybeCrashLock(tickSym);
     const expired = maybeAutoExpireReady(tickPx, tickSym);
-    const pl = await maybeProfitLockExit(tickPx, tickSym);
+
+    const fail = await maybeFailStopExit(tickPx, tickSym);
+    const be = fail ? null : await maybeBreakevenExit(tickPx, tickSym);
+    const pl = fail || be ? null : await maybeProfitLockExit(tickPx, tickSym);
+
+    maybeLogState(tickSym);
 
     return res.json({
       ok: true,
@@ -1252,6 +1380,8 @@ app.post("/webhook", async (req, res) => {
       regime: r || regimeState.get(tickSym) || null,
       crash: crash || null,
       expired,
+      fail_stop: fail || null,
+      breakeven: be || null,
       profit_lock: pl || null,
       readyOn,
       inPosition,
@@ -1260,7 +1390,6 @@ app.post("/webhook", async (req, res) => {
     });
   }
 
-  // ---- READY_LONG
   if (intent === "ready_long" || (READY_ACCEPT_LEGACY_READY && intent === "ready")) {
     if (crashLockActive()) {
       console.log("🟡 READY_LONG ignored (crash lock active)");
@@ -1286,11 +1415,20 @@ app.post("/webhook", async (req, res) => {
       return res.json({ ok: true, ignored: "in_position" });
     }
 
+    const priorReady = readyOn
+      ? {
+          price: readyPrice,
+          symbol: readySymbol,
+          tf: readyTf,
+          ageSec: readyAtMs ? Math.round((nowMs() - readyAtMs) / 1000) : null,
+        }
+      : null;
+
     readyOn = true;
     readyAtMs = nowMs();
 
     readyPrice = getReadyPrice(payload);
-    readySymbol = getSymbolFromPayload(payload); // normalized
+    readySymbol = getSymbolFromPayload(payload);
     readyTf = payload?.tf ? String(payload.tf) : "";
 
     const derived = deriveTvFromSymbol(readySymbol);
@@ -1299,23 +1437,26 @@ app.post("/webhook", async (req, res) => {
       timestamp: payload?.timestamp ?? payload?.time ?? null,
       tv_exchange: payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? null,
       tv_instrument: payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? null,
+      meta_ready_ver: payload?.meta_ready_ver ?? null,
     };
 
     lastAction = "ready_long_set";
     console.log("🟢 READY_LONG ON", {
+      priorReady,
       readyPrice,
       readySymbol,
       readyTf,
+      meta_ready_ver: payload?.meta_ready_ver ?? null,
+      READY_ENTRY_MAX_AGE_SEC,
       READY_MAX_MOVE_PCT,
       READY_AUTOEXPIRE_ENABLED,
       READY_AUTOEXPIRE_PCT,
       regime: readySymbol ? getRegime(readySymbol) : null,
     });
 
-    // Pending consume BEFORE clearing
     if (PENDING_BUY_ENABLED && pendingCanConsumeWithReady(readySymbol, readyPrice)) {
       console.log(
-        `🩷 PendingBUY consuming -> ENTER LONG (pending) drift<=${PENDING_BUY_MAX_READY_DRIFT_PCT}%`
+        `🩷 PendingBUY consuming -> ENTER LONG (pending) drift<=${PENDING_BUY_MAX_READY_DRIFT_PCT}% age<=${PENDING_BUY_MAX_AGE_SEC}s`
       );
 
       const pendingPayload = pendingBuy.payload || {};
@@ -1350,11 +1491,9 @@ app.post("/webhook", async (req, res) => {
     });
   }
 
-  // ---- ENTER/EXIT
   if (intent === "enter_long") return handleEnterLong(payload, res, "intent_enter_long");
   if (intent === "exit_long") return handleExitLong(payload, res, "intent_exit_long");
 
-  // ---- Ray format
   if (String(payload?.src || "").toLowerCase() === "ray") {
     const side = String(payload.side || "").toUpperCase();
     if (side === "BUY") return handleEnterLong(payload, res, "ray_side_buy");
@@ -1372,16 +1511,20 @@ app.post("/webhook", async (req, res) => {
 // ====================
 app.listen(PORT, () => {
   console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
-
+  console.log(`Emergency: EMERGENCY_BYPASS_COOLDOWN=${EMERGENCY_BYPASS_COOLDOWN}`);
   console.log(
-    `Emergency: EMERGENCY_BYPASS_COOLDOWN=${EMERGENCY_BYPASS_COOLDOWN}`
-  );
-
-  console.log(
-    `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
+    `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_ENTRY_MAX_AGE_SEC=${READY_ENTRY_MAX_AGE_SEC} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
   );
   console.log(
     `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`
+  );
+  console.log(`TickLog: TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
+  console.log(`StateLog: STATE_LOG_EVERY_MS=${STATE_LOG_EVERY_MS}`);
+  console.log(
+    `ExitLadder: FAIL_STOP_ENABLED=${FAIL_STOP_ENABLED} fail=${FAIL_STOP_PCT}% | BREAKEVEN_ENABLED=${BREAKEVEN_ENABLED} arm=${BREAKEVEN_ARM_PCT}% lock=${BREAKEVEN_LOCK_PCT}% | PROFIT_LOCK_ENABLED=${PROFIT_LOCK_ENABLED} adaptive=${PL_ADAPTIVE_ENABLED}`
+  );
+  console.log(
+    `PLTighten: enabled=${PL_TIGHTEN_ENABLED} | t1>=${PL_TIGHTEN_TIER1_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER2_MULT} | t2>=${PL_TIGHTEN_TIER2_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER3_MULT} | t3>=${PL_TIGHTEN_TIER3_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER4_MULT}`
   );
   console.log(
     `Regime: ENABLED=${REGIME_ENABLED} | slopeWin=${SLOPE_WINDOW_SEC}s | atrWin=${ATR_WINDOW_SEC}s | trendOn=${REGIME_TREND_SLOPE_ON_PCT}% | trendOff=${REGIME_TREND_SLOPE_OFF_PCT}% | volMinATR=${REGIME_VOL_MIN_ATR_PCT}%`
@@ -1396,7 +1539,7 @@ app.listen(PORT, () => {
     `ReEntry: ENABLED=${REENTRY_ENABLED} | window=${REENTRY_WINDOW_MIN}m | fall<=${REENTRY_MAX_FALL_PCT}% | rise<=${REENTRY_MAX_RISE_PCT}% | reqTrend=${REENTRY_REQUIRE_TREND} | reqReady=${REENTRY_REQUIRE_READY} | cancelOnBreach=${REENTRY_CANCEL_ON_BREACH} | maxTries=${REENTRY_MAX_TRIES} | skipStartIfExitPnL<=${REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT}%`
   );
   console.log(
-    `PendingBUY: ENABLED=${PENDING_BUY_ENABLED} | window=${PENDING_BUY_WINDOW_SEC}s | maxReadyDrift=${PENDING_BUY_MAX_READY_DRIFT_PCT}%`
+    `PendingBUY: ENABLED=${PENDING_BUY_ENABLED} | window=${PENDING_BUY_WINDOW_SEC}s | maxReadyDrift=${PENDING_BUY_MAX_READY_DRIFT_PCT}% | maxAge=${PENDING_BUY_MAX_AGE_SEC}s`
   );
   console.log(`EnterDedupe: ENTER_DEDUP_SEC=${ENTER_DEDUP_SEC}`);
   console.log(
