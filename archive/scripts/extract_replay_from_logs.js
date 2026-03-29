@@ -2,18 +2,13 @@
 /**
  * extract_replay_from_logs.js
  *
- * Reads a raw brain log file and extracts replayable events:
- * - FEATURES events
- * - TICK events
- *
- * Output:
- *   JSON array sorted by timestamp
+ * ESM version
  *
  * Usage:
  *   node extract_replay_from_logs.js input.log replay_20260328.json
  */
 
-const fs = require("fs");
+import fs from "fs";
 
 const inputPath = process.argv[2];
 const outputPath = process.argv[3] || "replay.json";
@@ -27,14 +22,12 @@ const raw = fs.readFileSync(inputPath, "utf8");
 const lines = raw.split(/\r?\n/);
 
 const events = [];
-
-// Keep latest feature snapshot if line set comes in pieces
 let pendingFeature = null;
 
 function safeNum(v) {
   if (v == null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
 }
 
 function parseIsoPrefix(line) {
@@ -86,9 +79,6 @@ function pushPendingFeature() {
 for (const line of lines) {
   const isoTs = parseIsoPrefix(line);
 
-  // ---------------- TICK line ----------------
-  // Example:
-  // 2026-03-28T04:04:25.011322393Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=82.6 time=2026-03-28T04:04:16.638Z
   const tickMatch = line.match(
     /TICK\(([^)]+)\)\s+([A-Z0-9:_-]+)\s+price=([0-9.]+)\s+time=([0-9T:.\-Z]+)/
   );
@@ -114,9 +104,6 @@ for (const line of lines) {
     continue;
   }
 
-  // ---------------- FEAT line ----------------
-  // Example:
-  // 🟩 FEAT rx BINANCE:SOLUSDT close=82.55 ema8=... patternAWatch=0
   const featMatch = line.match(
     /FEAT rx\s+([A-Z0-9:_-]+)\s+close=([^\s]+)\s+ema8=([^\s]+)\s+ema18=([^\s]+)\s+ema50=([^\s]+)\s+rsi=([^\s]+)\s+atr=([^\s]+)\s+atrPct=([^\s]+)\s+adx=([^\s]+)\s+oiTrend=([^\s]+)\s+oiDeltaBias=([^\s]+)\s+cvdTrend=([^\s]+)\s+liqClusterBelow=([^\s]+)\s+priceDropPct=([^\s]+)\s+patternAReady=([^\s]+)\s+patternAWatch=([^\s]+)/
   );
@@ -153,7 +140,6 @@ for (const line of lines) {
     continue;
   }
 
-  // Optional parsing for ray/fwo signals if present in logs later
   if (pendingFeature && /ray/i.test(line) && /signal/i.test(line)) {
     if (/buy|bull/i.test(line)) pendingFeature.rayBuy = 1;
     if (/sell|bear/i.test(line)) pendingFeature.raySell = 1;
