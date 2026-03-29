@@ -1,4 +1,3 @@
-BRAIN_NAME="BrainPhase2_DemoLong_v3.7a"
 
 MIN_BARS_FOR_SETUPS="20"
 
