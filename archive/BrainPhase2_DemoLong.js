@@ -1,33 +1,28 @@
 /**
- * BrainPhase2_DemoLong_v3.6b
+ * BrainPhase2_DemoLong_v3.7
  *
- * Merged from:
- * - BrainPhase2_DemoLong v3.5 direction
- * - v3.6 structure improvements
- * - log-backed tuning from logs20260317_Phase2.log
+ * Long-only demo brain
  *
- * Key points:
- * - FEATURES path handles regime/setup/scoring
- * - TICK path handles timing + active trade management
- * - Warmup reduced vs prior version
- * - Breakout confirmation kept strict
- * - Retest stale cleanup kept and made explicit
- * - Washout reclaim path preserved
- * - Flow-aware scoring preserved
- * - Full script, no partial patch
+ * v3.7 goals:
+ * - Reduce mediocre breakout longs
+ * - Favor full-flow breakout longs
+ * - Keep washout reclaim path alive
+ * - Make breakout sizing depend on quality
+ * - Make bounce confirmation adaptive
+ * - Reduce late/chased breakout entries
  */
 
 import express from "express";
 
 // --------------------------------------------------
-// App / config helpers
+// App / config
 // --------------------------------------------------
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.6b";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -41,14 +36,18 @@ const MAX_LAG_SEC = Number(process.env.MAX_LAG_SEC || 300);
 const SYMBOL_BOT_MAP = safeJson(process.env.SYMBOL_BOT_MAP || "{}", {});
 const ALLOW_SYMBOLS = Object.keys(SYMBOL_BOT_MAP);
 
-// warmup / setup lifecycle
+// --------------------------------------------------
+// Warmup / lifecycle
+// --------------------------------------------------
 const MIN_BARS_FOR_SETUPS = Number(process.env.MIN_BARS_FOR_SETUPS || 20);
 const SETUP_TTL_SEC = Number(process.env.SETUP_TTL_SEC || 1800);
 const BREAKOUT_MAX_AGE_MIN = Number(process.env.BREAKOUT_MAX_AGE_MIN || 12);
 const BREAKOUT_RETEST_MAX_MIN = Number(process.env.BREAKOUT_RETEST_MAX_MIN || 4);
 const WASHOUT_MAX_AGE_MIN = Number(process.env.WASHOUT_MAX_AGE_MIN || 12);
 
-// freshness / signals
+// --------------------------------------------------
+// Freshness
+// --------------------------------------------------
 const REQUIRE_FRESH_HEARTBEAT =
   String(process.env.REQUIRE_FRESH_HEARTBEAT || "1") === "1";
 const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || 90);
@@ -57,49 +56,87 @@ const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || 180000);
 const RAY_SIGNAL_TTL_MS = Number(process.env.RAY_SIGNAL_TTL_MS || 900000);
 const FWO_SIGNAL_TTL_MS = Number(process.env.FWO_SIGNAL_TTL_MS || 900000);
 
-// dedupe / cooldown
+// --------------------------------------------------
+// Dedupe / cooldown
+// --------------------------------------------------
 const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || 25);
 const EXIT_DEDUP_SEC = Number(process.env.EXIT_DEDUP_SEC || 20);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 180);
 
-// scoring / entry thresholds
+// --------------------------------------------------
+// Setup thresholds
+// --------------------------------------------------
 const BREAKOUT_MIN_SCORE = Number(process.env.BREAKOUT_MIN_SCORE || 7);
 const WASHOUT_MIN_SCORE = Number(process.env.WASHOUT_MIN_SCORE || 6);
-
 const BREAKOUT_MIN_ADX = Number(process.env.BREAKOUT_MIN_ADX || 20);
-const BREAKOUT_CONFIRM_BOUNCE_PCT = Number(
-  process.env.BREAKOUT_CONFIRM_BOUNCE_PCT || 0.08
+const BREAKOUT_A_GRADE_ADX_MIN = Number(process.env.BREAKOUT_A_GRADE_ADX_MIN || 22);
+
+const BREAKOUT_STALE_MIN_SCORE = Number(
+  process.env.BREAKOUT_STALE_MIN_SCORE || 5
 );
-const BREAKOUT_NEAR_LEVEL_MAX_PCT = Number(
-  process.env.BREAKOUT_NEAR_LEVEL_MAX_PCT || 0.35
+
+// Adaptive breakout bounce confirm
+const BREAKOUT_CONFIRM_BOUNCE_PCT_STRONG = Number(
+  process.env.BREAKOUT_CONFIRM_BOUNCE_PCT_STRONG || 0.08
+);
+const BREAKOUT_CONFIRM_BOUNCE_PCT_WEAK = Number(
+  process.env.BREAKOUT_CONFIRM_BOUNCE_PCT_WEAK || 0.12
+);
+
+// Chase / distance
+const BREAKOUT_NEAR_LEVEL_MAX_PCT_STRONG = Number(
+  process.env.BREAKOUT_NEAR_LEVEL_MAX_PCT_STRONG || 0.30
+);
+const BREAKOUT_NEAR_LEVEL_MAX_PCT_WEAK = Number(
+  process.env.BREAKOUT_NEAR_LEVEL_MAX_PCT_WEAK || 0.20
 );
 const BREAKOUT_NEAR_EMA8_MAX_PCT = Number(
   process.env.BREAKOUT_NEAR_EMA8_MAX_PCT || 0.20
 );
-const BREAKOUT_STALE_MIN_SCORE = Number(
-  process.env.BREAKOUT_STALE_MIN_SCORE || 5
+const MAX_CHASE_PCT_WASHOUT = Number(process.env.MAX_CHASE_PCT_WASHOUT || 0.20);
+const MAX_CHASE_PCT_BREAKOUT_STRONG = Number(
+  process.env.MAX_CHASE_PCT_BREAKOUT_STRONG || 0.30
 );
-const ALLOW_EARLY_TREND_ENTRY =
-  String(process.env.ALLOW_EARLY_TREND_ENTRY || "1") === "1";
-const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE =
-  String(process.env.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE || "1") === "1";
+const MAX_CHASE_PCT_BREAKOUT_WEAK = Number(
+  process.env.MAX_CHASE_PCT_BREAKOUT_WEAK || 0.18
+);
+const BREAKOUT_LATE_AGE_MIN = Number(process.env.BREAKOUT_LATE_AGE_MIN || 2.5);
 
-// risk / sizing
+// Breakout flow filters
+const BREAKOUT_MIN_FLOW_SUPPORT = Number(process.env.BREAKOUT_MIN_FLOW_SUPPORT || 2);
+const BREAKOUT_ALLOW_SCORE9_FLOW1 =
+  String(process.env.BREAKOUT_ALLOW_SCORE9_FLOW1 || "1") === "1";
+
+const PUMP_BLOCK_PCT = Number(process.env.PUMP_BLOCK_PCT || 1.8);
+const PUMP_BLOCK_WINDOW_BARS = Number(process.env.PUMP_BLOCK_WINDOW_BARS || 3);
+
+// --------------------------------------------------
+// Risk / sizing
+// --------------------------------------------------
 const BOT_MAX_NOTIONAL_USDT = Number(process.env.BOT_MAX_NOTIONAL_USDT || 3000);
 const ACCOUNT_EQUITY = Number(process.env.ACCOUNT_EQUITY || 3000);
+
 const BASE_RISK_PCT = Number(process.env.BASE_RISK_PCT || 0.35);
 const MIN_RISK_PCT = Number(process.env.MIN_RISK_PCT || 0.2);
 const MAX_RISK_PCT = Number(process.env.MAX_RISK_PCT || 0.7);
+
 const MIN_VOLUME_PCT = Number(process.env.MIN_VOLUME_PCT || 5);
 const MAX_VOLUME_PCT = Number(process.env.MAX_VOLUME_PCT || 100);
 
-// pump / anti-chase
-const PUMP_BLOCK_PCT = Number(process.env.PUMP_BLOCK_PCT || 1.8);
-const PUMP_BLOCK_WINDOW_BARS = Number(process.env.PUMP_BLOCK_WINDOW_BARS || 3);
-const MAX_CHASE_PCT_WASHOUT = Number(process.env.MAX_CHASE_PCT_WASHOUT || 0.20);
-const MAX_CHASE_PCT_BREAKOUT = Number(process.env.MAX_CHASE_PCT_BREAKOUT || 0.35);
+// extra size controls for breakout quality
+const BREAKOUT_VOLUME_CAP_FLOW1 = Number(
+  process.env.BREAKOUT_VOLUME_CAP_FLOW1 || 40
+);
+const BREAKOUT_VOLUME_CAP_FLOW2 = Number(
+  process.env.BREAKOUT_VOLUME_CAP_FLOW2 || 65
+);
+const BREAKOUT_VOLUME_CAP_FLOW3 = Number(
+  process.env.BREAKOUT_VOLUME_CAP_FLOW3 || 100
+);
 
-// trade management
+// --------------------------------------------------
+// Trade management
+// --------------------------------------------------
 const TREND_STOP_ACTIVATE_MIN = Number(
   process.env.TREND_STOP_ACTIVATE_MIN || 9
 );
@@ -196,7 +233,7 @@ function ensureState(symbol) {
       heartbeat: 0,
       lastHeartbeatMs: 0,
 
-      // external signal freshness
+      // external signals
       rayFresh: 0,
       fwoFresh: 0,
       raySignal: "",
@@ -206,7 +243,7 @@ function ensureState(symbol) {
       lastFwoBullMs: 0,
       lastFwoBearMs: 0,
 
-      // flow / pattern features
+      // flow
       oiTrend: 0,
       oiDeltaBias: 0,
       cvdTrend: 0,
@@ -215,7 +252,7 @@ function ensureState(symbol) {
       patternAReady: 0,
       patternAWatch: 0,
 
-      // rolling bars
+      // bars
       barsSeen: 0,
       closeHist: [],
 
@@ -226,10 +263,12 @@ function ensureState(symbol) {
       // setup
       armed: false,
       setupType: "",
-      setupPhase: "idle", // idle | breakout_triggered | breakout_retest | breakout_bounce_confirmed | washout_reclaim
+      setupPhase: "idle",
       setupTs: 0,
       setupScore: 0,
       setupReasons: [],
+      setupGrade: "",
+      flowSupport: 0,
       level: null,
       triggerPrice: null,
       retestPrice: null,
@@ -244,14 +283,13 @@ function ensureState(symbol) {
       stopPrice: null,
       trailingStop: null,
 
-      // dedupe / cooldown
+      // dedupe
       enterInFlight: false,
       exitInFlight: false,
       lastEnterMs: 0,
       lastExitMs: 0,
       cooldownUntilMs: 0,
 
-      // last action
       lastAction: "none",
     };
   }
@@ -264,7 +302,7 @@ function ensureState(symbol) {
 function updateCloseHistory(st, close) {
   if (!Number.isFinite(close)) return;
   st.closeHist.push(close);
-  if (st.closeHist.length > 20) st.closeHist.shift();
+  if (st.closeHist.length > 30) st.closeHist.shift();
 }
 
 function recentPumpPct(st) {
@@ -298,15 +336,15 @@ function shouldDedupeExit(st) {
 }
 
 function clearSetup(st, reason = "") {
-  if (reason) {
-    dlog(`🧹 Setup cleared (${reason}) type=${st.setupType || "na"}`);
-  }
+  if (reason) dlog(`🧹 Setup cleared (${reason}) type=${st.setupType || "na"}`);
   st.armed = false;
   st.setupType = "";
   st.setupPhase = "idle";
   st.setupTs = 0;
   st.setupScore = 0;
   st.setupReasons = [];
+  st.setupGrade = "";
+  st.flowSupport = 0;
   st.level = null;
   st.triggerPrice = null;
   st.retestPrice = null;
@@ -356,50 +394,25 @@ function computeSignalFreshness(st) {
       : 0;
 }
 
+function computeFlowSupport(st) {
+  let x = 0;
+  if (st.oiTrend > 0) x += 1;
+  if (st.oiDeltaBias > 0) x += 1;
+  if (st.cvdTrend > 0) x += 1;
+  return x;
+}
+
 function computeStopDistancePct(entry, stop) {
   if (!Number.isFinite(entry) || !Number.isFinite(stop) || stop >= entry) return 0.5;
   return ((entry - stop) / entry) * 100;
 }
 
-function computeRiskVolumePct(st, entryPrice, stopPrice) {
-  const stopDistPct = computeStopDistancePct(entryPrice, stopPrice);
-  if (stopDistPct <= 0) return MIN_VOLUME_PCT;
-
-  let riskPct = BASE_RISK_PCT;
-  if ((st.atrPct || 0) < 0.15) riskPct -= 0.05;
-  if ((st.atrPct || 0) > 0.30) riskPct += 0.05;
-  if (st.regime === "trend" && (st.adx || 0) > 22) riskPct += 0.05;
-  riskPct = clamp(riskPct, MIN_RISK_PCT, MAX_RISK_PCT);
-
-  let sizeMult = 1.0;
-  if (st.setupScore >= 8) sizeMult = 1.15;
-  else if (st.setupScore >= 7) sizeMult = 1.0;
-  else if (st.setupScore >= 6) sizeMult = 0.85;
-  else sizeMult = 0.7;
-
-  const riskUsd = ACCOUNT_EQUITY * (riskPct / 100) * sizeMult;
-  const maxNotionalByRisk = riskUsd / (stopDistPct / 100);
-  const cappedNotional = Math.min(maxNotionalByRisk, BOT_MAX_NOTIONAL_USDT);
-
-  let volumePct = (cappedNotional / BOT_MAX_NOTIONAL_USDT) * 100;
-  volumePct = clamp(volumePct, MIN_VOLUME_PCT, MAX_VOLUME_PCT);
-
-  return {
-    riskPct,
-    riskUsd,
-    stopDistPct,
-    sizeMult,
-    volumePct: Number(volumePct.toFixed(2)),
-  };
-}
-
 // --------------------------------------------------
-// Setup scoring
+// Scoring
 // --------------------------------------------------
 function scoreBreakout(st) {
   let score = 0;
   const reasons = [];
-
   const bullAligned =
     st.ema8 != null &&
     st.ema18 != null &&
@@ -407,11 +420,11 @@ function scoreBreakout(st) {
     st.ema8 > st.ema18 &&
     st.ema18 > st.ema50;
 
+  const flowSupport = computeFlowSupport(st);
+
   if (st.regime === "trend") {
     score += 2;
     reasons.push("regime(trend)+2");
-  } else {
-    reasons.push("regime(range)+0");
   }
 
   if (bullAligned) {
@@ -443,12 +456,10 @@ function scoreBreakout(st) {
     score += 1;
     reasons.push("oi trend up +1");
   }
-
   if (st.oiDeltaBias > 0) {
     score += 1;
     reasons.push("oi expansion +1");
   }
-
   if (st.cvdTrend > 0) {
     score += 1;
     reasons.push("cvd bullish +1");
@@ -460,30 +471,21 @@ function scoreBreakout(st) {
     reasons.push(`pump>${PUMP_BLOCK_PCT}% -3`);
   }
 
-  if (
-    BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
-    st.oiTrend <= 0 &&
-    st.oiDeltaBias <= 0 &&
-    st.cvdTrend <= 0
-  ) {
+  if (flowSupport === 0) {
     score -= 2;
-    reasons.push("flow weak -2");
+    reasons.push("flow=0 -2");
   }
 
-  return { score, reasons };
+  return { score, reasons, flowSupport };
 }
 
 function scoreWashout(st) {
   let score = 0;
   const reasons = [];
+  const flowSupport = computeFlowSupport(st);
 
-  if (st.regime === "range") {
-    score += 1;
-    reasons.push("regime(range) +1");
-  } else {
-    score += 1;
-    reasons.push("regime(trend) +1");
-  }
+  score += 1;
+  reasons.push(`regime(${st.regime}) +1`);
 
   if ((st.rsi || 0) > 0 && (st.rsi || 0) <= 45) {
     score += 1;
@@ -492,7 +494,7 @@ function scoreWashout(st) {
 
   if (st.fwoFresh) {
     score += 2;
-    reasons.push("fresh fwo sniper +2");
+    reasons.push("fresh fwo +2");
   }
 
   if (st.rayFresh) {
@@ -525,7 +527,27 @@ function scoreWashout(st) {
     reasons.push("recent flush +1");
   }
 
-  return { score, reasons };
+  return { score, reasons, flowSupport };
+}
+
+function classifyBreakoutGrade(st, score, flowSupport) {
+  const bullAligned =
+    st.ema8 != null &&
+    st.ema18 != null &&
+    st.ema50 != null &&
+    st.ema8 > st.ema18 &&
+    st.ema18 > st.ema50;
+
+  const aGrade =
+    st.regime === "trend" &&
+    bullAligned &&
+    (st.adx || 0) >= BREAKOUT_A_GRADE_ADX_MIN &&
+    flowSupport === 3 &&
+    score >= 9;
+
+  if (aGrade) return "A";
+  if (flowSupport >= 2) return "B";
+  return "C";
 }
 
 // --------------------------------------------------
@@ -546,17 +568,31 @@ function detectBreakoutSetup(st) {
   if (!bullAligned) return null;
   if ((st.adx || 0) < BREAKOUT_MIN_ADX) return null;
 
-  const swingHigh = Math.max(...st.closeHist.slice(-10), st.close || -Infinity);
+  const recent = st.closeHist.slice(-10);
+  const swingHigh = recent.length ? Math.max(...recent) : st.close;
   const breakout = st.close >= swingHigh * 0.999;
 
-  dlog(
-    `🔎 BRKCHK swingHigh=${fmt(swingHigh)} breakout=${breakout ? 1 : 0}`
-  );
-
+  dlog(`🔎 BRKCHK swingHigh=${fmt(swingHigh)} breakout=${breakout ? 1 : 0}`);
   if (!breakout) return null;
 
   const scored = scoreBreakout(st);
   if (scored.score < BREAKOUT_MIN_SCORE) return null;
+
+  const grade = classifyBreakoutGrade(st, scored.score, scored.flowSupport);
+
+  // hard flow filter
+  const allowFlow2Plus = scored.flowSupport >= BREAKOUT_MIN_FLOW_SUPPORT;
+  const allowExceptionalFlow1 =
+    BREAKOUT_ALLOW_SCORE9_FLOW1 &&
+    scored.flowSupport === 1 &&
+    scored.score >= 9;
+
+  if (!allowFlow2Plus && !allowExceptionalFlow1) {
+    dlog(
+      `🚫 breakout rejected | flowSupport=${scored.flowSupport} score=${scored.score}`
+    );
+    return null;
+  }
 
   return {
     type: "breakout_pullback",
@@ -567,7 +603,9 @@ function detectBreakoutSetup(st) {
     bouncePrice: null,
     invalidation: st.ema18 * 0.997,
     score: scored.score,
-    reasons: scored.reasons,
+    reasons: [...scored.reasons, `grade=${grade}`, `flow=${scored.flowSupport}`],
+    grade,
+    flowSupport: scored.flowSupport,
   };
 }
 
@@ -581,10 +619,12 @@ function detectWashoutSetup(st) {
     return null;
   }
 
-  const localLow = Math.min(...st.closeHist.slice(-12), st.close || Infinity);
+  const recent = st.closeHist.slice(-12);
+  const localLow = recent.length ? Math.min(...recent) : st.close;
   const washout = localLow < st.ema50 * 0.995;
   const reclaimed = st.close > st.ema18;
-  const prev1 = st.closeHist.length >= 2 ? st.closeHist[st.closeHist.length - 2] : null;
+  const prev1 =
+    st.closeHist.length >= 2 ? st.closeHist[st.closeHist.length - 2] : null;
   const rsiUp = prev1 != null ? st.close > prev1 : false;
 
   dlog(
@@ -605,12 +645,15 @@ function detectWashoutSetup(st) {
     bouncePrice: st.close,
     invalidation: localLow * 0.999,
     score: scored.score,
-    reasons: scored.reasons,
+    reasons: [...scored.reasons, `flow=${scored.flowSupport}`],
+    grade: "W",
+    flowSupport: scored.flowSupport,
   };
 }
 
 function maybeArmSetup(st) {
   if (st.inPosition || inCooldown(st)) return;
+
   if (st.barsSeen < MIN_BARS_FOR_SETUPS) {
     dlog(`⏳ detectSetups waiting bars=${st.barsSeen}/${MIN_BARS_FOR_SETUPS}`);
     return;
@@ -624,15 +667,16 @@ function maybeArmSetup(st) {
     st.setupTs = nowMs();
     st.setupScore = wash.score;
     st.setupReasons = wash.reasons;
+    st.setupGrade = wash.grade;
+    st.flowSupport = wash.flowSupport;
     st.level = wash.level;
     st.triggerPrice = wash.triggerPrice;
     st.retestPrice = wash.retestPrice;
     st.bouncePrice = wash.bouncePrice;
     st.invalidation = wash.invalidation;
     dlog(
-      `📌 STATE ${st.symbol} reg=${st.regime} armed=1 type=${st.setupType} setupAgeMin=0.0 score=${st.setupScore} inPos=0 cooldown=0 rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
+      `🟡 Armed washout_reclaim inv=${fmt(st.invalidation)} score=${st.setupScore} flow=${st.flowSupport}`
     );
-    dlog(`🟡 Armed washout_reclaim inv=${st.invalidation}`);
     return;
   }
 
@@ -644,16 +688,17 @@ function maybeArmSetup(st) {
     st.setupTs = nowMs();
     st.setupScore = brk.score;
     st.setupReasons = brk.reasons;
+    st.setupGrade = brk.grade;
+    st.flowSupport = brk.flowSupport;
     st.level = brk.level;
     st.triggerPrice = brk.triggerPrice;
     st.retestPrice = brk.retestPrice;
     st.bouncePrice = brk.bouncePrice;
     st.invalidation = brk.invalidation;
     dlog(
-      `📌 STATE ${st.symbol} reg=${st.regime} armed=1 type=${st.setupType} setupAgeMin=0.0 score=${st.setupScore} inPos=0 cooldown=0 rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
-    );
-    dlog(
-      `🟦 Armed breakout_pullback trigger=${fmt(st.triggerPrice)} level=${fmt(st.level)} inv=${fmt(st.invalidation)} score=${st.setupScore}`
+      `🟦 Armed breakout_pullback trigger=${fmt(st.triggerPrice)} level=${fmt(st.level)} inv=${fmt(
+        st.invalidation
+      )} score=${st.setupScore} grade=${st.setupGrade} flow=${st.flowSupport}`
     );
     return;
   }
@@ -712,11 +757,19 @@ function manageSetupLifecycle(st) {
       clearSetup(st, "breakout_invalidated");
       return;
     }
+
+    if (
+      sAgeMin > BREAKOUT_RETEST_MAX_MIN &&
+      st.setupScore < BREAKOUT_STALE_MIN_SCORE
+    ) {
+      clearSetup(st, "breakout_score_stale");
+      return;
+    }
   }
 }
 
 // --------------------------------------------------
-// Entry checks
+// Entry logic
 // --------------------------------------------------
 function canEnter(st) {
   if (st.inPosition) return { ok: false, note: "already in position" };
@@ -728,50 +781,81 @@ function canEnter(st) {
   return { ok: true, note: "ok" };
 }
 
-function breakoutEntryDecision(st, price) {
-  if (st.setupType !== "breakout_pullback") return { ok: false, note: "not breakout" };
-  if (st.level == null || st.ema8 == null) return { ok: false, note: "missing level" };
+function getBreakoutBounceNeed(st) {
+  return st.flowSupport >= 3 || st.setupGrade === "A"
+    ? BREAKOUT_CONFIRM_BOUNCE_PCT_STRONG
+    : BREAKOUT_CONFIRM_BOUNCE_PCT_WEAK;
+}
 
+function getBreakoutNearLevelMax(st) {
+  return st.flowSupport >= 3 || st.setupGrade === "A"
+    ? BREAKOUT_NEAR_LEVEL_MAX_PCT_STRONG
+    : BREAKOUT_NEAR_LEVEL_MAX_PCT_WEAK;
+}
+
+function getBreakoutMaxChase(st) {
+  return st.flowSupport >= 3 || st.setupGrade === "A"
+    ? MAX_CHASE_PCT_BREAKOUT_STRONG
+    : MAX_CHASE_PCT_BREAKOUT_WEAK;
+}
+
+function breakoutEntryDecision(st, price) {
+  if (st.setupType !== "breakout_pullback") {
+    return { ok: false, note: "not breakout" };
+  }
+  if (st.level == null || st.ema8 == null) {
+    return { ok: false, note: "missing level" };
+  }
+
+  const sAgeMin = ageMin(st.setupTs);
   const nearLevelPct = Math.abs(pctChange(price, st.level));
   const nearEma8Pct = Math.abs(pctChange(price, st.ema8));
   const bounceBase = st.retestPrice ?? st.triggerPrice ?? price;
   const bouncePct = pctChange(price, bounceBase);
   const aboveLevel = price >= st.level ? 1 : 0;
   const aboveEma8 = price >= st.ema8 ? 1 : 0;
-  const maxDist = BREAKOUT_NEAR_LEVEL_MAX_PCT;
+
+  const maxDist = getBreakoutNearLevelMax(st);
+  const needBounce = getBreakoutBounceNeed(st);
+  const maxChase = getBreakoutMaxChase(st);
 
   dlog(
-    `🎯 breakout entry check ageMin=${fmt(ageMin(st.setupTs), 1)} nearLevelPct=${fmt(
+    `🎯 breakout entry check ageMin=${fmt(sAgeMin, 1)} nearLevelPct=${fmt(
       nearLevelPct,
       3
-    )} nearEma8Pct=${fmt(nearEma8Pct, 3)} maxDist=${fmt(maxDist, 2)} score=${st.setupScore}`
+    )} nearEma8Pct=${fmt(nearEma8Pct, 3)} maxDist=${fmt(maxDist, 2)} score=${st.setupScore} grade=${st.setupGrade} flow=${st.flowSupport}`
   );
   dlog(
     `🎯 breakout confirm bouncePct=${fmt(
       bouncePct,
       3
-    )} need=${fmt(BREAKOUT_CONFIRM_BOUNCE_PCT, 3)} aboveLevel=${aboveLevel} aboveEma8=${aboveEma8}`
+    )} need=${fmt(needBounce, 3)} aboveLevel=${aboveLevel} aboveEma8=${aboveEma8}`
   );
 
-  if (nearLevelPct > BREAKOUT_NEAR_LEVEL_MAX_PCT && nearEma8Pct > BREAKOUT_NEAR_EMA8_MAX_PCT) {
+  // base distance filter
+  if (nearLevelPct > maxDist && nearEma8Pct > BREAKOUT_NEAR_EMA8_MAX_PCT) {
     return { ok: false, note: "too far from breakout level" };
   }
 
-  if (st.setupScore < BREAKOUT_MIN_SCORE) {
-    if (ageMin(st.setupTs) > BREAKOUT_RETEST_MAX_MIN && st.setupScore < BREAKOUT_STALE_MIN_SCORE) {
-      clearSetup(st, "breakout_score_stale");
+  // late breakout stricter filter
+  if (sAgeMin > BREAKOUT_LATE_AGE_MIN) {
+    if (st.flowSupport < 2) {
+      return { ok: false, note: "late breakout weak flow" };
     }
-    return { ok: false, note: "breakout score low" };
+    if (nearLevelPct > 0.25 && !(st.setupScore >= 9 && st.flowSupport >= 2)) {
+      return { ok: false, note: "late breakout too extended" };
+    }
   }
 
-  // keep strict confirmation per log findings
-  if (!(aboveLevel && aboveEma8 && bouncePct >= BREAKOUT_CONFIRM_BOUNCE_PCT)) {
+  // hard confirmation
+  if (!(aboveLevel && aboveEma8 && bouncePct >= needBounce)) {
     dlog(`🚫 no breakout confirm: price not back above level/ema8`);
     return { ok: false, note: "no breakout confirm" };
   }
 
+  // anti-chase
   const chasePct = Math.abs(pctChange(price, st.level));
-  if (chasePct > MAX_CHASE_PCT_BREAKOUT) {
+  if (chasePct > maxChase) {
     return { ok: false, note: "breakout chase too far" };
   }
 
@@ -781,19 +865,23 @@ function breakoutEntryDecision(st, price) {
 }
 
 function washoutEntryDecision(st, price) {
-  if (st.setupType !== "washout_reclaim") return { ok: false, note: "not washout" };
-  if (st.level == null) return { ok: false, note: "missing level" };
+  if (st.setupType !== "washout_reclaim") {
+    return { ok: false, note: "not washout" };
+  }
+  if (st.level == null) {
+    return { ok: false, note: "missing level" };
+  }
 
   const aboveLevel = price >= st.level ? 1 : 0;
   const chasePct = Math.abs(pctChange(price, st.level));
 
   dlog(
-    `🎯 washout entry check: ageMin=${fmt(ageMin(st.setupTs), 1)} price=${fmt(
+    `🎯 washout entry check ageMin=${fmt(ageMin(st.setupTs), 1)} price=${fmt(
       price
     )} level=${fmt(st.level)} aboveLevel=${aboveLevel} chasePct=${fmt(
       chasePct,
       3
-    )}% score=${st.setupScore}`
+    )}% score=${st.setupScore} flow=${st.flowSupport}`
   );
 
   if (!aboveLevel) return { ok: false, note: "washout below level" };
@@ -801,6 +889,78 @@ function washoutEntryDecision(st, price) {
   if (st.setupScore < WASHOUT_MIN_SCORE) return { ok: false, note: "washout score low" };
 
   return { ok: true, note: "washout confirmed" };
+}
+
+// --------------------------------------------------
+// Sizing
+// --------------------------------------------------
+function computeRiskVolumePct(st, entryPrice, stopPrice) {
+  const stopDistPct = computeStopDistancePct(entryPrice, stopPrice);
+  if (stopDistPct <= 0) {
+    return {
+      riskPct: BASE_RISK_PCT,
+      riskUsd: ACCOUNT_EQUITY * (BASE_RISK_PCT / 100),
+      stopDistPct,
+      sizeMult: 0.5,
+      volumePct: MIN_VOLUME_PCT,
+      flowCap: MIN_VOLUME_PCT,
+    };
+  }
+
+  let riskPct = BASE_RISK_PCT;
+  if ((st.atrPct || 0) < 0.15) riskPct -= 0.05;
+  if ((st.atrPct || 0) > 0.30) riskPct += 0.05;
+  if (st.regime === "trend" && (st.adx || 0) > 22) riskPct += 0.05;
+  riskPct = clamp(riskPct, MIN_RISK_PCT, MAX_RISK_PCT);
+
+  let sizeMult = 1.0;
+
+  if (st.setupType === "washout_reclaim") {
+    if (st.setupScore >= 8) sizeMult = 1.10;
+    else if (st.setupScore >= 7) sizeMult = 1.00;
+    else if (st.setupScore >= 6) sizeMult = 0.85;
+    else sizeMult = 0.70;
+  } else if (st.setupType === "breakout_pullback") {
+    // v3.7 breakout sizing is much more quality-aware
+    if (st.flowSupport >= 3 && st.setupScore >= 9) sizeMult = 1.00;
+    else if (st.flowSupport >= 2 && st.setupScore >= 8) sizeMult = 0.80;
+    else if (st.flowSupport >= 2 && st.setupScore >= 7) sizeMult = 0.65;
+    else if (st.flowSupport === 1 && st.setupScore >= 9) sizeMult = 0.45;
+    else sizeMult = 0.35;
+
+    const nearLevelNow =
+      Number.isFinite(st.level) && Number.isFinite(entryPrice)
+        ? Math.abs(pctChange(entryPrice, st.level))
+        : 0;
+
+    if (nearLevelNow > 0.25) sizeMult *= 0.85;
+    if (ageMin(st.setupTs) > BREAKOUT_LATE_AGE_MIN) sizeMult *= 0.90;
+  }
+
+  const riskUsd = ACCOUNT_EQUITY * (riskPct / 100) * sizeMult;
+  const maxNotionalByRisk = riskUsd / (stopDistPct / 100);
+  const cappedNotional = Math.min(maxNotionalByRisk, BOT_MAX_NOTIONAL_USDT);
+
+  let volumePct = (cappedNotional / BOT_MAX_NOTIONAL_USDT) * 100;
+
+  // hard breakout caps by flow quality
+  let flowCap = MAX_VOLUME_PCT;
+  if (st.setupType === "breakout_pullback") {
+    if (st.flowSupport <= 1) flowCap = BREAKOUT_VOLUME_CAP_FLOW1;
+    else if (st.flowSupport === 2) flowCap = BREAKOUT_VOLUME_CAP_FLOW2;
+    else flowCap = BREAKOUT_VOLUME_CAP_FLOW3;
+  }
+
+  volumePct = clamp(volumePct, MIN_VOLUME_PCT, Math.min(MAX_VOLUME_PCT, flowCap));
+
+  return {
+    riskPct,
+    riskUsd,
+    stopDistPct,
+    sizeMult,
+    volumePct: Number(volumePct.toFixed(2)),
+    flowCap,
+  };
 }
 
 // --------------------------------------------------
@@ -815,9 +975,10 @@ async function send3CommasSignal(st, action, price, extra = {}) {
   const sizing = computeRiskVolumePct(st, price, stopPrice);
 
   const comment =
-    `${BRAIN_NAME}|${st.setupType || "na"}|score=${st.setupScore}|reg=${st.regime}` +
-    `|riskPct=${fmt(sizing.riskPct, 2)}|riskUsd=${fmt(sizing.riskUsd, 2)}` +
-    `|stopDist=${fmt(sizing.stopDistPct, 5)}|volPct=${fmt(sizing.volumePct, 2)}` +
+    `${BRAIN_NAME}|${st.setupType || "na"}|score=${st.setupScore}|grade=${st.setupGrade || "na"}` +
+    `|flow=${st.flowSupport}|reg=${st.regime}|riskPct=${fmt(sizing.riskPct, 2)}` +
+    `|riskUsd=${fmt(sizing.riskUsd, 2)}|stopDist=${fmt(sizing.stopDistPct, 5)}` +
+    `|volPct=${fmt(sizing.volumePct, 2)}|flowCap=${fmt(sizing.flowCap, 2)}` +
     `|oiT=${st.oiTrend}|oiD=${st.oiDeltaBias}|cvd=${st.cvdTrend}` +
     `|liq=${st.liqClusterBelow}|drop=${st.priceDropPct}|pA=${st.patternAReady}`;
 
@@ -867,7 +1028,7 @@ async function send3CommasSignal(st, action, price, extra = {}) {
 }
 
 // --------------------------------------------------
-// Entry / exit execution
+// Entry / exit
 // --------------------------------------------------
 async function tryEnterOnTick(st, price) {
   const gate = canEnter(st);
@@ -888,13 +1049,19 @@ async function tryEnterOnTick(st, price) {
     const sizing = computeRiskVolumePct(st, price, stopPrice);
 
     dlog(
-      `📥 ENTER ${st.symbol} ${BRAIN_NAME}|${st.setupType}|score=${st.setupScore}|reg=${st.regime}|riskPct=${fmt(
+      `📥 ENTER ${st.symbol} ${BRAIN_NAME}|${st.setupType}|score=${st.setupScore}|grade=${st.setupGrade}|flow=${st.flowSupport}|reg=${st.regime}|riskPct=${fmt(
         sizing.riskPct,
         2
       )}|riskUsd=${fmt(sizing.riskUsd, 1)}|stopDist=${fmt(
         sizing.stopDistPct,
         5
-      )}|volPct=${fmt(sizing.volumePct, 2)}|oiT=${st.oiTrend}|oiD=${st.oiDeltaBias}|cvd=${st.cvdTrend}|liq=${st.liqClusterBelow}|drop=${st.priceDropPct}|pA=${st.patternAReady} price=${price} sizeMult=${fmt(sizing.sizeMult, 2)} volumePercent=${fmt(sizing.volumePct, 2)}`
+      )}|volPct=${fmt(sizing.volumePct, 2)}|flowCap=${fmt(
+        sizing.flowCap,
+        2
+      )}|oiT=${st.oiTrend}|oiD=${st.oiDeltaBias}|cvd=${st.cvdTrend}|liq=${st.liqClusterBelow}|drop=${st.priceDropPct}|pA=${st.patternAReady} price=${price} sizeMult=${fmt(
+        sizing.sizeMult,
+        2
+      )}`
     );
 
     const sent = await send3CommasSignal(st, "enter_long", price);
@@ -942,8 +1109,7 @@ async function tryExitOnTick(st, price) {
 
   const pnlPct = pctChange(price, st.entryPrice);
   const timeInMin = ageMin(st.entryTs);
-  const belowTrail =
-    Number.isFinite(st.trailingStop) && price <= st.trailingStop;
+  const belowTrail = Number.isFinite(st.trailingStop) && price <= st.trailingStop;
   const trendStopActive = timeInMin >= TREND_STOP_ACTIVATE_MIN;
   const weakProgress =
     timeInMin >= TREND_TIME_STOP_MIN && pnlPct < TREND_MIN_PROGRESS_PCT;
@@ -969,9 +1135,8 @@ async function tryExitOnTick(st, price) {
     st.cooldownUntilMs = nowMs() + COOLDOWN_SEC * 1000;
     resetPosition(st);
     clearSetup(st, "after_exit");
-    dlog(
-      `📤 EXIT ${st.symbol} reason=${exitReason} price=${fmt(price)} cooldownSec=${COOLDOWN_SEC}`
-    );
+
+    dlog(`📤 EXIT ${st.symbol} reason=${exitReason} price=${fmt(price)} cooldownSec=${COOLDOWN_SEC}`);
     return { ok: true, note: exitReason };
   } finally {
     st.exitInFlight = false;
@@ -1027,9 +1192,7 @@ app.post("/webhook", async (req, res) => {
 
     if (nowMs() - st.lastTickLogMs >= TICK_LOG_EVERY_MS) {
       st.lastTickLogMs = nowMs();
-      dlog(
-        `🟦 TICK(3m) ${symbol} price=${price} time=${new Date(st.lastTickMs).toISOString()}`
-      );
+      dlog(`🟦 TICK(3m) ${symbol} price=${price} time=${new Date(st.lastTickMs).toISOString()}`);
     }
 
     if (st.tickCount % 50 === 0) {
@@ -1081,9 +1244,9 @@ app.post("/webhook", async (req, res) => {
   st.patternAReady = n(body.patternAReady) || 0;
   st.patternAWatch = n(body.patternAWatch) || 0;
 
-  // external signals
   st.raySignal = String(body.raySignal || st.raySignal || "");
   st.fwoSignal = String(body.fwoSignal || st.fwoSignal || "");
+
   const rayBuy = n(body.rayBuy) || 0;
   const raySell = n(body.raySell) || 0;
   const fwo = n(body.fwo) || 0;
@@ -1114,7 +1277,7 @@ app.post("/webhook", async (req, res) => {
     maybeArmSetup(st);
   } else {
     dlog(
-      `📌 STATE ${symbol} reg=${st.regime} armed=${st.armed ? 1 : 0} type=${st.setupType} setupAgeMin=${st.armed ? fmt(ageMin(st.setupTs), 1) : 0} score=${st.setupScore} inPos=${st.inPosition ? 1 : 0} cooldown=${inCooldown(st) ? 1 : 0} rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
+      `📌 STATE ${symbol} reg=${st.regime} armed=${st.armed ? 1 : 0} type=${st.setupType} setupAgeMin=${st.armed ? fmt(ageMin(st.setupTs), 1) : 0} score=${st.setupScore} grade=${st.setupGrade || "na"} flow=${st.flowSupport} inPos=${st.inPosition ? 1 : 0} cooldown=${inCooldown(st) ? 1 : 0} rayFresh=${st.rayFresh} fwoFresh=${st.fwoFresh}`
     );
   }
 
@@ -1126,6 +1289,8 @@ app.post("/webhook", async (req, res) => {
     armed: st.armed,
     setupType: st.setupType,
     setupScore: st.setupScore,
+    setupGrade: st.setupGrade,
+    flowSupport: st.flowSupport,
     inPosition: st.inPosition,
     barsSeen: st.barsSeen,
   });
@@ -1142,23 +1307,23 @@ app.post("/tv", async (req, res) => {
 // --------------------------------------------------
 app.listen(PORT, () => {
   console.log(`✅ ${BRAIN_NAME} listening on :${PORT}`);
+  console.log(`📚 MIN_BARS_FOR_SETUPS=${MIN_BARS_FOR_SETUPS}`);
   console.log(`🧭 SYMBOL_BOT_MAP keys=${ALLOW_SYMBOLS.length}`);
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
-  console.log(`📚 MIN_BARS_FOR_SETUPS=${MIN_BARS_FOR_SETUPS}`);
   console.log(`🧾 TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
   console.log(`🕒 RAY_SIGNAL_TTL_MS=${RAY_SIGNAL_TTL_MS}`);
   console.log(`🕒 FWO_SIGNAL_TTL_MS=${FWO_SIGNAL_TTL_MS}`);
   console.log(`⏱️ BREAKOUT_MAX_AGE_MIN=${BREAKOUT_MAX_AGE_MIN}`);
-  console.log(`📏 BREAKOUT_STALE_MIN_SCORE=${BREAKOUT_STALE_MIN_SCORE}`);
   console.log(`⏱️ BREAKOUT_RETEST_MAX_MIN=${BREAKOUT_RETEST_MAX_MIN}`);
   console.log(`⏱️ WASHOUT_MAX_AGE_MIN=${WASHOUT_MAX_AGE_MIN}`);
+  console.log(`✅ BREAKOUT_CONFIRM_BOUNCE_PCT_STRONG=${BREAKOUT_CONFIRM_BOUNCE_PCT_STRONG}`);
+  console.log(`✅ BREAKOUT_CONFIRM_BOUNCE_PCT_WEAK=${BREAKOUT_CONFIRM_BOUNCE_PCT_WEAK}`);
+  console.log(`✅ BREAKOUT_MIN_FLOW_SUPPORT=${BREAKOUT_MIN_FLOW_SUPPORT}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
   console.log(`🛡️ MAX_RISK_PCT=${MAX_RISK_PCT}`);
-  console.log(`⏳ TREND_STOP_ACTIVATE_MIN=${TREND_STOP_ACTIVATE_MIN}`);
   console.log(`📉 TREND_MIN_TRAIL_PCT=${TREND_MIN_TRAIL_PCT}`);
   console.log(`⏳ TREND_TIME_STOP_MIN=${TREND_TIME_STOP_MIN}`);
   console.log(`📉 TREND_MIN_PROGRESS_PCT=${TREND_MIN_PROGRESS_PCT}`);
-  console.log(`✅ BREAKOUT_CONFIRM_BOUNCE_PCT=${BREAKOUT_CONFIRM_BOUNCE_PCT}`);
 });
