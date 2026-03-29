@@ -20,6 +20,7 @@
  * - add EARLY TREND LONG path from bounce_confirmed
  * - weak reclaim / below-trigger still hard-block
  * - negative OI no longer always kills a strong trend continuation
+ * - noise reduction: do NOT emit "missing trigger price" style hard blocks while breakout is idle
  */
 
 export const BRAIN_VERSION = "Brain Phase 5 v5.5";
@@ -129,15 +130,8 @@ export function buildEntryDecision(state) {
   const regime = String(ctxOf(state).regime ?? feat.regime ?? "range");
 
   const triggerPrice = n(breakout.triggerPrice);
-
-  const reclaimPctFromTrigger = Number.isFinite(
-    Number(breakout.reclaimPctFromTrigger)
-  )
-    ? n(breakout.reclaimPctFromTrigger)
-    : pctFrom(close, triggerPrice);
-
-  const score = n(breakout.score);
   const phase = String(breakout.phase ?? "idle");
+  const score = n(breakout.score);
 
   const entryCandidatePrice = Number.isFinite(
     Number(breakout.entryCandidatePrice)
@@ -146,6 +140,16 @@ export function buildEntryDecision(state) {
     : close;
 
   const chasePct = triggerPrice > 0 ? pctFrom(close, triggerPrice) : 0;
+
+  const reclaimPctFromTrigger =
+    triggerPrice > 0
+      ? (
+          Number.isFinite(Number(breakout.reclaimPctFromTrigger))
+            ? n(breakout.reclaimPctFromTrigger)
+            : pctFrom(close, triggerPrice)
+        )
+      : 0;
+
   const bounceBodyPct = n(breakout.bounceBodyPct);
   const bounceCloseInRangePct = n(breakout.bounceCloseInRangePct);
 
@@ -166,6 +170,23 @@ export function buildEntryDecision(state) {
     return base;
   }
 
+  // ---------------------------
+  // noise reduction
+  // ---------------------------
+  // For idle phase, do not emit hard block reasons like "missing trigger price".
+  // This keeps logs clean when no setup exists yet.
+  if (phase === "idle") {
+    addUnique(reasons, "breakout phase=idle");
+    return base;
+  }
+
+  // For retest_pending, keep it quiet and explicit.
+  if (phase === "retest_pending" && !(triggerPrice > 0)) {
+    addUnique(reasons, "breakout phase=retest_pending");
+    addUnique(hardReasons, "waiting for trigger context");
+    return base;
+  }
+
   if (!(triggerPrice > 0)) {
     addUnique(reasons, "missing trigger price");
     addUnique(hardReasons, "missing trigger price");
@@ -178,7 +199,7 @@ export function buildEntryDecision(state) {
   const trendOk = isTrendRegime(regime);
   const bullAligned = isBullAligned(feat);
 
-  // universal hard blocks
+  // universal hard blocks for real setup phases only
   if (!trendOk) {
     addUnique(reasons, "entry_block_not_trend_regime");
     addUnique(hardReasons, "not trend regime");
@@ -275,7 +296,6 @@ export function buildEntryDecision(state) {
       addUnique(hardReasons, "flow not supportive");
     }
 
-    // weaker body tolerated for early trend path
     if (!EARLY_ENTRY_MAX_BODY_WEAKNESS_ALLOW && bounceBodyPct < 0.08) {
       addUnique(reasons, "early_block_weak_bounce_body");
       addUnique(hardReasons, "weak bounce body");
