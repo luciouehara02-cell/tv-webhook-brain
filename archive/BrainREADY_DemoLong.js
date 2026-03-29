@@ -1,5 +1,5 @@
 /**
- * Brain v3.0.0-LONG
+ * Brain v3.1.0-LONG
  * READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
  * + Pending BUY buffer
  * + Re-entry window with loop protection
@@ -12,6 +12,8 @@
  *   Stage 1 = Fail Stop
  *   Stage 2 = Breakeven
  *   Stage 3 = Profit Lock
+ * + READY cleanup after successful enter
+ * + Progressive Profit Lock tightening by peak profit tiers
  */
 
 import express from "express";
@@ -19,7 +21,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v3.0.0-LONG";
+const BRAIN_VERSION = "v3.1.0-LONG";
 
 // ====================
 // CONFIG (Railway Variables)
@@ -81,6 +83,19 @@ const PL_MIN_ARM_PCT = Number(process.env.PL_MIN_ARM_PCT || "0");
 const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
 const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
 const PL_MAX_GIVEBACK_PCT = Number(process.env.PL_MAX_GIVEBACK_PCT || "0");
+
+// Progressive PL tightening
+const PL_TIGHTEN_ENABLED =
+  String(process.env.PL_TIGHTEN_ENABLED || "true").toLowerCase() === "true";
+
+const PL_TIGHTEN_TIER1_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER1_PROFIT_PCT || "0.80");
+const PL_TIGHTEN_TIER2_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER2_PROFIT_PCT || "1.20");
+const PL_TIGHTEN_TIER3_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER3_PROFIT_PCT || "1.80");
+
+const PL_TIGHTEN_TIER1_MULT = Number(process.env.PL_TIGHTEN_TIER1_MULT || "1.00");
+const PL_TIGHTEN_TIER2_MULT = Number(process.env.PL_TIGHTEN_TIER2_MULT || "0.85");
+const PL_TIGHTEN_TIER3_MULT = Number(process.env.PL_TIGHTEN_TIER3_MULT || "0.70");
+const PL_TIGHTEN_TIER4_MULT = Number(process.env.PL_TIGHTEN_TIER4_MULT || "0.55");
 
 const PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT = Number(
   process.env.PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT || "0"
@@ -201,8 +216,6 @@ let entryPrice = null;
 let entrySymbol = "";
 let peakPrice = null;
 let profitLockArmed = false;
-
-// new stage memory
 let breakevenArmed = false;
 
 let entryMeta = { tv_exchange: null, tv_instrument: null };
@@ -357,13 +370,11 @@ function maybeLogState(symbol) {
 
   if (!lastStateLogMs || now - lastStateLogMs >= STATE_LOG_EVERY_MS) {
     const reg = getRegime(symbol);
-    
-const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
-const readyAgeStr = readyAgeSec != null ? `${readyAgeSec}s` : "na";
-console.log(
-  `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeStr} inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} be=${breakevenArmed ? 1 : 0} pl=${profitLockArmed ? 1 : 0} lastAction=${lastAction}`
-);
-    
+    const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
+    const readyAgeStr = readyAgeSec != null ? `${readyAgeSec}s` : "na";
+    console.log(
+      `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeStr} inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} be=${breakevenArmed ? 1 : 0} pl=${profitLockArmed ? 1 : 0} lastAction=${lastAction}`
+    );
     lastStateLogMs = now;
   }
 }
@@ -581,6 +592,15 @@ function maybeCrashLock(symbol) {
   return false;
 }
 
+function plTightenMultiplier(peakProfitPct) {
+  if (!PL_TIGHTEN_ENABLED || !Number.isFinite(peakProfitPct)) return 1.0;
+
+  if (peakProfitPct >= PL_TIGHTEN_TIER3_PROFIT_PCT) return PL_TIGHTEN_TIER4_MULT;
+  if (peakProfitPct >= PL_TIGHTEN_TIER2_PROFIT_PCT) return PL_TIGHTEN_TIER3_MULT;
+  if (peakProfitPct >= PL_TIGHTEN_TIER1_PROFIT_PCT) return PL_TIGHTEN_TIER2_MULT;
+  return PL_TIGHTEN_TIER1_MULT;
+}
+
 async function postTo3Commas(action, payload) {
   if (!THREECOMMAS_BOT_UUID || !THREECOMMAS_SECRET) {
     console.log("⚠️ 3Commas not configured (missing BOT_UUID/SECRET) — skipping");
@@ -682,7 +702,12 @@ async function doManagedExit(reason, currentPrice, currentSymbol) {
   });
 
   noteExitForEquity(currentPrice);
-  maybeStartOrKeepReentryWindow(currentSymbol || entrySymbol, currentPrice, reason, pctProfit(entryPrice, currentPrice));
+  maybeStartOrKeepReentryWindow(
+    currentSymbol || entrySymbol,
+    currentPrice,
+    reason,
+    pctProfit(entryPrice, currentPrice)
+  );
 
   clearReadyContext(reason);
   clearPositionContext(reason);
@@ -747,7 +772,8 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
   peakPrice = peakPrice == null ? currentPrice : Math.max(peakPrice, currentPrice);
 
   const p = pctProfit(entryPrice, currentPrice);
-  if (p == null) return false;
+  const peakProfitPct = pctProfit(entryPrice, peakPrice);
+  if (p == null || peakProfitPct == null) return false;
 
   let armPct = PROFIT_LOCK_ARM_PCT;
   let givebackPct = PROFIT_LOCK_GIVEBACK_PCT;
@@ -775,10 +801,17 @@ async function maybeProfitLockExit(currentPrice, currentSymbol) {
   }
   if (!profitLockArmed) return false;
 
-  const floor = peakPrice * (1 - givebackPct / 100);
+  const tightenMult = plTightenMultiplier(peakProfitPct);
+  let effectiveGivebackPct = givebackPct * tightenMult;
+
+  if (PL_MIN_GIVEBACK_PCT > 0) effectiveGivebackPct = Math.max(effectiveGivebackPct, PL_MIN_GIVEBACK_PCT);
+  if (PL_MAX_GIVEBACK_PCT > 0) effectiveGivebackPct = Math.min(effectiveGivebackPct, PL_MAX_GIVEBACK_PCT);
+
+  const floor = peakPrice * (1 - effectiveGivebackPct / 100);
+
   if (currentPrice <= floor) {
     console.log(
-      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | giveback=${givebackPct.toFixed(3)}%`
+      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | baseGiveback=${givebackPct.toFixed(3)}% | tightenMult=${tightenMult.toFixed(2)} | effectiveGiveback=${effectiveGivebackPct.toFixed(3)}% | peakProfit=${peakProfitPct.toFixed(3)}%`
     );
     return doManagedExit("profit_lock_exit", currentPrice, currentSymbol);
   }
@@ -936,7 +969,11 @@ async function handleEnterLong(payload, res, sourceTag) {
   }
 
   const reentryCandidate =
-    REENTRY_ENABLED && reentryActive() && reentryTriesLeft() && !reentry.consumed && (!REENTRY_REQUIRE_READY || readyOn);
+    REENTRY_ENABLED &&
+    reentryActive() &&
+    reentryTriesLeft() &&
+    !reentry.consumed &&
+    (!REENTRY_REQUIRE_READY || readyOn);
 
   const emergencyBypassCooldown = emergency && EMERGENCY_BYPASS_COOLDOWN;
 
@@ -1092,6 +1129,8 @@ async function handleEnterLong(payload, res, sourceTag) {
     tv_instrument: entryMeta?.tv_instrument,
   });
 
+  clearReadyContext("entered_long");
+
   if (reentryCandidate) {
     reentry.consumed = true;
     reentry.active = false;
@@ -1215,6 +1254,15 @@ function statusPayload() {
     PL_ADAPTIVE_ENABLED,
     profitLockArmed,
 
+    PL_TIGHTEN_ENABLED,
+    PL_TIGHTEN_TIER1_PROFIT_PCT,
+    PL_TIGHTEN_TIER2_PROFIT_PCT,
+    PL_TIGHTEN_TIER3_PROFIT_PCT,
+    PL_TIGHTEN_TIER1_MULT,
+    PL_TIGHTEN_TIER2_MULT,
+    PL_TIGHTEN_TIER3_MULT,
+    PL_TIGHTEN_TIER4_MULT,
+
     REGIME_ENABLED,
     SLOPE_WINDOW_SEC,
     ATR_WINDOW_SEC,
@@ -1320,7 +1368,6 @@ app.post("/webhook", async (req, res) => {
     const crash = maybeCrashLock(tickSym);
     const expired = maybeAutoExpireReady(tickPx, tickSym);
 
-    // exit ladder order
     const fail = await maybeFailStopExit(tickPx, tickSym);
     const be = fail ? null : await maybeBreakevenExit(tickPx, tickSym);
     const pl = fail || be ? null : await maybeProfitLockExit(tickPx, tickSym);
@@ -1475,6 +1522,9 @@ app.listen(PORT, () => {
   console.log(`StateLog: STATE_LOG_EVERY_MS=${STATE_LOG_EVERY_MS}`);
   console.log(
     `ExitLadder: FAIL_STOP_ENABLED=${FAIL_STOP_ENABLED} fail=${FAIL_STOP_PCT}% | BREAKEVEN_ENABLED=${BREAKEVEN_ENABLED} arm=${BREAKEVEN_ARM_PCT}% lock=${BREAKEVEN_LOCK_PCT}% | PROFIT_LOCK_ENABLED=${PROFIT_LOCK_ENABLED} adaptive=${PL_ADAPTIVE_ENABLED}`
+  );
+  console.log(
+    `PLTighten: enabled=${PL_TIGHTEN_ENABLED} | t1>=${PL_TIGHTEN_TIER1_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER2_MULT} | t2>=${PL_TIGHTEN_TIER2_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER3_MULT} | t3>=${PL_TIGHTEN_TIER3_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER4_MULT}`
   );
   console.log(
     `Regime: ENABLED=${REGIME_ENABLED} | slopeWin=${SLOPE_WINDOW_SEC}s | atrWin=${ATR_WINDOW_SEC}s | trendOn=${REGIME_TREND_SLOPE_ON_PCT}% | trendOff=${REGIME_TREND_SLOPE_OFF_PCT}% | volMinATR=${REGIME_VOL_MIN_ATR_PCT}%`
