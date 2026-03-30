@@ -8,6 +8,8 @@ import {
   updateFeatures,
   updatePosition,
   updateTick,
+  markPositionDesync,
+  clearPositionDesync,
 } from "./stateStore.js";
 import { calculateRegime } from "./regimeEngine.js";
 import { runBreakoutSetup } from "./setupEngine.js";
@@ -66,6 +68,10 @@ function logPosition(state) {
   console.log(
     `📍 POSITION | inPosition=${state.position.inPosition ? 1 : 0} side=${state.position.side ?? "na"} entry=${formatNum(state.position.entryPrice, 4)} stop=${formatNum(state.position.stopPrice, 4)} peak=${formatNum(state.position.peakPrice, 4)} be=${state.position.breakEvenArmed ? 1 : 0} trail=${state.position.trailingActive ? 1 : 0} pl=${state.position.profitLockActive ? 1 : 0} cooldownUntilBar=${state.execution.cooldownUntilBar ?? "na"}`
   );
+
+  if (state.execution?.desyncWarning) {
+    console.log(`⚠️ POSITION DESYNC | ${state.execution.desyncWarning}`);
+  }
 }
 
 function logTransition(beforePhase, afterPhase, note) {
@@ -76,7 +82,64 @@ function logTransition(beforePhase, afterPhase, note) {
   }
 }
 
+function reconcileLiveState() {
+  const state = getState();
+
+  if (CONFIG.EXECUTION_MODE !== "live") return;
+
+  const pending = state.execution?.pendingLivePosition;
+
+  if (
+    !state.position.inPosition &&
+    state.execution?.lastAction === "enter_long" &&
+    state.execution?.lastLiveSendOk === true &&
+    pending
+  ) {
+    updatePosition({
+      inPosition: true,
+      side: pending.side ?? "long",
+      entryPrice: pending.entryPrice ?? state.position.entryPrice,
+      entryTime: pending.entryTime ?? state.position.entryTime,
+      entrySetupType: pending.entrySetupType ?? "breakout",
+      entrySetupId: pending.entrySetupId ?? state.position.entrySetupId,
+      peakPrice: pending.peakPrice ?? pending.entryPrice ?? state.position.peakPrice,
+      stopPrice: pending.stopPrice ?? state.position.stopPrice,
+      breakEvenArmed: state.position.breakEvenArmed ?? false,
+      trailingActive: state.position.trailingActive ?? false,
+      profitLockActive: state.position.profitLockActive ?? false,
+      lastExitReason: null,
+    });
+
+    updateExecution({
+      positionSyncState: "recovered_open_from_persisted_live_entry",
+      desyncWarning: null,
+    });
+
+    console.log(
+      `🛠️ LIVE POSITION RECOVERED | entry=${formatNum(
+        pending.entryPrice,
+        4
+      )} setupId=${pending.entrySetupId ?? "na"}`
+    );
+
+    clearPositionDesync();
+    return;
+  }
+
+  if (
+    state.position.inPosition &&
+    state.execution?.lastAction === "exit_long" &&
+    state.execution?.lastLiveSendOk === true
+  ) {
+    markPositionDesync(
+      "exit_long was sent live previously but local position still shows open"
+    );
+  }
+}
+
 export async function processEvent(payload) {
+  reconcileLiveState();
+
   const src = payload?.src;
 
   if (src === "tick") {
@@ -152,7 +215,7 @@ export async function processEvent(payload) {
     const execModeResult = await executeEnterLong(state3);
     if (execModeResult.logLine) console.log(execModeResult.logLine);
 
-    const applyResult = applyExecutionResult(state3, execResult);
+    const applyResult = applyExecutionResult(state3, execResult, execModeResult);
 
     if (applyResult.positionPatch) updatePosition(applyResult.positionPatch);
     if (applyResult.executionPatch) updateExecution(applyResult.executionPatch);
@@ -185,6 +248,7 @@ export async function processEvent(payload) {
         consumedAtBar: enteredState.meta.barIndex,
         lastEntryMode: entryDecision.mode ?? null,
       });
+      clearPositionDesync();
     } else {
       console.log(
         "⚠️ ENTRY NOT ACTIVATED | setup not consumed because inPosition=0"
@@ -238,37 +302,45 @@ export async function processEvent(payload) {
 
     const latestState = getState();
 
-    updateBreakoutSetup({
-      phase: "idle",
-      startedBar: null,
-      phaseBar: latestState.meta.barIndex,
-      triggerPrice: null,
-      breakoutLevel: null,
-      retestPrice: null,
-      bouncePrice: null,
-      score: 0,
-      reasons: ["reset after exit"],
-      lastTransition: "reset_after_exit",
-      setupId: null,
-      retestLow: null,
-      invalidationPrice: null,
-      readySinceBar: null,
-      expiresAtBar: null,
-      bouncePct: null,
-      pullbackPct: null,
-      chasePct: null,
-      qualityFlags: [],
-      cancelReason: null,
-      consumedAtBar: null,
-      bounceBodyPct: null,
-      bounceCloseInRangePct: null,
-      reclaimPctFromTrigger: null,
-      reentryCount: 0,
-      lastEntryMode: null,
-      entryCandidatePrice: null,
-    });
+    if (!latestState.position.inPosition) {
+      updateBreakoutSetup({
+        phase: "idle",
+        startedBar: null,
+        phaseBar: latestState.meta.barIndex,
+        triggerPrice: null,
+        breakoutLevel: null,
+        retestPrice: null,
+        bouncePrice: null,
+        score: 0,
+        reasons: ["reset after exit"],
+        lastTransition: "reset_after_exit",
+        setupId: null,
+        retestLow: null,
+        invalidationPrice: null,
+        readySinceBar: null,
+        expiresAtBar: null,
+        bouncePct: null,
+        pullbackPct: null,
+        chasePct: null,
+        qualityFlags: [],
+        cancelReason: null,
+        consumedAtBar: null,
+        bounceBodyPct: null,
+        bounceCloseInRangePct: null,
+        reclaimPctFromTrigger: null,
+        reentryCount: 0,
+        lastEntryMode: null,
+        entryCandidatePrice: null,
+      });
 
-    finalSetupNote = `reset after exit (${exitReason})`;
+      finalSetupNote = `reset after exit (${exitReason})`;
+      clearPositionDesync();
+    } else {
+      markPositionDesync(
+        `exit decision allowed and live exit sent, but local position still open | reason=${exitReason}`
+      );
+      finalSetupNote = `exit sent but local position still open (${exitReason})`;
+    }
   }
 
   const state4 = getState();
