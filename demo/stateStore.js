@@ -20,6 +20,11 @@ function createInitialState() {
       stateFile: STATE_FILE,
     },
 
+    history: {
+      bars: [],
+      maxBars: Math.max(CONFIG.WASHOUT_LOOKBACK_BARS + 10, 40),
+    },
+
     features: {
       open: null,
       high: null,
@@ -82,6 +87,17 @@ function createInitialState() {
 
         lastEntryMode: null,
         entryCandidatePrice: null,
+
+        // Phase 5.6 washout fields
+        washoutPeakPrice: null,
+        washoutLow: null,
+        washoutDropPct: null,
+        washoutDetectedBar: null,
+        noBuyUntilBar: null,
+        baseBars: 0,
+        deepestLowBar: null,
+        reclaimPctFromLow: null,
+        setupType: null,
       },
     },
 
@@ -212,6 +228,13 @@ function loadPersistedState() {
       lastUpdatedAt: stamp(),
     };
 
+    if (!merged.history || !Array.isArray(merged.history.bars)) {
+      merged.history = {
+        bars: [],
+        maxBars: Math.max(CONFIG.WASHOUT_LOOKBACK_BARS + 10, 40),
+      };
+    }
+
     return merged;
   } catch (err) {
     console.error(`⚠️ STATE RESTORE FAILED | ${err.message}`);
@@ -289,6 +312,39 @@ export function updateFeatures(payload) {
 
   STATE.meta.barIndex = (STATE.meta.barIndex ?? 0) + 1;
   STATE.meta.lastUpdatedAt = stamp();
+
+  const bar = {
+    barIndex: STATE.meta.barIndex,
+    time: payload?.time ?? null,
+    open: payload?.open ?? null,
+    high: payload?.high ?? null,
+    low: payload?.low ?? null,
+    close: payload?.close ?? null,
+    ema8: payload?.ema8 ?? null,
+    ema18: payload?.ema18 ?? null,
+    ema50: payload?.ema50 ?? null,
+    rsi: payload?.rsi ?? null,
+    atr: payload?.atr ?? null,
+    atrPct: payload?.atrPct ?? null,
+    adx: payload?.adx ?? null,
+    oiTrend: payload?.oiTrend ?? null,
+    cvdTrend: payload?.cvdTrend ?? null,
+  };
+
+  if (!STATE.history || !Array.isArray(STATE.history.bars)) {
+    STATE.history = {
+      bars: [],
+      maxBars: Math.max(CONFIG.WASHOUT_LOOKBACK_BARS + 10, 40),
+    };
+  }
+
+  STATE.history.maxBars = Math.max(CONFIG.WASHOUT_LOOKBACK_BARS + 10, 40);
+  STATE.history.bars.push(bar);
+
+  if (STATE.history.bars.length > STATE.history.maxBars) {
+    STATE.history.bars.splice(0, STATE.history.bars.length - STATE.history.maxBars);
+  }
+
   persistState();
 }
 
