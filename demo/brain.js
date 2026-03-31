@@ -57,7 +57,10 @@ function logBreakout(state) {
   if (
     (b.phase === "ready" ||
       b.phase === "bounce_confirmed" ||
-      b.phase === "retest_pending") &&
+      b.phase === "retest_pending" ||
+      b.phase === "washout_monitor" ||
+      b.phase === "washout_base" ||
+      b.phase === "washout_ready") &&
     v.reasons?.length
   ) {
     console.log(`🛡️ VALIDATION | ${v.reasons.join(", ")}`);
@@ -331,6 +334,16 @@ export async function processEvent(payload) {
         reentryCount: 0,
         lastEntryMode: null,
         entryCandidatePrice: null,
+
+        washoutPeakPrice: null,
+        washoutLow: null,
+        washoutDropPct: null,
+        washoutDetectedBar: null,
+        noBuyUntilBar: null,
+        baseBars: 0,
+        deepestLowBar: null,
+        reclaimPctFromLow: null,
+        setupType: null,
       });
 
       finalSetupNote = `reset after exit (${exitReason})`;
