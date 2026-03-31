@@ -1,19 +1,18 @@
 /**
- * BrainPhase2_DemoLong_v3.7b
+ * BrainPhase2_DemoLong_v3.7c
  *
  * Long-only demo brain
  *
- * v3.7b goals:
- * - Preserve v3.7a selective breakout logic
- * - Add stronger late-entry / extension protection
- * - Keep clean early breakout confirmations
- * - Reduce stretched continuation entries
+ * v3.7c goals:
+ * - Preserve v3.7b selective breakout logic
+ * - Tighten B-grade breakout entries further
+ * - Keep strong early confirmations
+ * - Reduce price-extension chase on B-grade setups
  *
- * New vs v3.7a:
- * - hard late-entry block for breakout setups
- * - stricter breakout extension cap for grade B
- * - stale breakout cleanup when old + extended
- * - slightly clearer breakout blocked reasons
+ * New vs v3.7b:
+ * - stricter B-grade near-level cap
+ * - stricter B-grade cap once setup is no longer brand-new
+ * - slightly more conservative B-grade sizing when extension is elevated
  */
 
 import express from "express";
@@ -26,7 +25,7 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7b";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7c";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -70,15 +69,17 @@ const BREAKOUT_HARD_LATE_ENTRY_MIN = Number(
 const BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT = Number(
   process.env.BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT || 0.22
 );
+
 const BREAKOUT_B_MAX_NEAR_LEVEL_PCT = Number(
-  process.env.BREAKOUT_B_MAX_NEAR_LEVEL_PCT || 0.20
+  process.env.BREAKOUT_B_MAX_NEAR_LEVEL_PCT || 0.18
 );
 const BREAKOUT_B_LATE_ENTRY_MIN = Number(
-  process.env.BREAKOUT_B_LATE_ENTRY_MIN || 0.8
+  process.env.BREAKOUT_B_LATE_ENTRY_MIN || 0.3
 );
 const BREAKOUT_B_LATE_NEAR_LEVEL_PCT = Number(
-  process.env.BREAKOUT_B_LATE_NEAR_LEVEL_PCT || 0.16
+  process.env.BREAKOUT_B_LATE_NEAR_LEVEL_PCT || 0.14
 );
+
 const BREAKOUT_STALE_CLEAR_AGE_MIN = Number(
   process.env.BREAKOUT_STALE_CLEAR_AGE_MIN || 4
 );
@@ -261,13 +262,11 @@ function ensureState(symbol) {
     S[symbol] = {
       symbol,
 
-      // market
       lastPrice: null,
       lastTickMs: 0,
       tickCount: 0,
       lastTickLogMs: 0,
 
-      // features
       tf: "3",
       close: null,
       ema8: null,
@@ -280,7 +279,6 @@ function ensureState(symbol) {
       heartbeat: 0,
       lastHeartbeatMs: 0,
 
-      // external signals
       rayFresh: 0,
       fwoFresh: 0,
       raySignal: "",
@@ -290,7 +288,6 @@ function ensureState(symbol) {
       lastFwoBullMs: 0,
       lastFwoBearMs: 0,
 
-      // flow
       oiTrend: 0,
       oiDeltaBias: 0,
       cvdTrend: 0,
@@ -299,15 +296,12 @@ function ensureState(symbol) {
       patternAReady: 0,
       patternAWatch: 0,
 
-      // bars
       barsSeen: 0,
       closeHist: [],
 
-      // regime
       regime: "range",
       regimeConf: 0.4,
 
-      // setup
       armed: false,
       setupType: "",
       setupPhase: "idle",
@@ -324,7 +318,6 @@ function ensureState(symbol) {
       failConfirmCount: 0,
       failConfirmNoReclaimCount: 0,
 
-      // position
       inPosition: false,
       entryPrice: null,
       entryTs: 0,
@@ -332,7 +325,6 @@ function ensureState(symbol) {
       stopPrice: null,
       trailingStop: null,
 
-      // dedupe
       enterInFlight: false,
       exitInFlight: false,
       lastEnterMs: 0,
@@ -820,7 +812,6 @@ function manageSetupLifecycle(st) {
       return;
     }
 
-    // v3.7b stale + extended cleanup
     if (Number.isFinite(st.level) && Number.isFinite(st.close)) {
       const nearLevelPct = Math.abs(pctChange(st.close, st.level));
       const bounceBase = st.retestPrice ?? st.triggerPrice ?? st.close;
@@ -909,7 +900,6 @@ function breakoutEntryDecision(st, price) {
     )} need=${fmt(needBounce, 3)} aboveLevel=${aboveLevel} aboveEma8=${aboveEma8}`
   );
 
-  // v3.7b hard late-entry / extension controls
   if (
     sAgeMin > BREAKOUT_HARD_LATE_ENTRY_MIN &&
     nearLevelPct > BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT
@@ -922,6 +912,12 @@ function breakoutEntryDecision(st, price) {
   if (st.setupGrade === "B") {
     if (nearLevelPct > BREAKOUT_B_MAX_NEAR_LEVEL_PCT) {
       st.failConfirmCount += 1;
+      dlog(
+        `🚫 breakout blocked | grade=B reason=too_extended nearLevelPct=${fmt(
+          nearLevelPct,
+          3
+        )} max=${fmt(BREAKOUT_B_MAX_NEAR_LEVEL_PCT, 3)}`
+      );
       return { ok: false, note: "breakout_B_too_extended" };
     }
 
@@ -1078,7 +1074,7 @@ function computeRiskVolumePct(st, entryPrice, stopPrice) {
 
     if (nearLevelNow > 0.25) sizeMult *= 0.85;
     if (ageMin(st.setupTs) > BREAKOUT_LATE_AGE_MIN) sizeMult *= 0.90;
-    if (st.setupGrade === "B" && nearLevelNow > 0.16) sizeMult *= 0.85;
+    if (st.setupGrade === "B" && nearLevelNow > 0.14) sizeMult *= 0.80;
   }
 
   const riskUsd = ACCOUNT_EQUITY * (riskPct / 100) * sizeMult;
@@ -1364,7 +1360,6 @@ app.post("/webhook", async (req, res) => {
 
   dlog(`📩 WEBHOOK src=${src || "features"} signal=${body.signal || ""} symbol=${symbol}`);
 
-  // preserve prior feature values when signal-only webhook arrives
   const hasFeaturePayload =
     body.close != null ||
     body.price != null ||
@@ -1410,7 +1405,6 @@ app.post("/webhook", async (req, res) => {
   const raySell = n(body.raySell) || 0;
   const fwo = n(body.fwo) || 0;
 
-  // allow signal aliases
   if (src === "fwo_buy" || String(body.signal || "").toLowerCase().includes("buy")) {
     st.lastFwoBullMs = nowMs();
   }
