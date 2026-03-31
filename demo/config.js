@@ -143,14 +143,8 @@ export const CONFIG = {
   ),
 
   // Continuation mode
-  BREAKOUT_CONTINUATION_ADX_MIN: num(
-    process.env.BREAKOUT_CONTINUATION_ADX_MIN,
-    22
-  ),
-  BREAKOUT_CONTINUATION_RSI_MIN: num(
-    process.env.BREAKOUT_CONTINUATION_RSI_MIN,
-    58
-  ),
+  BREAKOUT_CONTINUATION_ADX_MIN: num(process.env.BREAKOUT_CONTINUATION_ADX_MIN, 22),
+  BREAKOUT_CONTINUATION_RSI_MIN: num(process.env.BREAKOUT_CONTINUATION_RSI_MIN, 58),
   BREAKOUT_CONTINUATION_MIN_EXTENSION_PCT: num(
     process.env.BREAKOUT_CONTINUATION_MIN_EXTENSION_PCT,
     0.12
@@ -175,27 +169,29 @@ export const CONFIG = {
   BREAKOUT_MIN_READY_BOUNCE_PCT: num(process.env.BREAKOUT_MIN_READY_BOUNCE_PCT, 0.06),
 
   // ---------------------------
-  // Phase 5.6 Washout reclaim
+  // Phase 5.6 Washout logic
   // ---------------------------
   WASHOUT_ENABLED: bool(process.env.WASHOUT_ENABLED, true),
-  WASHOUT_DROP_PCT_MIN: num(process.env.WASHOUT_DROP_PCT_MIN, 2.0),
-  WASHOUT_DEEP_DROP_PCT_MIN: num(process.env.WASHOUT_DEEP_DROP_PCT_MIN, 3.2),
+  WASHOUT_LOOKBACK_BARS: num(process.env.WASHOUT_LOOKBACK_BARS, 20),
+  WASHOUT_DROP_PCT_MIN: num(process.env.WASHOUT_DROP_PCT_MIN, 2.2),
+  WASHOUT_DEEP_DROP_PCT_MIN: num(process.env.WASHOUT_DEEP_DROP_PCT_MIN, 3.8),
 
-  // recent swing lookback for multi-bar flush detection
-  WASHOUT_LOOKBACK_BARS: num(process.env.WASHOUT_LOOKBACK_BARS, 12),
-
-  // do NOT buy first reclaim after flush
+  // user asked first 6-7 bars should not buy
   WASHOUT_NO_BUY_BARS_AFTER_DETECT: num(
     process.env.WASHOUT_NO_BUY_BARS_AFTER_DETECT,
-    6
+    7
   ),
 
-  // stabilization / base requirements
   WASHOUT_MIN_BASE_BARS: num(process.env.WASHOUT_MIN_BASE_BARS, 3),
   WASHOUT_MAX_SETUP_BARS: num(process.env.WASHOUT_MAX_SETUP_BARS, 18),
-  WASHOUT_NO_NEW_LOW_TOL_PCT: num(process.env.WASHOUT_NO_NEW_LOW_TOL_PCT, 0.05),
+  WASHOUT_NO_NEW_LOW_TOL_PCT: num(process.env.WASHOUT_NO_NEW_LOW_TOL_PCT, 0.10),
 
-  // reclaim quality
+  WASHOUT_REQUIRE_CLOSE_BELOW_EMA18_ON_DETECT: bool(
+    process.env.WASHOUT_REQUIRE_CLOSE_BELOW_EMA18_ON_DETECT,
+    true
+  ),
+  WASHOUT_RSI_MAX_ON_DETECT: num(process.env.WASHOUT_RSI_MAX_ON_DETECT, 45),
+
   WASHOUT_REQUIRE_RECLAIM_ABOVE_EMA8: bool(
     process.env.WASHOUT_REQUIRE_RECLAIM_ABOVE_EMA8,
     true
@@ -206,7 +202,7 @@ export const CONFIG = {
   ),
   WASHOUT_MIN_BOUNCE_BODY_PCT: num(
     process.env.WASHOUT_MIN_BOUNCE_BODY_PCT,
-    0.10
+    0.08
   ),
   WASHOUT_MIN_RECLAIM_FROM_LOW_PCT: num(
     process.env.WASHOUT_MIN_RECLAIM_FROM_LOW_PCT,
@@ -216,19 +212,11 @@ export const CONFIG = {
     process.env.WASHOUT_MIN_RECLAIM_FROM_LOW_PCT_DEEP,
     0.60
   ),
-
-  // filters
-  WASHOUT_RSI_MAX_ON_DETECT: num(process.env.WASHOUT_RSI_MAX_ON_DETECT, 42),
-  WASHOUT_REQUIRE_CLOSE_BELOW_EMA18_ON_DETECT: bool(
-    process.env.WASHOUT_REQUIRE_CLOSE_BELOW_EMA18_ON_DETECT,
-    true
-  ),
+  WASHOUT_MIN_SCORE: num(process.env.WASHOUT_MIN_SCORE, 7),
   WASHOUT_ALLOW_NEGATIVE_OI_ON_ENTRY: bool(
     process.env.WASHOUT_ALLOW_NEGATIVE_OI_ON_ENTRY,
     true
   ),
-
-  WASHOUT_MIN_SCORE: num(process.env.WASHOUT_MIN_SCORE, 7),
 
   // Execution mode
   EXECUTION_MODE: process.env.EXECUTION_MODE || "dry_run",
