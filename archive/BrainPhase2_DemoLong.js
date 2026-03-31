@@ -1,13 +1,19 @@
 /**
- * BrainPhase2_DemoLong_v3.7a
+ * BrainPhase2_DemoLong_v3.7b
  *
  * Long-only demo brain
  *
- * v3.7a goals:
- * - Preserve v3.7 selective breakout logic
- * - Add faster cleanup for weak B-grade breakouts
- * - Add repeated failed confirmation counter
- * - Improve replay/log diagnostics
+ * v3.7b goals:
+ * - Preserve v3.7a selective breakout logic
+ * - Add stronger late-entry / extension protection
+ * - Keep clean early breakout confirmations
+ * - Reduce stretched continuation entries
+ *
+ * New vs v3.7a:
+ * - hard late-entry block for breakout setups
+ * - stricter breakout extension cap for grade B
+ * - stale breakout cleanup when old + extended
+ * - slightly clearer breakout blocked reasons
  */
 
 import express from "express";
@@ -20,7 +26,7 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7a";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7b";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -55,6 +61,35 @@ const BREAKOUT_FAIL_CONFIRM_MAX = Number(
 );
 const BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX = Number(
   process.env.BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX || 4
+);
+
+// v3.7b late / extension controls
+const BREAKOUT_HARD_LATE_ENTRY_MIN = Number(
+  process.env.BREAKOUT_HARD_LATE_ENTRY_MIN || 1.0
+);
+const BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT = Number(
+  process.env.BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT || 0.22
+);
+const BREAKOUT_B_MAX_NEAR_LEVEL_PCT = Number(
+  process.env.BREAKOUT_B_MAX_NEAR_LEVEL_PCT || 0.20
+);
+const BREAKOUT_B_LATE_ENTRY_MIN = Number(
+  process.env.BREAKOUT_B_LATE_ENTRY_MIN || 0.8
+);
+const BREAKOUT_B_LATE_NEAR_LEVEL_PCT = Number(
+  process.env.BREAKOUT_B_LATE_NEAR_LEVEL_PCT || 0.16
+);
+const BREAKOUT_STALE_CLEAR_AGE_MIN = Number(
+  process.env.BREAKOUT_STALE_CLEAR_AGE_MIN || 4
+);
+const BREAKOUT_STALE_CLEAR_NEAR_LEVEL_PCT = Number(
+  process.env.BREAKOUT_STALE_CLEAR_NEAR_LEVEL_PCT || 0.30
+);
+const BREAKOUT_WEAK_PROGRESS_CLEAR_AGE_MIN = Number(
+  process.env.BREAKOUT_WEAK_PROGRESS_CLEAR_AGE_MIN || 2
+);
+const BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT = Number(
+  process.env.BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT || 0.04
 );
 
 // --------------------------------------------------
@@ -784,6 +819,29 @@ function manageSetupLifecycle(st) {
       clearSetup(st, "breakout_score_stale");
       return;
     }
+
+    // v3.7b stale + extended cleanup
+    if (Number.isFinite(st.level) && Number.isFinite(st.close)) {
+      const nearLevelPct = Math.abs(pctChange(st.close, st.level));
+      const bounceBase = st.retestPrice ?? st.triggerPrice ?? st.close;
+      const bouncePct = pctChange(st.close, bounceBase);
+
+      if (
+        sAgeMin > BREAKOUT_STALE_CLEAR_AGE_MIN &&
+        nearLevelPct > BREAKOUT_STALE_CLEAR_NEAR_LEVEL_PCT
+      ) {
+        clearSetup(st, "breakout_old_and_extended");
+        return;
+      }
+
+      if (
+        sAgeMin > BREAKOUT_WEAK_PROGRESS_CLEAR_AGE_MIN &&
+        bouncePct < BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT
+      ) {
+        clearSetup(st, "breakout_weak_progress_timeout");
+        return;
+      }
+    }
   }
 }
 
@@ -851,6 +909,32 @@ function breakoutEntryDecision(st, price) {
     )} need=${fmt(needBounce, 3)} aboveLevel=${aboveLevel} aboveEma8=${aboveEma8}`
   );
 
+  // v3.7b hard late-entry / extension controls
+  if (
+    sAgeMin > BREAKOUT_HARD_LATE_ENTRY_MIN &&
+    nearLevelPct > BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT
+  ) {
+    st.failConfirmCount += 1;
+    clearSetup(st, "breakout_hard_late_extended");
+    return { ok: false, note: "breakout_hard_late_extended" };
+  }
+
+  if (st.setupGrade === "B") {
+    if (nearLevelPct > BREAKOUT_B_MAX_NEAR_LEVEL_PCT) {
+      st.failConfirmCount += 1;
+      return { ok: false, note: "breakout_B_too_extended" };
+    }
+
+    if (
+      sAgeMin > BREAKOUT_B_LATE_ENTRY_MIN &&
+      nearLevelPct > BREAKOUT_B_LATE_NEAR_LEVEL_PCT
+    ) {
+      st.failConfirmCount += 1;
+      clearSetup(st, "breakout_B_late_extended");
+      return { ok: false, note: "breakout_B_late_extended" };
+    }
+  }
+
   if (nearLevelPct > maxDist && nearEma8Pct > BREAKOUT_NEAR_EMA8_MAX_PCT) {
     st.failConfirmCount += 1;
     return { ok: false, note: "too far from breakout level" };
@@ -880,10 +964,12 @@ function breakoutEntryDecision(st, price) {
       )} aboveLevel=${aboveLevel} aboveEma8=${aboveEma8} bouncePct=${fmt(
         bouncePct,
         3
-      )} need=${fmt(needBounce, 3)} failCount=${st.failConfirmCount} noReclaimCount=${st.failConfirmNoReclaimCount}`
+      )} need=${fmt(needBounce, 3)} nearLevelPct=${fmt(
+        nearLevelPct,
+        3
+      )} failCount=${st.failConfirmCount} noReclaimCount=${st.failConfirmNoReclaimCount}`
     );
 
-    // v3.7a fast cleanup for weak B-grade setups
     if (
       st.setupGrade === "B" &&
       sAgeMin >= BREAKOUT_B_FAIL_RESET_MIN &&
@@ -992,6 +1078,7 @@ function computeRiskVolumePct(st, entryPrice, stopPrice) {
 
     if (nearLevelNow > 0.25) sizeMult *= 0.85;
     if (ageMin(st.setupTs) > BREAKOUT_LATE_AGE_MIN) sizeMult *= 0.90;
+    if (st.setupGrade === "B" && nearLevelNow > 0.16) sizeMult *= 0.85;
   }
 
   const riskUsd = ACCOUNT_EQUITY * (riskPct / 100) * sizeMult;
@@ -1277,26 +1364,44 @@ app.post("/webhook", async (req, res) => {
 
   dlog(`📩 WEBHOOK src=${src || "features"} signal=${body.signal || ""} symbol=${symbol}`);
 
+  // preserve prior feature values when signal-only webhook arrives
+  const hasFeaturePayload =
+    body.close != null ||
+    body.price != null ||
+    body.ema8 != null ||
+    body.ema18 != null ||
+    body.ema50 != null ||
+    body.rsi != null ||
+    body.adx != null ||
+    body.atr != null ||
+    body.atrPct != null;
+
   st.tf = String(body.tf || st.tf || "3");
-  st.close = n(body.close ?? body.price);
-  st.ema8 = n(body.ema8);
-  st.ema18 = n(body.ema18);
-  st.ema50 = n(body.ema50);
-  st.rsi = n(body.rsi);
-  st.adx = n(body.adx);
-  st.atr = n(body.atr);
-  st.atrPct = n(body.atrPct);
 
-  st.heartbeat = n(body.heartbeat) || 0;
-  if (st.heartbeat) st.lastHeartbeatMs = nowMs();
+  if (hasFeaturePayload) {
+    st.close = n(body.close ?? body.price);
+    st.ema8 = n(body.ema8);
+    st.ema18 = n(body.ema18);
+    st.ema50 = n(body.ema50);
+    st.rsi = n(body.rsi);
+    st.adx = n(body.adx);
+    st.atr = n(body.atr);
+    st.atrPct = n(body.atrPct);
 
-  st.oiTrend = n(body.oiTrend) || 0;
-  st.oiDeltaBias = n(body.oiDeltaBias) || 0;
-  st.cvdTrend = n(body.cvdTrend) || 0;
-  st.liqClusterBelow = n(body.liqClusterBelow) || 0;
-  st.priceDropPct = n(body.priceDropPct) || 0;
-  st.patternAReady = n(body.patternAReady) || 0;
-  st.patternAWatch = n(body.patternAWatch) || 0;
+    st.heartbeat = n(body.heartbeat) || 0;
+    if (st.heartbeat) st.lastHeartbeatMs = nowMs();
+
+    st.oiTrend = n(body.oiTrend) || 0;
+    st.oiDeltaBias = n(body.oiDeltaBias) || 0;
+    st.cvdTrend = n(body.cvdTrend) || 0;
+    st.liqClusterBelow = n(body.liqClusterBelow) || 0;
+    st.priceDropPct = n(body.priceDropPct) || 0;
+    st.patternAReady = n(body.patternAReady) || 0;
+    st.patternAWatch = n(body.patternAWatch) || 0;
+
+    st.barsSeen += 1;
+    updateCloseHistory(st, st.close);
+  }
 
   st.raySignal = String(body.raySignal || st.raySignal || "");
   st.fwoSignal = String(body.fwoSignal || st.fwoSignal || "");
@@ -1305,15 +1410,20 @@ app.post("/webhook", async (req, res) => {
   const raySell = n(body.raySell) || 0;
   const fwo = n(body.fwo) || 0;
 
+  // allow signal aliases
+  if (src === "fwo_buy" || String(body.signal || "").toLowerCase().includes("buy")) {
+    st.lastFwoBullMs = nowMs();
+  }
+  if (src === "fwo_sell" || String(body.signal || "").toLowerCase().includes("sell")) {
+    st.lastFwoBearMs = nowMs();
+  }
+
   if (rayBuy) st.lastRayBullMs = nowMs();
   if (raySell) st.lastRayBearMs = nowMs();
   if (fwo > 0) st.lastFwoBullMs = nowMs();
   if (fwo < 0) st.lastFwoBearMs = nowMs();
 
   computeSignalFreshness(st);
-
-  st.barsSeen += 1;
-  updateCloseHistory(st, st.close);
 
   dlog(
     `🟩 FEAT rx ${symbol} close=${st.close} ema8=${st.ema8} ema18=${st.ema18} ema50=${st.ema50} rsi=${st.rsi} atr=${st.atr} atrPct=${st.atrPct} adx=${st.adx} oiTrend=${st.oiTrend} oiDeltaBias=${st.oiDeltaBias} cvdTrend=${st.cvdTrend} liqClusterBelow=${st.liqClusterBelow} priceDropPct=${st.priceDropPct} patternAReady=${st.patternAReady} patternAWatch=${st.patternAWatch}`
@@ -1379,6 +1489,15 @@ app.listen(PORT, () => {
   console.log(`✅ BREAKOUT_B_FAIL_RESET_MAX_BOUNCE_PCT=${BREAKOUT_B_FAIL_RESET_MAX_BOUNCE_PCT}`);
   console.log(`✅ BREAKOUT_FAIL_CONFIRM_MAX=${BREAKOUT_FAIL_CONFIRM_MAX}`);
   console.log(`✅ BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX=${BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX}`);
+  console.log(`✅ BREAKOUT_HARD_LATE_ENTRY_MIN=${BREAKOUT_HARD_LATE_ENTRY_MIN}`);
+  console.log(`✅ BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT=${BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT}`);
+  console.log(`✅ BREAKOUT_B_MAX_NEAR_LEVEL_PCT=${BREAKOUT_B_MAX_NEAR_LEVEL_PCT}`);
+  console.log(`✅ BREAKOUT_B_LATE_ENTRY_MIN=${BREAKOUT_B_LATE_ENTRY_MIN}`);
+  console.log(`✅ BREAKOUT_B_LATE_NEAR_LEVEL_PCT=${BREAKOUT_B_LATE_NEAR_LEVEL_PCT}`);
+  console.log(`✅ BREAKOUT_STALE_CLEAR_AGE_MIN=${BREAKOUT_STALE_CLEAR_AGE_MIN}`);
+  console.log(`✅ BREAKOUT_STALE_CLEAR_NEAR_LEVEL_PCT=${BREAKOUT_STALE_CLEAR_NEAR_LEVEL_PCT}`);
+  console.log(`✅ BREAKOUT_WEAK_PROGRESS_CLEAR_AGE_MIN=${BREAKOUT_WEAK_PROGRESS_CLEAR_AGE_MIN}`);
+  console.log(`✅ BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT=${BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
