@@ -1,13 +1,18 @@
 /**
  * entryEngine.js
- * Brain Phase 5 v5.6
+ * Brain Phase 5 v5.7
  *
- * Adds washout reclaim long
- * Keeps breakout ready long
- * Keeps early trend long
+ * Unified entry engine:
+ * - setupType=washout -> washout validation only
+ * - setupType=breakout -> breakout ready / early validation only
+ *
+ * Main goals:
+ * - eliminate cross-strategy contamination
+ * - make decisions deterministic
+ * - keep current return contract unchanged
  */
 
-export const BRAIN_VERSION = "Brain Phase 5 v5.6";
+export const BRAIN_VERSION = "Brain Phase 5 v5.7";
 
 // ---------------------------
 // Helpers
@@ -53,7 +58,6 @@ const ALLOW_EARLY_TREND_ENTRY = boolEnv("ALLOW_EARLY_TREND_ENTRY", true);
 const EARLY_ENTRY_ALLOW_NEGATIVE_OI = boolEnv("EARLY_ENTRY_ALLOW_NEGATIVE_OI", false);
 
 const READY_RECLAIM_MIN_PCT = numEnv("READY_RECLAIM_MIN_PCT", 0.05);
-const ENTRY_RECLAIM_MIN_PCT = numEnv("ENTRY_RECLAIM_MIN_PCT", 0.05);
 const EARLY_ENTRY_RECLAIM_MIN_PCT = numEnv("EARLY_ENTRY_RECLAIM_MIN_PCT", 0.05);
 
 const READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT = numEnv(
@@ -109,7 +113,7 @@ function dlog(...args) {
 }
 
 // ---------------------------
-// Core metrics
+// Metrics
 // ---------------------------
 function getSetupMetrics(state) {
   const feat = state.features || {};
@@ -123,45 +127,39 @@ function getSetupMetrics(state) {
 
   const triggerPrice = n(setup.triggerPrice, NaN);
   const bouncePrice = n(setup.bouncePrice, NaN);
-  const retestPrice = n(setup.retestPrice, NaN);
   const washoutLow = n(setup.washoutLow, NaN);
 
   const closeBelowTriggerTolPrice = Number.isFinite(triggerPrice)
     ? triggerPrice * (1 - ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT / 100)
     : NaN;
 
-  const reclaimPctFromTrigger = Number.isFinite(setup.reclaimPctFromTrigger)
-    ? n(setup.reclaimPctFromTrigger)
-    : pctFrom(close, triggerPrice);
+  const reclaimPctFromTrigger =
+    setup.reclaimPctFromTrigger !== undefined && setup.reclaimPctFromTrigger !== null
+      ? n(setup.reclaimPctFromTrigger)
+      : pctFrom(close, triggerPrice);
 
-  const reclaimPctFromLow = Number.isFinite(setup.reclaimPctFromLow)
-    ? n(setup.reclaimPctFromLow)
-    : pctFrom(close, washoutLow);
+  const reclaimPctFromLow =
+    setup.reclaimPctFromLow !== undefined && setup.reclaimPctFromLow !== null
+      ? n(setup.reclaimPctFromLow)
+      : pctFrom(close, washoutLow);
 
-  const bounceCloseInRangePct = Number.isFinite(setup.bounceCloseInRangePct)
-    ? n(setup.bounceCloseInRangePct)
-    : Number.isFinite(high) && Number.isFinite(low) && high > low
-    ? ((close - low) / (high - low)) * 100
-    : 0;
+  const bounceCloseInRangePct =
+    setup.bounceCloseInRangePct !== undefined && setup.bounceCloseInRangePct !== null
+      ? n(setup.bounceCloseInRangePct)
+      : Number.isFinite(high) && Number.isFinite(low) && high > low
+      ? ((close - low) / (high - low)) * 100
+      : 0;
 
-  const bounceBodyPct = Number.isFinite(setup.bounceBodyPct)
-    ? n(setup.bounceBodyPct)
-    : Number.isFinite(open) && open !== 0 && Number.isFinite(close)
-    ? (Math.abs(close - open) / open) * 100
-    : 0;
+  const bounceBodyPct =
+    setup.bounceBodyPct !== undefined && setup.bounceBodyPct !== null
+      ? n(setup.bounceBodyPct)
+      : Number.isFinite(open) && open !== 0 && Number.isFinite(close)
+      ? (Math.abs(close - open) / open) * 100
+      : 0;
 
   const chasePctFromBounce = Number.isFinite(bouncePrice)
     ? pctFrom(close, bouncePrice)
     : 0;
-
-  const ema8 = n(feat.ema8, NaN);
-  const ema18 = n(feat.ema18, NaN);
-  const ema50 = n(feat.ema50, NaN);
-
-  const oiTrend = n(feat.oiTrend, 0);
-  const cvdTrend = n(feat.cvdTrend, 0);
-
-  const setupScore = n(setup.score, 0);
 
   return {
     close,
@@ -170,7 +168,6 @@ function getSetupMetrics(state) {
     low,
     triggerPrice,
     bouncePrice,
-    retestPrice,
     washoutLow,
     closeBelowTriggerTolPrice,
     reclaimPctFromTrigger,
@@ -178,29 +175,34 @@ function getSetupMetrics(state) {
     bounceCloseInRangePct,
     bounceBodyPct,
     chasePctFromBounce,
-    ema8,
-    ema18,
-    ema50,
-    oiTrend,
-    cvdTrend,
-    setupScore,
+    ema8: n(feat.ema8, NaN),
+    ema18: n(feat.ema18, NaN),
+    ema50: n(feat.ema50, NaN),
+    oiTrend: n(feat.oiTrend, 0),
+    cvdTrend: n(feat.cvdTrend, 0),
+    setupScore: n(setup.score, 0),
     regime: String(context.regime || "unknown"),
     phase: String(setup.phase || "idle"),
+    setupType: String(setup.setupType || "breakout"),
     qualityFlags: Array.isArray(setup.qualityFlags) ? setup.qualityFlags : [],
     baseBars: n(setup.baseBars, 0),
     washoutDropPct: n(setup.washoutDropPct, 0),
-    setupType: String(setup.setupType || "breakout"),
   };
 }
 
 // ---------------------------
-// READY gate
+// Breakout READY
 // ---------------------------
 function evaluateReadyLong(state) {
   const m = getSetupMetrics(state);
   const reasons = [];
   const hardReasons = [];
   const softReasons = [];
+
+  if (m.setupType !== "breakout") {
+    addUnique(hardReasons, "not breakout setup");
+    addUnique(reasons, "not_breakout_setup");
+  }
 
   if (m.phase !== "ready") {
     addUnique(reasons, `breakout phase=${m.phase}`);
@@ -298,13 +300,18 @@ function evaluateReadyLong(state) {
 }
 
 // ---------------------------
-// EARLY gate
+// Breakout EARLY
 // ---------------------------
 function evaluateEarlyTrendLong(state) {
   const m = getSetupMetrics(state);
   const reasons = [];
   const hardReasons = [];
   const softReasons = [];
+
+  if (m.setupType !== "breakout") {
+    addUnique(hardReasons, "not breakout setup");
+    addUnique(reasons, "not_breakout_setup");
+  }
 
   if (m.phase !== "bounce_confirmed") {
     addUnique(reasons, `breakout phase=${m.phase}`);
@@ -390,13 +397,18 @@ function evaluateEarlyTrendLong(state) {
 }
 
 // ---------------------------
-// WASHOUT gate
+// Washout reclaim
 // ---------------------------
 function evaluateWashoutReclaimLong(state) {
   const m = getSetupMetrics(state);
   const reasons = [];
   const hardReasons = [];
   const softReasons = [];
+
+  if (m.setupType !== "washout") {
+    addUnique(hardReasons, "not washout setup");
+    addUnique(reasons, "not_washout_setup");
+  }
 
   if (m.phase !== "washout_ready") {
     addUnique(reasons, `washout phase=${m.phase}`);
@@ -483,6 +495,7 @@ export function buildEntryDecision(state) {
   const breakout = state.setups?.breakout || {};
   const execution = state.execution || {};
   const nowMs = Date.now();
+  const setupType = String(breakout.setupType || "breakout");
 
   if (state.position?.inPosition) {
     return {
@@ -513,26 +526,45 @@ export function buildEntryDecision(state) {
     };
   }
 
-  const washoutEval = evaluateWashoutReclaimLong(state);
-  if (washoutEval.allowed) {
+  if (setupType === "washout") {
+    const washoutEval = evaluateWashoutReclaimLong(state);
+
+    if (washoutEval.allowed) {
+      return {
+        allowed: true,
+        mode: "washout_reclaim_long",
+        score: washoutEval.score,
+        patch: {
+          score: washoutEval.score,
+          chasePct: 0,
+          entryCandidatePrice: washoutEval.metrics.close,
+          lastEntryMode: "washout_reclaim_long",
+        },
+        chasePct: 0,
+        reasons: ["entry_allowed"],
+        hardReasons: [],
+        softReasons: [],
+      };
+    }
+
     return {
-      allowed: true,
-      mode: "washout_reclaim_long",
+      allowed: false,
+      mode: null,
       score: washoutEval.score,
       patch: {
         score: washoutEval.score,
         chasePct: 0,
-        entryCandidatePrice: washoutEval.metrics.close,
-        lastEntryMode: "washout_reclaim_long",
+        entryCandidatePrice: washoutEval.metrics?.close ?? null,
       },
       chasePct: 0,
-      reasons: ["entry_allowed"],
-      hardReasons: [],
-      softReasons: [],
+      reasons: washoutEval.reasons.length ? washoutEval.reasons : ["entry_blocked"],
+      hardReasons: washoutEval.hardReasons,
+      softReasons: washoutEval.softReasons,
     };
   }
 
   const readyEval = evaluateReadyLong(state);
+
   if (readyEval.allowed) {
     return {
       allowed: true,
@@ -552,6 +584,7 @@ export function buildEntryDecision(state) {
   }
 
   const earlyEval = evaluateEarlyTrendLong(state);
+
   if (earlyEval.allowed) {
     return {
       allowed: true,
@@ -574,20 +607,16 @@ export function buildEntryDecision(state) {
   const mergedHardReasons = [];
   const mergedSoftReasons = [];
 
-  for (const r of washoutEval.reasons || []) addUnique(mergedReasons, r);
   for (const r of readyEval.reasons || []) addUnique(mergedReasons, r);
   for (const r of earlyEval.reasons || []) addUnique(mergedReasons, r);
 
-  for (const r of washoutEval.hardReasons || []) addUnique(mergedHardReasons, r);
   for (const r of readyEval.hardReasons || []) addUnique(mergedHardReasons, r);
   for (const r of earlyEval.hardReasons || []) addUnique(mergedHardReasons, r);
 
-  for (const r of washoutEval.softReasons || []) addUnique(mergedSoftReasons, r);
   for (const r of readyEval.softReasons || []) addUnique(mergedSoftReasons, r);
   for (const r of earlyEval.softReasons || []) addUnique(mergedSoftReasons, r);
 
   const fallbackScore = Math.max(
-    n(washoutEval.score),
     n(readyEval.score),
     n(earlyEval.score),
     n(breakout.score)
@@ -604,7 +633,6 @@ export function buildEntryDecision(state) {
         earlyEval.metrics?.chasePctFromBounce ??
         0,
       entryCandidatePrice:
-        washoutEval.metrics?.close ??
         readyEval.metrics?.close ??
         earlyEval.metrics?.close ??
         null,
