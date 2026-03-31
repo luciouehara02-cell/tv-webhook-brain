@@ -2,13 +2,23 @@ import { CONFIG } from "./config.js";
 
 /**
  * setupEngine.js
- * Brain Phase 5 v5.6
+ * Brain Phase 5 v5.7
  *
- * Keeps breakout flow
- * Adds 3m washout logic with delayed-entry filter
+ * Unified setup state machine:
+ * - breakout path
+ * - washout path
+ *
+ * setupType drives the active strategy:
+ *   - "breakout"
+ *   - "washout"
+ *
+ * Main goals:
+ * - prevent breakout/washout rule contamination
+ * - keep setup metrics updated consistently
+ * - support delayed-entry washout logic
  */
 
-export const BRAIN_VERSION = "Brain Phase 5 v5.6";
+export const BRAIN_VERSION = "Brain Phase 5 v5.7";
 
 // ---------------------------
 // helpers
@@ -41,14 +51,6 @@ function setFamilyFlag(arr, family, value) {
   return next;
 }
 
-function phaseOf(state) {
-  return state?.setups?.breakout?.phase ?? "idle";
-}
-
-function setupOf(state) {
-  return state?.setups?.breakout ?? {};
-}
-
 function featOf(state) {
   return state?.features ?? {};
 }
@@ -61,8 +63,16 @@ function metaOf(state) {
   return state?.meta ?? {};
 }
 
+function setupOf(state) {
+  return state?.setups?.breakout ?? {};
+}
+
 function historyOf(state) {
   return Array.isArray(state?.history?.bars) ? state.history.bars : [];
+}
+
+function phaseOf(state) {
+  return setupOf(state).phase ?? "idle";
 }
 
 function isTrendRegime(regime) {
@@ -75,6 +85,7 @@ function isBullAligned(feat) {
 
 function computeCandleMetrics(open, high, low, close) {
   const range = Math.max(n(high) - n(low), 0);
+
   const bodyPct =
     Number.isFinite(open) && open !== 0 && Number.isFinite(close)
       ? (Math.abs(close - open) / open) * 100
@@ -91,7 +102,7 @@ function buildSetupId(prefix, state) {
 }
 
 // ---------------------------
-// breakout scoring
+// breakout quality/scoring
 // ---------------------------
 function resolveBreakoutQualityFlags({
   bounceCloseInRangePct,
@@ -268,7 +279,7 @@ function computeBreakoutScore(state, candidate) {
 }
 
 // ---------------------------
-// washout scoring
+// washout quality/scoring
 // ---------------------------
 function resolveWashoutQualityFlags({
   closeInRangePct,
@@ -325,7 +336,6 @@ function computeWashoutScore(state, candidate) {
   const close = n(feat.close);
   const ema8 = n(feat.ema8);
   const ema18 = n(feat.ema18);
-  const ema50 = n(feat.ema50);
   const rsi = n(feat.rsi);
   const adx = n(feat.adx);
   const oiTrend = n(feat.oiTrend);
@@ -440,7 +450,7 @@ function computeWashoutScore(state, candidate) {
 }
 
 // ---------------------------
-// washout detection
+// washout detect
 // ---------------------------
 function detectWashoutCandidate(state) {
   if (!CONFIG.WASHOUT_ENABLED) return null;
@@ -484,7 +494,50 @@ function detectWashoutCandidate(state) {
 }
 
 // ---------------------------
-// idle entry point
+// init setup object helpers
+// ---------------------------
+function buildBaseSetupFields(state) {
+  return {
+    startedBar: metaOf(state).barIndex ?? null,
+    phaseBar: metaOf(state).barIndex ?? null,
+    triggerPrice: null,
+    breakoutLevel: null,
+    retestPrice: null,
+    bouncePrice: null,
+    score: 0,
+    reasons: [],
+    lastTransition: null,
+    setupId: null,
+    retestLow: null,
+    invalidationPrice: null,
+    readySinceBar: null,
+    expiresAtBar: null,
+    bouncePct: null,
+    pullbackPct: null,
+    chasePct: null,
+    qualityFlags: [],
+    cancelReason: null,
+    consumedAtBar: null,
+    bounceBodyPct: null,
+    bounceCloseInRangePct: null,
+    reclaimPctFromTrigger: null,
+    reentryCount: 0,
+    lastEntryMode: null,
+    entryCandidatePrice: null,
+    washoutPeakPrice: null,
+    washoutLow: null,
+    washoutDropPct: null,
+    washoutDetectedBar: null,
+    noBuyUntilBar: null,
+    baseBars: 0,
+    deepestLowBar: null,
+    reclaimPctFromLow: null,
+    setupType: null,
+  };
+}
+
+// ---------------------------
+// idle selector
 // ---------------------------
 function buildIdleCandidate(state) {
   const feat = featOf(state);
@@ -501,34 +554,19 @@ function buildIdleCandidate(state) {
     return {
       ok: true,
       candidate: {
+        ...buildBaseSetupFields(state),
         phase: "washout_monitor",
         startedBar: currentBar,
         phaseBar: currentBar,
         triggerPrice: close,
         breakoutLevel: close,
-        retestPrice: null,
-        bouncePrice: null,
-        score: 0,
         reasons: ["washout detected"],
         lastTransition: "idle_to_washout_monitor",
         setupId: buildSetupId("wash", state),
         retestLow: wash.lowPrice,
         invalidationPrice: wash.lowPrice,
-        readySinceBar: null,
         expiresAtBar: currentBar + CONFIG.WASHOUT_MAX_SETUP_BARS,
-        bouncePct: null,
-        pullbackPct: null,
-        chasePct: null,
-        qualityFlags: [],
-        cancelReason: null,
-        consumedAtBar: null,
-        bounceBodyPct: null,
-        bounceCloseInRangePct: null,
         reclaimPctFromTrigger: null,
-        reentryCount: 0,
-        lastEntryMode: null,
-        entryCandidatePrice: null,
-
         washoutPeakPrice: wash.peakPrice,
         washoutLow: wash.lowPrice,
         washoutDropPct: wash.dropPctFromPeak,
@@ -580,42 +618,18 @@ function buildIdleCandidate(state) {
   return {
     ok: true,
     candidate: {
+      ...buildBaseSetupFields(state),
       phase: "retest_pending",
       startedBar: metaOf(state).barIndex ?? null,
       phaseBar: metaOf(state).barIndex ?? null,
       triggerPrice,
       breakoutLevel: triggerPrice,
-      retestPrice: null,
-      bouncePrice: null,
       score: 0,
       reasons: ["initial breakout detected"],
       lastTransition: "idle_to_retest_pending",
       setupId: buildSetupId("brk", state),
-      retestLow: null,
       invalidationPrice,
-      readySinceBar: null,
-      expiresAtBar: null,
-      bouncePct: null,
-      pullbackPct: null,
-      chasePct: null,
-      qualityFlags: [],
-      cancelReason: null,
-      consumedAtBar: null,
-      bounceBodyPct: null,
-      bounceCloseInRangePct: null,
-      reclaimPctFromTrigger: 0,
-      reentryCount: 0,
-      lastEntryMode: null,
-      entryCandidatePrice: null,
-
-      washoutPeakPrice: null,
-      washoutLow: null,
-      washoutDropPct: null,
-      washoutDetectedBar: null,
-      noBuyUntilBar: null,
-      baseBars: 0,
-      deepestLowBar: null,
-      reclaimPctFromLow: null,
+      reclaimPctFromTrigger: null,
       setupType: "breakout",
     },
     note: `new breakout candidate | impulsePct=${impulsePct.toFixed(3)} adx=${adx.toFixed(2)}`,
@@ -623,7 +637,7 @@ function buildIdleCandidate(state) {
 }
 
 // ---------------------------
-// washout progression
+// washout phases
 // ---------------------------
 function buildWashoutMonitorCandidate(state, current) {
   const feat = featOf(state);
@@ -637,7 +651,7 @@ function buildWashoutMonitorCandidate(state, current) {
   const currentWashoutLow = isNum(current.washoutLow) ? n(current.washoutLow) : low;
   const newWashoutLow = Math.min(currentWashoutLow, low);
 
-  const newLowTolerancePrice =
+  const tolerancePrice =
     currentWashoutLow * (1 - CONFIG.WASHOUT_NO_NEW_LOW_TOL_PCT / 100);
 
   let baseBars = n(current.baseBars, 0);
@@ -646,7 +660,7 @@ function buildWashoutMonitorCandidate(state, current) {
   if (low < currentWashoutLow) {
     baseBars = 0;
     deepestLowBar = barIndex;
-  } else if (low >= newLowTolerancePrice) {
+  } else if (low >= tolerancePrice) {
     baseBars += 1;
   } else {
     baseBars = 0;
@@ -691,6 +705,7 @@ function buildWashoutMonitorCandidate(state, current) {
         cancelReason: "washout_expired",
         reasons: ["washout expired"],
         lastTransition: "washout_monitor_to_idle",
+        setupType: null,
       },
       note: "washout expired",
     };
@@ -727,7 +742,7 @@ function buildWashoutBaseCandidate(state, current) {
   const currentWashoutLow = isNum(current.washoutLow) ? n(current.washoutLow) : low;
   const newWashoutLow = Math.min(currentWashoutLow, low);
 
-  const newLowTolerancePrice =
+  const tolerancePrice =
     currentWashoutLow * (1 - CONFIG.WASHOUT_NO_NEW_LOW_TOL_PCT / 100);
 
   let baseBars = n(current.baseBars, 0);
@@ -736,7 +751,7 @@ function buildWashoutBaseCandidate(state, current) {
   if (low < currentWashoutLow) {
     baseBars = 0;
     deepestLowBar = barIndex;
-  } else if (low >= newLowTolerancePrice) {
+  } else if (low >= tolerancePrice) {
     baseBars += 1;
   } else {
     baseBars = 0;
@@ -791,6 +806,7 @@ function buildWashoutBaseCandidate(state, current) {
         cancelReason: "washout_expired",
         reasons: ["washout expired"],
         lastTransition: "washout_base_to_idle",
+        setupType: null,
       },
       note: "washout expired",
     };
@@ -896,7 +912,7 @@ function buildWashoutReadyCandidate(state, current) {
 }
 
 // ---------------------------
-// breakout progression
+// breakout phases
 // ---------------------------
 function buildRetestPendingCandidate(state, current) {
   const feat = featOf(state);
@@ -940,6 +956,7 @@ function buildRetestPendingCandidate(state, current) {
         cancelReason: "retest_too_deep",
         reasons: [`retest too deep pullbackPct=${pullbackPct.toFixed(3)}`],
         lastTransition: "retest_pending_to_idle",
+        setupType: null,
       },
       note: `retest invalidated | pullbackPct=${pullbackPct.toFixed(3)} > max=${CONFIG.BREAKOUT_RETEST_MAX_PULLBACK_PCT}`,
     };
@@ -999,7 +1016,6 @@ function buildBounceConfirmedCandidate(state, current) {
   };
 
   const scorePack = computeBreakoutScore(state, next);
-
   const scored = {
     ...next,
     score: scorePack.score,
@@ -1030,10 +1046,7 @@ function buildBounceConfirmedCandidate(state, current) {
     readyReasons.push("ready_block_ema_not_bull_aligned");
   }
 
-  if (
-    CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
-    oiTrend <= 0
-  ) {
+  if (CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && oiTrend <= 0) {
     readyReasons.push("ready_block_flow_not_supportive");
   }
 
@@ -1102,7 +1115,7 @@ export function runBreakoutSetup(state) {
   } else if (phase === "consumed") {
     return { patch: null, note: "setup already consumed" };
   } else {
-    return { patch: null, note: `unsupported breakout phase=${phase}` };
+    return { patch: null, note: `unsupported setup phase=${phase}` };
   }
 
   const next = result?.candidate;
@@ -1115,39 +1128,90 @@ export function runBreakoutSetup(state) {
       phase: next.phase ?? current.phase ?? "idle",
       startedBar: next.startedBar ?? current.startedBar ?? null,
       phaseBar: next.phaseBar ?? metaOf(state).barIndex ?? current.phaseBar ?? null,
-      triggerPrice: isNum(next.triggerPrice) ? n(next.triggerPrice) : current.triggerPrice ?? null,
-      breakoutLevel: isNum(next.breakoutLevel) ? n(next.breakoutLevel) : current.breakoutLevel ?? null,
-      retestPrice: isNum(next.retestPrice) ? n(next.retestPrice) : next.retestPrice ?? null,
-      bouncePrice: isNum(next.bouncePrice) ? n(next.bouncePrice) : next.bouncePrice ?? null,
+      triggerPrice:
+        next.triggerPrice !== undefined && next.triggerPrice !== null
+          ? n(next.triggerPrice)
+          : null,
+      breakoutLevel:
+        next.breakoutLevel !== undefined && next.breakoutLevel !== null
+          ? n(next.breakoutLevel)
+          : null,
+      retestPrice:
+        next.retestPrice !== undefined && next.retestPrice !== null
+          ? n(next.retestPrice)
+          : null,
+      bouncePrice:
+        next.bouncePrice !== undefined && next.bouncePrice !== null
+          ? n(next.bouncePrice)
+          : null,
       score: isNum(next.score) ? n(next.score) : 0,
       reasons: Array.isArray(next.reasons) ? next.reasons : [],
       lastTransition: next.lastTransition ?? null,
       setupId: next.setupId ?? current.setupId ?? null,
-      retestLow: isNum(next.retestLow) ? n(next.retestLow) : next.retestLow ?? null,
-      invalidationPrice: isNum(next.invalidationPrice) ? n(next.invalidationPrice) : next.invalidationPrice ?? null,
+      retestLow:
+        next.retestLow !== undefined && next.retestLow !== null
+          ? n(next.retestLow)
+          : null,
+      invalidationPrice:
+        next.invalidationPrice !== undefined && next.invalidationPrice !== null
+          ? n(next.invalidationPrice)
+          : null,
       readySinceBar: next.readySinceBar ?? null,
       expiresAtBar: next.expiresAtBar ?? null,
-      bouncePct: isNum(next.bouncePct) ? n(next.bouncePct) : next.bouncePct ?? null,
-      pullbackPct: isNum(next.pullbackPct) ? n(next.pullbackPct) : next.pullbackPct ?? null,
-      chasePct: isNum(next.chasePct) ? n(next.chasePct) : next.chasePct ?? null,
+      bouncePct:
+        next.bouncePct !== undefined && next.bouncePct !== null
+          ? n(next.bouncePct)
+          : null,
+      pullbackPct:
+        next.pullbackPct !== undefined && next.pullbackPct !== null
+          ? n(next.pullbackPct)
+          : null,
+      chasePct:
+        next.chasePct !== undefined && next.chasePct !== null
+          ? n(next.chasePct)
+          : null,
       qualityFlags: Array.isArray(next.qualityFlags) ? next.qualityFlags : [],
       cancelReason: next.cancelReason ?? null,
       consumedAtBar: next.consumedAtBar ?? null,
-      bounceBodyPct: isNum(next.bounceBodyPct) ? n(next.bounceBodyPct) : next.bounceBodyPct ?? null,
-      bounceCloseInRangePct: isNum(next.bounceCloseInRangePct) ? n(next.bounceCloseInRangePct) : next.bounceCloseInRangePct ?? null,
-      reclaimPctFromTrigger: isNum(next.reclaimPctFromTrigger) ? n(next.reclaimPctFromTrigger) : next.reclaimPctFromTrigger ?? null,
+      bounceBodyPct:
+        next.bounceBodyPct !== undefined && next.bounceBodyPct !== null
+          ? n(next.bounceBodyPct)
+          : null,
+      bounceCloseInRangePct:
+        next.bounceCloseInRangePct !== undefined && next.bounceCloseInRangePct !== null
+          ? n(next.bounceCloseInRangePct)
+          : null,
+      reclaimPctFromTrigger:
+        next.reclaimPctFromTrigger !== undefined && next.reclaimPctFromTrigger !== null
+          ? n(next.reclaimPctFromTrigger)
+          : null,
       reentryCount: isNum(next.reentryCount) ? n(next.reentryCount) : current.reentryCount ?? 0,
       lastEntryMode: next.lastEntryMode ?? current.lastEntryMode ?? null,
-      entryCandidatePrice: isNum(next.entryCandidatePrice) ? n(next.entryCandidatePrice) : next.entryCandidatePrice ?? null,
+      entryCandidatePrice:
+        next.entryCandidatePrice !== undefined && next.entryCandidatePrice !== null
+          ? n(next.entryCandidatePrice)
+          : null,
 
-      washoutPeakPrice: isNum(next.washoutPeakPrice) ? n(next.washoutPeakPrice) : next.washoutPeakPrice ?? null,
-      washoutLow: isNum(next.washoutLow) ? n(next.washoutLow) : next.washoutLow ?? null,
-      washoutDropPct: isNum(next.washoutDropPct) ? n(next.washoutDropPct) : next.washoutDropPct ?? null,
+      washoutPeakPrice:
+        next.washoutPeakPrice !== undefined && next.washoutPeakPrice !== null
+          ? n(next.washoutPeakPrice)
+          : null,
+      washoutLow:
+        next.washoutLow !== undefined && next.washoutLow !== null
+          ? n(next.washoutLow)
+          : null,
+      washoutDropPct:
+        next.washoutDropPct !== undefined && next.washoutDropPct !== null
+          ? n(next.washoutDropPct)
+          : null,
       washoutDetectedBar: next.washoutDetectedBar ?? null,
       noBuyUntilBar: next.noBuyUntilBar ?? null,
       baseBars: isNum(next.baseBars) ? n(next.baseBars) : 0,
       deepestLowBar: next.deepestLowBar ?? null,
-      reclaimPctFromLow: isNum(next.reclaimPctFromLow) ? n(next.reclaimPctFromLow) : next.reclaimPctFromLow ?? null,
+      reclaimPctFromLow:
+        next.reclaimPctFromLow !== undefined && next.reclaimPctFromLow !== null
+          ? n(next.reclaimPctFromLow)
+          : null,
       setupType: next.setupType ?? current.setupType ?? null,
     },
     note: result.note ?? "setup updated",
