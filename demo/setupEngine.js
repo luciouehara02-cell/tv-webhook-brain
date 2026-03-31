@@ -1,21 +1,14 @@
+import { CONFIG } from "./config.js";
+
 /**
  * setupEngine.js
- * Brain Phase 5 v5.5
+ * Brain Phase 5 v5.6
  *
- * Contract for current brain.js:
- *   const breakoutResult = runBreakoutSetup(getState());
- *   breakoutResult => { patch, note }
- *
- * v5.5:
- * - keep strict READY gating
- * - true reclaim required
- * - remove positive score for shallow_pullback_ok
- * - prevent weak/strong contradictory quality stacking
- * - add early-trend-compatible bounce scoring so good continuation setups
- *   can still progress even when candle body is not ideal
+ * Keeps breakout flow
+ * Adds 3m washout logic with delayed-entry filter
  */
 
-export const BRAIN_VERSION = "Brain Phase 5 v5.5";
+export const BRAIN_VERSION = "Brain Phase 5 v5.6";
 
 // ---------------------------
 // helpers
@@ -34,22 +27,12 @@ function pctFrom(a, b) {
   return ((a - b) / b) * 100;
 }
 
-function boolEnv(name, def = false) {
-  const raw = String(process.env[name] ?? (def ? "1" : "0")).trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-}
-
-function numEnv(name, def) {
-  const x = Number(process.env[name]);
-  return Number.isFinite(x) ? x : def;
-}
-
 function addUnique(arr, item) {
-  if (!arr.includes(item)) arr.push(item);
+  if (item && !arr.includes(item)) arr.push(item);
 }
 
 function removeByPrefix(arr, prefix) {
-  return arr.filter(x => !x.startsWith(prefix));
+  return arr.filter((x) => !x.startsWith(prefix));
 }
 
 function setFamilyFlag(arr, family, value) {
@@ -62,7 +45,7 @@ function phaseOf(state) {
   return state?.setups?.breakout?.phase ?? "idle";
 }
 
-function breakoutOf(state) {
+function setupOf(state) {
   return state?.setups?.breakout ?? {};
 }
 
@@ -78,6 +61,10 @@ function metaOf(state) {
   return state?.meta ?? {};
 }
 
+function historyOf(state) {
+  return Array.isArray(state?.history?.bars) ? state.history.bars : [];
+}
+
 function isTrendRegime(regime) {
   return String(regime || "").toLowerCase() === "trend";
 }
@@ -86,59 +73,27 @@ function isBullAligned(feat) {
   return n(feat.ema8) > n(feat.ema18) && n(feat.ema18) >= n(feat.ema50);
 }
 
-// ---------------------------
-// config
-// ---------------------------
-const DEBUG = boolEnv("DEBUG", true);
+function computeCandleMetrics(open, high, low, close) {
+  const range = Math.max(n(high) - n(low), 0);
+  const bodyPct =
+    Number.isFinite(open) && open !== 0 && Number.isFinite(close)
+      ? (Math.abs(close - open) / open) * 100
+      : 0;
 
-const READY_RECLAIM_MIN_PCT = numEnv("READY_RECLAIM_MIN_PCT", 0.05);
-const EARLY_ENTRY_RECLAIM_MIN_PCT = numEnv("EARLY_ENTRY_RECLAIM_MIN_PCT", 0.05);
+  const closeInRangePct =
+    range > 0 ? ((n(close) - n(low)) / range) * 100 : close >= open ? 100 : 0;
 
-const BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE = boolEnv(
-  "BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE",
-  true
-);
+  return { range, bodyPct, closeInRangePct };
+}
 
-// for READY phase only
-const READY_BLOCK_ON_NEGATIVE_OI = boolEnv("READY_BLOCK_ON_NEGATIVE_OI", true);
-
-// weaker handling for early trend path
-const EARLY_ENTRY_ALLOW_NEGATIVE_OI = boolEnv("EARLY_ENTRY_ALLOW_NEGATIVE_OI", true);
-
-const BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT = numEnv(
-  "BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT",
-  0.00
-);
-
-const READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT = numEnv(
-  "READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT",
-  60
-);
-
-const READY_MIN_BOUNCE_BODY_PCT = numEnv(
-  "READY_MIN_BOUNCE_BODY_PCT",
-  0.08
-);
-
-const BREAKOUT_MIN_IMPULSE_PCT = numEnv("BREAKOUT_MIN_IMPULSE_PCT", 0.18);
-const BREAKOUT_MIN_ADX = numEnv("BREAKOUT_MIN_ADX", 20);
-const BREAKOUT_RETEST_MAX_PULLBACK_PCT = numEnv("BREAKOUT_RETEST_MAX_PULLBACK_PCT", 1.20);
-const BREAKOUT_BOUNCE_MIN_PCT = numEnv("BREAKOUT_BOUNCE_MIN_PCT", 0.03);
-
-const SCORE_READY_LONG_MIN = numEnv("SCORE_READY_LONG_MIN", 6);
-const SCORE_EARLY_TREND_LONG_MIN = numEnv("SCORE_EARLY_TREND_LONG_MIN", 5);
-
-// ---------------------------
-// logging
-// ---------------------------
-function dlog(...args) {
-  if (DEBUG) console.log(...args);
+function buildSetupId(prefix, state) {
+  return `${prefix}-${state.market?.symbol ?? "na"}-${state.market?.time ?? Date.now()}`;
 }
 
 // ---------------------------
-// quality
+// breakout scoring
 // ---------------------------
-function resolveQualityFlags({
+function resolveBreakoutQualityFlags({
   bounceCloseInRangePct,
   bounceBodyPct,
   reclaimPctFromTrigger,
@@ -148,7 +103,7 @@ function resolveQualityFlags({
 
   if (bounceCloseInRangePct >= 75) {
     flags = setFamilyFlag(flags, "close_quality", "strong");
-  } else if (bounceCloseInRangePct >= READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
+  } else if (bounceCloseInRangePct >= CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT) {
     flags = setFamilyFlag(flags, "close_quality", "ok");
   } else {
     flags = setFamilyFlag(flags, "close_quality", "weak");
@@ -156,7 +111,7 @@ function resolveQualityFlags({
 
   if (bounceBodyPct >= 0.15) {
     flags = setFamilyFlag(flags, "body_quality", "strong");
-  } else if (bounceBodyPct >= READY_MIN_BOUNCE_BODY_PCT) {
+  } else if (bounceBodyPct >= CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT) {
     flags = setFamilyFlag(flags, "body_quality", "ok");
   } else {
     flags = setFamilyFlag(flags, "body_quality", "weak");
@@ -164,7 +119,7 @@ function resolveQualityFlags({
 
   if (reclaimPctFromTrigger >= 0.10) {
     flags = setFamilyFlag(flags, "reclaim_quality", "strong");
-  } else if (reclaimPctFromTrigger >= READY_RECLAIM_MIN_PCT) {
+  } else if (reclaimPctFromTrigger >= CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT) {
     flags = setFamilyFlag(flags, "reclaim_quality", "ok");
   } else {
     flags = setFamilyFlag(flags, "reclaim_quality", "weak");
@@ -187,15 +142,12 @@ function hasFlag(flags, exact) {
   return Array.isArray(flags) && flags.includes(exact);
 }
 
-// ---------------------------
-// scoring
-// ---------------------------
-function computeScore(state, candidate) {
+function computeBreakoutScore(state, candidate) {
   const feat = featOf(state);
   const reasons = [];
   let score = 0;
 
-  const regime = String(ctxOf(state).regime ?? feat.regime ?? "range");
+  const regime = String(ctxOf(state).regime ?? "range");
   const adx = n(feat.adx);
   const atrPct = n(feat.atrPct);
   const ema8 = n(feat.ema8);
@@ -227,7 +179,7 @@ function computeScore(state, candidate) {
   if (adx >= 25) {
     score += 2;
     addUnique(reasons, "adx_strong");
-  } else if (adx >= BREAKOUT_MIN_ADX) {
+  } else if (adx >= CONFIG.BREAKOUT_MIN_ADX) {
     score += 1;
     addUnique(reasons, "adx_ok");
   } else {
@@ -243,16 +195,12 @@ function computeScore(state, candidate) {
     addUnique(reasons, "atr_too_small");
   }
 
-  // OI less absolute in v5.5; still meaningful but not always fatal
   if (oiTrend > 0) {
     score += 1;
     addUnique(reasons, "oi_supportive");
   } else if (oiTrend < 0) {
     score -= 1;
     addUnique(reasons, "oi_negative");
-  } else {
-    score -= 0;
-    addUnique(reasons, "oi_flat");
   }
 
   if (cvdTrend > 0) {
@@ -282,7 +230,6 @@ function computeScore(state, candidate) {
   } else if (hasFlag(flags, "body_quality:ok")) {
     addUnique(reasons, "body_quality_ok");
   } else {
-    // softer than v5.4 so early trend continuation is not over-killed
     score -= 1;
     addUnique(reasons, "body_quality_weak");
   }
@@ -298,7 +245,6 @@ function computeScore(state, candidate) {
     addUnique(reasons, "reclaim_quality_weak");
   }
 
-  // informational only
   if (candidate.shallowPullbackOk) {
     addUnique(reasons, "shallow_pullback_ok");
   }
@@ -308,20 +254,237 @@ function computeScore(state, candidate) {
     addUnique(reasons, "close_below_trigger");
   }
 
-  if (n(candidate.reclaimPctFromTrigger) < READY_RECLAIM_MIN_PCT) {
+  if (n(candidate.reclaimPctFromTrigger) < CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT) {
     score -= 2;
     addUnique(reasons, "reclaim_below_min");
   }
 
-  // hard caps remain for truly weak reclaim / below-trigger structure
   if (close < n(candidate.triggerPrice)) score = Math.min(score, 5);
-  if (n(candidate.reclaimPctFromTrigger) < READY_RECLAIM_MIN_PCT) score = Math.min(score, 5);
+  if (n(candidate.reclaimPctFromTrigger) < CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT) {
+    score = Math.min(score, 5);
+  }
 
   return { score, reasons };
 }
 
 // ---------------------------
-// candidate building
+// washout scoring
+// ---------------------------
+function resolveWashoutQualityFlags({
+  closeInRangePct,
+  bodyPct,
+  reclaimPctFromLow,
+  baseBars,
+  deepWashout,
+}) {
+  let flags = [];
+
+  if (closeInRangePct >= 75) {
+    flags = setFamilyFlag(flags, "wash_close_quality", "strong");
+  } else if (closeInRangePct >= CONFIG.WASHOUT_MIN_CLOSE_IN_RANGE_PCT) {
+    flags = setFamilyFlag(flags, "wash_close_quality", "ok");
+  } else {
+    flags = setFamilyFlag(flags, "wash_close_quality", "weak");
+  }
+
+  if (bodyPct >= 0.18) {
+    flags = setFamilyFlag(flags, "wash_body_quality", "strong");
+  } else if (bodyPct >= CONFIG.WASHOUT_MIN_BOUNCE_BODY_PCT) {
+    flags = setFamilyFlag(flags, "wash_body_quality", "ok");
+  } else {
+    flags = setFamilyFlag(flags, "wash_body_quality", "weak");
+  }
+
+  const minReclaim = deepWashout
+    ? CONFIG.WASHOUT_MIN_RECLAIM_FROM_LOW_PCT_DEEP
+    : CONFIG.WASHOUT_MIN_RECLAIM_FROM_LOW_PCT;
+
+  if (reclaimPctFromLow >= minReclaim + 0.35) {
+    flags = setFamilyFlag(flags, "wash_reclaim_quality", "strong");
+  } else if (reclaimPctFromLow >= minReclaim) {
+    flags = setFamilyFlag(flags, "wash_reclaim_quality", "ok");
+  } else {
+    flags = setFamilyFlag(flags, "wash_reclaim_quality", "weak");
+  }
+
+  if (baseBars >= CONFIG.WASHOUT_MIN_BASE_BARS + 2) {
+    flags = setFamilyFlag(flags, "wash_base_quality", "strong");
+  } else if (baseBars >= CONFIG.WASHOUT_MIN_BASE_BARS) {
+    flags = setFamilyFlag(flags, "wash_base_quality", "ok");
+  } else {
+    flags = setFamilyFlag(flags, "wash_base_quality", "weak");
+  }
+
+  return flags;
+}
+
+function computeWashoutScore(state, candidate) {
+  const feat = featOf(state);
+  const ctx = ctxOf(state);
+
+  const close = n(feat.close);
+  const ema8 = n(feat.ema8);
+  const ema18 = n(feat.ema18);
+  const ema50 = n(feat.ema50);
+  const rsi = n(feat.rsi);
+  const adx = n(feat.adx);
+  const oiTrend = n(feat.oiTrend);
+  const cvdTrend = n(feat.cvdTrend);
+
+  let score = 0;
+  const reasons = [];
+
+  if (candidate.washoutDropPct >= CONFIG.WASHOUT_DEEP_DROP_PCT_MIN) {
+    score += 3;
+    addUnique(reasons, "deep_washout");
+  } else if (candidate.washoutDropPct >= CONFIG.WASHOUT_DROP_PCT_MIN) {
+    score += 2;
+    addUnique(reasons, "valid_washout");
+  }
+
+  if (candidate.baseBars >= CONFIG.WASHOUT_MIN_BASE_BARS + 2) {
+    score += 2;
+    addUnique(reasons, "base_strong");
+  } else if (candidate.baseBars >= CONFIG.WASHOUT_MIN_BASE_BARS) {
+    score += 1;
+    addUnique(reasons, "base_ok");
+  } else {
+    score -= 2;
+    addUnique(reasons, "base_weak");
+  }
+
+  if (close > ema8) {
+    score += 2;
+    addUnique(reasons, "close_above_ema8");
+  } else {
+    score -= 1;
+    addUnique(reasons, "close_below_ema8");
+  }
+
+  if (ema8 > ema18) {
+    score += 2;
+    addUnique(reasons, "ema8_above_ema18");
+  } else if (close > ema18) {
+    score += 1;
+    addUnique(reasons, "close_above_ema18");
+  }
+
+  if (cvdTrend > 0) {
+    score += 1;
+    addUnique(reasons, "cvd_supportive");
+  } else if (cvdTrend < 0) {
+    score -= 1;
+    addUnique(reasons, "cvd_negative");
+  }
+
+  if (oiTrend > 0) {
+    score += 1;
+    addUnique(reasons, "oi_supportive");
+  } else if (oiTrend < 0) {
+    score -= 1;
+    addUnique(reasons, "oi_negative");
+  }
+
+  if (adx >= 18) {
+    score += 1;
+    addUnique(reasons, "adx_ok");
+  }
+
+  if (rsi >= 45 && rsi <= 62) {
+    score += 1;
+    addUnique(reasons, "rsi_recovery_zone");
+  }
+
+  const flags = candidate.qualityFlags || [];
+
+  if (hasFlag(flags, "wash_close_quality:strong")) {
+    score += 2;
+    addUnique(reasons, "wash_close_quality_strong");
+  } else if (hasFlag(flags, "wash_close_quality:ok")) {
+    score += 1;
+    addUnique(reasons, "wash_close_quality_ok");
+  } else {
+    score -= 2;
+    addUnique(reasons, "wash_close_quality_weak");
+  }
+
+  if (hasFlag(flags, "wash_body_quality:strong")) {
+    score += 1;
+    addUnique(reasons, "wash_body_quality_strong");
+  } else if (hasFlag(flags, "wash_body_quality:ok")) {
+    addUnique(reasons, "wash_body_quality_ok");
+  } else {
+    score -= 1;
+    addUnique(reasons, "wash_body_quality_weak");
+  }
+
+  if (hasFlag(flags, "wash_reclaim_quality:strong")) {
+    score += 2;
+    addUnique(reasons, "wash_reclaim_quality_strong");
+  } else if (hasFlag(flags, "wash_reclaim_quality:ok")) {
+    score += 1;
+    addUnique(reasons, "wash_reclaim_quality_ok");
+  } else {
+    score -= 3;
+    addUnique(reasons, "wash_reclaim_quality_weak");
+  }
+
+  if (String(ctx.regime) === "trend") {
+    score += 1;
+    addUnique(reasons, "trend_context");
+  } else if (String(ctx.regime) === "range") {
+    addUnique(reasons, "range_context");
+  }
+
+  return { score, reasons };
+}
+
+// ---------------------------
+// washout detection
+// ---------------------------
+function detectWashoutCandidate(state) {
+  if (!CONFIG.WASHOUT_ENABLED) return null;
+
+  const bars = historyOf(state);
+  const feat = featOf(state);
+
+  if (!bars.length) return null;
+
+  const lookback = bars.slice(-CONFIG.WASHOUT_LOOKBACK_BARS);
+  if (lookback.length < 4) return null;
+
+  let peakPrice = -Infinity;
+  for (const b of lookback) {
+    peakPrice = Math.max(peakPrice, n(b.high, n(b.close, -Infinity)));
+  }
+
+  const currentLow = n(feat.low, n(feat.close));
+  const currentClose = n(feat.close);
+  const currentRsi = n(feat.rsi, 50);
+  const ema18 = n(feat.ema18);
+
+  const dropPctFromPeak = pctFrom(peakPrice, currentLow);
+
+  if (dropPctFromPeak < CONFIG.WASHOUT_DROP_PCT_MIN) return null;
+
+  if (
+    CONFIG.WASHOUT_REQUIRE_CLOSE_BELOW_EMA18_ON_DETECT &&
+    !(currentClose < ema18)
+  ) {
+    return null;
+  }
+
+  if (currentRsi > CONFIG.WASHOUT_RSI_MAX_ON_DETECT) return null;
+
+  return {
+    peakPrice,
+    lowPrice: currentLow,
+    dropPctFromPeak,
+  };
+}
+
+// ---------------------------
+// idle entry point
 // ---------------------------
 function buildIdleCandidate(state) {
   const feat = featOf(state);
@@ -330,20 +493,81 @@ function buildIdleCandidate(state) {
   const adx = n(feat.adx);
   const ema18 = n(feat.ema18);
 
+  const wash = detectWashoutCandidate(state);
+
+  if (wash) {
+    const currentBar = metaOf(state).barIndex ?? null;
+
+    return {
+      ok: true,
+      candidate: {
+        phase: "washout_monitor",
+        startedBar: currentBar,
+        phaseBar: currentBar,
+        triggerPrice: close,
+        breakoutLevel: close,
+        retestPrice: null,
+        bouncePrice: null,
+        score: 0,
+        reasons: ["washout detected"],
+        lastTransition: "idle_to_washout_monitor",
+        setupId: buildSetupId("wash", state),
+        retestLow: wash.lowPrice,
+        invalidationPrice: wash.lowPrice,
+        readySinceBar: null,
+        expiresAtBar: currentBar + CONFIG.WASHOUT_MAX_SETUP_BARS,
+        bouncePct: null,
+        pullbackPct: null,
+        chasePct: null,
+        qualityFlags: [],
+        cancelReason: null,
+        consumedAtBar: null,
+        bounceBodyPct: null,
+        bounceCloseInRangePct: null,
+        reclaimPctFromTrigger: null,
+        reentryCount: 0,
+        lastEntryMode: null,
+        entryCandidatePrice: null,
+
+        washoutPeakPrice: wash.peakPrice,
+        washoutLow: wash.lowPrice,
+        washoutDropPct: wash.dropPctFromPeak,
+        washoutDetectedBar: currentBar,
+        noBuyUntilBar: currentBar + CONFIG.WASHOUT_NO_BUY_BARS_AFTER_DETECT,
+        baseBars: 0,
+        deepestLowBar: currentBar,
+        reclaimPctFromLow: 0,
+        setupType: "washout",
+      },
+      note: `washout detected | dropPct=${wash.dropPctFromPeak.toFixed(3)} peak=${wash.peakPrice.toFixed(4)} low=${wash.lowPrice.toFixed(4)}`,
+    };
+  }
+
+  if (!CONFIG.BREAKOUT_ENABLED) {
+    return { ok: false, note: "idle | breakout disabled" };
+  }
+
   const bullAligned = isBullAligned(feat);
   const impulsePct = pctFrom(close, ema18);
-  const regime = String(ctx.regime ?? feat.regime ?? "range");
+  const regime = String(ctx.regime ?? "range");
 
   const reasons = [];
 
   if (!isTrendRegime(regime)) reasons.push("regime=range");
   if (!bullAligned) reasons.push("bullAligned=false");
-  if (impulsePct < BREAKOUT_MIN_IMPULSE_PCT) {
-    reasons.push(`impulsePct=${impulsePct.toFixed(3)} < min=${BREAKOUT_MIN_IMPULSE_PCT}`);
+  if (impulsePct < CONFIG.BREAKOUT_MIN_IMPULSE_PCT) {
+    reasons.push(`impulsePct=${impulsePct.toFixed(3)} < min=${CONFIG.BREAKOUT_MIN_IMPULSE_PCT}`);
   }
-  if (adx < BREAKOUT_MIN_ADX) reasons.push(`adx=${adx.toFixed(2)} < min=${BREAKOUT_MIN_ADX}`);
+  if (adx < CONFIG.BREAKOUT_MIN_ADX) {
+    reasons.push(`adx=${adx.toFixed(2)} < min=${CONFIG.BREAKOUT_MIN_ADX}`);
+  }
 
-  if (!isTrendRegime(regime) || !bullAligned || impulsePct < BREAKOUT_MIN_IMPULSE_PCT || adx < BREAKOUT_MIN_ADX) {
+  if (
+    !isTrendRegime(regime) ||
+    !bullAligned ||
+    impulsePct < CONFIG.BREAKOUT_MIN_IMPULSE_PCT ||
+    adx < CONFIG.BREAKOUT_MIN_ADX
+  ) {
     return {
       ok: false,
       note: `idle no breakout | ${reasons.join(", ") || "conditions not met"}`,
@@ -366,7 +590,7 @@ function buildIdleCandidate(state) {
       score: 0,
       reasons: ["initial breakout detected"],
       lastTransition: "idle_to_retest_pending",
-      setupId: `brk-${state.market?.symbol ?? "na"}-${state.market?.time ?? Date.now()}`,
+      setupId: buildSetupId("brk", state),
       retestLow: null,
       invalidationPrice,
       readySinceBar: null,
@@ -383,12 +607,297 @@ function buildIdleCandidate(state) {
       reentryCount: 0,
       lastEntryMode: null,
       entryCandidatePrice: null,
-      shallowPullbackOk: false,
+
+      washoutPeakPrice: null,
+      washoutLow: null,
+      washoutDropPct: null,
+      washoutDetectedBar: null,
+      noBuyUntilBar: null,
+      baseBars: 0,
+      deepestLowBar: null,
+      reclaimPctFromLow: null,
+      setupType: "breakout",
     },
-    note: `new breakout candidate | impulsePct=${impulsePct.toFixed(3)} adx=${adx.toFixed(2)}`
+    note: `new breakout candidate | impulsePct=${impulsePct.toFixed(3)} adx=${adx.toFixed(2)}`,
   };
 }
 
+// ---------------------------
+// washout progression
+// ---------------------------
+function buildWashoutMonitorCandidate(state, current) {
+  const feat = featOf(state);
+  const barIndex = metaOf(state).barIndex ?? 0;
+
+  const low = n(feat.low, n(feat.close));
+  const close = n(feat.close);
+  const open = n(feat.open, close);
+  const high = n(feat.high, close);
+
+  const currentWashoutLow = isNum(current.washoutLow) ? n(current.washoutLow) : low;
+  const newWashoutLow = Math.min(currentWashoutLow, low);
+
+  const newLowTolerancePrice =
+    currentWashoutLow * (1 - CONFIG.WASHOUT_NO_NEW_LOW_TOL_PCT / 100);
+
+  let baseBars = n(current.baseBars, 0);
+  let deepestLowBar = current.deepestLowBar ?? current.washoutDetectedBar ?? barIndex;
+
+  if (low < currentWashoutLow) {
+    baseBars = 0;
+    deepestLowBar = barIndex;
+  } else if (low >= newLowTolerancePrice) {
+    baseBars += 1;
+  } else {
+    baseBars = 0;
+  }
+
+  const reclaimPctFromLow = pctFrom(close, newWashoutLow);
+  const { bodyPct, closeInRangePct } = computeCandleMetrics(open, high, low, close);
+
+  const deepWashout =
+    n(current.washoutDropPct, 0) >= CONFIG.WASHOUT_DEEP_DROP_PCT_MIN;
+
+  const qualityFlags = resolveWashoutQualityFlags({
+    closeInRangePct,
+    bodyPct,
+    reclaimPctFromLow,
+    baseBars,
+    deepWashout,
+  });
+
+  const next = {
+    ...current,
+    phaseBar: barIndex,
+    retestLow: newWashoutLow,
+    invalidationPrice: newWashoutLow,
+    washoutLow: newWashoutLow,
+    baseBars,
+    deepestLowBar,
+    reclaimPctFromLow,
+    bounceBodyPct: bodyPct,
+    bounceCloseInRangePct: closeInRangePct,
+    qualityFlags,
+    entryCandidatePrice: close,
+    reasons: ["washout monitoring"],
+    lastTransition: "washout_monitor_hold",
+  };
+
+  if (barIndex > n(current.expiresAtBar, barIndex + 1)) {
+    return {
+      candidate: {
+        ...next,
+        phase: "idle",
+        cancelReason: "washout_expired",
+        reasons: ["washout expired"],
+        lastTransition: "washout_monitor_to_idle",
+      },
+      note: "washout expired",
+    };
+  }
+
+  if (barIndex <= n(current.noBuyUntilBar, barIndex)) {
+    return {
+      candidate: next,
+      note: `washout delay active | noBuyUntilBar=${current.noBuyUntilBar}`,
+    };
+  }
+
+  return {
+    candidate: {
+      ...next,
+      phase: "washout_base",
+      reasons: ["washout base forming"],
+      lastTransition: "washout_monitor_to_base",
+    },
+    note: `washout delay complete -> base forming | baseBars=${baseBars}`,
+  };
+}
+
+function buildWashoutBaseCandidate(state, current) {
+  const feat = featOf(state);
+  const barIndex = metaOf(state).barIndex ?? 0;
+
+  const low = n(feat.low, n(feat.close));
+  const close = n(feat.close);
+  const open = n(feat.open, close);
+  const high = n(feat.high, close);
+  const ema8 = n(feat.ema8);
+
+  const currentWashoutLow = isNum(current.washoutLow) ? n(current.washoutLow) : low;
+  const newWashoutLow = Math.min(currentWashoutLow, low);
+
+  const newLowTolerancePrice =
+    currentWashoutLow * (1 - CONFIG.WASHOUT_NO_NEW_LOW_TOL_PCT / 100);
+
+  let baseBars = n(current.baseBars, 0);
+  let deepestLowBar = current.deepestLowBar ?? current.washoutDetectedBar ?? barIndex;
+
+  if (low < currentWashoutLow) {
+    baseBars = 0;
+    deepestLowBar = barIndex;
+  } else if (low >= newLowTolerancePrice) {
+    baseBars += 1;
+  } else {
+    baseBars = 0;
+  }
+
+  const reclaimPctFromLow = pctFrom(close, newWashoutLow);
+  const { bodyPct, closeInRangePct } = computeCandleMetrics(open, high, low, close);
+
+  const deepWashout =
+    n(current.washoutDropPct, 0) >= CONFIG.WASHOUT_DEEP_DROP_PCT_MIN;
+
+  const qualityFlags = resolveWashoutQualityFlags({
+    closeInRangePct,
+    bodyPct,
+    reclaimPctFromLow,
+    baseBars,
+    deepWashout,
+  });
+
+  const minReclaim = deepWashout
+    ? CONFIG.WASHOUT_MIN_RECLAIM_FROM_LOW_PCT_DEEP
+    : CONFIG.WASHOUT_MIN_RECLAIM_FROM_LOW_PCT;
+
+  const reclaimAboveEma8Ok = !CONFIG.WASHOUT_REQUIRE_RECLAIM_ABOVE_EMA8 || close > ema8;
+  const closeInRangeOk = closeInRangePct >= CONFIG.WASHOUT_MIN_CLOSE_IN_RANGE_PCT;
+  const bodyOk = bodyPct >= CONFIG.WASHOUT_MIN_BOUNCE_BODY_PCT;
+  const reclaimOk = reclaimPctFromLow >= minReclaim;
+  const baseOk = baseBars >= CONFIG.WASHOUT_MIN_BASE_BARS;
+
+  const next = {
+    ...current,
+    phaseBar: barIndex,
+    retestLow: newWashoutLow,
+    invalidationPrice: newWashoutLow,
+    washoutLow: newWashoutLow,
+    baseBars,
+    deepestLowBar,
+    reclaimPctFromLow,
+    bounceBodyPct: bodyPct,
+    bounceCloseInRangePct: closeInRangePct,
+    qualityFlags,
+    entryCandidatePrice: close,
+    reasons: ["washout base forming"],
+    lastTransition: "washout_base_hold",
+  };
+
+  if (barIndex > n(current.expiresAtBar, barIndex + 1)) {
+    return {
+      candidate: {
+        ...next,
+        phase: "idle",
+        cancelReason: "washout_expired",
+        reasons: ["washout expired"],
+        lastTransition: "washout_base_to_idle",
+      },
+      note: "washout expired",
+    };
+  }
+
+  if (low < currentWashoutLow) {
+    return {
+      candidate: {
+        ...next,
+        phase: "washout_monitor",
+        reasons: ["new washout low -> monitoring reset"],
+        lastTransition: "washout_base_to_monitor",
+      },
+      note: "new low after base -> back to monitor",
+    };
+  }
+
+  if (baseOk && reclaimAboveEma8Ok && closeInRangeOk && bodyOk && reclaimOk) {
+    const scored = computeWashoutScore(state, next);
+
+    return {
+      candidate: {
+        ...next,
+        phase: "washout_ready",
+        score: scored.score,
+        reasons: scored.reasons,
+        readySinceBar: barIndex,
+        lastTransition: "washout_base_to_ready",
+        setupType: "washout",
+      },
+      note: `washout ready | baseBars=${baseBars} reclaimPctFromLow=${reclaimPctFromLow.toFixed(3)}`,
+    };
+  }
+
+  return {
+    candidate: next,
+    note: `washout base waiting | baseBars=${baseBars} reclaimPctFromLow=${reclaimPctFromLow.toFixed(3)}`,
+  };
+}
+
+function buildWashoutReadyCandidate(state, current) {
+  const feat = featOf(state);
+  const barIndex = metaOf(state).barIndex ?? 0;
+
+  const low = n(feat.low, n(feat.close));
+  const close = n(feat.close);
+  const open = n(feat.open, close);
+  const high = n(feat.high, close);
+
+  const washoutLow = isNum(current.washoutLow) ? n(current.washoutLow) : low;
+  const reclaimPctFromLow = pctFrom(close, washoutLow);
+  const { bodyPct, closeInRangePct } = computeCandleMetrics(open, high, low, close);
+
+  const deepWashout =
+    n(current.washoutDropPct, 0) >= CONFIG.WASHOUT_DEEP_DROP_PCT_MIN;
+
+  const qualityFlags = resolveWashoutQualityFlags({
+    closeInRangePct,
+    bodyPct,
+    reclaimPctFromLow,
+    baseBars: n(current.baseBars, 0),
+    deepWashout,
+  });
+
+  const next = {
+    ...current,
+    phaseBar: barIndex,
+    bounceBodyPct: bodyPct,
+    bounceCloseInRangePct: closeInRangePct,
+    reclaimPctFromLow,
+    qualityFlags,
+    entryCandidatePrice: close,
+    setupType: "washout",
+  };
+
+  if (low < washoutLow * (1 - CONFIG.WASHOUT_NO_NEW_LOW_TOL_PCT / 100)) {
+    return {
+      candidate: {
+        ...next,
+        phase: "washout_monitor",
+        washoutLow: low,
+        baseBars: 0,
+        readySinceBar: null,
+        reasons: ["washout ready lost due to new low"],
+        lastTransition: "washout_ready_to_monitor",
+      },
+      note: "washout ready invalidated by new low",
+    };
+  }
+
+  const scored = computeWashoutScore(state, next);
+
+  return {
+    candidate: {
+      ...next,
+      phase: "washout_ready",
+      score: scored.score,
+      reasons: scored.reasons,
+      lastTransition: "washout_ready_hold",
+    },
+    note: `washout ready hold | score=${scored.score}`,
+  };
+}
+
+// ---------------------------
+// breakout progression
+// ---------------------------
 function buildRetestPendingCandidate(state, current) {
   const feat = featOf(state);
   const close = n(feat.close);
@@ -396,7 +905,10 @@ function buildRetestPendingCandidate(state, current) {
   const triggerPrice = n(current.triggerPrice);
 
   const pullbackPct = pctFrom(triggerPrice, close);
-  const retestLow = Math.min(isNum(current.retestLow) ? n(current.retestLow) : Infinity, low);
+  const retestLow = Math.min(
+    isNum(current.retestLow) ? n(current.retestLow) : Infinity,
+    low
+  );
 
   const next = {
     ...current,
@@ -420,7 +932,7 @@ function buildRetestPendingCandidate(state, current) {
     };
   }
 
-  if (pullbackPct > BREAKOUT_RETEST_MAX_PULLBACK_PCT) {
+  if (pullbackPct > CONFIG.BREAKOUT_RETEST_MAX_PULLBACK_PCT) {
     return {
       candidate: {
         ...next,
@@ -429,7 +941,7 @@ function buildRetestPendingCandidate(state, current) {
         reasons: [`retest too deep pullbackPct=${pullbackPct.toFixed(3)}`],
         lastTransition: "retest_pending_to_idle",
       },
-      note: `retest invalidated | pullbackPct=${pullbackPct.toFixed(3)} > max=${BREAKOUT_RETEST_MAX_PULLBACK_PCT}`,
+      note: `retest invalidated | pullbackPct=${pullbackPct.toFixed(3)} > max=${CONFIG.BREAKOUT_RETEST_MAX_PULLBACK_PCT}`,
     };
   }
 
@@ -439,7 +951,7 @@ function buildRetestPendingCandidate(state, current) {
       reasons: ["waiting retest / reclaim"],
       lastTransition: "retest_pending_hold",
     },
-    note: `retest pending | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)}`
+    note: `retest pending | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)}`,
   };
 }
 
@@ -453,11 +965,7 @@ function buildBounceConfirmedCandidate(state, current) {
   const low = isNum(feat.low) ? n(feat.low) : Math.min(open, close);
 
   const triggerPrice = n(current.triggerPrice);
-  const range = Math.max(high - low, 0);
-
-  const bounceBodyPct = open !== 0 ? Math.abs((close - open) / open) * 100 : 0;
-  const bounceCloseInRangePct =
-    range > 0 ? ((close - low) / range) * 100 : close >= open ? 100 : 0;
+  const { bodyPct, closeInRangePct } = computeCandleMetrics(open, high, low, close);
 
   const reclaimPctFromTrigger = pctFrom(close, triggerPrice);
   const pullbackPct = isNum(current.pullbackPct)
@@ -466,9 +974,9 @@ function buildBounceConfirmedCandidate(state, current) {
 
   const shallowPullbackOk = pullbackPct <= 0.45;
 
-  const qualityFlags = resolveQualityFlags({
-    bounceCloseInRangePct,
-    bounceBodyPct,
+  const qualityFlags = resolveBreakoutQualityFlags({
+    bounceCloseInRangePct: closeInRangePct,
+    bounceBodyPct: bodyPct,
     reclaimPctFromTrigger,
     pullbackPct,
   });
@@ -479,17 +987,18 @@ function buildBounceConfirmedCandidate(state, current) {
     bouncePrice: close,
     bouncePct: pctFrom(close, triggerPrice),
     pullbackPct,
-    bounceBodyPct,
-    bounceCloseInRangePct,
+    bounceBodyPct: bodyPct,
+    bounceCloseInRangePct: closeInRangePct,
     reclaimPctFromTrigger,
     qualityFlags,
     shallowPullbackOk,
     reasons: ["bounce confirmed"],
     lastTransition: "bounce_confirmed_hold",
     entryCandidatePrice: close,
+    setupType: "breakout",
   };
 
-  const scorePack = computeScore(state, next);
+  const scorePack = computeBreakoutScore(state, next);
 
   const scored = {
     ...next,
@@ -498,76 +1007,47 @@ function buildBounceConfirmedCandidate(state, current) {
   };
 
   const readyReasons = [];
-  const earlyReasons = [];
-
   const minCloseAllowed =
-    triggerPrice * (1 - BREAKOUT_CLOSE_BELOW_TRIGGER_TOL_PCT / 100);
+    triggerPrice * (1 - CONFIG.MAX_CLOSE_BELOW_TRIGGER_TOLERANCE_PCT / 100);
 
   const oiTrend = n(feat.oiTrend);
-  const regime = String(ctx.regime ?? feat.regime ?? "range");
+  const regime = String(ctx.regime ?? "range");
   const bullAligned = isBullAligned(feat);
 
-  // common structural blockers
   if (close < minCloseAllowed) {
     readyReasons.push("ready_block_close_below_trigger");
-    earlyReasons.push("early_block_close_below_trigger");
   }
 
-  if (reclaimPctFromTrigger < READY_RECLAIM_MIN_PCT) {
+  if (reclaimPctFromTrigger < CONFIG.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT) {
     readyReasons.push("ready_block_reclaim_too_small");
-  }
-
-  if (reclaimPctFromTrigger < EARLY_ENTRY_RECLAIM_MIN_PCT) {
-    earlyReasons.push("early_block_reclaim_too_small");
   }
 
   if (!isTrendRegime(regime)) {
     readyReasons.push("ready_block_not_trend_regime");
-    earlyReasons.push("early_block_not_trend_regime");
   }
 
   if (!bullAligned) {
     readyReasons.push("ready_block_ema_not_bull_aligned");
-    earlyReasons.push("early_block_ema_not_bull_aligned");
   }
 
-  // strict READY path
-  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && READY_BLOCK_ON_NEGATIVE_OI && oiTrend <= 0) {
+  if (
+    CONFIG.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    oiTrend <= 0
+  ) {
     readyReasons.push("ready_block_flow_not_supportive");
   }
 
-  if (bounceCloseInRangePct < READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
+  if (closeInRangePct < CONFIG.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT) {
     readyReasons.push("ready_block_weak_close_in_range");
   }
 
-  if (bounceBodyPct < READY_MIN_BOUNCE_BODY_PCT) {
+  if (bodyPct < CONFIG.BREAKOUT_MIN_BOUNCE_BODY_PCT) {
     readyReasons.push("ready_block_weak_bounce_body");
   }
 
-  if (scored.score < SCORE_READY_LONG_MIN) {
+  if (scored.score < CONFIG.BREAKOUT_MIN_SCORE) {
     readyReasons.push("ready_block_score_too_low");
   }
-
-  // softer EARLY TREND path
-  if (BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && !EARLY_ENTRY_ALLOW_NEGATIVE_OI && oiTrend <= 0) {
-    earlyReasons.push("early_block_flow_not_supportive");
-  }
-
-  if (bouncePctFromTriggerTooSmall(scored)) {
-    earlyReasons.push("early_block_bounce_too_small");
-  }
-
-  if (scored.score < SCORE_EARLY_TREND_LONG_MIN) {
-    earlyReasons.push("early_block_score_too_low");
-  }
-
-  dlog(
-    `🟦 READYCHK LONG | close=${close.toFixed(4)} trigger=${triggerPrice.toFixed(4)} ` +
-      `reclaimPct=${reclaimPctFromTrigger.toFixed(3)} oiTrend=${oiTrend} ` +
-      `closeInRange=${bounceCloseInRangePct.toFixed(2)} bodyPct=${bounceBodyPct.toFixed(3)} ` +
-      `score=${scored.score} readyOk=${readyReasons.length === 0 ? 1 : 0} earlyOk=${earlyReasons.length === 0 ? 1 : 0} ` +
-      `readyReasons=${readyReasons.join(",") || "pass"} earlyReasons=${earlyReasons.join(",") || "pass"}`
-  );
 
   if (readyReasons.length === 0) {
     return {
@@ -583,27 +1063,22 @@ function buildBounceConfirmedCandidate(state, current) {
     };
   }
 
-  // hold in bounce_confirmed; entryEngine can still allow early_trend_long
   return {
     candidate: {
       ...scored,
       phase: "bounce_confirmed",
-      reasons: [...scored.reasons, ...readyReasons, ...earlyReasons],
+      reasons: [...scored.reasons, ...readyReasons],
       lastTransition: "bounce_confirmed_hold",
     },
     note: `bounce confirmed but not ready | ${readyReasons.join(", ") || "waiting"}`,
   };
 }
 
-function bouncePctFromTriggerTooSmall(candidate) {
-  return n(candidate.bouncePct) < BREAKOUT_BOUNCE_MIN_PCT;
-}
-
 // ---------------------------
 // public runner
 // ---------------------------
 export function runBreakoutSetup(state) {
-  const current = breakoutOf(state);
+  const current = setupOf(state);
   const phase = phaseOf(state);
 
   let result;
@@ -614,6 +1089,12 @@ export function runBreakoutSetup(state) {
       return { patch: null, note: built.note };
     }
     result = { candidate: built.candidate, note: built.note };
+  } else if (phase === "washout_monitor") {
+    result = buildWashoutMonitorCandidate(state, current);
+  } else if (phase === "washout_base") {
+    result = buildWashoutBaseCandidate(state, current);
+  } else if (phase === "washout_ready") {
+    result = buildWashoutReadyCandidate(state, current);
   } else if (phase === "retest_pending") {
     result = buildRetestPendingCandidate(state, current);
   } else if (phase === "bounce_confirmed" || phase === "ready") {
@@ -626,7 +1107,7 @@ export function runBreakoutSetup(state) {
 
   const next = result?.candidate;
   if (!next) {
-    return { patch: null, note: result?.note ?? "no breakout update" };
+    return { patch: null, note: result?.note ?? "no setup update" };
   }
 
   return {
@@ -658,8 +1139,18 @@ export function runBreakoutSetup(state) {
       reentryCount: isNum(next.reentryCount) ? n(next.reentryCount) : current.reentryCount ?? 0,
       lastEntryMode: next.lastEntryMode ?? current.lastEntryMode ?? null,
       entryCandidatePrice: isNum(next.entryCandidatePrice) ? n(next.entryCandidatePrice) : next.entryCandidatePrice ?? null,
+
+      washoutPeakPrice: isNum(next.washoutPeakPrice) ? n(next.washoutPeakPrice) : next.washoutPeakPrice ?? null,
+      washoutLow: isNum(next.washoutLow) ? n(next.washoutLow) : next.washoutLow ?? null,
+      washoutDropPct: isNum(next.washoutDropPct) ? n(next.washoutDropPct) : next.washoutDropPct ?? null,
+      washoutDetectedBar: next.washoutDetectedBar ?? null,
+      noBuyUntilBar: next.noBuyUntilBar ?? null,
+      baseBars: isNum(next.baseBars) ? n(next.baseBars) : 0,
+      deepestLowBar: next.deepestLowBar ?? null,
+      reclaimPctFromLow: isNum(next.reclaimPctFromLow) ? n(next.reclaimPctFromLow) : next.reclaimPctFromLow ?? null,
+      setupType: next.setupType ?? current.setupType ?? null,
     },
-    note: result.note ?? "breakout updated",
+    note: result.note ?? "setup updated",
   };
 }
 
