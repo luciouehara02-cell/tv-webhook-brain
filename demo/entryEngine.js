@@ -73,7 +73,7 @@ const ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT = numEnv(
 
 const SCORE_ENTER_LONG = numEnv("SCORE_ENTER_LONG", 6);
 const SCORE_READY_LONG_MIN = numEnv("SCORE_READY_LONG_MIN", SCORE_ENTER_LONG);
-const SCORE_EARLY_TREND_LONG_MIN = numEnv("SCORE_EARLY_TREND_LONG_MIN", 5);
+const SCORE_EARLY_TREND_LONG_MIN = numEnv("SCORE_EARLY_TREND_LONG_MIN", 6);
 
 const BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_READY_ENTRY = numEnv(
   "BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_READY_ENTRY",
@@ -348,7 +348,30 @@ function evaluateEarlyTrendLong(state) {
     addUnique(hardReasons, "reclaim too small");
   }
 
-  if (!EARLY_ENTRY_ALLOW_NEGATIVE_OI && m.oiTrend < 0) {
+  if (m.bounceCloseInRangePct < READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
+    addUnique(reasons, "entry_block_weak_close_in_range");
+    addUnique(hardReasons, "weak close in range");
+  }
+
+  if (m.bounceBodyPct < READY_MIN_BOUNCE_BODY_PCT) {
+    addUnique(reasons, "entry_block_weak_bounce_body");
+    addUnique(hardReasons, "weak bounce body");
+  }
+
+  if (
+    BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    !EARLY_ENTRY_ALLOW_NEGATIVE_OI &&
+    m.oiTrend <= 0
+  ) {
+    addUnique(reasons, "entry_block_flow_not_supportive");
+    addUnique(hardReasons, "flow not supportive");
+  }
+
+  if (
+    !BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    !EARLY_ENTRY_ALLOW_NEGATIVE_OI &&
+    m.oiTrend < 0
+  ) {
     addUnique(reasons, "entry_block_negative_oi_for_early_long");
     addUnique(hardReasons, "negative oi blocked for early long");
   }
@@ -361,11 +384,36 @@ function evaluateEarlyTrendLong(state) {
     addUnique(hardReasons, "chase too high");
   }
 
+  if (m.qualityFlags.includes("close_quality:weak")) {
+    addUnique(reasons, "entry_block_close_quality_weak");
+    addUnique(hardReasons, "close quality weak");
+  }
+
+  if (m.qualityFlags.includes("reclaim_quality:weak")) {
+    addUnique(reasons, "entry_block_reclaim_quality_weak");
+    addUnique(hardReasons, "reclaim quality weak");
+  }
+
   let score = m.setupScore;
 
   if (m.close < m.triggerPrice) score = Math.min(score, 5);
   if (m.reclaimPctFromTrigger < EARLY_ENTRY_RECLAIM_MIN_PCT) score = Math.min(score, 5);
-  if (!EARLY_ENTRY_ALLOW_NEGATIVE_OI && m.oiTrend < 0) score = Math.min(score, 4);
+  if (m.bounceCloseInRangePct < READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT) {
+    score = Math.min(score, 5);
+  }
+  if (m.bounceBodyPct < READY_MIN_BOUNCE_BODY_PCT) {
+    score = Math.min(score, 5);
+  }
+  if (
+    BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE &&
+    !EARLY_ENTRY_ALLOW_NEGATIVE_OI &&
+    m.oiTrend <= 0
+  ) {
+    score = Math.min(score, 5);
+  }
+  if (!BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && !EARLY_ENTRY_ALLOW_NEGATIVE_OI && m.oiTrend < 0) {
+    score = Math.min(score, 4);
+  }
 
   if (score < SCORE_EARLY_TREND_LONG_MIN) {
     addUnique(reasons, "entry_block_score_too_low");
@@ -378,6 +426,7 @@ function evaluateEarlyTrendLong(state) {
     `🚦 ENTRYCHK LONG | mode=early close=${Number.isFinite(m.close) ? m.close.toFixed(4) : "na"} ` +
       `trigger=${Number.isFinite(m.triggerPrice) ? m.triggerPrice.toFixed(4) : "na"} ` +
       `reclaimPct=${m.reclaimPctFromTrigger.toFixed(3)} oiTrend=${m.oiTrend} ` +
+      `closeInRange=${m.bounceCloseInRangePct.toFixed(2)} bodyPct=${m.bounceBodyPct.toFixed(3)} ` +
       `ema8=${Number.isFinite(m.ema8) ? m.ema8.toFixed(4) : "na"} ` +
       `ema18=${Number.isFinite(m.ema18) ? m.ema18.toFixed(4) : "na"} ` +
       `ema50=${Number.isFinite(m.ema50) ? m.ema50.toFixed(4) : "na"} ` +
