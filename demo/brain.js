@@ -234,7 +234,7 @@ export async function processEvent(payload) {
 
     updateExecution({
       lastLiveSendOk: execModeResult.ok,
-      lastLiveSendAt: state3.market.time,
+      lastLiveSendAt: new Date().toISOString(),
       lastLiveResponse: execModeResult.result || execModeResult.logLine,
       lastLiveEventKey: execModeResult.eventKey ?? null,
       lastLiveGuardrailReason: execModeResult.guardrailReason ?? null,
@@ -296,7 +296,7 @@ export async function processEvent(payload) {
 
     updateExecution({
       lastLiveSendOk: exitModeResult.ok,
-      lastLiveSendAt: latestManagedState.market.time,
+      lastLiveSendAt: new Date().toISOString(),
       lastLiveResponse: exitModeResult.result || exitModeResult.logLine,
       lastLiveEventKey: exitModeResult.eventKey ?? null,
       lastLiveGuardrailReason: exitModeResult.guardrailReason ?? null,
