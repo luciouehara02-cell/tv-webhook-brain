@@ -2,19 +2,22 @@ import { CONFIG } from "./config.js";
 import { resolveEntryOrder } from "./riskSizer.js";
 
 function buildTiming(marketTime) {
-  // Live mode:
-  // - use feature/bar time from TradingView so 3Commas receives the true bar timestamp
   // Replay mode:
-  // - use current wall-clock time so old replay bars are not rejected as stale
+  // - use wall-clock time so old replay bars are not rejected as stale
   if (CONFIG.REPLAY_SIGNAL_MODE === true) {
     return {
       timestamp: new Date().toISOString(),
+      signalBarTime: marketTime || null,
       maxLag: String(CONFIG.REPLAY_MAX_LAG_SEC),
     };
   }
 
+  // Live mode:
+  // - use actual send/build time for 3Commas timestamp alignment
+  // - preserve original bar time separately in metadata
   return {
-    timestamp: marketTime || new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    signalBarTime: marketTime || null,
     maxLag: String(CONFIG.C3_MAX_LAG_SEC),
   };
 }
@@ -30,9 +33,13 @@ export function build3CommasEnterLongSignal(state) {
   const features = state.features;
 
   const entryPrice =
-    features.close ?? market.price ?? breakout.entryCandidatePrice ?? breakout.bouncePrice ?? breakout.triggerPrice;
+    features.close ??
+    market.price ??
+    breakout.entryCandidatePrice ??
+    breakout.bouncePrice ??
+    breakout.triggerPrice;
 
-  const { timestamp, maxLag } = buildTiming(market.time);
+  const { timestamp, signalBarTime, maxLag } = buildTiming(market.time);
   const order = resolveEntryOrder(state);
   const setupType = detectSetupType(state);
 
@@ -63,6 +70,7 @@ export function build3CommasEnterLongSignal(state) {
       symbol: market.symbol,
       exec_mode: CONFIG.EXECUTION_MODE,
       replay_signal_mode: CONFIG.REPLAY_SIGNAL_MODE,
+      signal_bar_time: signalBarTime,
       sizing_mode: order.sizing_mode,
       sizing_debug: order.sizing_debug,
     },
@@ -74,7 +82,7 @@ export function build3CommasExitLongSignal(state, exitReason = "exit_long") {
   const features = state.features;
 
   const exitPrice = features.close ?? market.price;
-  const { timestamp, maxLag } = buildTiming(market.time);
+  const { timestamp, signalBarTime, maxLag } = buildTiming(market.time);
 
   return {
     secret: CONFIG.C3_SIGNAL_SECRET,
@@ -92,6 +100,7 @@ export function build3CommasExitLongSignal(state, exitReason = "exit_long") {
       symbol: market.symbol,
       exec_mode: CONFIG.EXECUTION_MODE,
       replay_signal_mode: CONFIG.REPLAY_SIGNAL_MODE,
+      signal_bar_time: signalBarTime,
     },
   };
 }
