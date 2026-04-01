@@ -10,7 +10,7 @@ const bool = (v, d = false) => {
 };
 
 export const CONFIG = {
-  BRAIN_VERSION: process.env.BRAIN_VERSION || "Brain Phase 5 v5.6",
+  BRAIN_VERSION: process.env.BRAIN_VERSION || "Brain Phase 5 v5.7",
   SYMBOL: process.env.SYMBOL || "BINANCE:SOLUSDT",
   TF: process.env.TF || "3",
 
@@ -110,10 +110,10 @@ export const CONFIG = {
   ),
 
   BREAKOUT_MIN_BOUNCE_BODY_PCT: num(process.env.BREAKOUT_MIN_BOUNCE_BODY_PCT, 0.08),
-  BREAKOUT_MIN_CLOSE_IN_RANGE_PCT: num(process.env.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT, 55),
+  BREAKOUT_MIN_CLOSE_IN_RANGE_PCT: num(process.env.BREAKOUT_MIN_CLOSE_IN_RANGE_PCT, 60),
   BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT: num(
     process.env.BREAKOUT_MIN_RECLAIM_ABOVE_TRIGGER_PCT,
-    0.03
+    0.05
   ),
 
   BREAKOUT_REQUIRE_STRONG_OI_ON_BOUNCE_ENTRY: bool(
@@ -126,7 +126,7 @@ export const CONFIG = {
   ),
   BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE: bool(
     process.env.BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE,
-    false
+    true
   ),
 
   BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_BOUNCE_ENTRY: num(
@@ -169,7 +169,42 @@ export const CONFIG = {
   BREAKOUT_MIN_READY_BOUNCE_PCT: num(process.env.BREAKOUT_MIN_READY_BOUNCE_PCT, 0.06),
 
   // ---------------------------
-  // Phase 5.6 Washout logic
+  // v5.7 unified entry controls
+  // ---------------------------
+  READY_BLOCK_ON_NEGATIVE_OI: bool(process.env.READY_BLOCK_ON_NEGATIVE_OI, true),
+  READY_RECLAIM_MIN_PCT: num(process.env.READY_RECLAIM_MIN_PCT, 0.05),
+  READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT: num(
+    process.env.READY_MIN_BOUNCE_CLOSE_IN_RANGE_PCT,
+    60
+  ),
+  READY_MIN_BOUNCE_BODY_PCT: num(
+    process.env.READY_MIN_BOUNCE_BODY_PCT,
+    0.08
+  ),
+  SCORE_ENTER_LONG: num(process.env.SCORE_ENTER_LONG, 6),
+  SCORE_READY_LONG_MIN: num(process.env.SCORE_READY_LONG_MIN, 6),
+
+  ALLOW_EARLY_TREND_ENTRY: bool(process.env.ALLOW_EARLY_TREND_ENTRY, true),
+  EARLY_ENTRY_ALLOW_NEGATIVE_OI: bool(
+    process.env.EARLY_ENTRY_ALLOW_NEGATIVE_OI,
+    false
+  ),
+  EARLY_ENTRY_RECLAIM_MIN_PCT: num(
+    process.env.EARLY_ENTRY_RECLAIM_MIN_PCT,
+    0.05
+  ),
+  SCORE_EARLY_TREND_LONG_MIN: num(
+    process.env.SCORE_EARLY_TREND_LONG_MIN,
+    6
+  ),
+  ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT: num(
+    process.env.ENTRY_CLOSE_BELOW_TRIGGER_TOL_PCT,
+    0.0
+  ),
+  ENTER_DEDUP_MS: num(process.env.ENTER_DEDUP_MS, 25000),
+
+  // ---------------------------
+  // Phase 5.6 / 5.7 Washout logic
   // ---------------------------
   WASHOUT_ENABLED: bool(process.env.WASHOUT_ENABLED, true),
   WASHOUT_LOOKBACK_BARS: num(process.env.WASHOUT_LOOKBACK_BARS, 20),
