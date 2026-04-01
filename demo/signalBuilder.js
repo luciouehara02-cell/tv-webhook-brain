@@ -14,7 +14,7 @@ function buildTiming(marketTime) {
 
   // Live mode:
   // - use actual send/build time for 3Commas timestamp alignment
-  // - preserve original bar time separately in metadata
+  // - preserve original bar/candle time separately in metadata
   return {
     timestamp: new Date().toISOString(),
     signalBarTime: marketTime || null,
