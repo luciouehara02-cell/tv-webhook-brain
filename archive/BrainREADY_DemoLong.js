@@ -1,19 +1,20 @@
 /**
- * Brain v3.1.0-LONG
- * READY_LONG + enter/exit gatekeeper + 3Commas + Regime + Adaptive PL + Crash Lock + Equity Stabilizer
- * + Pending BUY buffer
- * + Re-entry window with loop protection
- * + READY freshness gate for entry
- * + Pending BUY freshness gate
- * + Consolidated tick logging
- * + Compact state snapshot
- * + Entry drift logging
- * + Exit ladder:
- *   Stage 1 = Fail Stop
- *   Stage 2 = Breakeven
- *   Stage 3 = Profit Lock
- * + READY cleanup after successful enter
- * + Progressive Profit Lock tightening by peak profit tiers
+ * Brain_READYFilter_v4.0-LONG
+ *
+ * New architecture:
+ * - RayAlgo BUY/SELL remains the external trigger
+ * - READY is no longer sent from Pine
+ * - Brain builds synthetic 3m bars from 15s ticks
+ * - Brain evaluates a live long-entry filter at BUY time
+ *
+ * Goal:
+ * - block stale continuation BUYs
+ * - allow fresh washout -> reclaim -> bounce BUYs
+ *
+ * Notes:
+ * - This first build focuses on ENTRY architecture
+ * - EXIT remains simple: Ray SELL / intent exit_long
+ * - You can layer your current fail stop / BE / PL ladder back on top next
  */
 
 import express from "express";
@@ -21,141 +22,13 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "v3.1.0-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.0-LONG";
 
-// ====================
-// CONFIG (Railway Variables)
-// ====================
-const PORT = process.env.PORT || 3000;
+// ========================================
+// CONFIG
+// ========================================
+const PORT = Number(process.env.PORT || 8080);
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
-
-const EMERGENCY_BYPASS_COOLDOWN =
-  String(process.env.EMERGENCY_BYPASS_COOLDOWN || "false").toLowerCase() === "true";
-
-// READY
-const READY_TTL_MIN = Number(process.env.READY_TTL_MIN || "0");
-const READY_ENTRY_MAX_AGE_SEC = Number(process.env.READY_ENTRY_MAX_AGE_SEC || "480");
-const READY_ACCEPT_LEGACY_READY =
-  String(process.env.READY_ACCEPT_LEGACY_READY || "true").toLowerCase() === "true";
-const READY_MAX_MOVE_PCT = Number(process.env.READY_MAX_MOVE_PCT || "1.2");
-const READY_MAX_MOVE_PCT_TREND = toNumEnv(process.env.READY_MAX_MOVE_PCT_TREND);
-const READY_MAX_MOVE_PCT_RANGE = toNumEnv(process.env.READY_MAX_MOVE_PCT_RANGE);
-const READY_AUTOEXPIRE_PCT = Number(process.env.READY_AUTOEXPIRE_PCT || String(READY_MAX_MOVE_PCT));
-const READY_AUTOEXPIRE_ENABLED =
-  String(process.env.READY_AUTOEXPIRE_ENABLED || "true").toLowerCase() === "true";
-
-// Cooldown / heartbeat / logging
-const EXIT_COOLDOWN_MIN = Number(process.env.EXIT_COOLDOWN_MIN || "0");
-const REQUIRE_FRESH_HEARTBEAT =
-  String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
-const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "240");
-const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000");
-const STATE_LOG_EVERY_MS = Number(process.env.STATE_LOG_EVERY_MS || String(TICK_LOG_EVERY_MS));
-
-// ===== Exit ladder =====
-
-// Stage 1: Fail stop
-const FAIL_STOP_ENABLED =
-  String(process.env.FAIL_STOP_ENABLED || "true").toLowerCase() === "true";
-const FAIL_STOP_PCT = Number(process.env.FAIL_STOP_PCT || "0.45");
-
-// Stage 2: Breakeven
-const BREAKEVEN_ENABLED =
-  String(process.env.BREAKEVEN_ENABLED || "true").toLowerCase() === "true";
-const BREAKEVEN_ARM_PCT = Number(process.env.BREAKEVEN_ARM_PCT || "0.35");
-const BREAKEVEN_LOCK_PCT = Number(process.env.BREAKEVEN_LOCK_PCT || "0.05");
-
-// Stage 3: Profit lock
-const PROFIT_LOCK_ENABLED =
-  String(process.env.PROFIT_LOCK_ENABLED || "true").toLowerCase() === "true";
-const PROFIT_LOCK_ARM_PCT = Number(process.env.PROFIT_LOCK_ARM_PCT || "0.6");
-const PROFIT_LOCK_GIVEBACK_PCT = Number(process.env.PROFIT_LOCK_GIVEBACK_PCT || "0.35");
-
-const PL_ADAPTIVE_ENABLED =
-  String(process.env.PL_ADAPTIVE_ENABLED || "true").toLowerCase() === "true";
-
-const PL_START_ATR_MULT_TREND = Number(process.env.PL_START_ATR_MULT_TREND || "2.2");
-const PL_GIVEBACK_ATR_MULT_TREND = Number(process.env.PL_GIVEBACK_ATR_MULT_TREND || "1.2");
-const PL_START_ATR_MULT_RANGE = Number(process.env.PL_START_ATR_MULT_RANGE || "1.2");
-const PL_GIVEBACK_ATR_MULT_RANGE = Number(process.env.PL_GIVEBACK_ATR_MULT_RANGE || "0.7");
-
-const PL_MIN_ARM_PCT = Number(process.env.PL_MIN_ARM_PCT || "0");
-const PL_MIN_GIVEBACK_PCT = Number(process.env.PL_MIN_GIVEBACK_PCT || "0");
-const PL_MAX_ARM_PCT = Number(process.env.PL_MAX_ARM_PCT || "0");
-const PL_MAX_GIVEBACK_PCT = Number(process.env.PL_MAX_GIVEBACK_PCT || "0");
-
-// Progressive PL tightening
-const PL_TIGHTEN_ENABLED =
-  String(process.env.PL_TIGHTEN_ENABLED || "true").toLowerCase() === "true";
-
-const PL_TIGHTEN_TIER1_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER1_PROFIT_PCT || "0.80");
-const PL_TIGHTEN_TIER2_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER2_PROFIT_PCT || "1.20");
-const PL_TIGHTEN_TIER3_PROFIT_PCT = Number(process.env.PL_TIGHTEN_TIER3_PROFIT_PCT || "1.80");
-
-const PL_TIGHTEN_TIER1_MULT = Number(process.env.PL_TIGHTEN_TIER1_MULT || "1.00");
-const PL_TIGHTEN_TIER2_MULT = Number(process.env.PL_TIGHTEN_TIER2_MULT || "0.85");
-const PL_TIGHTEN_TIER3_MULT = Number(process.env.PL_TIGHTEN_TIER3_MULT || "0.70");
-const PL_TIGHTEN_TIER4_MULT = Number(process.env.PL_TIGHTEN_TIER4_MULT || "0.55");
-
-const PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT = Number(
-  process.env.PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT || "0"
-);
-
-// Regime
-const REGIME_ENABLED =
-  String(process.env.REGIME_ENABLED || "true").toLowerCase() === "true";
-const SLOPE_WINDOW_SEC = Number(process.env.SLOPE_WINDOW_SEC || "300");
-const ATR_WINDOW_SEC = Number(process.env.ATR_WINDOW_SEC || "300");
-const TICK_BUFFER_SEC = Number(process.env.TICK_BUFFER_SEC || "1800");
-const REGIME_MIN_TICKS = Number(process.env.REGIME_MIN_TICKS || "10");
-const REGIME_TREND_SLOPE_ON_PCT = Number(process.env.REGIME_TREND_SLOPE_ON_PCT || "0.25");
-const REGIME_TREND_SLOPE_OFF_PCT = Number(process.env.REGIME_TREND_SLOPE_OFF_PCT || "0.18");
-const REGIME_RANGE_SLOPE_ON_PCT = Number(process.env.REGIME_RANGE_SLOPE_ON_PCT || "0.12");
-const REGIME_RANGE_SLOPE_OFF_PCT = Number(process.env.REGIME_RANGE_SLOPE_OFF_PCT || "0.16");
-const REGIME_VOL_MIN_ATR_PCT = Number(process.env.REGIME_VOL_MIN_ATR_PCT || "0.20");
-
-// Crash protection
-const CRASH_PROTECT_ENABLED =
-  String(process.env.CRASH_PROTECT_ENABLED || "true").toLowerCase() === "true";
-const CRASH_DUMP_1M_PCT = Number(process.env.CRASH_DUMP_1M_PCT || "2.0");
-const CRASH_DUMP_5M_PCT = Number(process.env.CRASH_DUMP_5M_PCT || "4.0");
-const CRASH_COOLDOWN_MIN = Number(process.env.CRASH_COOLDOWN_MIN || "45");
-
-// Equity stabilizer
-const EQUITY_STABILIZER_ENABLED =
-  String(process.env.EQUITY_STABILIZER_ENABLED || "true").toLowerCase() === "true";
-const ES_LOSS_STREAK_2_COOLDOWN_MIN = Number(process.env.ES_LOSS_STREAK_2_COOLDOWN_MIN || "15");
-const ES_LOSS_STREAK_3_COOLDOWN_MIN = Number(process.env.ES_LOSS_STREAK_3_COOLDOWN_MIN || "45");
-const ES_CONSERVATIVE_MIN = Number(process.env.ES_CONSERVATIVE_MIN || "45");
-
-// Re-entry
-const REENTRY_ENABLED =
-  String(process.env.REENTRY_ENABLED || "true").toLowerCase() === "true";
-const REENTRY_WINDOW_MIN = Number(process.env.REENTRY_WINDOW_MIN || "30");
-const REENTRY_MAX_FALL_PCT = Number(process.env.REENTRY_MAX_FALL_PCT || "0.5");
-const REENTRY_MAX_RISE_PCT = Number(process.env.REENTRY_MAX_RISE_PCT || "0.8");
-const REENTRY_REQUIRE_TREND =
-  String(process.env.REENTRY_REQUIRE_TREND || "false").toLowerCase() === "true";
-const REENTRY_REQUIRE_READY =
-  String(process.env.REENTRY_REQUIRE_READY || "false").toLowerCase() === "true";
-const REENTRY_CANCEL_ON_BREACH =
-  String(process.env.REENTRY_CANCEL_ON_BREACH || "true").toLowerCase() === "true";
-const REENTRY_MAX_TRIES = Number(process.env.REENTRY_MAX_TRIES || "2");
-const REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT = Number(
-  process.env.REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT || "-0.35"
-);
-
-// Pending BUY
-const PENDING_BUY_ENABLED =
-  String(process.env.PENDING_BUY_ENABLED || "true").toLowerCase() === "true";
-const PENDING_BUY_WINDOW_SEC = Number(process.env.PENDING_BUY_WINDOW_SEC || "120");
-const PENDING_BUY_MAX_READY_DRIFT_PCT = Number(
-  process.env.PENDING_BUY_MAX_READY_DRIFT_PCT || "0.3"
-);
-const PENDING_BUY_MAX_AGE_SEC = Number(process.env.PENDING_BUY_MAX_AGE_SEC || "60");
-
-// ENTER dedupe
-const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || "25");
 
 // 3Commas
 const THREECOMMAS_WEBHOOK_URL =
@@ -177,101 +50,122 @@ const THREECOMMAS_SECRET =
 const THREECOMMAS_MAX_LAG = String(
   process.env.THREECOMMAS_MAX_LAG || process.env.C3_MAX_LAG_SEC || "300"
 );
+
 const THREECOMMAS_TIMEOUT_MS = Number(
   process.env.THREECOMMAS_TIMEOUT_MS || process.env.C3_TIMEOUT_MS || "8000"
 );
 
-const THREECOMMAS_TV_EXCHANGE = process.env.THREECOMMAS_TV_EXCHANGE || "";
-const THREECOMMAS_TV_INSTRUMENT = process.env.THREECOMMAS_TV_INSTRUMENT || "";
+// Tick / bar building
+const TICK_EXPECTED_SEC = Number(process.env.TICK_EXPECTED_SEC || "15");
+const BAR_TF_SEC = Number(process.env.BAR_TF_SEC || "180"); // 3m
+const MAX_BARS = Number(process.env.MAX_BARS || "300");
 
-// ====================
+// Logging
+const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000");
+const STATE_LOG_EVERY_MS = Number(process.env.STATE_LOG_EVERY_MS || "180000");
+const DEBUG_FILTER = String(process.env.DEBUG_FILTER || "true").toLowerCase() === "true";
+
+// Heartbeat
+const REQUIRE_FRESH_HEARTBEAT =
+  String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
+const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "90");
+
+// Enter dedupe
+const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || "25");
+
+// Entry filter thresholds
+const FILTER_ENABLED =
+  String(process.env.FILTER_ENABLED || "true").toLowerCase() === "true";
+
+const FILTER_MIN_BARS = Number(process.env.FILTER_MIN_BARS || "25");
+const FILTER_ADX_MIN = Number(process.env.FILTER_ADX_MIN || "14");
+const FILTER_RSI_MIN = Number(process.env.FILTER_RSI_MIN || "46");
+
+const FILTER_WASH_LOOKBACK_BARS = Number(process.env.FILTER_WASH_LOOKBACK_BARS || "18");
+const FILTER_DROP_LOOKBACK_BARS = Number(process.env.FILTER_DROP_LOOKBACK_BARS || "12");
+const FILTER_MAX_BARS_SINCE_LOW = Number(process.env.FILTER_MAX_BARS_SINCE_LOW || "4");
+
+const FILTER_MIN_DROP_PCT = Number(process.env.FILTER_MIN_DROP_PCT || "0.60");
+const FILTER_MIN_RECLAIM_FROM_LOW_PCT = Number(
+  process.env.FILTER_MIN_RECLAIM_FROM_LOW_PCT || "0.45"
+);
+const FILTER_MIN_IMPULSE_FROM_LOW_PCT = Number(
+  process.env.FILTER_MIN_IMPULSE_FROM_LOW_PCT || "0.55"
+);
+const FILTER_MIN_BODY_PCT = Number(process.env.FILTER_MIN_BODY_PCT || "0.20");
+
+const FILTER_MAX_ENTRY_EXT_EMA21_PCT = Number(
+  process.env.FILTER_MAX_ENTRY_EXT_EMA21_PCT || "0.80"
+);
+const FILTER_MAX_ENTRY_EXT_EMA18_PCT = Number(
+  process.env.FILTER_MAX_ENTRY_EXT_EMA18_PCT || "0.60"
+);
+const FILTER_MAX_BUY_FROM_RECLAIM_PCT = Number(
+  process.env.FILTER_MAX_BUY_FROM_RECLAIM_PCT || "0.40"
+);
+
+const FILTER_HOSTILE_MAX_EMA_GAP_PCT = Number(
+  process.env.FILTER_HOSTILE_MAX_EMA_GAP_PCT || "0.60"
+);
+const FILTER_HOSTILE_MAX_NEG_SLOPE_PCT = Number(
+  process.env.FILTER_HOSTILE_MAX_NEG_SLOPE_PCT || "0.12"
+);
+const FILTER_HOSTILE_MAX_MINUS_DI_LEAD = Number(
+  process.env.FILTER_HOSTILE_MAX_MINUS_DI_LEAD || "10"
+);
+
+// Reclaim freshness
+const FILTER_MAX_BARS_SINCE_RECLAIM = Number(
+  process.env.FILTER_MAX_BARS_SINCE_RECLAIM || "3"
+);
+
+// In-position tracking
+const ALLOW_ONLY_ONE_POSITION =
+  String(process.env.ALLOW_ONLY_ONE_POSITION || "true").toLowerCase() === "true";
+
+// ========================================
 // MEMORY
-// ====================
-let readyOn = false;
-let readyAtMs = 0;
-
-let inPosition = false;
-let lastAction = "none";
-
-let readyPrice = null;
-let readySymbol = "";
-let readyTf = "";
-let readyMeta = {};
-
-let cooldownUntilMs = 0;
-let crashLockUntilMs = 0;
-let lossStreak = 0;
-let conservativeUntilMs = 0;
-
-let lastTickMs = 0;
-let lastTickSymbol = "";
-let lastTickPrice = null;
-let lastTickLogMs = 0;
-let lastStateLogMs = 0;
-
-const tickHistory = new Map();
-const regimeState = new Map();
-
-let entryPrice = null;
-let entrySymbol = "";
-let peakPrice = null;
-let profitLockArmed = false;
-let breakevenArmed = false;
-
-let entryMeta = { tv_exchange: null, tv_instrument: null };
-
-let reentry = {
-  active: false,
-  untilMs: 0,
-  ref: null,
-  symbol: "",
-  regimeAtExit: "",
-  reason: "",
-  triesUsed: 0,
-  triesMax: REENTRY_MAX_TRIES,
-  exitTs: 0,
-  consumed: false,
-};
-
-let positionWasReentry = false;
-let lastEnterAcceptedTs = 0;
-
-function emptyPendingBuy() {
+// ========================================
+function createSymbolState(symbol) {
   return {
-    active: false,
-    untilMs: 0,
-    symbol: "",
-    price: null,
-    payload: null,
-    createdMs: 0,
+    symbol,
+
+    lastTickMs: 0,
+    lastTickPrice: null,
+
+    lastTickLogMs: 0,
+    lastStateLogMs: 0,
+
+    currentBar: null,
+    bars: [],
+
+    inPosition: false,
+    entryPrice: null,
+    entryAtMs: 0,
+    lastAction: "none",
+    lastEnterAcceptedTs: 0,
+
+    lastEval: null,
   };
 }
-let pendingBuy = emptyPendingBuy();
 
-// ====================
-// HELPERS
-// ====================
-const nowMs = () => Date.now();
+const symbolState = new Map();
 
-function toNumEnv(v) {
-  if (v == null || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+function getState(symbol) {
+  if (!symbolState.has(symbol)) {
+    symbolState.set(symbol, createSymbolState(symbol));
+  }
+  return symbolState.get(symbol);
 }
+
+// ========================================
+// HELPERS
+// ========================================
+const nowMs = () => Date.now();
 
 function toNum(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
-}
-
-function normalizeIntent(payload) {
-  const a = payload?.action ? String(payload.action).toLowerCase() : "";
-  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
-  const s = payload?.src ? String(payload.src).toLowerCase() : "";
-  if (a) return a;
-  if (i) return i;
-  if (s && s !== "ray") return s;
-  return "";
 }
 
 function logWebhook(payload) {
@@ -292,19 +186,14 @@ function checkSecret(payload) {
   return String(s) === String(WEBHOOK_SECRET);
 }
 
-function isEmergency(payload) {
-  const er = String(payload?.exitReason || "").toLowerCase().trim();
-  return er === "emergency";
-}
-
-function pctDiff(a, b) {
-  if (!Number.isFinite(a) || a === 0) return null;
-  return (Math.abs(b - a) / Math.abs(a)) * 100.0;
-}
-
-function pctProfit(entry, current) {
-  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(current)) return null;
-  return ((current - entry) / entry) * 100.0;
+function normalizeIntent(payload) {
+  const a = payload?.action ? String(payload.action).toLowerCase() : "";
+  const i = payload?.intent ? String(payload.intent).toLowerCase() : "";
+  const s = payload?.src ? String(payload.src).toLowerCase() : "";
+  if (a) return a;
+  if (i) return i;
+  if (s && s !== "ray") return s;
+  return "";
 }
 
 function parseSymbol(symbolStr) {
@@ -319,12 +208,12 @@ function parseSymbol(symbolStr) {
 
 function getSymbolFromPayload(payload) {
   if (payload?.symbol) return parseSymbol(payload.symbol).symbol;
-  if (payload?.tv_exchange && payload?.tv_instrument)
+  if (payload?.tv_exchange && payload?.tv_instrument) {
     return parseSymbol(`${payload.tv_exchange}:${payload.tv_instrument}`).symbol;
-  if (payload?.exchange && payload?.ticker)
+  }
+  if (payload?.exchange && payload?.ticker) {
     return parseSymbol(`${payload.exchange}:${payload.ticker}`).symbol;
-  if (payload?.tv_instrument && payload?.tv_exchange)
-    return parseSymbol(`${payload.tv_exchange}:${payload.tv_instrument}`).symbol;
+  }
   return "";
 }
 
@@ -333,316 +222,531 @@ function deriveTvFromSymbol(sym) {
   return { tv_exchange: ex || "", tv_instrument: ins || "" };
 }
 
-function getReadyPrice(payload) {
-  return toNum(payload?.trigger_price) ?? toNum(payload?.price) ?? toNum(payload?.close) ?? null;
+function getTickPrice(payload) {
+  return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
 }
 
 function getRayPrice(payload) {
   return toNum(payload?.price) ?? toNum(payload?.close) ?? toNum(payload?.trigger_price) ?? null;
 }
 
-function getTickPrice(payload) {
-  return toNum(payload?.price) ?? toNum(payload?.close) ?? null;
+function isHeartbeatFresh(s) {
+  if (!REQUIRE_FRESH_HEARTBEAT) return true;
+  if (!s.lastTickMs) return false;
+  return nowMs() - s.lastTickMs <= HEARTBEAT_MAX_AGE_SEC * 1000;
 }
 
-function readyAgeMs() {
-  return readyAtMs ? nowMs() - readyAtMs : null;
+function pctDiff(a, b) {
+  if (!Number.isFinite(a) || a === 0 || !Number.isFinite(b)) return null;
+  return (Math.abs(b - a) / Math.abs(a)) * 100.0;
 }
 
-function isReadyFresh(maxAgeMs) {
-  if (!readyOn || !readyAtMs) return false;
-  return nowMs() - readyAtMs <= maxAgeMs;
+function pctProfit(entry, current) {
+  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(current)) return null;
+  return ((current - entry) / entry) * 100.0;
 }
 
-function maybeLogTick(symbol, price, isoTime) {
+function enterDedupeActive(s, ts) {
+  if (!ENTER_DEDUP_SEC || ENTER_DEDUP_SEC <= 0) return false;
+  return s.lastEnterAcceptedTs && ts - s.lastEnterAcceptedTs < ENTER_DEDUP_SEC * 1000;
+}
+
+function floorToTfMs(tsMs, tfSec) {
+  const tfMs = tfSec * 1000;
+  return Math.floor(tsMs / tfMs) * tfMs;
+}
+
+function maybeLogTick(s, isoTime) {
   const now = nowMs();
   if (!TICK_LOG_EVERY_MS || TICK_LOG_EVERY_MS <= 0) return;
-  if (!lastTickLogMs || now - lastTickLogMs >= TICK_LOG_EVERY_MS) {
-    console.log(`🟦 TICK(3m) ${symbol} price=${price} time=${isoTime}`);
-    lastTickLogMs = now;
+  if (!s.lastTickLogMs || now - s.lastTickLogMs >= TICK_LOG_EVERY_MS) {
+    console.log(`🟦 TICK(15s) ${s.symbol} price=${s.lastTickPrice} time=${isoTime}`);
+    s.lastTickLogMs = now;
   }
 }
 
-function maybeLogState(symbol) {
+function maybeLogState(s) {
   const now = nowMs();
   if (!STATE_LOG_EVERY_MS || STATE_LOG_EVERY_MS <= 0) return;
-  if (!symbol) return;
-
-  if (!lastStateLogMs || now - lastStateLogMs >= STATE_LOG_EVERY_MS) {
-    const reg = getRegime(symbol);
-    const readyAgeSec = readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null;
-    const readyAgeStr = readyAgeSec != null ? `${readyAgeSec}s` : "na";
+  if (!s.lastStateLogMs || now - s.lastStateLogMs >= STATE_LOG_EVERY_MS) {
+    const e = s.lastEval;
+    const reasons = e?.reasons?.length ? e.reasons.join(",") : "na";
     console.log(
-      `📌 STATE ${symbol} ready=${readyOn ? 1 : 0} readyAge=${readyAgeStr} inPos=${inPosition ? 1 : 0} reg=${reg} cooldown=${cooldownActive() ? 1 : 0} crash=${crashLockActive() ? 1 : 0} pending=${pendingActive() ? 1 : 0} reentry=${reentryActive() ? 1 : 0} be=${breakevenArmed ? 1 : 0} pl=${profitLockArmed ? 1 : 0} lastAction=${lastAction}`
+      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} reg=${e?.regime || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} reasons=${reasons} lastAction=${s.lastAction}`
     );
-    lastStateLogMs = now;
+    s.lastStateLogMs = now;
   }
 }
 
-function clearReadyContext(reason = "cleared") {
-  readyOn = false;
-  readyAtMs = 0;
-  readyPrice = null;
-  readySymbol = "";
-  readyTf = "";
-  readyMeta = {};
-  console.log(`🧹 READY context cleared (${reason})`);
-}
+// ========================================
+// 3M BAR BUILDER FROM 15S TICKS
+// ========================================
+function pushTickToBars(s, price, tsMs) {
+  const bucketMs = floorToTfMs(tsMs, BAR_TF_SEC);
 
-function clearPositionContext(reason = "pos_cleared") {
-  inPosition = false;
-  entryPrice = null;
-  entrySymbol = "";
-  peakPrice = null;
-  profitLockArmed = false;
-  breakevenArmed = false;
-  entryMeta = { tv_exchange: null, tv_instrument: null };
-  positionWasReentry = false;
-  console.log(`🧽 POSITION context cleared (${reason})`);
-}
-
-function startCooldown(reason = "exit", minutesOverride = null) {
-  const mins = minutesOverride != null ? minutesOverride : EXIT_COOLDOWN_MIN;
-  if (!mins || mins <= 0) return;
-  const until = nowMs() + mins * 60 * 1000;
-  cooldownUntilMs = Math.max(cooldownUntilMs || 0, until);
-  console.log(`⏳ Cooldown active until ${new Date(cooldownUntilMs).toISOString()} reason=${reason}`);
-}
-
-function startCrashLock(reason = "crash", minutesOverride = null) {
-  const mins = minutesOverride != null ? minutesOverride : CRASH_COOLDOWN_MIN;
-  if (!mins || mins <= 0) return;
-  crashLockUntilMs = nowMs() + mins * 60 * 1000;
-  console.log(`🛑 CrashLock started (${mins} min) reason=${reason}`);
-}
-
-function crashLockActive() {
-  return crashLockUntilMs && nowMs() < crashLockUntilMs;
-}
-function cooldownActive() {
-  return cooldownUntilMs && nowMs() < cooldownUntilMs;
-}
-function conservativeModeActive() {
-  return conservativeUntilMs && nowMs() < conservativeUntilMs;
-}
-
-function ttlExpired() {
-  if (inPosition) return false;
-  if (!READY_TTL_MIN || READY_TTL_MIN <= 0) return false;
-  return readyOn && nowMs() - readyAtMs > READY_TTL_MIN * 60 * 1000;
-}
-
-function isHeartbeatFresh() {
-  if (!REQUIRE_FRESH_HEARTBEAT) return true;
-  if (!lastTickMs) return false;
-  return nowMs() - lastTickMs <= HEARTBEAT_MAX_AGE_SEC * 1000;
-}
-
-function maybeAutoExpireReady(currentPrice, currentSymbol) {
-  if (!READY_AUTOEXPIRE_ENABLED) return false;
-  if (!readyOn) return false;
-  if (inPosition) return false;
-  if (readyPrice == null || currentPrice == null) return false;
-  if (readySymbol && currentSymbol && readySymbol !== currentSymbol) return false;
-
-  const dPct = pctDiff(readyPrice, currentPrice);
-  if (dPct == null) return false;
-
-  if (dPct > READY_AUTOEXPIRE_PCT) {
-    console.log(
-      `🟠 AUTO-EXPIRE READY: drift ${dPct.toFixed(3)}% > ${READY_AUTOEXPIRE_PCT}%`,
-      { readyPrice, currentPrice }
-    );
-    clearReadyContext("auto_expire_drift");
-    lastAction = "ready_autoexpired_drift";
-    return true;
-  }
-  return false;
-}
-
-// tick analytics
-function pushTick(symbol, price, tMs) {
-  if (!symbol || price == null) return;
-  const arr = tickHistory.get(symbol) || [];
-  arr.push({ t: tMs, p: price });
-  const cutoff = tMs - TICK_BUFFER_SEC * 1000;
-  while (arr.length && arr[0].t < cutoff) arr.shift();
-  tickHistory.set(symbol, arr);
-}
-
-function priceAtOrBefore(symbol, targetMs) {
-  const arr = tickHistory.get(symbol);
-  if (!arr || arr.length === 0) return null;
-  for (let i = arr.length - 1; i >= 0; i--) {
-    if (arr[i].t <= targetMs) return arr[i].p;
-  }
-  return arr[0]?.p ?? null;
-}
-
-function atrPctFromTicks(symbol, windowSec) {
-  const arr = tickHistory.get(symbol);
-  if (!arr || arr.length < 3) return null;
-
-  const now = nowMs();
-  const cutoff = now - windowSec * 1000;
-  const sub = arr.filter((x) => x.t >= cutoff);
-  if (sub.length < 3) return null;
-
-  let sumTR = 0;
-  let count = 0;
-  for (let i = 1; i < sub.length; i++) {
-    sumTR += Math.abs(sub[i].p - sub[i - 1].p);
-    count++;
-  }
-  if (!count) return null;
-  const atr = sumTR / count;
-  const last = sub[sub.length - 1].p;
-  if (!last) return null;
-  return (atr / last) * 100.0;
-}
-
-function slopePct(symbol, windowSec) {
-  const now = nowMs();
-  const pNow = priceAtOrBefore(symbol, now);
-  const pPast = priceAtOrBefore(symbol, now - windowSec * 1000);
-  if (!Number.isFinite(pNow) || !Number.isFinite(pPast) || pPast === 0) return null;
-  return ((pNow - pPast) / pPast) * 100.0;
-}
-
-function updateRegime(symbol) {
-  if (!REGIME_ENABLED) return null;
-  const arr = tickHistory.get(symbol);
-  if (!arr || arr.length < REGIME_MIN_TICKS) return null;
-
-  const s = slopePct(symbol, SLOPE_WINDOW_SEC);
-  const atrP = atrPctFromTicks(symbol, ATR_WINDOW_SEC);
-  if (s == null || atrP == null) return null;
-
-  const prev = regimeState.get(symbol) || { regime: "RANGE", updatedMs: 0 };
-  const absSlope = Math.abs(s);
-
-  let next = prev.regime;
-
-  if (prev.regime === "RANGE") {
-    if (absSlope >= REGIME_TREND_SLOPE_ON_PCT && atrP >= REGIME_VOL_MIN_ATR_PCT) next = "TREND";
+  if (!s.currentBar || s.currentBar.t !== bucketMs) {
+    if (s.currentBar) {
+      s.bars.push(s.currentBar);
+      if (s.bars.length > MAX_BARS) s.bars.shift();
+    }
+    s.currentBar = {
+      t: bucketMs,
+      o: price,
+      h: price,
+      l: price,
+      c: price,
+    };
   } else {
-    if (absSlope <= REGIME_TREND_SLOPE_OFF_PCT) next = "RANGE";
+    s.currentBar.h = Math.max(s.currentBar.h, price);
+    s.currentBar.l = Math.min(s.currentBar.l, price);
+    s.currentBar.c = price;
   }
-
-  if (absSlope <= REGIME_RANGE_SLOPE_ON_PCT) next = "RANGE";
-  if (absSlope >= REGIME_RANGE_SLOPE_OFF_PCT && atrP >= REGIME_VOL_MIN_ATR_PCT) {
-    if (absSlope >= REGIME_TREND_SLOPE_ON_PCT) next = "TREND";
-  }
-
-  const st = { regime: next, updatedMs: nowMs(), slopePct: s, atrPct: atrP };
-  regimeState.set(symbol, st);
-
-  if (prev.regime !== next) {
-    console.log(
-      `🔄 REGIME SWITCH: ${symbol} ${prev.regime} -> ${next} | slope=${s.toFixed(3)}% | atr=${atrP.toFixed(3)}%`
-    );
-  }
-  return st;
 }
 
-function getRegime(symbol) {
-  const st = regimeState.get(symbol);
-  return st?.regime || "RANGE";
+function getBarsForCalc(s) {
+  const out = s.bars.slice();
+  if (s.currentBar) out.push(s.currentBar);
+  return out;
 }
 
-function effectiveReadyMaxMovePct(symbol) {
-  if (!REGIME_ENABLED) return READY_MAX_MOVE_PCT;
-  const r = getRegime(symbol);
-  if (r === "TREND" && READY_MAX_MOVE_PCT_TREND != null) return READY_MAX_MOVE_PCT_TREND;
-  if (r === "RANGE" && READY_MAX_MOVE_PCT_RANGE != null) return READY_MAX_MOVE_PCT_RANGE;
-  return READY_MAX_MOVE_PCT;
+// ========================================
+// INDICATOR HELPERS
+// ========================================
+function emaSeries(values, len) {
+  if (!values.length) return [];
+  const alpha = 2 / (len + 1);
+  const out = [values[0]];
+  for (let i = 1; i < values.length; i++) {
+    out.push(alpha * values[i] + (1 - alpha) * out[i - 1]);
+  }
+  return out;
 }
 
-function maybeCrashLock(symbol) {
-  if (!CRASH_PROTECT_ENABLED) return false;
-  if (!symbol) return false;
+function smaLast(values, len) {
+  if (values.length < len) return null;
+  let sum = 0;
+  for (let i = values.length - len; i < values.length; i++) sum += values[i];
+  return sum / len;
+}
 
-  const now = nowMs();
-  const pNow = priceAtOrBefore(symbol, now);
-  const p1m = priceAtOrBefore(symbol, now - 60 * 1000);
-  const p5m = priceAtOrBefore(symbol, now - 300 * 1000);
-
-  if (!Number.isFinite(pNow)) return false;
-
-  let dump1m = null;
-  let dump5m = null;
-
-  if (Number.isFinite(p1m) && p1m !== 0) dump1m = ((pNow - p1m) / p1m) * 100.0;
-  if (Number.isFinite(p5m) && p5m !== 0) dump5m = ((pNow - p5m) / p5m) * 100.0;
-
-  if (dump1m != null && dump1m <= -CRASH_DUMP_1M_PCT) {
-    startCrashLock(`dump_1m_${dump1m.toFixed(2)}%`);
-    lastAction = "crash_lock_dump_1m";
-    clearReadyContext("crash_lock_dump_1m");
-    return { triggered: true, window: "1m", dumpPct: dump1m };
+function rsiSeries(values, len) {
+  if (values.length < len + 1) return [];
+  const gains = [];
+  const losses = [];
+  for (let i = 1; i < values.length; i++) {
+    const d = values[i] - values[i - 1];
+    gains.push(Math.max(d, 0));
+    losses.push(Math.max(-d, 0));
   }
 
-  if (dump5m != null && dump5m <= -CRASH_DUMP_5M_PCT) {
-    startCrashLock(`dump_5m_${dump5m.toFixed(2)}%`);
-    lastAction = "crash_lock_dump_5m";
-    clearReadyContext("crash_lock_dump_5m");
-    return { triggered: true, window: "5m", dumpPct: dump5m };
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 0; i < len; i++) {
+    avgGain += gains[i];
+    avgLoss += losses[i];
+  }
+  avgGain /= len;
+  avgLoss /= len;
+
+  const out = [null];
+  for (let i = 1; i < len; i++) out.push(null);
+
+  const firstRs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  out.push(100 - 100 / (1 + firstRs));
+
+  for (let i = len; i < gains.length; i++) {
+    avgGain = (avgGain * (len - 1) + gains[i]) / len;
+    avgLoss = (avgLoss * (len - 1) + losses[i]) / len;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    out.push(100 - 100 / (1 + rs));
+  }
+  return out;
+}
+
+function adxSeries(bars, len) {
+  if (bars.length < len + 2) return { adx: [], plusDI: [], minusDI: [] };
+
+  const tr = [];
+  const plusDM = [];
+  const minusDM = [];
+
+  for (let i = 1; i < bars.length; i++) {
+    const h = bars[i].h;
+    const l = bars[i].l;
+    const pc = bars[i - 1].c;
+    const upMove = h - bars[i - 1].h;
+    const downMove = bars[i - 1].l - l;
+
+    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    tr.push(Math.max(h - l, Math.max(Math.abs(h - pc), Math.abs(l - pc))));
   }
 
-  return false;
+  function rma(vals, rmaLen) {
+    if (vals.length < rmaLen) return [];
+    let seed = 0;
+    for (let i = 0; i < rmaLen; i++) seed += vals[i];
+    seed /= rmaLen;
+    const out = [];
+    for (let i = 0; i < rmaLen - 1; i++) out.push(null);
+    out.push(seed);
+    for (let i = rmaLen; i < vals.length; i++) {
+      out.push((out[out.length - 1] * (rmaLen - 1) + vals[i]) / rmaLen);
+    }
+    return out;
+  }
+
+  const trRma = rma(tr, len);
+  const plusRma = rma(plusDM, len);
+  const minusRma = rma(minusDM, len);
+
+  const plusDI = [];
+  const minusDI = [];
+  const dx = [];
+
+  for (let i = 0; i < tr.length; i++) {
+    const atr = trRma[i];
+    if (!Number.isFinite(atr) || atr === 0) {
+      plusDI.push(null);
+      minusDI.push(null);
+      dx.push(null);
+      continue;
+    }
+    const pdi = (100 * plusRma[i]) / atr;
+    const mdi = (100 * minusRma[i]) / atr;
+    plusDI.push(pdi);
+    minusDI.push(mdi);
+    const denom = pdi + mdi;
+    dx.push(denom > 0 ? (100 * Math.abs(pdi - mdi)) / denom : 0);
+  }
+
+  const adx = rma(dx.filter((x) => Number.isFinite(x)), len);
+  const fullAdx = new Array(dx.length).fill(null);
+  let k = 0;
+  for (let i = 0; i < dx.length; i++) {
+    if (Number.isFinite(dx[i])) {
+      fullAdx[i] = adx[k] ?? null;
+      k++;
+    }
+  }
+
+  // align to bars length
+  return {
+    adx: [null, ...fullAdx],
+    plusDI: [null, ...plusDI],
+    minusDI: [null, ...minusDI],
+  };
 }
 
-function plTightenMultiplier(peakProfitPct) {
-  if (!PL_TIGHTEN_ENABLED || !Number.isFinite(peakProfitPct)) return 1.0;
-
-  if (peakProfitPct >= PL_TIGHTEN_TIER3_PROFIT_PCT) return PL_TIGHTEN_TIER4_MULT;
-  if (peakProfitPct >= PL_TIGHTEN_TIER2_PROFIT_PCT) return PL_TIGHTEN_TIER3_MULT;
-  if (peakProfitPct >= PL_TIGHTEN_TIER1_PROFIT_PCT) return PL_TIGHTEN_TIER2_MULT;
-  return PL_TIGHTEN_TIER1_MULT;
+function wtSeries(bars, n1, n2, sigLen) {
+  const ap = bars.map((b) => (b.h + b.l + b.c) / 3);
+  const esa = emaSeries(ap, n1);
+  const absDev = ap.map((v, i) => Math.abs(v - esa[i]));
+  const de = emaSeries(absDev, n1);
+  const ci = ap.map((v, i) => {
+    const d = de[i];
+    return d && d !== 0 ? (v - esa[i]) / (0.015 * d) : 0;
+  });
+  const fwo = emaSeries(ci, n2);
+  const fwoSignal = [];
+  for (let i = 0; i < fwo.length; i++) {
+    if (i + 1 < sigLen) fwoSignal.push(null);
+    else {
+      let sum = 0;
+      for (let j = i - sigLen + 1; j <= i; j++) sum += fwo[j];
+      fwoSignal.push(sum / sigLen);
+    }
+  }
+  return { fwo, fwoSignal };
 }
 
+function barsSinceLowestLow(bars, lookback) {
+  const start = Math.max(0, bars.length - lookback);
+  let idx = start;
+  let low = bars[start].l;
+  for (let i = start + 1; i < bars.length; i++) {
+    if (bars[i].l <= low) {
+      low = bars[i].l;
+      idx = i;
+    }
+  }
+  return { low, barsSince: bars.length - 1 - idx, index: idx };
+}
+
+function highestClose(bars, lookback) {
+  const start = Math.max(0, bars.length - lookback);
+  let v = bars[start].c;
+  for (let i = start + 1; i < bars.length; i++) v = Math.max(v, bars[i].c);
+  return v;
+}
+
+function highestStretchBelowEma(bars, ema21, lookback) {
+  const start = Math.max(0, bars.length - lookback);
+  let maxStretch = 0;
+  for (let i = start; i < bars.length; i++) {
+    const e = ema21[i];
+    if (Number.isFinite(e) && e > 0) {
+      maxStretch = Math.max(maxStretch, ((e - bars[i].l) / e) * 100);
+    }
+  }
+  return maxStretch;
+}
+
+function highestBelowStreak(bars, ema21, lookback) {
+  const start = Math.max(0, bars.length - lookback);
+  let streak = 0;
+  let maxStreak = 0;
+  for (let i = start; i < bars.length; i++) {
+    if (bars[i].c < ema21[i]) {
+      streak += 1;
+      maxStreak = Math.max(maxStreak, streak);
+    } else {
+      streak = 0;
+    }
+  }
+  return maxStreak;
+}
+
+function findRecentReclaimBar(bars, ema21, maxBarsSinceReclaim) {
+  for (let i = bars.length - 1; i >= 1; i--) {
+    const crossed = bars[i - 1].c <= ema21[i - 1] && bars[i].c > ema21[i];
+    if (crossed) {
+      const age = bars.length - 1 - i;
+      if (age <= maxBarsSinceReclaim) {
+        return { index: i, ageBars: age, reclaimPrice: bars[i].c, reclaimLow: bars[i].l };
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+// ========================================
+// FILTER EVALUATION
+// ========================================
+function evaluateLongFilter(s) {
+  const bars = getBarsForCalc(s);
+  const reasons = [];
+
+  if (!FILTER_ENABLED) {
+    return {
+      allow: true,
+      reasons,
+      barsCount: bars.length,
+      regime: "na",
+      hostileBear: false,
+    };
+  }
+
+  if (bars.length < FILTER_MIN_BARS) {
+    reasons.push("not_enough_bars");
+    return {
+      allow: false,
+      reasons,
+      barsCount: bars.length,
+      regime: "na",
+      hostileBear: false,
+    };
+  }
+
+  const closes = bars.map((b) => b.c);
+  const opens = bars.map((b) => b.o);
+
+  const ema8 = emaSeries(closes, 8);
+  const ema18 = emaSeries(closes, 18);
+  const ema21 = emaSeries(closes, 21);
+  const rsi = rsiSeries(closes, 14);
+  const rsiMA = [];
+  for (let i = 0; i < rsi.length; i++) {
+    if (i < 4 || !Number.isFinite(rsi[i])) rsiMA.push(null);
+    else {
+      let sum = 0;
+      let ok = true;
+      for (let j = i - 4; j <= i; j++) {
+        if (!Number.isFinite(rsi[j])) {
+          ok = false;
+          break;
+        }
+        sum += rsi[j];
+      }
+      rsiMA.push(ok ? sum / 5 : null);
+    }
+  }
+
+  const { adx, plusDI, minusDI } = adxSeries(bars, 14);
+  const { fwo, fwoSignal } = wtSeries(bars, 10, 21, 4);
+
+  const i = bars.length - 1;
+  const bar = bars[i];
+  const prev = bars[i - 1];
+
+  const rsiNow = rsi[i];
+  const rsiPrev = rsi[i - 1];
+  const rsiMaNow = rsiMA[i];
+
+  const adxNow = adx[i];
+  const plusDINow = plusDI[i];
+  const minusDINow = minusDI[i];
+
+  const ema8Now = ema8[i];
+  const ema18Now = ema18[i];
+  const ema21Now = ema21[i];
+  const ema21Prev = ema21[i - 1];
+
+  const fwoNow = fwo[i];
+  const fwoPrev = fwo[i - 1];
+  const fwoSigNow = fwoSignal[i];
+
+  const reg = "RANGE"; // entry filter is tailored mainly for reversal/range-to-early-trend
+
+  // 1) Damage / washout
+  const lowInfo = barsSinceLowestLow(bars, FILTER_WASH_LOOKBACK_BARS);
+  const recentLow = lowInfo.low;
+  const barsSinceLow = lowInfo.barsSince;
+  const recentHigh = highestClose(bars, FILTER_DROP_LOOKBACK_BARS);
+  const dropPct = recentHigh > 0 ? ((recentHigh - bar.c) / recentHigh) * 100 : 0;
+  const maxStretchBelow = highestStretchBelowEma(bars, ema21, FILTER_WASH_LOOKBACK_BARS);
+  const maxBelowStreak = highestBelowStreak(bars, ema21, FILTER_WASH_LOOKBACK_BARS);
+
+  const hadDamage =
+    dropPct >= FILTER_MIN_DROP_PCT ||
+    maxStretchBelow >= FILTER_MIN_DROP_PCT ||
+    maxBelowStreak >= 3;
+
+  if (!hadDamage) reasons.push("no_recent_damage");
+  if (barsSinceLow > FILTER_MAX_BARS_SINCE_LOW) reasons.push("low_too_old");
+
+  // 2) Reclaim freshness
+  const reclaim = findRecentReclaimBar(bars, ema21, FILTER_MAX_BARS_SINCE_RECLAIM);
+  if (!reclaim) reasons.push("no_fresh_reclaim");
+
+  const reclaimAgeBars = reclaim ? reclaim.ageBars : null;
+  const reclaimPrice = reclaim ? reclaim.reclaimPrice : null;
+  const reclaimFromLowPct =
+    Number.isFinite(recentLow) && recentLow > 0 ? ((bar.c - recentLow) / recentLow) * 100 : null;
+  const impulseFromLowPct =
+    Number.isFinite(recentLow) && recentLow > 0 ? ((bar.h - recentLow) / recentLow) * 100 : null;
+  const bodyPct =
+    bar.o > 0 ? (Math.abs(bar.c - bar.o) / bar.o) * 100 : null;
+
+  if (!(reclaimFromLowPct >= FILTER_MIN_RECLAIM_FROM_LOW_PCT)) {
+    reasons.push("weak_reclaim_from_low");
+  }
+  if (!(impulseFromLowPct >= FILTER_MIN_IMPULSE_FROM_LOW_PCT)) {
+    reasons.push("weak_impulse_from_low");
+  }
+  if (!(bodyPct >= FILTER_MIN_BODY_PCT)) {
+    reasons.push("weak_body");
+  }
+
+  // 3) Recovery quality
+  if (!(bar.c > ema18Now && bar.c > ema21Now)) reasons.push("not_above_ema18_21");
+  if (!(rsiNow >= FILTER_RSI_MIN)) reasons.push("rsi_too_low");
+  if (!(Number.isFinite(rsiPrev) && rsiNow > rsiPrev)) reasons.push("rsi_not_rising");
+  if (!(Number.isFinite(rsiMaNow) && rsiNow > rsiMaNow)) reasons.push("rsi_not_above_ma");
+  if (!(Number.isFinite(fwoSigNow) && fwoNow > fwoSigNow)) reasons.push("fwo_not_recovered");
+  if (!(Number.isFinite(fwoPrev) && fwoNow > fwoPrev)) reasons.push("fwo_not_rising");
+  if (!(bar.c > bar.o)) reasons.push("not_bull_candle");
+  if (!(adxNow >= FILTER_ADX_MIN)) reasons.push("adx_too_low");
+  if (!(ema8Now > ema8[i - 1])) reasons.push("ema8_not_rising");
+
+  // 4) Hostility
+  const emaGapPct = ema21Now > 0 ? ((ema21Now - ema8Now) / ema21Now) * 100 : 0;
+  const ema21SlopePct =
+    Number.isFinite(ema21Prev) && ema21Prev > 0 ? ((ema21Now - ema21Prev) / ema21Prev) * 100 : 0;
+  const minusLead =
+    Number.isFinite(minusDINow) && Number.isFinite(plusDINow) ? minusDINow - plusDINow : 0;
+
+  const hostileBear =
+    emaGapPct > FILTER_HOSTILE_MAX_EMA_GAP_PCT ||
+    ema21SlopePct < -FILTER_HOSTILE_MAX_NEG_SLOPE_PCT ||
+    minusLead > FILTER_HOSTILE_MAX_MINUS_DI_LEAD;
+
+  if (hostileBear) reasons.push("hostile_bear");
+
+  // 5) Extension / stale continuation protection
+  const entryExtEma21Pct = ema21Now > 0 ? ((bar.c - ema21Now) / ema21Now) * 100 : null;
+  const entryExtEma18Pct = ema18Now > 0 ? ((bar.c - ema18Now) / ema18Now) * 100 : null;
+  const buyFromReclaimPct =
+    Number.isFinite(reclaimPrice) && reclaimPrice > 0 ? ((bar.c - reclaimPrice) / reclaimPrice) * 100 : null;
+
+  if (!(entryExtEma21Pct <= FILTER_MAX_ENTRY_EXT_EMA21_PCT)) reasons.push("too_extended_ema21");
+  if (!(entryExtEma18Pct <= FILTER_MAX_ENTRY_EXT_EMA18_PCT)) reasons.push("too_extended_ema18");
+  if (!(buyFromReclaimPct == null || buyFromReclaimPct <= FILTER_MAX_BUY_FROM_RECLAIM_PCT)) {
+    reasons.push("too_far_from_reclaim");
+  }
+
+  // 6) Fresh low should precede reclaim
+  if (reclaim && lowInfo.index > reclaim.index) {
+    reasons.push("fresh_low_after_reclaim");
+  }
+
+  const allow = reasons.length === 0;
+
+  return {
+    allow,
+    reasons,
+    regime: reg,
+
+    barsCount: bars.length,
+
+    recentLow,
+    barsSinceLow,
+    recentHigh,
+    dropPct,
+    maxStretchBelow,
+    maxBelowStreak,
+
+    reclaimAgeBars,
+    reclaimPrice,
+    reclaimFromLowPct,
+    impulseFromLowPct,
+    bodyPct,
+
+    rsi: rsiNow,
+    rsiMa: rsiMaNow,
+    adx: adxNow,
+    plusDI: plusDINow,
+    minusDI: minusDINow,
+
+    ema8: ema8Now,
+    ema18: ema18Now,
+    ema21: ema21Now,
+    emaGapPct,
+    ema21SlopePct,
+    minusLead,
+    hostileBear,
+
+    entryExtEma21Pct,
+    entryExtEma18Pct,
+    buyFromReclaimPct,
+  };
+}
+
+// ========================================
+// 3COMMAS POST
+// ========================================
 async function postTo3Commas(action, payload) {
   if (!THREECOMMAS_BOT_UUID || !THREECOMMAS_SECRET) {
     console.log("⚠️ 3Commas not configured (missing BOT_UUID/SECRET) — skipping");
     return { skipped: true };
   }
 
-  const sym = getSymbolFromPayload(payload) || entrySymbol || readySymbol || "";
+  const sym = getSymbolFromPayload(payload);
   const derived = deriveTvFromSymbol(sym);
-
-  const tv_exchange =
-    payload?.tv_exchange ??
-    payload?.exchange ??
-    entryMeta?.tv_exchange ??
-    readyMeta?.tv_exchange ??
-    THREECOMMAS_TV_EXCHANGE ??
-    derived.tv_exchange ??
-    "";
-
-  const tv_instrument =
-    payload?.tv_instrument ??
-    payload?.ticker ??
-    entryMeta?.tv_instrument ??
-    readyMeta?.tv_instrument ??
-    THREECOMMAS_TV_INSTRUMENT ??
-    derived.tv_instrument ??
-    "";
-
-  const trigger_price =
-    toNum(payload?.trigger_price) ??
-    toNum(payload?.price) ??
-    toNum(payload?.close) ??
-    readyPrice ??
-    lastTickPrice ??
-    "";
 
   const body = {
     secret: THREECOMMAS_SECRET,
     max_lag: THREECOMMAS_MAX_LAG,
     timestamp: payload?.timestamp ?? payload?.time ?? new Date().toISOString(),
-    trigger_price: trigger_price !== "" ? String(trigger_price) : "",
-    tv_exchange: String(tv_exchange || ""),
-    tv_instrument: String(tv_instrument || ""),
+    trigger_price: String(
+      toNum(payload?.trigger_price) ??
+      toNum(payload?.price) ??
+      toNum(payload?.close) ??
+      ""
+    ),
+    tv_exchange: String(payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? ""),
+    tv_instrument: String(payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? ""),
     action,
     bot_uuid: THREECOMMAS_BOT_UUID,
   };
@@ -668,673 +772,190 @@ async function postTo3Commas(action, payload) {
   }
 }
 
-function noteExitForEquity(exitPrice) {
-  if (!EQUITY_STABILIZER_ENABLED) return;
-  const p = pctProfit(entryPrice, exitPrice);
-  if (p == null) return;
+// ========================================
+// HANDLERS
+// ========================================
+async function handleTick(payload, res) {
+  const symbol = getSymbolFromPayload(payload);
+  const price = getTickPrice(payload);
+  const tsMs = payload?.time ? new Date(payload.time).getTime() : nowMs();
 
-  if (p < 0) lossStreak += 1;
-  else lossStreak = 0;
-
-  console.log(`📉 Equity: exitPnL=${p.toFixed(3)}% | lossStreak=${lossStreak}`);
-
-  if (lossStreak >= 3) {
-    const until = nowMs() + ES_CONSERVATIVE_MIN * 60 * 1000;
-    conservativeUntilMs = Math.max(conservativeUntilMs || 0, until);
-    startCooldown("equity_loss_streak_3", ES_LOSS_STREAK_3_COOLDOWN_MIN);
-    console.log(`🧯 Conservative mode ON for ${ES_CONSERVATIVE_MIN} min`);
-  } else if (lossStreak >= 2) {
-    startCooldown("equity_loss_streak_2", ES_LOSS_STREAK_2_COOLDOWN_MIN);
-  }
-}
-
-// ===== Exit ladder evaluators =====
-
-async function doManagedExit(reason, currentPrice, currentSymbol) {
-  lastAction = reason;
-
-  const fwd = await postTo3Commas("exit_long", {
-    time: new Date().toISOString(),
-    trigger_price: currentPrice,
-    symbol: entrySymbol || currentSymbol,
-    tv_exchange: entryMeta?.tv_exchange,
-    tv_instrument: entryMeta?.tv_instrument,
-  });
-
-  noteExitForEquity(currentPrice);
-  maybeStartOrKeepReentryWindow(
-    currentSymbol || entrySymbol,
-    currentPrice,
-    reason,
-    pctProfit(entryPrice, currentPrice)
-  );
-
-  clearReadyContext(reason);
-  clearPositionContext(reason);
-  startCooldown(reason);
-
-  return { exited: true, reason, threecommas: fwd };
-}
-
-async function maybeFailStopExit(currentPrice, currentSymbol) {
-  if (!FAIL_STOP_ENABLED) return false;
-  if (!inPosition) return false;
-  if (!Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) return false;
-  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
-  if (profitLockArmed || breakevenArmed) return false;
-
-  const stopPx = entryPrice * (1 - FAIL_STOP_PCT / 100);
-  if (currentPrice <= stopPx) {
-    console.log(
-      `🛑 FAIL STOP EXIT: price=${currentPrice} <= stop=${stopPx.toFixed(4)} | entry=${entryPrice} | failStop=${FAIL_STOP_PCT}%`
-    );
-    return doManagedExit("fail_stop_exit", currentPrice, currentSymbol);
-  }
-  return false;
-}
-
-async function maybeBreakevenExit(currentPrice, currentSymbol) {
-  if (!BREAKEVEN_ENABLED) return false;
-  if (!inPosition) return false;
-  if (!Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) return false;
-  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
-  if (profitLockArmed) return false;
-
-  const p = pctProfit(entryPrice, currentPrice);
-  if (p == null) return false;
-
-  if (!breakevenArmed && p >= BREAKEVEN_ARM_PCT) {
-    breakevenArmed = true;
-    console.log(
-      `🟡 BREAKEVEN ARMED at +${p.toFixed(3)}% (>= ${BREAKEVEN_ARM_PCT.toFixed(3)}%)`
-    );
+  if (!symbol || !Number.isFinite(price)) {
+    return res.json({ ok: true, tick: true, ignored: "missing_fields" });
   }
 
-  if (!breakevenArmed) return false;
+  const s = getState(symbol);
+  s.lastTickMs = nowMs();
+  s.lastTickPrice = price;
 
-  const beFloor = entryPrice * (1 + BREAKEVEN_LOCK_PCT / 100);
-  if (currentPrice <= beFloor) {
-    console.log(
-      `🟨 BREAKEVEN EXIT: price=${currentPrice} <= floor=${beFloor.toFixed(4)} | entry=${entryPrice} | lock=${BREAKEVEN_LOCK_PCT}%`
-    );
-    return doManagedExit("breakeven_exit", currentPrice, currentSymbol);
-  }
+  pushTickToBars(s, price, tsMs);
 
-  return false;
-}
+  maybeLogTick(s, payload?.time ?? new Date(tsMs).toISOString());
 
-async function maybeProfitLockExit(currentPrice, currentSymbol) {
-  if (!PROFIT_LOCK_ENABLED) return false;
-  if (!inPosition) return false;
-  if (!entryPrice || currentPrice == null) return false;
-  if (entrySymbol && currentSymbol && entrySymbol !== currentSymbol) return false;
+  s.lastEval = evaluateLongFilter(s);
 
-  peakPrice = peakPrice == null ? currentPrice : Math.max(peakPrice, currentPrice);
+  maybeLogState(s);
 
-  const p = pctProfit(entryPrice, currentPrice);
-  const peakProfitPct = pctProfit(entryPrice, peakPrice);
-  if (p == null || peakProfitPct == null) return false;
-
-  let armPct = PROFIT_LOCK_ARM_PCT;
-  let givebackPct = PROFIT_LOCK_GIVEBACK_PCT;
-
-  if (PL_ADAPTIVE_ENABLED) {
-    const st = regimeState.get(currentSymbol);
-    const atrP = st?.atrPct ?? atrPctFromTicks(currentSymbol, ATR_WINDOW_SEC);
-    if (atrP != null) {
-      const r = getRegime(currentSymbol);
-      const startMult = r === "TREND" ? PL_START_ATR_MULT_TREND : PL_START_ATR_MULT_RANGE;
-      const giveMult = r === "TREND" ? PL_GIVEBACK_ATR_MULT_TREND : PL_GIVEBACK_ATR_MULT_RANGE;
-      armPct = startMult * atrP;
-      givebackPct = giveMult * atrP;
-    }
-  }
-
-  if (PL_MIN_ARM_PCT > 0) armPct = Math.max(armPct, PL_MIN_ARM_PCT);
-  if (PL_MIN_GIVEBACK_PCT > 0) givebackPct = Math.max(givebackPct, PL_MIN_GIVEBACK_PCT);
-  if (PL_MAX_ARM_PCT > 0) armPct = Math.min(armPct, PL_MAX_ARM_PCT);
-  if (PL_MAX_GIVEBACK_PCT > 0) givebackPct = Math.min(givebackPct, PL_MAX_GIVEBACK_PCT);
-
-  if (!profitLockArmed && p >= armPct) {
-    profitLockArmed = true;
-    console.log(`🔒 PROFIT LOCK ARMED at +${p.toFixed(3)}% (>= ${armPct.toFixed(3)}%)`);
-  }
-  if (!profitLockArmed) return false;
-
-  const tightenMult = plTightenMultiplier(peakProfitPct);
-  let effectiveGivebackPct = givebackPct * tightenMult;
-
-  if (PL_MIN_GIVEBACK_PCT > 0) effectiveGivebackPct = Math.max(effectiveGivebackPct, PL_MIN_GIVEBACK_PCT);
-  if (PL_MAX_GIVEBACK_PCT > 0) effectiveGivebackPct = Math.min(effectiveGivebackPct, PL_MAX_GIVEBACK_PCT);
-
-  const floor = peakPrice * (1 - effectiveGivebackPct / 100);
-
-  if (currentPrice <= floor) {
-    console.log(
-      `🧷 PROFIT LOCK EXIT: price=${currentPrice} <= floor=${floor.toFixed(4)} | peak=${peakPrice} | baseGiveback=${givebackPct.toFixed(3)}% | tightenMult=${tightenMult.toFixed(2)} | effectiveGiveback=${effectiveGivebackPct.toFixed(3)}% | peakProfit=${peakProfitPct.toFixed(3)}%`
-    );
-    return doManagedExit("profit_lock_exit", currentPrice, currentSymbol);
-  }
-
-  return false;
-}
-
-// ====================
-// RE-ENTRY helpers
-// ====================
-function reentryActive() {
-  return reentry.active && nowMs() < reentry.untilMs;
-}
-function reentryTriesLeft() {
-  return reentry.triesUsed < reentry.triesMax;
-}
-function reentryClear(reason = "cleared") {
-  reentry.active = false;
-  reentry.untilMs = 0;
-  reentry.ref = null;
-  reentry.symbol = "";
-  reentry.regimeAtExit = "";
-  reentry.reason = reason;
-  reentry.triesUsed = 0;
-  reentry.triesMax = REENTRY_MAX_TRIES;
-  reentry.exitTs = 0;
-  reentry.consumed = false;
-  console.log(`🧼 REENTRY cleared (${reason})`);
-}
-
-function reentryFallRiseFromRef(ref, current) {
-  if (!Number.isFinite(ref) || ref === 0 || !Number.isFinite(current)) return null;
-  const pct = ((current - ref) / ref) * 100.0;
-  return { pct };
-}
-
-function maybeStartOrKeepReentryWindow(symbol, exitPrice, reason, exitPnlPct) {
-  if (!REENTRY_ENABLED) return;
-  if (!symbol || !Number.isFinite(exitPrice)) return;
-
-  if (positionWasReentry) {
-    console.log("🟣 REENTRY not started (exit from re-entry trade)");
-    return;
-  }
-
-  if (Number.isFinite(exitPnlPct) && exitPnlPct <= REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT) {
-    console.log(
-      `🟣 REENTRY not started (exitPnL ${exitPnlPct.toFixed(3)}% <= ${REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT}%)`
-    );
-    return;
-  }
-
-  const now = nowMs();
-  const regAtExit = symbol ? getRegime(symbol) : "RANGE";
-
-  if (reentry.active && now < reentry.untilMs && reentry.symbol === symbol) {
-    reentry.ref = exitPrice;
-    reentry.regimeAtExit = regAtExit;
-    reentry.reason = reason;
-    reentry.exitTs = now;
-    reentry.consumed = false;
-    console.log(
-      `🟣 REENTRY window kept | until=${new Date(reentry.untilMs).toISOString()} | ref=${exitPrice} tries=${reentry.triesUsed}/${reentry.triesMax} reason=${reason}`
-    );
-    return;
-  }
-
-  reentry = {
-    active: true,
-    untilMs: now + REENTRY_WINDOW_MIN * 60 * 1000,
-    ref: exitPrice,
-    symbol,
-    regimeAtExit: regAtExit,
-    reason,
-    triesUsed: 0,
-    triesMax: REENTRY_MAX_TRIES,
-    exitTs: now,
-    consumed: false,
-  };
-
-  console.log(
-    `🟣 REENTRY window started (${REENTRY_WINDOW_MIN}m) ref=${exitPrice} fall<=${REENTRY_MAX_FALL_PCT}% rise<=${REENTRY_MAX_RISE_PCT}% regimeAtExit=${regAtExit} reason=${reason}`
-  );
-}
-
-// ====================
-// Pending BUY helpers
-// ====================
-function pendingActive() {
-  return pendingBuy.active && nowMs() < pendingBuy.untilMs;
-}
-
-function pendingClear(reason = "cleared") {
-  pendingBuy = emptyPendingBuy();
-  if (reason) console.log(`🩷 PendingBUY cleared (${reason})`);
-}
-
-function pendingStore(symbol, price, payload) {
-  if (!PENDING_BUY_ENABLED) return;
-  pendingBuy = {
-    active: true,
-    untilMs: nowMs() + PENDING_BUY_WINDOW_SEC * 1000,
+  return res.json({
+    ok: true,
+    tick: true,
     symbol,
     price,
-    payload,
-    createdMs: nowMs(),
-  };
-  console.log(`🩷 PendingBUY stored (${PENDING_BUY_WINDOW_SEC}s) symbol=${symbol} price=${price}`);
-}
-
-function pendingCanConsumeWithReady(readySym, readyPx) {
-  if (!pendingActive()) return false;
-  if (!readySym || pendingBuy.symbol !== readySym) return false;
-  if (!Number.isFinite(readyPx) || !Number.isFinite(pendingBuy.price)) return false;
-  if (!pendingBuy.createdMs) return false;
-  if (nowMs() - pendingBuy.createdMs > PENDING_BUY_MAX_AGE_SEC * 1000) return false;
-
-  const d = pctDiff(readyPx, pendingBuy.price);
-  return d != null && d <= PENDING_BUY_MAX_READY_DRIFT_PCT;
-}
-
-// ====================
-// ENTRY/EXIT handlers
-// ====================
-function enterDedupeActive(ts) {
-  if (!ENTER_DEDUP_SEC || ENTER_DEDUP_SEC <= 0) return false;
-  const gapMs = ENTER_DEDUP_SEC * 1000;
-  return lastEnterAcceptedTs && ts - lastEnterAcceptedTs < gapMs;
+    bars: getBarsForCalc(s).length,
+    filter: s.lastEval,
+  });
 }
 
 async function handleEnterLong(payload, res, sourceTag) {
-  const px = getRayPrice(payload);
-  const sym = getSymbolFromPayload(payload);
+  const symbol = getSymbolFromPayload(payload);
+  const price = getRayPrice(payload);
   const ts = nowMs();
-  const emergency = isEmergency(payload);
 
-  if (crashLockActive()) {
-    lastAction = "enter_long_blocked_crash_lock";
-    return res.json({ ok: false, blocked: "crash_lock_active" });
-  }
-
-  if (inPosition) {
-    lastAction = "enter_long_blocked_in_position";
-    return res.json({ ok: false, blocked: "already_in_position" });
-  }
-
-  if (!isHeartbeatFresh()) {
-    lastAction = "enter_long_blocked_stale_heartbeat";
-    return res.json({ ok: false, blocked: "stale_heartbeat" });
-  }
-
-  if (enterDedupeActive(ts)) {
-    lastAction = "enter_long_deduped";
-    return res.json({ ok: true, ignored: "enter_dedup", window_sec: ENTER_DEDUP_SEC });
-  }
-
-  const reentryCandidate =
-    REENTRY_ENABLED &&
-    reentryActive() &&
-    reentryTriesLeft() &&
-    !reentry.consumed &&
-    (!REENTRY_REQUIRE_READY || readyOn);
-
-  const emergencyBypassCooldown = emergency && EMERGENCY_BYPASS_COOLDOWN;
-
-  if (cooldownActive() && !reentryCandidate && !emergencyBypassCooldown) {
-    lastAction = "enter_long_blocked_cooldown";
-    return res.json({ ok: false, blocked: "cooldown_active" });
-  } else if (cooldownActive() && reentryCandidate) {
-    console.log("🟣 REENTRY bypassing cooldown (valid re-entry candidate)");
-  } else if (cooldownActive() && emergencyBypassCooldown) {
-    console.log("🧨 EMERGENCY: bypassing cooldown (EMERGENCY_BYPASS_COOLDOWN=true)");
-  }
-
-  if (conservativeModeActive()) {
-    const reg = sym ? getRegime(sym) : "RANGE";
-    if (reg !== "TREND") {
-      lastAction = "enter_long_blocked_conservative_range";
-      return res.json({ ok: false, blocked: "conservative_blocks_range", regime: reg });
-    }
-  }
-
-  if (!reentryCandidate && !emergency) {
-    if (!readyOn) {
-      lastAction = "enter_long_blocked_not_ready";
-      if (PENDING_BUY_ENABLED && sym && Number.isFinite(px)) {
-        pendingStore(sym, px, payload);
-      }
-      return res.json({ ok: false, blocked: "not_ready" });
-    }
-
-    if (!isReadyFresh(READY_ENTRY_MAX_AGE_SEC * 1000)) {
-      lastAction = "enter_long_blocked_ready_too_old";
-      clearReadyContext("ready_too_old_for_entry");
-      return res.json({
-        ok: false,
-        blocked: "ready_too_old",
-        readyAgeSec: readyAgeMs() != null ? Math.round(readyAgeMs() / 1000) : null,
-        maxAgeSec: READY_ENTRY_MAX_AGE_SEC,
-      });
-    }
-  }
-
-  if (emergency && !reentryCandidate) {
-    console.log("🧨 EMERGENCY: ENTER_LONG bypassing READY requirement");
-  }
-
-  if (reentryCandidate) {
-    if (reentry.symbol && sym && reentry.symbol !== sym) {
-      lastAction = "enter_long_blocked_reentry_symbol_mismatch";
-      return res.json({
-        ok: false,
-        blocked: "reentry_symbol_mismatch",
-        reentrySymbol: reentry.symbol,
-        sym,
-      });
-    }
-
-    if (REENTRY_REQUIRE_TREND) {
-      const r = getRegime(sym);
-      if (r !== "TREND") {
-        lastAction = "enter_long_blocked_reentry_requires_trend";
-        return res.json({ ok: false, blocked: "reentry_requires_trend", regime: r });
-      }
-    }
-
-    if (Number.isFinite(reentry.ref) && Number.isFinite(px)) {
-      const move = reentryFallRiseFromRef(reentry.ref, px);
-      if (move) {
-        const pct = move.pct;
-        if (pct < -REENTRY_MAX_FALL_PCT || pct > REENTRY_MAX_RISE_PCT) {
-          lastAction = "enter_long_blocked_reentry_breach";
-          console.log(
-            `🟣 REENTRY blocked (breach) move=${pct.toFixed(3)}% ref=${reentry.ref} fall<=${REENTRY_MAX_FALL_PCT}% rise<=${REENTRY_MAX_RISE_PCT}%`
-          );
-          if (REENTRY_CANCEL_ON_BREACH) reentryClear("breach_cancel");
-          return res.json({ ok: false, blocked: "reentry_breach", movePct: pct });
-        }
-      }
-    }
-
-    reentry.triesUsed += 1;
-    console.log(
-      `🟣 REENTRY allowed (${sourceTag}) ref=${reentry.ref} regime=${getRegime(sym)} tries=${reentry.triesUsed}/${reentry.triesMax}`
-    );
-  }
-
-  if (!reentryCandidate && !emergency) {
-    if (readySymbol && sym && readySymbol !== sym) {
-      lastAction = "enter_long_blocked_symbol_mismatch";
-      return res.json({ ok: false, blocked: "symbol_mismatch", readySymbol, sym });
-    }
-  }
-
-  if (px == null || !sym) {
-    lastAction = "enter_long_blocked_missing_fields";
+  if (!symbol || !Number.isFinite(price)) {
     return res.json({ ok: false, blocked: "missing_price_or_symbol" });
   }
 
-  let entryDriftPct = null;
+  const s = getState(symbol);
 
-  if (!reentryCandidate && !emergency) {
-    if (readyPrice == null) {
-      lastAction = "enter_long_blocked_missing_ready_price";
-      return res.json({ ok: false, blocked: "missing_ready_price" });
-    }
-
-    const dPct = pctDiff(readyPrice, px);
-    if (dPct == null) {
-      lastAction = "enter_long_blocked_bad_price_diff";
-      return res.json({ ok: false, blocked: "bad_price_diff" });
-    }
-
-    entryDriftPct = dPct;
-    const maxMove = effectiveReadyMaxMovePct(sym);
-
-    if (dPct > maxMove) {
-      console.log(`⛔ ENTER LONG blocked (drift ${dPct.toFixed(3)}% > ${maxMove}%) — HARD RESET READY`);
-      clearReadyContext("hard_reset_price_drift");
-      lastAction = "enter_long_blocked_price_drift_reset";
-      return res.json({ ok: false, blocked: "price_drift_reset", drift_pct: dPct, maxMove });
-    }
+  if (!isHeartbeatFresh(s)) {
+    s.lastAction = "enter_long_blocked_stale_heartbeat";
+    return res.json({ ok: false, blocked: "stale_heartbeat" });
   }
 
-  inPosition = true;
-  entryPrice = px;
-  entrySymbol = sym;
-  peakPrice = px;
-  profitLockArmed = false;
-  breakevenArmed = false;
+  if (ALLOW_ONLY_ONE_POSITION && s.inPosition) {
+    s.lastAction = "enter_long_blocked_in_position";
+    return res.json({ ok: false, blocked: "already_in_position" });
+  }
 
-  positionWasReentry = Boolean(reentryCandidate);
+  if (enterDedupeActive(s, ts)) {
+    s.lastAction = "enter_long_deduped";
+    return res.json({ ok: true, ignored: "enter_dedup", window_sec: ENTER_DEDUP_SEC });
+  }
 
-  const derived = deriveTvFromSymbol(sym);
-  entryMeta = {
-    tv_exchange:
-      payload?.tv_exchange ?? payload?.exchange ?? readyMeta?.tv_exchange ?? derived.tv_exchange ?? null,
-    tv_instrument:
-      payload?.tv_instrument ?? payload?.ticker ?? readyMeta?.tv_instrument ?? derived.tv_instrument ?? null,
-  };
+  const evalResult = evaluateLongFilter(s);
+  s.lastEval = evalResult;
 
-  lastAction = "enter_long";
-  lastEnterAcceptedTs = ts;
+  if (!evalResult.allow) {
+    s.lastAction = "enter_long_blocked_filter";
+    if (DEBUG_FILTER) {
+      console.log(
+        `⛔ BUY BLOCKED | symbol=${symbol} price=${price} | reasons=${evalResult.reasons.join(",")}`
+      );
+    }
+    return res.json({
+      ok: false,
+      blocked: "filter_blocked",
+      reasons: evalResult.reasons,
+      filter: evalResult,
+    });
+  }
 
-  const readyPxForLog = readyPrice;
+  s.inPosition = true;
+  s.entryPrice = price;
+  s.entryAtMs = ts;
+  s.lastEnterAcceptedTs = ts;
+  s.lastAction = "enter_long";
+
   console.log(
-    `🚀 ENTER LONG (${sourceTag}${reentryCandidate ? "+reentry" : ""}${emergency ? "+emergency" : ""}) | regime=${getRegime(entrySymbol)} | ready=${readyPxForLog ?? "na"} entry=${px ?? "na"} drift=${entryDriftPct != null ? entryDriftPct.toFixed(3) + "%" : "na"}`
+    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} reclaimAge=${evalResult.reclaimAgeBars} ext21=${evalResult.entryExtEma21Pct?.toFixed(3)}%`
   );
 
   const fwd = await postTo3Commas("enter_long", {
     ...payload,
-    symbol: sym,
-    trigger_price: payload?.trigger_price ?? payload?.price ?? payload?.close ?? readyPrice ?? px,
-    tv_exchange: entryMeta?.tv_exchange,
-    tv_instrument: entryMeta?.tv_instrument,
+    symbol,
+    price,
   });
-
-  clearReadyContext("entered_long");
-
-  if (reentryCandidate) {
-    reentry.consumed = true;
-    reentry.active = false;
-  }
 
   return res.json({
     ok: true,
     action: "enter_long",
     source: sourceTag,
-    emergency,
-    reentry: reentryCandidate ? true : false,
-    entryDriftPct,
-    regime: entrySymbol ? regimeState.get(entrySymbol) || null : null,
+    filter: evalResult,
     threecommas: fwd,
   });
 }
 
 async function handleExitLong(payload, res, sourceTag) {
-  const px = getRayPrice(payload);
-  const exitPx = px ?? lastTickPrice ?? null;
+  const symbol = getSymbolFromPayload(payload);
+  const price = getRayPrice(payload);
 
-  if (!inPosition) {
-    lastAction = "exit_long_no_position";
+  if (!symbol) {
+    return res.json({ ok: false, blocked: "missing_symbol" });
+  }
+
+  const s = getState(symbol);
+
+  if (!s.inPosition) {
+    s.lastAction = "exit_long_no_position";
     return res.json({ ok: false, blocked: "no_position" });
   }
 
-  const emergency = isEmergency(payload);
+  s.inPosition = false;
+  s.entryPrice = null;
+  s.entryAtMs = 0;
+  s.lastAction = "exit_long";
 
-  if (PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT > 0 && exitPx != null) {
-    const p = pctProfit(entryPrice, exitPx);
-    if (p != null && p < PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT) {
-      lastAction = "exit_long_blocked_profit_filter";
-      console.log(
-        `⛔ EXIT LONG ignored: profit ${p.toFixed(3)}% < ${PROFIT_LOCK_MIN_PROFIT_TO_ACCEPT_RAY_SELL_PCT}%`
-      );
-      return res.json({ ok: false, blocked: "profit_filter", profit_pct: p });
-    }
-  }
-
-  lastAction = "exit_long";
-
-  const sym = entrySymbol || getSymbolFromPayload(payload) || "";
-  const derived = deriveTvFromSymbol(sym);
+  console.log(`✅ EXIT LONG (${sourceTag}) | symbol=${symbol} price=${price ?? "na"}`);
 
   const fwd = await postTo3Commas("exit_long", {
     ...payload,
-    symbol: sym,
-    trigger_price: payload?.trigger_price ?? payload?.price ?? payload?.close ?? "",
-    tv_exchange: entryMeta?.tv_exchange ?? derived.tv_exchange,
-    tv_instrument: entryMeta?.tv_instrument ?? derived.tv_instrument,
+    symbol,
+    price: price ?? s.lastTickPrice,
   });
 
-  let pnlPct = null;
-  if (exitPx != null) {
-    pnlPct = pctProfit(entryPrice, exitPx);
-
-    if (emergency) {
-      console.log("🧨 EMERGENCY EXIT: skipping EquityStab cooldown/conservative");
-    } else {
-      noteExitForEquity(exitPx);
-    }
-  }
-
-  if (exitPx != null) {
-    maybeStartOrKeepReentryWindow(sym, exitPx, `exit_${sourceTag}`, pnlPct);
-  }
-
-  clearReadyContext("exit_long");
-  clearPositionContext("exit_long");
-  startCooldown(sourceTag);
-
-  console.log(`✅ EXIT LONG (${sourceTag}${emergency ? "+emergency" : ""})`);
-  return res.json({ ok: true, action: "exit_long", source: sourceTag, emergency, threecommas: fwd });
+  return res.json({
+    ok: true,
+    action: "exit_long",
+    source: sourceTag,
+    threecommas: fwd,
+  });
 }
 
-// ====================
-// ROUTES
-// ====================
-function statusPayload() {
-  return {
+// ========================================
+// STATUS
+// ========================================
+app.get("/", (_req, res) => {
+  const out = {};
+  for (const [sym, s] of symbolState.entries()) {
+    out[sym] = {
+      inPosition: s.inPosition,
+      entryPrice: s.entryPrice,
+      lastTickPrice: s.lastTickPrice,
+      bars: getBarsForCalc(s).length,
+      lastAction: s.lastAction,
+      lastEval: s.lastEval,
+    };
+  }
+  res.json({
     brain: BRAIN_VERSION,
+    symbols: out,
+  });
+});
 
-    EMERGENCY_BYPASS_COOLDOWN,
+app.get("/status", (_req, res) => {
+  const out = {};
+  for (const [sym, s] of symbolState.entries()) {
+    out[sym] = {
+      inPosition: s.inPosition,
+      entryPrice: s.entryPrice,
+      lastTickPrice: s.lastTickPrice,
+      bars: getBarsForCalc(s).length,
+      lastAction: s.lastAction,
+      lastEval: s.lastEval,
+    };
+  }
+  res.json({
+    brain: BRAIN_VERSION,
+    symbols: out,
+  });
+});
 
-    readyOn,
-    inPosition,
-    lastAction,
-
-    READY_TTL_MIN,
-    READY_ENTRY_MAX_AGE_SEC,
-    readyAgeMs: readyAgeMs(),
-
-    READY_MAX_MOVE_PCT,
-    READY_MAX_MOVE_PCT_TREND,
-    READY_MAX_MOVE_PCT_RANGE,
-    READY_AUTOEXPIRE_ENABLED,
-    READY_AUTOEXPIRE_PCT,
-
-    EXIT_COOLDOWN_MIN,
-    crashLockActive: crashLockActive() ? 1 : 0,
-    crashLockUntilMs,
-    cooldownActive: cooldownActive(),
-    cooldownUntilMs,
-
-    REQUIRE_FRESH_HEARTBEAT,
-    HEARTBEAT_MAX_AGE_SEC,
-    TICK_LOG_EVERY_MS,
-    STATE_LOG_EVERY_MS,
-    lastTickMs,
-    lastTickSymbol,
-    lastTickPrice,
-
-    FAIL_STOP_ENABLED,
-    FAIL_STOP_PCT,
-    BREAKEVEN_ENABLED,
-    BREAKEVEN_ARM_PCT,
-    BREAKEVEN_LOCK_PCT,
-    breakevenArmed,
-
-    PROFIT_LOCK_ENABLED,
-    PL_ADAPTIVE_ENABLED,
-    profitLockArmed,
-
-    PL_TIGHTEN_ENABLED,
-    PL_TIGHTEN_TIER1_PROFIT_PCT,
-    PL_TIGHTEN_TIER2_PROFIT_PCT,
-    PL_TIGHTEN_TIER3_PROFIT_PCT,
-    PL_TIGHTEN_TIER1_MULT,
-    PL_TIGHTEN_TIER2_MULT,
-    PL_TIGHTEN_TIER3_MULT,
-    PL_TIGHTEN_TIER4_MULT,
-
-    REGIME_ENABLED,
-    SLOPE_WINDOW_SEC,
-    ATR_WINDOW_SEC,
-    TICK_BUFFER_SEC,
-
-    CRASH_PROTECT_ENABLED,
-    CRASH_DUMP_1M_PCT,
-    CRASH_DUMP_5M_PCT,
-    CRASH_COOLDOWN_MIN,
-
-    EQUITY_STABILIZER_ENABLED,
-    lossStreak,
-    conservativeModeActive: conservativeModeActive() ? 1 : 0,
-    conservativeUntilMs,
-
-    REENTRY_ENABLED,
-    REENTRY_WINDOW_MIN,
-    REENTRY_MAX_FALL_PCT,
-    REENTRY_MAX_RISE_PCT,
-    REENTRY_REQUIRE_TREND,
-    REENTRY_REQUIRE_READY,
-    REENTRY_CANCEL_ON_BREACH,
-    REENTRY_MAX_TRIES,
-    REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT,
-    reentry: {
-      ...reentry,
-      activeNow: reentryActive(),
-      triesLeft: reentryTriesLeft(),
-    },
-
-    ENTER_DEDUP_SEC,
-    lastEnterAcceptedTs,
-
-    PENDING_BUY_ENABLED,
-    PENDING_BUY_WINDOW_SEC,
-    PENDING_BUY_MAX_READY_DRIFT_PCT,
-    PENDING_BUY_MAX_AGE_SEC,
-    pendingBuy: {
-      active: pendingActive(),
-      untilMs: pendingBuy.untilMs,
-      symbol: pendingBuy.symbol,
-      price: pendingBuy.price,
-      createdMs: pendingBuy.createdMs,
-    },
-
-    readyPrice,
-    readySymbol,
-    readyTf,
-
-    entryPrice,
-    entrySymbol,
-    peakPrice,
-    entryMeta,
-    positionWasReentry,
-
-    regime: lastTickSymbol ? regimeState.get(lastTickSymbol) || null : null,
-    threecommas_configured: Boolean(THREECOMMAS_BOT_UUID && THREECOMMAS_SECRET),
-    READY_ACCEPT_LEGACY_READY,
-  };
-}
-
-app.get("/", (_req, res) => res.json(statusPayload()));
-app.get("/status", (_req, res) => res.json(statusPayload()));
-
+// ========================================
+// WEBHOOK
+// ========================================
 app.post("/webhook", async (req, res) => {
   const payload = req.body || {};
   logWebhook(payload);
-
-  if (ttlExpired()) {
-    clearReadyContext("ttl_expired");
-    lastAction = "ready_ttl_expired";
-  }
 
   if (!checkSecret(payload)) {
     console.log("⛔ Secret mismatch - blocked");
@@ -1343,206 +964,32 @@ app.post("/webhook", async (req, res) => {
 
   const intent = normalizeIntent(payload);
 
-  if (intent === "tick") {
-    const tickPx = getTickPrice(payload);
-    const tickSym = getSymbolFromPayload(payload);
-
-    if (tickPx == null || !tickSym) {
-      console.log("⚠️ Tick ignored (missing price or symbol)");
-      return res.json({ ok: true, tick: true, ignored: "missing_fields" });
-    }
-
-    lastTickMs = nowMs();
-    lastTickSymbol = tickSym;
-    lastTickPrice = tickPx;
-
-    maybeLogTick(tickSym, tickPx, payload?.time ?? new Date(lastTickMs).toISOString());
-
-    pushTick(tickSym, tickPx, lastTickMs);
-
-    if (pendingBuy.active && nowMs() > pendingBuy.untilMs) {
-      pendingClear("expired");
-    }
-
-    const r = updateRegime(tickSym);
-    const crash = maybeCrashLock(tickSym);
-    const expired = maybeAutoExpireReady(tickPx, tickSym);
-
-    const fail = await maybeFailStopExit(tickPx, tickSym);
-    const be = fail ? null : await maybeBreakevenExit(tickPx, tickSym);
-    const pl = fail || be ? null : await maybeProfitLockExit(tickPx, tickSym);
-
-    maybeLogState(tickSym);
-
-    return res.json({
-      ok: true,
-      tick: true,
-      regime: r || regimeState.get(tickSym) || null,
-      crash: crash || null,
-      expired,
-      fail_stop: fail || null,
-      breakeven: be || null,
-      profit_lock: pl || null,
-      readyOn,
-      inPosition,
-      crashLockActive: crashLockActive(),
-      conservativeModeActive: conservativeModeActive(),
-    });
-  }
-
-  if (intent === "ready_long" || (READY_ACCEPT_LEGACY_READY && intent === "ready")) {
-    if (crashLockActive()) {
-      console.log("🟡 READY_LONG ignored (crash lock active)");
-      lastAction = "ready_long_ignored_crash_lock";
-      return res.json({ ok: true, ignored: "crash_lock_active" });
-    }
-
-    if (cooldownActive()) {
-      console.log("🟡 READY_LONG ignored (cooldown active)");
-      lastAction = "ready_long_ignored_cooldown";
-      return res.json({ ok: true, ignored: "cooldown_active" });
-    }
-
-    if (!isHeartbeatFresh()) {
-      console.log("🟡 READY_LONG ignored (stale heartbeat)");
-      lastAction = "ready_long_ignored_stale_heartbeat";
-      return res.json({ ok: true, ignored: "stale_heartbeat" });
-    }
-
-    if (inPosition) {
-      console.log("🟡 READY_LONG ignored (already in position)");
-      lastAction = "ready_long_ignored_in_position";
-      return res.json({ ok: true, ignored: "in_position" });
-    }
-
-    const priorReady = readyOn
-      ? {
-          price: readyPrice,
-          symbol: readySymbol,
-          tf: readyTf,
-          ageSec: readyAtMs ? Math.round((nowMs() - readyAtMs) / 1000) : null,
-        }
-      : null;
-
-    readyOn = true;
-    readyAtMs = nowMs();
-
-    readyPrice = getReadyPrice(payload);
-    readySymbol = getSymbolFromPayload(payload);
-    readyTf = payload?.tf ? String(payload.tf) : "";
-
-    const derived = deriveTvFromSymbol(readySymbol);
-
-    readyMeta = {
-      timestamp: payload?.timestamp ?? payload?.time ?? null,
-      tv_exchange: payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? null,
-      tv_instrument: payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? null,
-      meta_ready_ver: payload?.meta_ready_ver ?? null,
-    };
-
-    lastAction = "ready_long_set";
-    console.log("🟢 READY_LONG ON", {
-      priorReady,
-      readyPrice,
-      readySymbol,
-      readyTf,
-      meta_ready_ver: payload?.meta_ready_ver ?? null,
-      READY_ENTRY_MAX_AGE_SEC,
-      READY_MAX_MOVE_PCT,
-      READY_AUTOEXPIRE_ENABLED,
-      READY_AUTOEXPIRE_PCT,
-      regime: readySymbol ? getRegime(readySymbol) : null,
-    });
-
-    if (PENDING_BUY_ENABLED && pendingCanConsumeWithReady(readySymbol, readyPrice)) {
-      console.log(
-        `🩷 PendingBUY consuming -> ENTER LONG (pending) drift<=${PENDING_BUY_MAX_READY_DRIFT_PCT}% age<=${PENDING_BUY_MAX_AGE_SEC}s`
-      );
-
-      const pendingPayload = pendingBuy.payload || {};
-      const pendingPrice = pendingBuy.price;
-      const pendingSym = pendingBuy.symbol;
-
-      pendingClear("consumed");
-
-      return handleEnterLong(
-        {
-          ...pendingPayload,
-          intent: "enter_long",
-          symbol: pendingPayload?.symbol ?? pendingSym,
-          price: pendingPayload?.price ?? pendingPrice,
-          time: pendingPayload?.time ?? new Date().toISOString(),
-          tv_exchange: readyMeta?.tv_exchange ?? pendingPayload?.tv_exchange,
-          tv_instrument: readyMeta?.tv_instrument ?? pendingPayload?.tv_instrument,
-        },
-        res,
-        "pending_buy_consumed"
-      );
-    }
-
-    return res.json({
-      ok: true,
-      readyOn,
-      action: "ready_long",
-      readyPrice,
-      readySymbol,
-      readyTf,
-      regime: readySymbol ? regimeState.get(readySymbol) || null : null,
-    });
-  }
+  if (intent === "tick") return handleTick(payload, res);
 
   if (intent === "enter_long") return handleEnterLong(payload, res, "intent_enter_long");
   if (intent === "exit_long") return handleExitLong(payload, res, "intent_exit_long");
 
   if (String(payload?.src || "").toLowerCase() === "ray") {
-    const side = String(payload.side || "").toUpperCase();
+    const side = String(payload?.side || "").toUpperCase();
     if (side === "BUY") return handleEnterLong(payload, res, "ray_side_buy");
     if (side === "SELL") return handleExitLong(payload, res, "ray_side_sell");
-    lastAction = "ray_unknown_side";
     return res.json({ ok: true, note: "ray_unknown_side" });
   }
 
-  lastAction = "unknown";
   return res.json({ ok: true, note: "unknown" });
 });
 
-// ====================
+// ========================================
 // START
-// ====================
+// ========================================
 app.listen(PORT, () => {
   console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
-  console.log(`Emergency: EMERGENCY_BYPASS_COOLDOWN=${EMERGENCY_BYPASS_COOLDOWN}`);
-  console.log(
-    `Config: READY_TTL_MIN=${READY_TTL_MIN} | READY_ENTRY_MAX_AGE_SEC=${READY_ENTRY_MAX_AGE_SEC} | READY_MAX_MOVE_PCT=${READY_MAX_MOVE_PCT} | READY_AUTOEXPIRE_ENABLED=${READY_AUTOEXPIRE_ENABLED} | READY_AUTOEXPIRE_PCT=${READY_AUTOEXPIRE_PCT} | EXIT_COOLDOWN_MIN=${EXIT_COOLDOWN_MIN}`
-  );
-  console.log(
-    `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`
-  );
-  console.log(`TickLog: TICK_LOG_EVERY_MS=${TICK_LOG_EVERY_MS}`);
-  console.log(`StateLog: STATE_LOG_EVERY_MS=${STATE_LOG_EVERY_MS}`);
-  console.log(
-    `ExitLadder: FAIL_STOP_ENABLED=${FAIL_STOP_ENABLED} fail=${FAIL_STOP_PCT}% | BREAKEVEN_ENABLED=${BREAKEVEN_ENABLED} arm=${BREAKEVEN_ARM_PCT}% lock=${BREAKEVEN_LOCK_PCT}% | PROFIT_LOCK_ENABLED=${PROFIT_LOCK_ENABLED} adaptive=${PL_ADAPTIVE_ENABLED}`
-  );
-  console.log(
-    `PLTighten: enabled=${PL_TIGHTEN_ENABLED} | t1>=${PL_TIGHTEN_TIER1_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER2_MULT} | t2>=${PL_TIGHTEN_TIER2_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER3_MULT} | t3>=${PL_TIGHTEN_TIER3_PROFIT_PCT}% mult=${PL_TIGHTEN_TIER4_MULT}`
-  );
-  console.log(
-    `Regime: ENABLED=${REGIME_ENABLED} | slopeWin=${SLOPE_WINDOW_SEC}s | atrWin=${ATR_WINDOW_SEC}s | trendOn=${REGIME_TREND_SLOPE_ON_PCT}% | trendOff=${REGIME_TREND_SLOPE_OFF_PCT}% | volMinATR=${REGIME_VOL_MIN_ATR_PCT}%`
-  );
-  console.log(
-    `CrashProtect: ENABLED=${CRASH_PROTECT_ENABLED} | dump1m=${CRASH_DUMP_1M_PCT}% | dump5m=${CRASH_DUMP_5M_PCT}% | cooldown=${CRASH_COOLDOWN_MIN}m`
-  );
-  console.log(
-    `EquityStab: ENABLED=${EQUITY_STABILIZER_ENABLED} | loss2_cd=${ES_LOSS_STREAK_2_COOLDOWN_MIN}m | loss3_cd=${ES_LOSS_STREAK_3_COOLDOWN_MIN}m | conservative=${ES_CONSERVATIVE_MIN}m`
-  );
-  console.log(
-    `ReEntry: ENABLED=${REENTRY_ENABLED} | window=${REENTRY_WINDOW_MIN}m | fall<=${REENTRY_MAX_FALL_PCT}% | rise<=${REENTRY_MAX_RISE_PCT}% | reqTrend=${REENTRY_REQUIRE_TREND} | reqReady=${REENTRY_REQUIRE_READY} | cancelOnBreach=${REENTRY_CANCEL_ON_BREACH} | maxTries=${REENTRY_MAX_TRIES} | skipStartIfExitPnL<=${REENTRY_SKIP_START_IF_EXIT_PNL_LE_PCT}%`
-  );
-  console.log(
-    `PendingBUY: ENABLED=${PENDING_BUY_ENABLED} | window=${PENDING_BUY_WINDOW_SEC}s | maxReadyDrift=${PENDING_BUY_MAX_READY_DRIFT_PCT}% | maxAge=${PENDING_BUY_MAX_AGE_SEC}s`
-  );
-  console.log(`EnterDedupe: ENTER_DEDUP_SEC=${ENTER_DEDUP_SEC}`);
-  console.log(
-    `3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"} | TIMEOUT_MS=${THREECOMMAS_TIMEOUT_MS}`
-  );
+  console.log(`Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`);
+  console.log(`Bars: BAR_TF_SEC=${BAR_TF_SEC} | MAX_BARS=${MAX_BARS}`);
+  console.log(`Filter: ENABLED=${FILTER_ENABLED} | MIN_BARS=${FILTER_MIN_BARS} | ADX_MIN=${FILTER_ADX_MIN} | RSI_MIN=${FILTER_RSI_MIN}`);
+  console.log(`Damage: washLookback=${FILTER_WASH_LOOKBACK_BARS} | dropLookback=${FILTER_DROP_LOOKBACK_BARS} | maxBarsSinceLow=${FILTER_MAX_BARS_SINCE_LOW} | minDropPct=${FILTER_MIN_DROP_PCT}`);
+  console.log(`Reclaim: minReclaimFromLow=${FILTER_MIN_RECLAIM_FROM_LOW_PCT}% | minImpulseFromLow=${FILTER_MIN_IMPULSE_FROM_LOW_PCT}% | minBody=${FILTER_MIN_BODY_PCT}% | maxBarsSinceReclaim=${FILTER_MAX_BARS_SINCE_RECLAIM}`);
+  console.log(`Extension: maxExt21=${FILTER_MAX_ENTRY_EXT_EMA21_PCT}% | maxExt18=${FILTER_MAX_ENTRY_EXT_EMA18_PCT}% | maxBuyFromReclaim=${FILTER_MAX_BUY_FROM_RECLAIM_PCT}%`);
+  console.log(`Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`);
+  console.log(`3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"}`);
 });
