@@ -4,6 +4,11 @@ function num(v) {
   return typeof v === "number" && Number.isFinite(v);
 }
 
+function pctBelow(value, reference) {
+  if (!num(value) || !num(reference) || reference === 0) return 0;
+  return ((reference - value) / reference) * 100;
+}
+
 export function buildInitialStop(state) {
   const f = state.features;
   const p = state.position;
@@ -84,11 +89,63 @@ export function checkExitTrigger(state) {
     };
   }
 
-  if (
-    CONFIG.EXIT_ON_CLOSE_BELOW_EMA18 &&
+  const entryBarIndex = Number.isFinite(Number(p.entryBarIndex))
+    ? Number(p.entryBarIndex)
+    : null;
+  const currentBarIndex = Number.isFinite(Number(state.meta?.barIndex))
+    ? Number(state.meta.barIndex)
+    : null;
+
+  const barsSinceEntry =
+    entryBarIndex != null && currentBarIndex != null
+      ? currentBarIndex - entryBarIndex
+      : null;
+
+  const ema18ExitBufferPct = Number.isFinite(Number(CONFIG.EMA18_EXIT_BUFFER_PCT))
+    ? Number(CONFIG.EMA18_EXIT_BUFFER_PCT)
+    : 0.03;
+
+  const ema18ExitMinBarsAfterEntry = Number.isFinite(
+    Number(CONFIG.EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
+  )
+    ? Number(CONFIG.EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
+    : 1;
+
+  const ema18ExitRequireConsecutiveCloses = Number.isFinite(
+    Number(CONFIG.EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
+  )
+    ? Number(CONFIG.EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
+    : 2;
+
+  const prevClose = state.history?.bars?.length
+    ? state.history.bars[state.history.bars.length - 1]?.close
+    : null;
+
+  const closeBelowNow =
     num(close) &&
     num(ema18) &&
-    close < ema18
+    close < ema18 &&
+    pctBelow(close, ema18) >= ema18ExitBufferPct;
+
+  const closeBelowPrev =
+    num(prevClose) &&
+    num(ema18) &&
+    prevClose < ema18 &&
+    pctBelow(prevClose, ema18) >= ema18ExitBufferPct;
+
+  const consecutiveBelowOk =
+    ema18ExitRequireConsecutiveCloses <= 1
+      ? closeBelowNow
+      : closeBelowNow && closeBelowPrev;
+
+  const minBarsOk =
+    barsSinceEntry == null ? true : barsSinceEntry >= ema18ExitMinBarsAfterEntry;
+
+  if (
+    CONFIG.EXIT_ON_CLOSE_BELOW_EMA18 &&
+    closeBelowNow &&
+    consecutiveBelowOk &&
+    minBarsOk
   ) {
     return {
       shouldExit: true,
