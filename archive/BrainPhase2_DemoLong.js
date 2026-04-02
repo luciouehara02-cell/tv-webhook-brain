@@ -1,19 +1,22 @@
 /**
- * BrainPhase2_DemoLong_v3.7d
+ * BrainPhase2_DemoLong_v3.7e
  *
  * Long-only demo brain
  *
- * v3.7d goals:
- * - Preserve v3.7c breakout protection
- * - Add a range-recovery / washout-reclaim entry path
- * - Capture earlier recovery longs in range-to-trend transitions
- * - Keep breakout chase protection intact
+ * v3.7e goals:
+ * - Preserve v3.7d breakout protection
+ * - Fix "no trade on strong recovery day" behavior
+ * - Allow recovery entries in early trend transitions
+ * - Reduce restart warmup blindness
+ * - Keep strict breakout chase protection
  *
- * New vs v3.7c:
- * - new RECOVERY_RECLAIM setup path
- * - reduced dependence on fresh Ray/FWO for recovery entries
- * - smaller sizing bucket for recovery setups
- * - keeps strict B-grade breakout extension controls
+ * New vs v3.7d:
+ * - MIN_BARS_FOR_SETUPS default reduced 20 -> 8
+ * - recovery path allowed in range OR early trend recovery
+ * - recovery ADX cap relaxed
+ * - recovery bounce requirement relaxed
+ * - recovery momentum override added
+ * - flow=0 penalty on recovery softened
  */
 
 import express from "express";
@@ -26,7 +29,7 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7d";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7e";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -43,7 +46,7 @@ const ALLOW_SYMBOLS = Object.keys(SYMBOL_BOT_MAP);
 // --------------------------------------------------
 // Warmup / lifecycle
 // --------------------------------------------------
-const MIN_BARS_FOR_SETUPS = Number(process.env.MIN_BARS_FOR_SETUPS || 20);
+const MIN_BARS_FOR_SETUPS = Number(process.env.MIN_BARS_FOR_SETUPS || 8);
 const SETUP_TTL_SEC = Number(process.env.SETUP_TTL_SEC || 1800);
 const BREAKOUT_MAX_AGE_MIN = Number(process.env.BREAKOUT_MAX_AGE_MIN || 12);
 const BREAKOUT_RETEST_MAX_MIN = Number(process.env.BREAKOUT_RETEST_MAX_MIN || 4);
@@ -95,24 +98,27 @@ const BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT = Number(
   process.env.BREAKOUT_WEAK_PROGRESS_MIN_BOUNCE_PCT || 0.04
 );
 
-// v3.7d recovery path
+// v3.7e recovery path
 const RECOVERY_MIN_SCORE = Number(process.env.RECOVERY_MIN_SCORE || 5);
 const RECOVERY_MAX_NEAR_EMA8_PCT = Number(
-  process.env.RECOVERY_MAX_NEAR_EMA8_PCT || 0.16
+  process.env.RECOVERY_MAX_NEAR_EMA8_PCT || 0.20
 );
 const RECOVERY_MAX_NEAR_EMA18_PCT = Number(
-  process.env.RECOVERY_MAX_NEAR_EMA18_PCT || 0.22
+  process.env.RECOVERY_MAX_NEAR_EMA18_PCT || 0.28
 );
 const RECOVERY_BOUNCE_MIN_PCT = Number(
-  process.env.RECOVERY_BOUNCE_MIN_PCT || 0.04
+  process.env.RECOVERY_BOUNCE_MIN_PCT || 0.02
 );
 const RECOVERY_REQUIRE_CVD_NON_NEGATIVE =
-  String(process.env.RECOVERY_REQUIRE_CVD_NON_NEGATIVE || "1") === "1";
+  String(process.env.RECOVERY_REQUIRE_CVD_NON_NEGATIVE || "0") === "1";
 const RECOVERY_REQUIRE_OI_NON_NEGATIVE =
   String(process.env.RECOVERY_REQUIRE_OI_NON_NEGATIVE || "1") === "1";
-const RECOVERY_RSI_MIN = Number(process.env.RECOVERY_RSI_MIN || 42);
-const RECOVERY_ADX_MAX = Number(process.env.RECOVERY_ADX_MAX || 20);
+const RECOVERY_RSI_MIN = Number(process.env.RECOVERY_RSI_MIN || 38);
+const RECOVERY_ADX_MAX = Number(process.env.RECOVERY_ADX_MAX || 28);
 const RECOVERY_ATRPCT_MIN = Number(process.env.RECOVERY_ATRPCT_MIN || 0.16);
+const RECOVERY_EARLY_TREND_ADX_MAX = Number(
+  process.env.RECOVERY_EARLY_TREND_ADX_MAX || 28
+);
 
 // --------------------------------------------------
 // Freshness
@@ -598,9 +604,19 @@ function scoreRecovery(st) {
   const reasons = [];
   const flowSupport = computeFlowSupport(st);
 
+  const earlyTrendRecovery =
+    st.regime === "trend" &&
+    (st.adx || 0) <= RECOVERY_EARLY_TREND_ADX_MAX &&
+    st.ema8 != null &&
+    st.ema18 != null &&
+    st.ema8 > st.ema18;
+
   if (st.regime === "range") {
     score += 1;
     reasons.push("range recovery +1");
+  } else if (earlyTrendRecovery) {
+    score += 1;
+    reasons.push("early trend recovery +1");
   }
 
   if ((st.rsi || 0) >= RECOVERY_RSI_MIN) {
@@ -615,7 +631,7 @@ function scoreRecovery(st) {
 
   if ((st.adx || 0) <= RECOVERY_ADX_MAX) {
     score += 1;
-    reasons.push("not over-trend +1");
+    reasons.push("adx acceptable +1");
   }
 
   if (st.oiTrend >= 0) {
@@ -649,8 +665,8 @@ function scoreRecovery(st) {
   }
 
   if (flowSupport === 0) {
-    score -= 1;
-    reasons.push("flow=0 -1");
+    score -= 0.5;
+    reasons.push("flow=0 -0.5");
   }
 
   return { score, reasons, flowSupport };
@@ -789,7 +805,12 @@ function detectRecoverySetup(st) {
     return null;
   }
 
-  if (st.regime !== "range") return null;
+  const earlyTrendRecovery =
+    st.regime === "trend" &&
+    (st.adx || 0) <= RECOVERY_EARLY_TREND_ADX_MAX &&
+    st.ema8 > st.ema18;
+
+  if (!(st.regime === "range" || earlyTrendRecovery)) return null;
 
   const recent = st.closeHist.slice(-12);
   const localLow = recent.length ? Math.min(...recent) : st.close;
@@ -1247,6 +1268,15 @@ function recoveryEntryDecision(st, price) {
 
   if (nearEma18Pct > RECOVERY_MAX_NEAR_EMA18_PCT) {
     return { ok: false, note: "recovery too far ema18" };
+  }
+
+  if (
+    st.setupScore >= 6 &&
+    (st.rsi || 0) >= 55 &&
+    price > st.ema8 &&
+    price > st.ema18
+  ) {
+    return { ok: true, note: "recovery momentum entry" };
   }
 
   if (!(aboveEma8 || aboveEma18)) {
@@ -1734,6 +1764,7 @@ app.listen(PORT, () => {
   console.log(`✅ RECOVERY_RSI_MIN=${RECOVERY_RSI_MIN}`);
   console.log(`✅ RECOVERY_ADX_MAX=${RECOVERY_ADX_MAX}`);
   console.log(`✅ RECOVERY_ATRPCT_MIN=${RECOVERY_ATRPCT_MIN}`);
+  console.log(`✅ RECOVERY_EARLY_TREND_ADX_MAX=${RECOVERY_EARLY_TREND_ADX_MAX}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
