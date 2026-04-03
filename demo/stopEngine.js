@@ -9,6 +9,52 @@ function pctBelow(value, reference) {
   return ((reference - value) / reference) * 100;
 }
 
+function getSetupType(state) {
+  return (
+    state?.position?.entrySetupType ||
+    state?.setups?.breakout?.setupType ||
+    "breakout"
+  );
+}
+
+function getEma18ExitProfile(state) {
+  const setupType = getSetupType(state);
+
+  if (setupType === "washout") {
+    return {
+      bufferPct: Number.isFinite(Number(CONFIG.WASHOUT_EMA18_EXIT_BUFFER_PCT))
+        ? Number(CONFIG.WASHOUT_EMA18_EXIT_BUFFER_PCT)
+        : 0.05,
+      minBarsAfterEntry: Number.isFinite(
+        Number(CONFIG.WASHOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
+      )
+        ? Number(CONFIG.WASHOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
+        : 2,
+      requireConsecutiveCloses: Number.isFinite(
+        Number(CONFIG.WASHOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
+      )
+        ? Number(CONFIG.WASHOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
+        : 2,
+    };
+  }
+
+  return {
+    bufferPct: Number.isFinite(Number(CONFIG.BREAKOUT_EMA18_EXIT_BUFFER_PCT))
+      ? Number(CONFIG.BREAKOUT_EMA18_EXIT_BUFFER_PCT)
+      : 0.03,
+    minBarsAfterEntry: Number.isFinite(
+      Number(CONFIG.BREAKOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
+    )
+      ? Number(CONFIG.BREAKOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
+      : 1,
+    requireConsecutiveCloses: Number.isFinite(
+      Number(CONFIG.BREAKOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
+    )
+      ? Number(CONFIG.BREAKOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
+      : 1,
+  };
+}
+
 export function buildInitialStop(state) {
   const f = state.features;
   const p = state.position;
@@ -101,21 +147,7 @@ export function checkExitTrigger(state) {
       ? currentBarIndex - entryBarIndex
       : null;
 
-  const ema18ExitBufferPct = Number.isFinite(Number(CONFIG.EMA18_EXIT_BUFFER_PCT))
-    ? Number(CONFIG.EMA18_EXIT_BUFFER_PCT)
-    : 0.03;
-
-  const ema18ExitMinBarsAfterEntry = Number.isFinite(
-    Number(CONFIG.EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
-  )
-    ? Number(CONFIG.EMA18_EXIT_MIN_BARS_AFTER_ENTRY)
-    : 1;
-
-  const ema18ExitRequireConsecutiveCloses = Number.isFinite(
-    Number(CONFIG.EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
-  )
-    ? Number(CONFIG.EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES)
-    : 2;
+  const profile = getEma18ExitProfile(state);
 
   const prevClose = state.history?.bars?.length
     ? state.history.bars[state.history.bars.length - 1]?.close
@@ -125,21 +157,21 @@ export function checkExitTrigger(state) {
     num(close) &&
     num(ema18) &&
     close < ema18 &&
-    pctBelow(close, ema18) >= ema18ExitBufferPct;
+    pctBelow(close, ema18) >= profile.bufferPct;
 
   const closeBelowPrev =
     num(prevClose) &&
     num(ema18) &&
     prevClose < ema18 &&
-    pctBelow(prevClose, ema18) >= ema18ExitBufferPct;
+    pctBelow(prevClose, ema18) >= profile.bufferPct;
 
   const consecutiveBelowOk =
-    ema18ExitRequireConsecutiveCloses <= 1
+    profile.requireConsecutiveCloses <= 1
       ? closeBelowNow
       : closeBelowNow && closeBelowPrev;
 
   const minBarsOk =
-    barsSinceEntry == null ? true : barsSinceEntry >= ema18ExitMinBarsAfterEntry;
+    barsSinceEntry == null ? true : barsSinceEntry >= profile.minBarsAfterEntry;
 
   if (
     CONFIG.EXIT_ON_CLOSE_BELOW_EMA18 &&
