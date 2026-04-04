@@ -10,6 +10,7 @@
  * - eliminate cross-strategy contamination
  * - make decisions deterministic
  * - keep current return contract unchanged
+ * - reduce late breakout entries that are too extended from trigger/retest
  */
 
 export const BRAIN_VERSION = "Brain Phase 5 v5.7";
@@ -84,6 +85,24 @@ const BREAKOUT_MAX_CHASE_FROM_BOUNCE_PCT_BOUNCE_ENTRY = numEnv(
   0.2
 );
 
+// new: hard cap on late extension from trigger / retest
+const BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_READY_ENTRY = numEnv(
+  "BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_READY_ENTRY",
+  0.60
+);
+const BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_READY_ENTRY = numEnv(
+  "BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_READY_ENTRY",
+  0.50
+);
+const BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_BOUNCE_ENTRY = numEnv(
+  "BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_BOUNCE_ENTRY",
+  0.45
+);
+const BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_BOUNCE_ENTRY = numEnv(
+  "BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_BOUNCE_ENTRY",
+  0.35
+);
+
 const ENTER_DEDUP_MS = numEnv("ENTER_DEDUP_MS", 25000);
 
 // washout
@@ -126,6 +145,7 @@ function getSetupMetrics(state) {
   const low = n(feat.low, NaN);
 
   const triggerPrice = n(setup.triggerPrice, NaN);
+  const retestPrice = n(setup.retestPrice, NaN);
   const bouncePrice = n(setup.bouncePrice, NaN);
   const washoutLow = n(setup.washoutLow, NaN);
 
@@ -161,12 +181,23 @@ function getSetupMetrics(state) {
     ? pctFrom(close, bouncePrice)
     : 0;
 
+  const entryExtensionFromTriggerPct = Number.isFinite(triggerPrice)
+    ? pctFrom(close, triggerPrice)
+    : 0;
+
+  const entryExtensionFromRetestPct = Number.isFinite(retestPrice)
+    ? pctFrom(close, retestPrice)
+    : Number.isFinite(triggerPrice)
+    ? pctFrom(close, triggerPrice)
+    : 0;
+
   return {
     close,
     open,
     high,
     low,
     triggerPrice,
+    retestPrice,
     bouncePrice,
     washoutLow,
     closeBelowTriggerTolPrice,
@@ -175,6 +206,8 @@ function getSetupMetrics(state) {
     bounceCloseInRangePct,
     bounceBodyPct,
     chasePctFromBounce,
+    entryExtensionFromTriggerPct,
+    entryExtensionFromRetestPct,
     ema8: n(feat.ema8, NaN),
     ema18: n(feat.ema18, NaN),
     ema50: n(feat.ema50, NaN),
@@ -261,6 +294,22 @@ function evaluateReadyLong(state) {
     addUnique(hardReasons, "chase too high");
   }
 
+  if (
+    Number.isFinite(m.entryExtensionFromTriggerPct) &&
+    m.entryExtensionFromTriggerPct > BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_READY_ENTRY
+  ) {
+    addUnique(reasons, "ready_block_extension_from_trigger_too_high");
+    addUnique(hardReasons, "extension from trigger too high");
+  }
+
+  if (
+    Number.isFinite(m.entryExtensionFromRetestPct) &&
+    m.entryExtensionFromRetestPct > BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_READY_ENTRY
+  ) {
+    addUnique(reasons, "ready_block_extension_from_retest_too_high");
+    addUnique(hardReasons, "extension from retest too high");
+  }
+
   let score = m.setupScore;
 
   if (m.close < m.triggerPrice) score = Math.min(score, 5);
@@ -270,6 +319,12 @@ function evaluateReadyLong(state) {
     READY_BLOCK_ON_NEGATIVE_OI &&
     m.oiTrend <= 0
   ) {
+    score = Math.min(score, 5);
+  }
+  if (m.entryExtensionFromTriggerPct > BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_READY_ENTRY) {
+    score = Math.min(score, 5);
+  }
+  if (m.entryExtensionFromRetestPct > BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_READY_ENTRY) {
     score = Math.min(score, 5);
   }
 
@@ -283,8 +338,10 @@ function evaluateReadyLong(state) {
   dlog(
     `🟦 READYCHK LONG | close=${Number.isFinite(m.close) ? m.close.toFixed(4) : "na"} ` +
       `trigger=${Number.isFinite(m.triggerPrice) ? m.triggerPrice.toFixed(4) : "na"} ` +
+      `retest=${Number.isFinite(m.retestPrice) ? m.retestPrice.toFixed(4) : "na"} ` +
       `reclaimPct=${m.reclaimPctFromTrigger.toFixed(3)} oiTrend=${m.oiTrend} ` +
       `closeInRange=${m.bounceCloseInRangePct.toFixed(2)} bodyPct=${m.bounceBodyPct.toFixed(3)} ` +
+      `extTrig=${m.entryExtensionFromTriggerPct.toFixed(3)} extRetest=${m.entryExtensionFromRetestPct.toFixed(3)} ` +
       `score=${score} readyOk=${allowed ? 1 : 0} reasons=${reasons.join(",") || "pass"}`
   );
 
@@ -384,6 +441,22 @@ function evaluateEarlyTrendLong(state) {
     addUnique(hardReasons, "chase too high");
   }
 
+  if (
+    Number.isFinite(m.entryExtensionFromTriggerPct) &&
+    m.entryExtensionFromTriggerPct > BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_BOUNCE_ENTRY
+  ) {
+    addUnique(reasons, "entry_block_extension_from_trigger_too_high");
+    addUnique(hardReasons, "extension from trigger too high");
+  }
+
+  if (
+    Number.isFinite(m.entryExtensionFromRetestPct) &&
+    m.entryExtensionFromRetestPct > BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_BOUNCE_ENTRY
+  ) {
+    addUnique(reasons, "entry_block_extension_from_retest_too_high");
+    addUnique(hardReasons, "extension from retest too high");
+  }
+
   if (m.qualityFlags.includes("close_quality:weak")) {
     addUnique(reasons, "entry_block_close_quality_weak");
     addUnique(hardReasons, "close quality weak");
@@ -414,6 +487,12 @@ function evaluateEarlyTrendLong(state) {
   if (!BREAKOUT_BLOCK_IF_FLOW_NOT_SUPPORTIVE && !EARLY_ENTRY_ALLOW_NEGATIVE_OI && m.oiTrend < 0) {
     score = Math.min(score, 4);
   }
+  if (m.entryExtensionFromTriggerPct > BREAKOUT_MAX_EXTENSION_FROM_TRIGGER_PCT_BOUNCE_ENTRY) {
+    score = Math.min(score, 5);
+  }
+  if (m.entryExtensionFromRetestPct > BREAKOUT_MAX_EXTENSION_FROM_RETEST_PCT_BOUNCE_ENTRY) {
+    score = Math.min(score, 5);
+  }
 
   if (score < SCORE_EARLY_TREND_LONG_MIN) {
     addUnique(reasons, "entry_block_score_too_low");
@@ -425,8 +504,10 @@ function evaluateEarlyTrendLong(state) {
   dlog(
     `🚦 ENTRYCHK LONG | mode=early close=${Number.isFinite(m.close) ? m.close.toFixed(4) : "na"} ` +
       `trigger=${Number.isFinite(m.triggerPrice) ? m.triggerPrice.toFixed(4) : "na"} ` +
+      `retest=${Number.isFinite(m.retestPrice) ? m.retestPrice.toFixed(4) : "na"} ` +
       `reclaimPct=${m.reclaimPctFromTrigger.toFixed(3)} oiTrend=${m.oiTrend} ` +
       `closeInRange=${m.bounceCloseInRangePct.toFixed(2)} bodyPct=${m.bounceBodyPct.toFixed(3)} ` +
+      `extTrig=${m.entryExtensionFromTriggerPct.toFixed(3)} extRetest=${m.entryExtensionFromRetestPct.toFixed(3)} ` +
       `ema8=${Number.isFinite(m.ema8) ? m.ema8.toFixed(4) : "na"} ` +
       `ema18=${Number.isFinite(m.ema18) ? m.ema18.toFixed(4) : "na"} ` +
       `ema50=${Number.isFinite(m.ema50) ? m.ema50.toFixed(4) : "na"} ` +
