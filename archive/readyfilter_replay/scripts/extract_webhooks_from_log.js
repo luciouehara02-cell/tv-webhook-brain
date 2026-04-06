@@ -12,8 +12,13 @@ function safeJsonParse(s) {
 function normalizeObjectLiteralToJson(text) {
   let s = text.trim();
 
+  // quote bare keys: secret: -> "secret":
   s = s.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":');
+
+  // single quotes -> double quotes
   s = s.replace(/'/g, '"');
+
+  // remove trailing commas
   s = s.replace(/,\s*([}\]])/g, "$1");
 
   return s;
@@ -94,4 +99,38 @@ async function main() {
   const blocks = extractBlocks(lines);
   const events = [];
 
-  for (const block of blocks
+  const startMs = startIso ? new Date(startIso).getTime() : null;
+  const endMs = endIso ? new Date(endIso).getTime() : null;
+
+  for (const block of blocks) {
+    const normalized = normalizeObjectLiteralToJson(block);
+    const obj = safeJsonParse(normalized);
+    if (!obj) continue;
+    if (!isRelevantWebhook(obj)) continue;
+
+    const t = getEventTime(obj);
+    const tMs = t ? new Date(t).getTime() : null;
+
+    if (startMs != null && tMs != null && tMs < startMs) continue;
+    if (endMs != null && tMs != null && tMs > endMs) continue;
+
+    events.push(obj);
+  }
+
+  events.sort((a, b) => {
+    const ta = new Date(getEventTime(a) || 0).getTime();
+    const tb = new Date(getEventTime(b) || 0).getTime();
+    return ta - tb;
+  });
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, JSON.stringify(events, null, 2), "utf8");
+
+  console.log(`Extracted ${events.length} webhook events`);
+  console.log(`Saved to ${outputPath}`);
+}
+
+main().catch((err) => {
+  console.error("Extraction failed:", err);
+  process.exit(1);
+});
