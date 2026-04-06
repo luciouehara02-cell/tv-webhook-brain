@@ -1,20 +1,17 @@
 /**
- * Brain_READYFilter_v4.0-LONG
+ * Brain_READYFilter_v4.1-LONG
  *
- * New architecture:
+ * Architecture:
  * - RayAlgo BUY/SELL remains the external trigger
- * - READY is no longer sent from Pine
  * - Brain builds synthetic 3m bars from 15s ticks
- * - Brain evaluates a live long-entry filter at BUY time
+ * - Brain evaluates BUY quality at the exact BUY moment
+ * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
- * Goal:
- * - block stale continuation BUYs
- * - allow fresh washout -> reclaim -> bounce BUYs
- *
- * Notes:
- * - This first build focuses on ENTRY architecture
- * - EXIT remains simple: Ray SELL / intent exit_long
- * - You can layer your current fail stop / BE / PL ladder back on top next
+ * New in v4.1:
+ * - dual entry modes:
+ *   1) reversal_reclaim
+ *   2) breakout_continuation
+ * - fixes overblocking of valid breakout entries after reclaim
  */
 
 import express from "express";
@@ -22,7 +19,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "Brain_READYFilter_v4.0-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.1-LONG";
 
 // ========================================
 // CONFIG
@@ -57,7 +54,7 @@ const THREECOMMAS_TIMEOUT_MS = Number(
 
 // Tick / bar building
 const TICK_EXPECTED_SEC = Number(process.env.TICK_EXPECTED_SEC || "15");
-const BAR_TF_SEC = Number(process.env.BAR_TF_SEC || "180"); // 3m
+const BAR_TF_SEC = Number(process.env.BAR_TF_SEC || "180");
 const MAX_BARS = Number(process.env.MAX_BARS || "300");
 
 // Logging
@@ -73,17 +70,18 @@ const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "90");
 // Enter dedupe
 const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || "25");
 
-// Entry filter thresholds
+// Filter base thresholds
 const FILTER_ENABLED =
   String(process.env.FILTER_ENABLED || "true").toLowerCase() === "true";
 
-const FILTER_MIN_BARS = Number(process.env.FILTER_MIN_BARS || "25");
+const FILTER_MIN_BARS = Number(process.env.FILTER_MIN_BARS || "12");
 const FILTER_ADX_MIN = Number(process.env.FILTER_ADX_MIN || "14");
 const FILTER_RSI_MIN = Number(process.env.FILTER_RSI_MIN || "46");
 
 const FILTER_WASH_LOOKBACK_BARS = Number(process.env.FILTER_WASH_LOOKBACK_BARS || "18");
 const FILTER_DROP_LOOKBACK_BARS = Number(process.env.FILTER_DROP_LOOKBACK_BARS || "12");
 const FILTER_MAX_BARS_SINCE_LOW = Number(process.env.FILTER_MAX_BARS_SINCE_LOW || "4");
+const FILTER_MAX_BARS_SINCE_RECLAIM = Number(process.env.FILTER_MAX_BARS_SINCE_RECLAIM || "3");
 
 const FILTER_MIN_DROP_PCT = Number(process.env.FILTER_MIN_DROP_PCT || "0.60");
 const FILTER_MIN_RECLAIM_FROM_LOW_PCT = Number(
@@ -104,6 +102,31 @@ const FILTER_MAX_BUY_FROM_RECLAIM_PCT = Number(
   process.env.FILTER_MAX_BUY_FROM_RECLAIM_PCT || "0.40"
 );
 
+// Breakout continuation mode
+const FILTER_BREAKOUT_ENABLED =
+  String(process.env.FILTER_BREAKOUT_ENABLED || "true").toLowerCase() === "true";
+
+const FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM = Number(
+  process.env.FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "5"
+);
+const FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT = Number(
+  process.env.FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT || "0.70"
+);
+const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT = Number(
+  process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT || "0.90"
+);
+const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT = Number(
+  process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT || "1.00"
+);
+const FILTER_BREAKOUT_MIN_RSI = Number(process.env.FILTER_BREAKOUT_MIN_RSI || "48");
+const FILTER_BREAKOUT_MIN_ADX = Number(process.env.FILTER_BREAKOUT_MIN_ADX || "14");
+const FILTER_BREAKOUT_REQUIRE_BULL_CANDLE =
+  String(process.env.FILTER_BREAKOUT_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
+const FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
+  process.env.FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT || "0.05"
+);
+
+// Hostility
 const FILTER_HOSTILE_MAX_EMA_GAP_PCT = Number(
   process.env.FILTER_HOSTILE_MAX_EMA_GAP_PCT || "0.60"
 );
@@ -114,12 +137,7 @@ const FILTER_HOSTILE_MAX_MINUS_DI_LEAD = Number(
   process.env.FILTER_HOSTILE_MAX_MINUS_DI_LEAD || "10"
 );
 
-// Reclaim freshness
-const FILTER_MAX_BARS_SINCE_RECLAIM = Number(
-  process.env.FILTER_MAX_BARS_SINCE_RECLAIM || "3"
-);
-
-// In-position tracking
+// Position
 const ALLOW_ONLY_ONE_POSITION =
   String(process.env.ALLOW_ONLY_ONE_POSITION || "true").toLowerCase() === "true";
 
@@ -272,14 +290,14 @@ function maybeLogState(s) {
     const e = s.lastEval;
     const reasons = e?.reasons?.length ? e.reasons.join(",") : "na";
     console.log(
-      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} reg=${e?.regime || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} reasons=${reasons} lastAction=${s.lastAction}`
+      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} mode=${e?.mode || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} reasons=${reasons} lastAction=${s.lastAction}`
     );
     s.lastStateLogMs = now;
   }
 }
 
 // ========================================
-// 3M BAR BUILDER FROM 15S TICKS
+// BAR BUILDER
 // ========================================
 function pushTickToBars(s, price, tsMs) {
   const bucketMs = floorToTfMs(tsMs, BAR_TF_SEC);
@@ -320,13 +338,6 @@ function emaSeries(values, len) {
     out.push(alpha * values[i] + (1 - alpha) * out[i - 1]);
   }
   return out;
-}
-
-function smaLast(values, len) {
-  if (values.length < len) return null;
-  let sum = 0;
-  for (let i = values.length - len; i < values.length; i++) sum += values[i];
-  return sum / len;
 }
 
 function rsiSeries(values, len) {
@@ -420,17 +431,18 @@ function adxSeries(bars, len) {
     dx.push(denom > 0 ? (100 * Math.abs(pdi - mdi)) / denom : 0);
   }
 
-  const adx = rma(dx.filter((x) => Number.isFinite(x)), len);
+  const finiteDx = dx.filter((x) => Number.isFinite(x));
+  const adxShort = rma(finiteDx, len);
+
   const fullAdx = new Array(dx.length).fill(null);
   let k = 0;
   for (let i = 0; i < dx.length; i++) {
     if (Number.isFinite(dx[i])) {
-      fullAdx[i] = adx[k] ?? null;
+      fullAdx[i] = adxShort[k] ?? null;
       k++;
     }
   }
 
-  // align to bars length
   return {
     adx: [null, ...fullAdx],
     plusDI: [null, ...plusDI],
@@ -448,15 +460,18 @@ function wtSeries(bars, n1, n2, sigLen) {
     return d && d !== 0 ? (v - esa[i]) / (0.015 * d) : 0;
   });
   const fwo = emaSeries(ci, n2);
+
   const fwoSignal = [];
   for (let i = 0; i < fwo.length; i++) {
-    if (i + 1 < sigLen) fwoSignal.push(null);
-    else {
+    if (i + 1 < sigLen) {
+      fwoSignal.push(null);
+    } else {
       let sum = 0;
       for (let j = i - sigLen + 1; j <= i; j++) sum += fwo[j];
       fwoSignal.push(sum / sigLen);
     }
   }
+
   return { fwo, fwoSignal };
 }
 
@@ -477,6 +492,13 @@ function highestClose(bars, lookback) {
   const start = Math.max(0, bars.length - lookback);
   let v = bars[start].c;
   for (let i = start + 1; i < bars.length; i++) v = Math.max(v, bars[i].c);
+  return v;
+}
+
+function highestHigh(bars, lookback) {
+  const start = Math.max(0, bars.length - lookback);
+  let v = bars[start].h;
+  for (let i = start + 1; i < bars.length; i++) v = Math.max(v, bars[i].h);
   return v;
 }
 
@@ -532,8 +554,8 @@ function evaluateLongFilter(s) {
     return {
       allow: true,
       reasons,
+      mode: "disabled",
       barsCount: bars.length,
-      regime: "na",
       hostileBear: false,
     };
   }
@@ -543,23 +565,24 @@ function evaluateLongFilter(s) {
     return {
       allow: false,
       reasons,
+      mode: "warmup",
       barsCount: bars.length,
-      regime: "na",
       hostileBear: false,
     };
   }
 
   const closes = bars.map((b) => b.c);
-  const opens = bars.map((b) => b.o);
 
   const ema8 = emaSeries(closes, 8);
   const ema18 = emaSeries(closes, 18);
   const ema21 = emaSeries(closes, 21);
   const rsi = rsiSeries(closes, 14);
+
   const rsiMA = [];
   for (let i = 0; i < rsi.length; i++) {
-    if (i < 4 || !Number.isFinite(rsi[i])) rsiMA.push(null);
-    else {
+    if (i < 4 || !Number.isFinite(rsi[i])) {
+      rsiMA.push(null);
+    } else {
       let sum = 0;
       let ok = true;
       for (let j = i - 4; j <= i; j++) {
@@ -578,7 +601,7 @@ function evaluateLongFilter(s) {
 
   const i = bars.length - 1;
   const bar = bars[i];
-  const prev = bars[i - 1];
+  const prevBar = bars[i - 1];
 
   const rsiNow = rsi[i];
   const rsiPrev = rsi[i - 1];
@@ -591,15 +614,16 @@ function evaluateLongFilter(s) {
   const ema8Now = ema8[i];
   const ema18Now = ema18[i];
   const ema21Now = ema21[i];
+  const ema8Prev = ema8[i - 1];
   const ema21Prev = ema21[i - 1];
 
   const fwoNow = fwo[i];
   const fwoPrev = fwo[i - 1];
   const fwoSigNow = fwoSignal[i];
 
-  const reg = "RANGE"; // entry filter is tailored mainly for reversal/range-to-early-trend
+  const bullCandle = bar.c > bar.o;
 
-  // 1) Damage / washout
+  // Damage / washout context
   const lowInfo = barsSinceLowestLow(bars, FILTER_WASH_LOOKBACK_BARS);
   const recentLow = lowInfo.low;
   const barsSinceLow = lowInfo.barsSince;
@@ -613,44 +637,24 @@ function evaluateLongFilter(s) {
     maxStretchBelow >= FILTER_MIN_DROP_PCT ||
     maxBelowStreak >= 3;
 
-  if (!hadDamage) reasons.push("no_recent_damage");
-  if (barsSinceLow > FILTER_MAX_BARS_SINCE_LOW) reasons.push("low_too_old");
-
-  // 2) Reclaim freshness
-  const reclaim = findRecentReclaimBar(bars, ema21, FILTER_MAX_BARS_SINCE_RECLAIM);
-  if (!reclaim) reasons.push("no_fresh_reclaim");
+  // Reclaim / rebound
+  const reclaimReversal = findRecentReclaimBar(bars, ema21, FILTER_MAX_BARS_SINCE_RECLAIM);
+  const reclaimBreakout = findRecentReclaimBar(
+    bars,
+    ema21,
+    FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM
+  );
+  const reclaim = reclaimBreakout || reclaimReversal;
 
   const reclaimAgeBars = reclaim ? reclaim.ageBars : null;
   const reclaimPrice = reclaim ? reclaim.reclaimPrice : null;
+
   const reclaimFromLowPct =
     Number.isFinite(recentLow) && recentLow > 0 ? ((bar.c - recentLow) / recentLow) * 100 : null;
   const impulseFromLowPct =
     Number.isFinite(recentLow) && recentLow > 0 ? ((bar.h - recentLow) / recentLow) * 100 : null;
-  const bodyPct =
-    bar.o > 0 ? (Math.abs(bar.c - bar.o) / bar.o) * 100 : null;
+  const bodyPct = bar.o > 0 ? (Math.abs(bar.c - bar.o) / bar.o) * 100 : null;
 
-  if (!(reclaimFromLowPct >= FILTER_MIN_RECLAIM_FROM_LOW_PCT)) {
-    reasons.push("weak_reclaim_from_low");
-  }
-  if (!(impulseFromLowPct >= FILTER_MIN_IMPULSE_FROM_LOW_PCT)) {
-    reasons.push("weak_impulse_from_low");
-  }
-  if (!(bodyPct >= FILTER_MIN_BODY_PCT)) {
-    reasons.push("weak_body");
-  }
-
-  // 3) Recovery quality
-  if (!(bar.c > ema18Now && bar.c > ema21Now)) reasons.push("not_above_ema18_21");
-  if (!(rsiNow >= FILTER_RSI_MIN)) reasons.push("rsi_too_low");
-  if (!(Number.isFinite(rsiPrev) && rsiNow > rsiPrev)) reasons.push("rsi_not_rising");
-  if (!(Number.isFinite(rsiMaNow) && rsiNow > rsiMaNow)) reasons.push("rsi_not_above_ma");
-  if (!(Number.isFinite(fwoSigNow) && fwoNow > fwoSigNow)) reasons.push("fwo_not_recovered");
-  if (!(Number.isFinite(fwoPrev) && fwoNow > fwoPrev)) reasons.push("fwo_not_rising");
-  if (!(bar.c > bar.o)) reasons.push("not_bull_candle");
-  if (!(adxNow >= FILTER_ADX_MIN)) reasons.push("adx_too_low");
-  if (!(ema8Now > ema8[i - 1])) reasons.push("ema8_not_rising");
-
-  // 4) Hostility
   const emaGapPct = ema21Now > 0 ? ((ema21Now - ema8Now) / ema21Now) * 100 : 0;
   const ema21SlopePct =
     Number.isFinite(ema21Prev) && ema21Prev > 0 ? ((ema21Now - ema21Prev) / ema21Prev) * 100 : 0;
@@ -662,31 +666,107 @@ function evaluateLongFilter(s) {
     ema21SlopePct < -FILTER_HOSTILE_MAX_NEG_SLOPE_PCT ||
     minusLead > FILTER_HOSTILE_MAX_MINUS_DI_LEAD;
 
-  if (hostileBear) reasons.push("hostile_bear");
-
-  // 5) Extension / stale continuation protection
   const entryExtEma21Pct = ema21Now > 0 ? ((bar.c - ema21Now) / ema21Now) * 100 : null;
   const entryExtEma18Pct = ema18Now > 0 ? ((bar.c - ema18Now) / ema18Now) * 100 : null;
   const buyFromReclaimPct =
     Number.isFinite(reclaimPrice) && reclaimPrice > 0 ? ((bar.c - reclaimPrice) / reclaimPrice) * 100 : null;
 
-  if (!(entryExtEma21Pct <= FILTER_MAX_ENTRY_EXT_EMA21_PCT)) reasons.push("too_extended_ema21");
-  if (!(entryExtEma18Pct <= FILTER_MAX_ENTRY_EXT_EMA18_PCT)) reasons.push("too_extended_ema18");
+  const fwoRecovered = Number.isFinite(fwoSigNow) && fwoNow > fwoSigNow;
+  const fwoRising = Number.isFinite(fwoPrev) && fwoNow > fwoPrev;
+  const rsiRising = Number.isFinite(rsiPrev) && rsiNow > rsiPrev;
+  const rsiAboveMa = Number.isFinite(rsiMaNow) && rsiNow > rsiMaNow;
+  const ema8Rising = Number.isFinite(ema8Prev) && ema8Now > ema8Prev;
+  const aboveEma18_21 = bar.c > ema18Now && bar.c > ema21Now;
+
+  // Recent structure breakout check
+  const prev6High = highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1));
+  const breakoutNow = Number.isFinite(prev6High) ? bar.c > prev6High : false;
+  const closeOverReclaimPct =
+    Number.isFinite(reclaimPrice) && reclaimPrice > 0 ? ((bar.c - reclaimPrice) / reclaimPrice) * 100 : null;
+
+  // ---------- MODE 1: REVERSAL RECLAIM ----------
+  const reversalReasons = [];
+
+  if (!hadDamage) reversalReasons.push("no_recent_damage");
+  if (barsSinceLow > FILTER_MAX_BARS_SINCE_LOW) reversalReasons.push("low_too_old");
+  if (!reclaimReversal) reversalReasons.push("no_fresh_reclaim");
+  if (!(reclaimFromLowPct >= FILTER_MIN_RECLAIM_FROM_LOW_PCT)) reversalReasons.push("weak_reclaim_from_low");
+  if (!(impulseFromLowPct >= FILTER_MIN_IMPULSE_FROM_LOW_PCT)) reversalReasons.push("weak_impulse_from_low");
+  if (!(bodyPct >= FILTER_MIN_BODY_PCT)) reversalReasons.push("weak_body");
+  if (!aboveEma18_21) reversalReasons.push("not_above_ema18_21");
+  if (!(rsiNow >= FILTER_RSI_MIN)) reversalReasons.push("rsi_too_low");
+  if (!rsiRising) reversalReasons.push("rsi_not_rising");
+  if (!rsiAboveMa) reversalReasons.push("rsi_not_above_ma");
+  if (!fwoRecovered) reversalReasons.push("fwo_not_recovered");
+  if (!fwoRising) reversalReasons.push("fwo_not_rising");
+  if (!bullCandle) reversalReasons.push("not_bull_candle");
+  if (!(adxNow >= FILTER_ADX_MIN)) reversalReasons.push("adx_too_low");
+  if (!ema8Rising) reversalReasons.push("ema8_not_rising");
+  if (hostileBear) reversalReasons.push("hostile_bear");
+  if (!(entryExtEma21Pct <= FILTER_MAX_ENTRY_EXT_EMA21_PCT)) reversalReasons.push("too_extended_ema21");
+  if (!(entryExtEma18Pct <= FILTER_MAX_ENTRY_EXT_EMA18_PCT)) reversalReasons.push("too_extended_ema18");
   if (!(buyFromReclaimPct == null || buyFromReclaimPct <= FILTER_MAX_BUY_FROM_RECLAIM_PCT)) {
-    reasons.push("too_far_from_reclaim");
+    reversalReasons.push("too_far_from_reclaim");
+  }
+  if (reclaimReversal && lowInfo.index > reclaimReversal.index) reversalReasons.push("fresh_low_after_reclaim");
+
+  const reversalAllow = reversalReasons.length === 0;
+
+  // ---------- MODE 2: BREAKOUT CONTINUATION ----------
+  const breakoutReasons = [];
+
+  if (!FILTER_BREAKOUT_ENABLED) {
+    breakoutReasons.push("breakout_mode_disabled");
+  } else {
+    if (!reclaimBreakout) breakoutReasons.push("no_recent_reclaim");
+    if (!aboveEma18_21) breakoutReasons.push("not_above_ema18_21");
+    if (!(rsiNow >= FILTER_BREAKOUT_MIN_RSI)) breakoutReasons.push("rsi_too_low");
+    if (!(adxNow >= FILTER_BREAKOUT_MIN_ADX)) breakoutReasons.push("adx_too_low");
+    if (!rsiAboveMa) breakoutReasons.push("rsi_not_above_ma");
+    if (!fwoRecovered) breakoutReasons.push("fwo_not_recovered");
+    if (!ema8Rising) breakoutReasons.push("ema8_not_rising");
+    if (hostileBear) breakoutReasons.push("hostile_bear");
+    if (!(closeOverReclaimPct != null && closeOverReclaimPct >= FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT)) {
+      breakoutReasons.push("no_breakout_clearance");
+    }
+    if (!(buyFromReclaimPct == null || buyFromReclaimPct <= FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT)) {
+      breakoutReasons.push("too_far_from_reclaim");
+    }
+    if (!(entryExtEma18Pct <= FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT)) {
+      breakoutReasons.push("too_extended_ema18");
+    }
+    if (!(entryExtEma21Pct <= FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT)) {
+      breakoutReasons.push("too_extended_ema21");
+    }
+    if (FILTER_BREAKOUT_REQUIRE_BULL_CANDLE && !bullCandle) {
+      breakoutReasons.push("not_bull_candle");
+    }
   }
 
-  // 6) Fresh low should precede reclaim
-  if (reclaim && lowInfo.index > reclaim.index) {
-    reasons.push("fresh_low_after_reclaim");
-  }
+  const breakoutAllow = breakoutReasons.length === 0;
 
-  const allow = reasons.length === 0;
+  // Choose
+  let allow = false;
+  let mode = "blocked";
+
+  if (reversalAllow) {
+    allow = true;
+    mode = "reversal_reclaim";
+  } else if (breakoutAllow) {
+    allow = true;
+    mode = "breakout_continuation";
+  } else {
+    // prefer the more informative active failure set
+    const combined = new Set();
+    for (const r of reversalReasons) combined.add(r);
+    for (const r of breakoutReasons) combined.add(r);
+    reasons.push(...combined);
+  }
 
   return {
     allow,
+    mode,
     reasons,
-    regime: reg,
 
     barsCount: bars.length,
 
@@ -720,6 +800,11 @@ function evaluateLongFilter(s) {
     entryExtEma21Pct,
     entryExtEma18Pct,
     buyFromReclaimPct,
+    closeOverReclaimPct,
+    breakoutNow,
+
+    reversalReasons,
+    breakoutReasons,
   };
 }
 
@@ -741,9 +826,9 @@ async function postTo3Commas(action, payload) {
     timestamp: payload?.timestamp ?? payload?.time ?? new Date().toISOString(),
     trigger_price: String(
       toNum(payload?.trigger_price) ??
-      toNum(payload?.price) ??
-      toNum(payload?.close) ??
-      ""
+        toNum(payload?.price) ??
+        toNum(payload?.close) ??
+        ""
     ),
     tv_exchange: String(payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? ""),
     tv_instrument: String(payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? ""),
@@ -845,6 +930,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     return res.json({
       ok: false,
       blocked: "filter_blocked",
+      mode: evalResult.mode,
       reasons: evalResult.reasons,
       filter: evalResult,
     });
@@ -857,7 +943,7 @@ async function handleEnterLong(payload, res, sourceTag) {
   s.lastAction = "enter_long";
 
   console.log(
-    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} reclaimAge=${evalResult.reclaimAgeBars} ext21=${evalResult.entryExtEma21Pct?.toFixed(3)}%`
+    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} mode=${evalResult.mode} reclaimAge=${evalResult.reclaimAgeBars} ext18=${evalResult.entryExtEma18Pct?.toFixed(3)}% ext21=${evalResult.entryExtEma21Pct?.toFixed(3)}%`
   );
 
   const fwd = await postTo3Commas("enter_long", {
@@ -870,6 +956,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     ok: true,
     action: "enter_long",
     source: sourceTag,
+    mode: evalResult.mode,
     filter: evalResult,
     threecommas: fwd,
   });
@@ -989,6 +1076,7 @@ app.listen(PORT, () => {
   console.log(`Filter: ENABLED=${FILTER_ENABLED} | MIN_BARS=${FILTER_MIN_BARS} | ADX_MIN=${FILTER_ADX_MIN} | RSI_MIN=${FILTER_RSI_MIN}`);
   console.log(`Damage: washLookback=${FILTER_WASH_LOOKBACK_BARS} | dropLookback=${FILTER_DROP_LOOKBACK_BARS} | maxBarsSinceLow=${FILTER_MAX_BARS_SINCE_LOW} | minDropPct=${FILTER_MIN_DROP_PCT}`);
   console.log(`Reclaim: minReclaimFromLow=${FILTER_MIN_RECLAIM_FROM_LOW_PCT}% | minImpulseFromLow=${FILTER_MIN_IMPULSE_FROM_LOW_PCT}% | minBody=${FILTER_MIN_BODY_PCT}% | maxBarsSinceReclaim=${FILTER_MAX_BARS_SINCE_RECLAIM}`);
+  console.log(`Breakout: enabled=${FILTER_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | maxBuyFromReclaim=${FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}%`);
   console.log(`Extension: maxExt21=${FILTER_MAX_ENTRY_EXT_EMA21_PCT}% | maxExt18=${FILTER_MAX_ENTRY_EXT_EMA18_PCT}% | maxBuyFromReclaim=${FILTER_MAX_BUY_FROM_RECLAIM_PCT}%`);
   console.log(`Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`);
   console.log(`3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"}`);
