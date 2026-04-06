@@ -1,5 +1,5 @@
 /**
- * Brain_READYFilter_v4.1-LONG
+ * Brain_READYFilter_v4.2-LONG
  *
  * Architecture:
  * - RayAlgo BUY/SELL remains the external trigger
@@ -7,11 +7,20 @@
  * - Brain evaluates BUY quality at the exact BUY moment
  * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
- * New in v4.1:
- * - dual entry modes:
+ * New in v4.2:
+ * - 3 entry modes:
  *   1) reversal_reclaim
  *   2) breakout_continuation
- * - fixes overblocking of valid breakout entries after reclaim
+ *   3) hold_continuation
+ * - hold_continuation is for cases where:
+ *   - reclaim happened earlier
+ *   - price is holding above EMA structure
+ *   - BUY appears on continuation, not fresh washout
+ * - reduces overblocking from:
+ *   - no_recent_damage
+ *   - no_fresh_reclaim
+ *   - no_recent_reclaim
+ *   - no_breakout_clearance
  */
 
 import express from "express";
@@ -19,7 +28,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "Brain_READYFilter_v4.1-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.2-LONG";
 
 // ========================================
 // CONFIG
@@ -107,24 +116,49 @@ const FILTER_BREAKOUT_ENABLED =
   String(process.env.FILTER_BREAKOUT_ENABLED || "true").toLowerCase() === "true";
 
 const FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM = Number(
-  process.env.FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "5"
+  process.env.FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "8"
 );
 const FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT = Number(
   process.env.FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT || "0.70"
 );
 const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT = Number(
-  process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT || "0.90"
+  process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT || "1.10"
 );
 const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT = Number(
-  process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT || "1.00"
+  process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT || "1.25"
 );
-const FILTER_BREAKOUT_MIN_RSI = Number(process.env.FILTER_BREAKOUT_MIN_RSI || "48");
-const FILTER_BREAKOUT_MIN_ADX = Number(process.env.FILTER_BREAKOUT_MIN_ADX || "14");
+const FILTER_BREAKOUT_MIN_RSI = Number(process.env.FILTER_BREAKOUT_MIN_RSI || "44");
+const FILTER_BREAKOUT_MIN_ADX = Number(process.env.FILTER_BREAKOUT_MIN_ADX || "10");
 const FILTER_BREAKOUT_REQUIRE_BULL_CANDLE =
   String(process.env.FILTER_BREAKOUT_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
 const FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
-  process.env.FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT || "0.05"
+  process.env.FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT || "0.00"
 );
+
+// Hold continuation mode
+const FILTER_HOLD_ENABLED =
+  String(process.env.FILTER_HOLD_ENABLED || "true").toLowerCase() === "true";
+const FILTER_HOLD_MIN_RSI = Number(process.env.FILTER_HOLD_MIN_RSI || "42");
+const FILTER_HOLD_MIN_ADX = Number(process.env.FILTER_HOLD_MIN_ADX || "8");
+const FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT = Number(
+  process.env.FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT || "1.20"
+);
+const FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT = Number(
+  process.env.FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT || "1.40"
+);
+const FILTER_HOLD_REQUIRE_BULL_CANDLE =
+  String(process.env.FILTER_HOLD_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
+const FILTER_HOLD_REQUIRE_RSI_RISING =
+  String(process.env.FILTER_HOLD_REQUIRE_RSI_RISING || "false").toLowerCase() === "true";
+const FILTER_HOLD_REQUIRE_FWO_RECOVERED =
+  String(process.env.FILTER_HOLD_REQUIRE_FWO_RECOVERED || "false").toLowerCase() === "true";
+const FILTER_HOLD_REQUIRE_EMA8_RISING =
+  String(process.env.FILTER_HOLD_REQUIRE_EMA8_RISING || "false").toLowerCase() === "true";
+const FILTER_HOLD_RECENT_RECLAIM_LOOKBACK = Number(
+  process.env.FILTER_HOLD_RECENT_RECLAIM_LOOKBACK || "12"
+);
+const FILTER_HOLD_REQUIRE_RECENT_RECLAIM =
+  String(process.env.FILTER_HOLD_REQUIRE_RECENT_RECLAIM || "false").toLowerCase() === "true";
 
 // Hostility
 const FILTER_HOSTILE_MAX_EMA_GAP_PCT = Number(
@@ -252,16 +286,6 @@ function isHeartbeatFresh(s) {
   if (!REQUIRE_FRESH_HEARTBEAT) return true;
   if (!s.lastTickMs) return false;
   return nowMs() - s.lastTickMs <= HEARTBEAT_MAX_AGE_SEC * 1000;
-}
-
-function pctDiff(a, b) {
-  if (!Number.isFinite(a) || a === 0 || !Number.isFinite(b)) return null;
-  return (Math.abs(b - a) / Math.abs(a)) * 100.0;
-}
-
-function pctProfit(entry, current) {
-  if (!Number.isFinite(entry) || entry === 0 || !Number.isFinite(current)) return null;
-  return ((current - entry) / entry) * 100.0;
 }
 
 function enterDedupeActive(s, ts) {
@@ -577,6 +601,8 @@ function evaluateLongFilter(s) {
   const ema18 = emaSeries(closes, 18);
   const ema21 = emaSeries(closes, 21);
   const rsi = rsiSeries(closes, 14);
+  const { adx, plusDI, minusDI } = adxSeries(bars, 14);
+  const { fwo, fwoSignal } = wtSeries(bars, 10, 21, 4);
 
   const rsiMA = [];
   for (let i = 0; i < rsi.length; i++) {
@@ -596,12 +622,8 @@ function evaluateLongFilter(s) {
     }
   }
 
-  const { adx, plusDI, minusDI } = adxSeries(bars, 14);
-  const { fwo, fwoSignal } = wtSeries(bars, 10, 21, 4);
-
   const i = bars.length - 1;
   const bar = bars[i];
-  const prevBar = bars[i - 1];
 
   const rsiNow = rsi[i];
   const rsiPrev = rsi[i - 1];
@@ -644,10 +666,15 @@ function evaluateLongFilter(s) {
     ema21,
     FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM
   );
-  const reclaim = reclaimBreakout || reclaimReversal;
+  const reclaimHold = findRecentReclaimBar(
+    bars,
+    ema21,
+    FILTER_HOLD_RECENT_RECLAIM_LOOKBACK
+  );
 
-  const reclaimAgeBars = reclaim ? reclaim.ageBars : null;
-  const reclaimPrice = reclaim ? reclaim.reclaimPrice : null;
+  const reclaimAny = reclaimBreakout || reclaimReversal || reclaimHold;
+  const reclaimAgeBars = reclaimAny ? reclaimAny.ageBars : null;
+  const reclaimPrice = reclaimAny ? reclaimAny.reclaimPrice : null;
 
   const reclaimFromLowPct =
     Number.isFinite(recentLow) && recentLow > 0 ? ((bar.c - recentLow) / recentLow) * 100 : null;
@@ -678,9 +705,12 @@ function evaluateLongFilter(s) {
   const ema8Rising = Number.isFinite(ema8Prev) && ema8Now > ema8Prev;
   const aboveEma18_21 = bar.c > ema18Now && bar.c > ema21Now;
 
-  // Recent structure breakout check
-  const prev6High = highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1));
+  // Structure
+  const prev6High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1)) : null;
+  const prev4High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(4, bars.length - 1)) : null;
   const breakoutNow = Number.isFinite(prev6High) ? bar.c > prev6High : false;
+  const holdBreakNow = Number.isFinite(prev4High) ? bar.c >= prev4High : false;
+
   const closeOverReclaimPct =
     Number.isFinite(reclaimPrice) && reclaimPrice > 0 ? ((bar.c - reclaimPrice) / reclaimPrice) * 100 : null;
 
@@ -724,8 +754,6 @@ function evaluateLongFilter(s) {
     if (!(adxNow >= FILTER_BREAKOUT_MIN_ADX)) breakoutReasons.push("adx_too_low");
     if (!rsiAboveMa) breakoutReasons.push("rsi_not_above_ma");
     if (!fwoRecovered) breakoutReasons.push("fwo_not_recovered");
-    if (!ema8Rising) breakoutReasons.push("ema8_not_rising");
-    if (hostileBear) breakoutReasons.push("hostile_bear");
     if (!(closeOverReclaimPct != null && closeOverReclaimPct >= FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT)) {
       breakoutReasons.push("no_breakout_clearance");
     }
@@ -741,9 +769,46 @@ function evaluateLongFilter(s) {
     if (FILTER_BREAKOUT_REQUIRE_BULL_CANDLE && !bullCandle) {
       breakoutReasons.push("not_bull_candle");
     }
+    if (hostileBear) breakoutReasons.push("hostile_bear");
   }
 
   const breakoutAllow = breakoutReasons.length === 0;
+
+  // ---------- MODE 3: HOLD CONTINUATION ----------
+  const holdReasons = [];
+
+  if (!FILTER_HOLD_ENABLED) {
+    holdReasons.push("hold_mode_disabled");
+  } else {
+    if (!aboveEma18_21) holdReasons.push("not_above_ema18_21");
+    if (!(rsiNow >= FILTER_HOLD_MIN_RSI)) holdReasons.push("rsi_too_low");
+    if (!(adxNow >= FILTER_HOLD_MIN_ADX)) holdReasons.push("adx_too_low");
+
+    if (FILTER_HOLD_REQUIRE_RSI_RISING && !rsiRising) holdReasons.push("rsi_not_rising");
+    if (!rsiAboveMa) holdReasons.push("rsi_not_above_ma");
+    if (FILTER_HOLD_REQUIRE_FWO_RECOVERED && !fwoRecovered) holdReasons.push("fwo_not_recovered");
+    if (FILTER_HOLD_REQUIRE_EMA8_RISING && !ema8Rising) holdReasons.push("ema8_not_rising");
+    if (FILTER_HOLD_REQUIRE_BULL_CANDLE && !bullCandle) holdReasons.push("not_bull_candle");
+
+    if (FILTER_HOLD_REQUIRE_RECENT_RECLAIM && !reclaimHold) {
+      holdReasons.push("no_recent_reclaim");
+    }
+
+    if (!(entryExtEma18Pct <= FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT)) {
+      holdReasons.push("too_extended_ema18");
+    }
+    if (!(entryExtEma21Pct <= FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT)) {
+      holdReasons.push("too_extended_ema21");
+    }
+
+    if (!(holdBreakNow || breakoutNow || (closeOverReclaimPct != null && closeOverReclaimPct >= 0))) {
+      holdReasons.push("no_hold_continuation_clearance");
+    }
+
+    if (hostileBear) holdReasons.push("hostile_bear");
+  }
+
+  const holdAllow = holdReasons.length === 0;
 
   // Choose
   let allow = false;
@@ -755,11 +820,14 @@ function evaluateLongFilter(s) {
   } else if (breakoutAllow) {
     allow = true;
     mode = "breakout_continuation";
+  } else if (holdAllow) {
+    allow = true;
+    mode = "hold_continuation";
   } else {
-    // prefer the more informative active failure set
     const combined = new Set();
     for (const r of reversalReasons) combined.add(r);
     for (const r of breakoutReasons) combined.add(r);
+    for (const r of holdReasons) combined.add(r);
     reasons.push(...combined);
   }
 
@@ -802,9 +870,11 @@ function evaluateLongFilter(s) {
     buyFromReclaimPct,
     closeOverReclaimPct,
     breakoutNow,
+    holdBreakNow,
 
     reversalReasons,
     breakoutReasons,
+    holdReasons,
   };
 }
 
@@ -924,7 +994,7 @@ async function handleEnterLong(payload, res, sourceTag) {
     s.lastAction = "enter_long_blocked_filter";
     if (DEBUG_FILTER) {
       console.log(
-        `⛔ BUY BLOCKED | symbol=${symbol} price=${price} | reasons=${evalResult.reasons.join(",")}`
+        `⛔ BUY BLOCKED | symbol=${symbol} price=${price} | mode=${evalResult.mode} | reasons=${evalResult.reasons.join(",")}`
       );
     }
     return res.json({
@@ -1077,6 +1147,7 @@ app.listen(PORT, () => {
   console.log(`Damage: washLookback=${FILTER_WASH_LOOKBACK_BARS} | dropLookback=${FILTER_DROP_LOOKBACK_BARS} | maxBarsSinceLow=${FILTER_MAX_BARS_SINCE_LOW} | minDropPct=${FILTER_MIN_DROP_PCT}`);
   console.log(`Reclaim: minReclaimFromLow=${FILTER_MIN_RECLAIM_FROM_LOW_PCT}% | minImpulseFromLow=${FILTER_MIN_IMPULSE_FROM_LOW_PCT}% | minBody=${FILTER_MIN_BODY_PCT}% | maxBarsSinceReclaim=${FILTER_MAX_BARS_SINCE_RECLAIM}`);
   console.log(`Breakout: enabled=${FILTER_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | maxBuyFromReclaim=${FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}%`);
+  console.log(`Hold: enabled=${FILTER_HOLD_ENABLED} | minRsi=${FILTER_HOLD_MIN_RSI} | minAdx=${FILTER_HOLD_MIN_ADX} | maxExt18=${FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT}% | recentReclaimLookback=${FILTER_HOLD_RECENT_RECLAIM_LOOKBACK}`);
   console.log(`Extension: maxExt21=${FILTER_MAX_ENTRY_EXT_EMA21_PCT}% | maxExt18=${FILTER_MAX_ENTRY_EXT_EMA18_PCT}% | maxBuyFromReclaim=${FILTER_MAX_BUY_FROM_RECLAIM_PCT}%`);
   console.log(`Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`);
   console.log(`3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"}`);
