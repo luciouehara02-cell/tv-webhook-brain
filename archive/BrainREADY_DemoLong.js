@@ -1,5 +1,5 @@
 /**
- * Brain_READYFilter_v4.2-LONG
+ * Brain_READYFilter_v4.3-LONG
  *
  * Architecture:
  * - RayAlgo BUY/SELL remains the external trigger
@@ -7,20 +7,17 @@
  * - Brain evaluates BUY quality at the exact BUY moment
  * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
- * New in v4.2:
- * - 3 entry modes:
+ * New in v4.3:
+ * - keeps 3 entry modes:
  *   1) reversal_reclaim
  *   2) breakout_continuation
  *   3) hold_continuation
- * - hold_continuation is for cases where:
- *   - reclaim happened earlier
- *   - price is holding above EMA structure
- *   - BUY appears on continuation, not fresh washout
- * - reduces overblocking from:
- *   - no_recent_damage
- *   - no_fresh_reclaim
- *   - no_recent_reclaim
- *   - no_breakout_clearance
+ * - loosened continuation logic after replay review
+ * - main fixes:
+ *   - lower ADX requirement for continuation modes
+ *   - remove RSI-above-MA requirement from hold mode
+ *   - remove weak_body / bull-candle dependency from hold mode
+ *   - widen breakout reclaim-distance cap slightly
  */
 
 import express from "express";
@@ -28,7 +25,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "Brain_READYFilter_v4.2-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.3-LONG";
 
 // ========================================
 // CONFIG
@@ -119,7 +116,7 @@ const FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM = Number(
   process.env.FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "8"
 );
 const FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT = Number(
-  process.env.FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT || "0.70"
+  process.env.FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT || "0.80"
 );
 const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT = Number(
   process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT || "1.10"
@@ -128,7 +125,7 @@ const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT = Number(
   process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT || "1.25"
 );
 const FILTER_BREAKOUT_MIN_RSI = Number(process.env.FILTER_BREAKOUT_MIN_RSI || "44");
-const FILTER_BREAKOUT_MIN_ADX = Number(process.env.FILTER_BREAKOUT_MIN_ADX || "10");
+const FILTER_BREAKOUT_MIN_ADX = Number(process.env.FILTER_BREAKOUT_MIN_ADX || "6");
 const FILTER_BREAKOUT_REQUIRE_BULL_CANDLE =
   String(process.env.FILTER_BREAKOUT_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
 const FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
@@ -139,7 +136,7 @@ const FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
 const FILTER_HOLD_ENABLED =
   String(process.env.FILTER_HOLD_ENABLED || "true").toLowerCase() === "true";
 const FILTER_HOLD_MIN_RSI = Number(process.env.FILTER_HOLD_MIN_RSI || "42");
-const FILTER_HOLD_MIN_ADX = Number(process.env.FILTER_HOLD_MIN_ADX || "8");
+const FILTER_HOLD_MIN_ADX = Number(process.env.FILTER_HOLD_MIN_ADX || "0");
 const FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT = Number(
   process.env.FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT || "1.20"
 );
@@ -181,22 +178,17 @@ const ALLOW_ONLY_ONE_POSITION =
 function createSymbolState(symbol) {
   return {
     symbol,
-
     lastTickMs: 0,
     lastTickPrice: null,
-
     lastTickLogMs: 0,
     lastStateLogMs: 0,
-
     currentBar: null,
     bars: [],
-
     inPosition: false,
     entryPrice: null,
     entryAtMs: 0,
     lastAction: "none",
     lastEnterAcceptedTs: 0,
-
     lastEval: null,
   };
 }
@@ -331,13 +323,7 @@ function pushTickToBars(s, price, tsMs) {
       s.bars.push(s.currentBar);
       if (s.bars.length > MAX_BARS) s.bars.shift();
     }
-    s.currentBar = {
-      t: bucketMs,
-      o: price,
-      h: price,
-      l: price,
-      c: price,
-    };
+    s.currentBar = { t: bucketMs, o: price, h: price, l: price, c: price };
   } else {
     s.currentBar.h = Math.max(s.currentBar.h, price);
     s.currentBar.l = Math.min(s.currentBar.l, price);
@@ -575,24 +561,12 @@ function evaluateLongFilter(s) {
   const reasons = [];
 
   if (!FILTER_ENABLED) {
-    return {
-      allow: true,
-      reasons,
-      mode: "disabled",
-      barsCount: bars.length,
-      hostileBear: false,
-    };
+    return { allow: true, reasons, mode: "disabled", barsCount: bars.length, hostileBear: false };
   }
 
   if (bars.length < FILTER_MIN_BARS) {
     reasons.push("not_enough_bars");
-    return {
-      allow: false,
-      reasons,
-      mode: "warmup",
-      barsCount: bars.length,
-      hostileBear: false,
-    };
+    return { allow: false, reasons, mode: "warmup", barsCount: bars.length, hostileBear: false };
   }
 
   const closes = bars.map((b) => b.c);
@@ -645,7 +619,6 @@ function evaluateLongFilter(s) {
 
   const bullCandle = bar.c > bar.o;
 
-  // Damage / washout context
   const lowInfo = barsSinceLowestLow(bars, FILTER_WASH_LOOKBACK_BARS);
   const recentLow = lowInfo.low;
   const barsSinceLow = lowInfo.barsSince;
@@ -659,7 +632,6 @@ function evaluateLongFilter(s) {
     maxStretchBelow >= FILTER_MIN_DROP_PCT ||
     maxBelowStreak >= 3;
 
-  // Reclaim / rebound
   const reclaimReversal = findRecentReclaimBar(bars, ema21, FILTER_MAX_BARS_SINCE_RECLAIM);
   const reclaimBreakout = findRecentReclaimBar(
     bars,
@@ -705,7 +677,6 @@ function evaluateLongFilter(s) {
   const ema8Rising = Number.isFinite(ema8Prev) && ema8Now > ema8Prev;
   const aboveEma18_21 = bar.c > ema18Now && bar.c > ema21Now;
 
-  // Structure
   const prev6High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1)) : null;
   const prev4High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(4, bars.length - 1)) : null;
   const breakoutNow = Number.isFinite(prev6High) ? bar.c > prev6High : false;
@@ -752,8 +723,6 @@ function evaluateLongFilter(s) {
     if (!aboveEma18_21) breakoutReasons.push("not_above_ema18_21");
     if (!(rsiNow >= FILTER_BREAKOUT_MIN_RSI)) breakoutReasons.push("rsi_too_low");
     if (!(adxNow >= FILTER_BREAKOUT_MIN_ADX)) breakoutReasons.push("adx_too_low");
-    if (!rsiAboveMa) breakoutReasons.push("rsi_not_above_ma");
-    if (!fwoRecovered) breakoutReasons.push("fwo_not_recovered");
     if (!(closeOverReclaimPct != null && closeOverReclaimPct >= FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT)) {
       breakoutReasons.push("no_breakout_clearance");
     }
@@ -785,7 +754,6 @@ function evaluateLongFilter(s) {
     if (!(adxNow >= FILTER_HOLD_MIN_ADX)) holdReasons.push("adx_too_low");
 
     if (FILTER_HOLD_REQUIRE_RSI_RISING && !rsiRising) holdReasons.push("rsi_not_rising");
-    if (!rsiAboveMa) holdReasons.push("rsi_not_above_ma");
     if (FILTER_HOLD_REQUIRE_FWO_RECOVERED && !fwoRecovered) holdReasons.push("fwo_not_recovered");
     if (FILTER_HOLD_REQUIRE_EMA8_RISING && !ema8Rising) holdReasons.push("ema8_not_rising");
     if (FILTER_HOLD_REQUIRE_BULL_CANDLE && !bullCandle) holdReasons.push("not_bull_candle");
@@ -810,7 +778,6 @@ function evaluateLongFilter(s) {
 
   const holdAllow = holdReasons.length === 0;
 
-  // Choose
   let allow = false;
   let mode = "blocked";
 
@@ -835,28 +802,23 @@ function evaluateLongFilter(s) {
     allow,
     mode,
     reasons,
-
     barsCount: bars.length,
-
     recentLow,
     barsSinceLow,
     recentHigh,
     dropPct,
     maxStretchBelow,
     maxBelowStreak,
-
     reclaimAgeBars,
     reclaimPrice,
     reclaimFromLowPct,
     impulseFromLowPct,
     bodyPct,
-
     rsi: rsiNow,
     rsiMa: rsiMaNow,
     adx: adxNow,
     plusDI: plusDINow,
     minusDI: minusDINow,
-
     ema8: ema8Now,
     ema18: ema18Now,
     ema21: ema21Now,
@@ -864,14 +826,12 @@ function evaluateLongFilter(s) {
     ema21SlopePct,
     minusLead,
     hostileBear,
-
     entryExtEma21Pct,
     entryExtEma18Pct,
     buyFromReclaimPct,
     closeOverReclaimPct,
     breakoutNow,
     holdBreakNow,
-
     reversalReasons,
     breakoutReasons,
     holdReasons,
@@ -944,11 +904,9 @@ async function handleTick(payload, res) {
   s.lastTickPrice = price;
 
   pushTickToBars(s, price, tsMs);
-
   maybeLogTick(s, payload?.time ?? new Date(tsMs).toISOString());
 
   s.lastEval = evaluateLongFilter(s);
-
   maybeLogState(s);
 
   return res.json({
@@ -1083,10 +1041,7 @@ app.get("/", (_req, res) => {
       lastEval: s.lastEval,
     };
   }
-  res.json({
-    brain: BRAIN_VERSION,
-    symbols: out,
-  });
+  res.json({ brain: BRAIN_VERSION, symbols: out });
 });
 
 app.get("/status", (_req, res) => {
@@ -1101,10 +1056,7 @@ app.get("/status", (_req, res) => {
       lastEval: s.lastEval,
     };
   }
-  res.json({
-    brain: BRAIN_VERSION,
-    symbols: out,
-  });
+  res.json({ brain: BRAIN_VERSION, symbols: out });
 });
 
 // ========================================
@@ -1122,7 +1074,6 @@ app.post("/webhook", async (req, res) => {
   const intent = normalizeIntent(payload);
 
   if (intent === "tick") return handleTick(payload, res);
-
   if (intent === "enter_long") return handleEnterLong(payload, res, "intent_enter_long");
   if (intent === "exit_long") return handleExitLong(payload, res, "intent_exit_long");
 
