@@ -1,0 +1,38 @@
+==================One terminal===============
+1.//Build a replay case from the log
+
+node readyfilter_replay/scripts/build_replay_from_log.cjs \
+  readyfilter_replay/data/READYLog0406D.txt \
+  readyfilter_replay/cases/case_today_first_entry.json \
+  2026-04-06T01:36:00Z \
+  2026-04-06T02:25:00Z \
+  CHANGE_ME_TO_RANDOM_40+CHARS_9f8d7c6b5a4e3d2c1b0a
+
+2.//Install if need it
+cd /workspaces/tv-webhook-brain
+npm install
+npm ls express
+
+3.// Listening Brain on port 8090
+cd /workspaces/tv-webhook-brain/archive
+node BrainREADY_DemoLong.js > /tmp/brain_replay.log 2>&1 &
+sleep 2
+tail -40 /tmp/brain_replay.log
+curl http://127.0.0.1:8090/status
+
+4.// Replay from build logs
+node readyfilter_replay/scripts/replay_readyfilter_cases.js \
+  readyfilter_replay/cases/case_today_first_entry.json
+
+
+
+//Second logs
+node readyfilter_replay/scripts/build_replay_from_log.cjs \
+  readyfilter_replay/data/READYLog0406D.txt \
+  readyfilter_replay/cases/case_today_second_entry.json \
+  2026-04-06T02:20:00Z \
+  2026-04-06T03:30:00Z \
+  CHANGE_ME_TO_RANDOM_40+CHARS_9f8d7c6b5a4e3d2c1b0a
+
+node readyfilter_replay/scripts/replay_readyfilter_cases.js \
+  readyfilter_replay/cases/case_today_second_entry.json
