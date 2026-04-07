@@ -1,5 +1,5 @@
 /**
- * Brain_READYFilter_v4.3-LONG
+ * Brain_READYFilter_v4.4-LONG
  *
  * Architecture:
  * - RayAlgo BUY/SELL remains the external trigger
@@ -7,22 +7,22 @@
  * - Brain evaluates BUY quality at the exact BUY moment
  * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
- * New in v4.3:
- * - keeps 3 entry modes:
+ * v4.4:
+ * - keeps existing 3 modes:
  *   1) reversal_reclaim
  *   2) breakout_continuation
  *   3) hold_continuation
- * - loosened continuation logic after replay review
- * - main fixes:
- *   - lower ADX requirement for continuation modes
- *   - remove RSI-above-MA requirement from hold mode
- *   - remove weak_body / bull-candle dependency from hold mode
- *   - widen breakout reclaim-distance cap slightly
+ * - adds new mode:
+ *   4) early_breakout_launch
  *
- * Patch:
- * - continuation ADX now only blocks when ADX is finite and below threshold
- * - this avoids false blocking when ADX is still null / not mature
- * - reversal mode remains strict and still requires valid ADX
+ * Main goal of early_breakout_launch:
+ * - catch the first clean breakout thrust after reclaim
+ * - before normal continuation metrics fully mature
+ * - without globally loosening continuation logic
+ *
+ * ADX behavior:
+ * - reversal remains strict
+ * - continuation / early-launch do not fail solely because ADX is null
  */
 
 import express from "express";
@@ -30,7 +30,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "Brain_READYFilter_v4.3-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.4-LONG";
 
 // ========================================
 // CONFIG
@@ -157,10 +157,43 @@ const FILTER_HOLD_REQUIRE_FWO_RECOVERED =
 const FILTER_HOLD_REQUIRE_EMA8_RISING =
   String(process.env.FILTER_HOLD_REQUIRE_EMA8_RISING || "false").toLowerCase() === "true";
 const FILTER_HOLD_RECENT_RECLAIM_LOOKBACK = Number(
-  process.env.FILTER_HOLD_RECENT_RECLAIM_LOOKBACK || "12"
+  process.env.FILTER_HOLD_RECENT_RECLAIM_LOOKBACK || "8"
 );
 const FILTER_HOLD_REQUIRE_RECENT_RECLAIM =
-  String(process.env.FILTER_HOLD_REQUIRE_RECENT_RECLAIM || "false").toLowerCase() === "true";
+  String(process.env.FILTER_HOLD_REQUIRE_RECENT_RECLAIM || "true").toLowerCase() === "true";
+
+// Early breakout launch mode
+const FILTER_EARLY_BREAKOUT_ENABLED =
+  String(process.env.FILTER_EARLY_BREAKOUT_ENABLED || "true").toLowerCase() === "true";
+const FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "2"
+);
+const FILTER_EARLY_BREAKOUT_MIN_RSI = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MIN_RSI || "48"
+);
+const FILTER_EARLY_BREAKOUT_MIN_ADX = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MIN_ADX || "0"
+);
+const FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT || "0.20"
+);
+const FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT || "0.20"
+);
+const FILTER_EARLY_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT || "0.35"
+);
+const FILTER_EARLY_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
+  process.env.FILTER_EARLY_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT || "0.00"
+);
+const FILTER_EARLY_BREAKOUT_REQUIRE_BREAK_FLAG =
+  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BREAK_FLAG || "true").toLowerCase() === "true";
+const FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 =
+  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 || "true").toLowerCase() === "true";
+const FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING =
+  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING || "false").toLowerCase() === "true";
+const FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE =
+  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
 
 // Hostility
 const FILTER_HOSTILE_MAX_EMA_GAP_PCT = Number(
@@ -658,8 +691,13 @@ function evaluateLongFilter(s) {
     ema21,
     FILTER_HOLD_RECENT_RECLAIM_LOOKBACK
   );
+  const reclaimEarly = findRecentReclaimBar(
+    bars,
+    ema21,
+    FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM
+  );
 
-  const reclaimAny = reclaimBreakout || reclaimReversal || reclaimHold;
+  const reclaimAny = reclaimBreakout || reclaimReversal || reclaimHold || reclaimEarly;
   const reclaimAgeBars = reclaimAny ? reclaimAny.ageBars : null;
   const reclaimPrice = reclaimAny ? reclaimAny.reclaimPrice : null;
 
@@ -695,6 +733,7 @@ function evaluateLongFilter(s) {
     Number.isFinite(ema21Now) &&
     bar.c > ema18Now &&
     bar.c > ema21Now;
+  const aboveEma8 = Number.isFinite(ema8Now) ? bar.c > ema8Now : false;
 
   const prev6High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1)) : null;
   const prev4High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(4, bars.length - 1)) : null;
@@ -732,7 +771,61 @@ function evaluateLongFilter(s) {
 
   const reversalAllow = reversalReasons.length === 0;
 
-  // ---------- MODE 2: BREAKOUT CONTINUATION ----------
+  // ---------- MODE 2: EARLY BREAKOUT LAUNCH ----------
+  const earlyBreakoutReasons = [];
+
+  if (!FILTER_EARLY_BREAKOUT_ENABLED) {
+    earlyBreakoutReasons.push("early_breakout_disabled");
+  } else {
+    if (!reclaimEarly) earlyBreakoutReasons.push("no_fresh_reclaim");
+    if (!aboveEma18_21) earlyBreakoutReasons.push("not_above_ema18_21");
+    if (FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 && !aboveEma8) {
+      earlyBreakoutReasons.push("not_above_ema8");
+    }
+    if (!(rsiNow >= FILTER_EARLY_BREAKOUT_MIN_RSI)) earlyBreakoutReasons.push("rsi_too_low");
+    if (FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING && !rsiRising) {
+      earlyBreakoutReasons.push("rsi_not_rising");
+    }
+    if (adxBelowThresholdContinuation(adxNow, FILTER_EARLY_BREAKOUT_MIN_ADX)) {
+      earlyBreakoutReasons.push("adx_too_low");
+    }
+    if (
+      FILTER_EARLY_BREAKOUT_REQUIRE_BREAK_FLAG &&
+      !(breakoutNow || holdBreakNow)
+    ) {
+      earlyBreakoutReasons.push("no_launch_break_flag");
+    }
+    if (
+      !(
+        closeOverReclaimPct != null &&
+        closeOverReclaimPct >= FILTER_EARLY_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT
+      )
+    ) {
+      earlyBreakoutReasons.push("no_breakout_clearance");
+    }
+    if (!(entryExtEma18Pct <= FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT)) {
+      earlyBreakoutReasons.push("too_extended_ema18");
+    }
+    if (!(entryExtEma21Pct <= FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT)) {
+      earlyBreakoutReasons.push("too_extended_ema21");
+    }
+    if (
+      !(
+        buyFromReclaimPct == null ||
+        buyFromReclaimPct <= FILTER_EARLY_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT
+      )
+    ) {
+      earlyBreakoutReasons.push("too_far_from_reclaim");
+    }
+    if (FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE && !bullCandle) {
+      earlyBreakoutReasons.push("not_bull_candle");
+    }
+    if (hostileBear) earlyBreakoutReasons.push("hostile_bear");
+  }
+
+  const earlyBreakoutAllow = earlyBreakoutReasons.length === 0;
+
+  // ---------- MODE 3: BREAKOUT CONTINUATION ----------
   const breakoutReasons = [];
 
   if (!FILTER_BREAKOUT_ENABLED) {
@@ -762,7 +855,7 @@ function evaluateLongFilter(s) {
 
   const breakoutAllow = breakoutReasons.length === 0;
 
-  // ---------- MODE 3: HOLD CONTINUATION ----------
+  // ---------- MODE 4: HOLD CONTINUATION ----------
   const holdReasons = [];
 
   if (!FILTER_HOLD_ENABLED) {
@@ -803,6 +896,9 @@ function evaluateLongFilter(s) {
   if (reversalAllow) {
     allow = true;
     mode = "reversal_reclaim";
+  } else if (earlyBreakoutAllow) {
+    allow = true;
+    mode = "early_breakout_launch";
   } else if (breakoutAllow) {
     allow = true;
     mode = "breakout_continuation";
@@ -812,6 +908,7 @@ function evaluateLongFilter(s) {
   } else {
     const combined = new Set();
     for (const r of reversalReasons) combined.add(r);
+    for (const r of earlyBreakoutReasons) combined.add(r);
     for (const r of breakoutReasons) combined.add(r);
     for (const r of holdReasons) combined.add(r);
     reasons.push(...combined);
@@ -852,6 +949,7 @@ function evaluateLongFilter(s) {
     breakoutNow,
     holdBreakNow,
     reversalReasons,
+    earlyBreakoutReasons,
     breakoutReasons,
     holdReasons,
   };
@@ -1111,14 +1209,35 @@ app.post("/webhook", async (req, res) => {
 // ========================================
 app.listen(PORT, () => {
   console.log(`✅ Brain ${BRAIN_VERSION} listening on port ${PORT}`);
-  console.log(`Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`);
+  console.log(
+    `Heartbeat: REQUIRE_FRESH_HEARTBEAT=${REQUIRE_FRESH_HEARTBEAT} | HEARTBEAT_MAX_AGE_SEC=${HEARTBEAT_MAX_AGE_SEC}`
+  );
   console.log(`Bars: BAR_TF_SEC=${BAR_TF_SEC} | MAX_BARS=${MAX_BARS}`);
-  console.log(`Filter: ENABLED=${FILTER_ENABLED} | MIN_BARS=${FILTER_MIN_BARS} | ADX_MIN=${FILTER_ADX_MIN} | RSI_MIN=${FILTER_RSI_MIN}`);
-  console.log(`Damage: washLookback=${FILTER_WASH_LOOKBACK_BARS} | dropLookback=${FILTER_DROP_LOOKBACK_BARS} | maxBarsSinceLow=${FILTER_MAX_BARS_SINCE_LOW} | minDropPct=${FILTER_MIN_DROP_PCT}`);
-  console.log(`Reclaim: minReclaimFromLow=${FILTER_MIN_RECLAIM_FROM_LOW_PCT}% | minImpulseFromLow=${FILTER_MIN_IMPULSE_FROM_LOW_PCT}% | minBody=${FILTER_MIN_BODY_PCT}% | maxBarsSinceReclaim=${FILTER_MAX_BARS_SINCE_RECLAIM}`);
-  console.log(`Breakout: enabled=${FILTER_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | maxBuyFromReclaim=${FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}%`);
-  console.log(`Hold: enabled=${FILTER_HOLD_ENABLED} | minRsi=${FILTER_HOLD_MIN_RSI} | minAdx=${FILTER_HOLD_MIN_ADX} | maxExt18=${FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT}% | recentReclaimLookback=${FILTER_HOLD_RECENT_RECLAIM_LOOKBACK}`);
-  console.log(`Extension: maxExt21=${FILTER_MAX_ENTRY_EXT_EMA21_PCT}% | maxExt18=${FILTER_MAX_ENTRY_EXT_EMA18_PCT}% | maxBuyFromReclaim=${FILTER_MAX_BUY_FROM_RECLAIM_PCT}%`);
-  console.log(`Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`);
-  console.log(`3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"}`);
+  console.log(
+    `Filter: ENABLED=${FILTER_ENABLED} | MIN_BARS=${FILTER_MIN_BARS} | ADX_MIN=${FILTER_ADX_MIN} | RSI_MIN=${FILTER_RSI_MIN}`
+  );
+  console.log(
+    `Damage: washLookback=${FILTER_WASH_LOOKBACK_BARS} | dropLookback=${FILTER_DROP_LOOKBACK_BARS} | maxBarsSinceLow=${FILTER_MAX_BARS_SINCE_LOW} | minDropPct=${FILTER_MIN_DROP_PCT}`
+  );
+  console.log(
+    `Reclaim: minReclaimFromLow=${FILTER_MIN_RECLAIM_FROM_LOW_PCT}% | minImpulseFromLow=${FILTER_MIN_IMPULSE_FROM_LOW_PCT}% | minBody=${FILTER_MIN_BODY_PCT}% | maxBarsSinceReclaim=${FILTER_MAX_BARS_SINCE_RECLAIM}`
+  );
+  console.log(
+    `EarlyBreakout: enabled=${FILTER_EARLY_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | minRsi=${FILTER_EARLY_BREAKOUT_MIN_RSI} | maxExt18=${FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}% | maxBuyFromReclaim=${FILTER_EARLY_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}%`
+  );
+  console.log(
+    `Breakout: enabled=${FILTER_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | maxBuyFromReclaim=${FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}%`
+  );
+  console.log(
+    `Hold: enabled=${FILTER_HOLD_ENABLED} | minRsi=${FILTER_HOLD_MIN_RSI} | minAdx=${FILTER_HOLD_MIN_ADX} | maxExt18=${FILTER_HOLD_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT}% | recentReclaimLookback=${FILTER_HOLD_RECENT_RECLAIM_LOOKBACK} | requireRecent=${FILTER_HOLD_REQUIRE_RECENT_RECLAIM}`
+  );
+  console.log(
+    `Extension: maxExt21=${FILTER_MAX_ENTRY_EXT_EMA21_PCT}% | maxExt18=${FILTER_MAX_ENTRY_EXT_EMA18_PCT}% | maxBuyFromReclaim=${FILTER_MAX_BUY_FROM_RECLAIM_PCT}%`
+  );
+  console.log(
+    `Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`
+  );
+  console.log(
+    `3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"}`
+  );
 });
