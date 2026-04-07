@@ -18,6 +18,11 @@
  *   - remove RSI-above-MA requirement from hold mode
  *   - remove weak_body / bull-candle dependency from hold mode
  *   - widen breakout reclaim-distance cap slightly
+ *
+ * Patch:
+ * - continuation ADX now only blocks when ADX is finite and below threshold
+ * - this avoids false blocking when ADX is still null / not mature
+ * - reversal mode remains strict and still requires valid ADX
  */
 
 import express from "express";
@@ -310,6 +315,16 @@ function maybeLogState(s) {
     );
     s.lastStateLogMs = now;
   }
+}
+
+function adxBelowThresholdStrict(adxValue, minAdx) {
+  return !Number.isFinite(adxValue) || adxValue < minAdx;
+}
+
+function adxBelowThresholdContinuation(adxValue, minAdx) {
+  if (!Number.isFinite(minAdx) || minAdx <= 0) return false;
+  if (!Number.isFinite(adxValue)) return false;
+  return adxValue < minAdx;
 }
 
 // ========================================
@@ -675,7 +690,11 @@ function evaluateLongFilter(s) {
   const rsiRising = Number.isFinite(rsiPrev) && rsiNow > rsiPrev;
   const rsiAboveMa = Number.isFinite(rsiMaNow) && rsiNow > rsiMaNow;
   const ema8Rising = Number.isFinite(ema8Prev) && ema8Now > ema8Prev;
-  const aboveEma18_21 = bar.c > ema18Now && bar.c > ema21Now;
+  const aboveEma18_21 =
+    Number.isFinite(ema18Now) &&
+    Number.isFinite(ema21Now) &&
+    bar.c > ema18Now &&
+    bar.c > ema21Now;
 
   const prev6High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1)) : null;
   const prev4High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(4, bars.length - 1)) : null;
@@ -701,7 +720,7 @@ function evaluateLongFilter(s) {
   if (!fwoRecovered) reversalReasons.push("fwo_not_recovered");
   if (!fwoRising) reversalReasons.push("fwo_not_rising");
   if (!bullCandle) reversalReasons.push("not_bull_candle");
-  if (!(adxNow >= FILTER_ADX_MIN)) reversalReasons.push("adx_too_low");
+  if (adxBelowThresholdStrict(adxNow, FILTER_ADX_MIN)) reversalReasons.push("adx_too_low");
   if (!ema8Rising) reversalReasons.push("ema8_not_rising");
   if (hostileBear) reversalReasons.push("hostile_bear");
   if (!(entryExtEma21Pct <= FILTER_MAX_ENTRY_EXT_EMA21_PCT)) reversalReasons.push("too_extended_ema21");
@@ -722,7 +741,7 @@ function evaluateLongFilter(s) {
     if (!reclaimBreakout) breakoutReasons.push("no_recent_reclaim");
     if (!aboveEma18_21) breakoutReasons.push("not_above_ema18_21");
     if (!(rsiNow >= FILTER_BREAKOUT_MIN_RSI)) breakoutReasons.push("rsi_too_low");
-    if (!(adxNow >= FILTER_BREAKOUT_MIN_ADX)) breakoutReasons.push("adx_too_low");
+    if (adxBelowThresholdContinuation(adxNow, FILTER_BREAKOUT_MIN_ADX)) breakoutReasons.push("adx_too_low");
     if (!(closeOverReclaimPct != null && closeOverReclaimPct >= FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT)) {
       breakoutReasons.push("no_breakout_clearance");
     }
@@ -751,7 +770,7 @@ function evaluateLongFilter(s) {
   } else {
     if (!aboveEma18_21) holdReasons.push("not_above_ema18_21");
     if (!(rsiNow >= FILTER_HOLD_MIN_RSI)) holdReasons.push("rsi_too_low");
-    if (!(adxNow >= FILTER_HOLD_MIN_ADX)) holdReasons.push("adx_too_low");
+    if (adxBelowThresholdContinuation(adxNow, FILTER_HOLD_MIN_ADX)) holdReasons.push("adx_too_low");
 
     if (FILTER_HOLD_REQUIRE_RSI_RISING && !rsiRising) holdReasons.push("rsi_not_rising");
     if (FILTER_HOLD_REQUIRE_FWO_RECOVERED && !fwoRecovered) holdReasons.push("fwo_not_recovered");
