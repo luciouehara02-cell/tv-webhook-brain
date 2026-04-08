@@ -1,136 +1,176 @@
-const fs = require("fs/promises");
+#!/usr/bin/env node
+
+/**
+ * extract_webhooks_from_log.cjs
+ *
+ * Reconstruct replayable webhook-style events from runtime brain logs.
+ *
+ * Supports Phase2 / READY-style log summaries such as:
+ * - 📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+ * - 🟩 FEAT rx BINANCE:SOLUSDT close=84.23 ema8=... ema18=... ema50=... rsi=...
+ * - 🟦 TICK(3m) BINANCE:SOLUSDT price=84.55 time=2026-04-08T13:13:16.681Z
+ *
+ * Output format:
+ *   <log_timestamp>\t<json_payload>
+ *
+ * Example:
+ *   2026-04-08T13:15:13.175765806Z    {"src":"features","symbol":"BINANCE:SOLUSDT",...}
+ *
+ * This format is chosen so build_replay_from_log.cjs can still time-filter
+ * using the leading timestamp while consuming the reconstructed payload JSON.
+ */
+
+const fs = require("fs");
 const path = require("path");
 
-function safeJsonParse(s) {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeObjectLiteralToJson(text) {
-  let s = text.trim();
-
-  // quote bare keys: secret: -> "secret":
-  s = s.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":');
-
-  // single quotes -> double quotes
-  s = s.replace(/'/g, '"');
-
-  // remove trailing commas
-  s = s.replace(/,\s*([}\]])/g, "$1");
-
-  return s;
-}
-
-function stripLogPrefix(line) {
-  return line.replace(/^.*?\[inf\]\s*/, "");
-}
-
-function extractBlocks(lines) {
-  const blocks = [];
-  let collecting = false;
-  let buf = [];
-  let depth = 0;
-
-  for (const raw of lines) {
-    const line = stripLogPrefix(raw).trimEnd();
-
-    if (!collecting) {
-      if (line === "{") {
-        collecting = true;
-        buf = ["{"];
-        depth = 1;
-      }
-      continue;
-    }
-
-    buf.push(line);
-
-    for (const ch of line) {
-      if (ch === "{") depth++;
-      if (ch === "}") depth--;
-    }
-
-    if (depth === 0) {
-      blocks.push(buf.join("\n"));
-      collecting = false;
-      buf = [];
-    }
-  }
-
-  return blocks;
-}
-
-function isRelevantWebhook(obj) {
-  if (!obj || typeof obj !== "object") return false;
-
-  const src = String(obj.src || "").toLowerCase();
-  const intent = String(obj.intent || "").toLowerCase();
-  const action = String(obj.action || "").toLowerCase();
-  const side = String(obj.side || "").toUpperCase();
-
-  if (src === "tick") return true;
-  if (src === "ray" && (side === "BUY" || side === "SELL")) return true;
-  if (intent === "enter_long" || intent === "exit_long") return true;
-  if (action === "enter_long" || action === "exit_long") return true;
-
-  return false;
-}
-
-function getEventTime(obj) {
-  return obj.time || obj.timestamp || null;
-}
-
-async function main() {
-  const [, , inputPath, outputPath, startIso, endIso] = process.argv;
-
-  if (!inputPath || !outputPath) {
-    console.error(
-      "Usage: node extract_webhooks_from_log.js <input_log.txt> <output.json> [startIso] [endIso]"
-    );
-    process.exit(1);
-  }
-
-  const raw = await fs.readFile(inputPath, "utf8");
-  const lines = raw.split(/\r?\n/);
-
-  const blocks = extractBlocks(lines);
-  const events = [];
-
-  const startMs = startIso ? new Date(startIso).getTime() : null;
-  const endMs = endIso ? new Date(endIso).getTime() : null;
-
-  for (const block of blocks) {
-    const normalized = normalizeObjectLiteralToJson(block);
-    const obj = safeJsonParse(normalized);
-    if (!obj) continue;
-    if (!isRelevantWebhook(obj)) continue;
-
-    const t = getEventTime(obj);
-    const tMs = t ? new Date(t).getTime() : null;
-
-    if (startMs != null && tMs != null && tMs < startMs) continue;
-    if (endMs != null && tMs != null && tMs > endMs) continue;
-
-    events.push(obj);
-  }
-
-  events.sort((a, b) => {
-    const ta = new Date(getEventTime(a) || 0).getTime();
-    const tb = new Date(getEventTime(b) || 0).getTime();
-    return ta - tb;
-  });
-
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, JSON.stringify(events, null, 2), "utf8");
-
-  console.log(`Extracted ${events.length} webhook events`);
-  console.log(`Saved to ${outputPath}`);
-}
-
-main().catch((err) => {
-  console.error("Extraction failed:", err);
+function usage() {
+  console.error(
+    "Usage: node extract_webhooks_from_log.cjs <input.log> <output.log>"
+  );
   process.exit(1);
-});
+}
+
+if (process.argv.length < 4) usage();
+
+const inputPath = process.argv[2];
+const outputPath = process.argv[3];
+
+if (!fs.existsSync(inputPath)) {
+  console.error(`Input file not found: ${inputPath}`);
+  process.exit(1);
+}
+
+const raw = fs.readFileSync(inputPath, "utf8");
+const lines = raw.split(/\r?\n/);
+
+function toNum(v) {
+  if (v == null) return undefined;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : undefined;
+}
+
+function parseKeyValues(s) {
+  const out = {};
+  const re = /([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)/g;
+  let m;
+  while ((m = re.exec(s))) {
+    out[m[1]] = m[2];
+  }
+  return out;
+}
+
+function parseLeadingTimestamp(line) {
+  const m = line.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/
+  );
+  return m ? m[1] : null;
+}
+
+function buildFeatureEvent(logTs, line) {
+  // Example:
+  // 2026-04-08T13:15:13.175765806Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.58 ema8=...
+  const m = line.match(/🟩 FEAT rx\s+([A-Z0-9:_-]+)\s+(.+)$/);
+  if (!m) return null;
+
+  const symbol = m[1];
+  const kv = parseKeyValues(m[2]);
+
+  const evt = {
+    src: "features",
+    symbol,
+    tf: "3",
+
+    // Important: synthesize heartbeat so replay can pass fresh-heartbeat gates.
+    heartbeat: 1,
+
+    close: toNum(kv.close),
+    ema8: toNum(kv.ema8),
+    ema18: toNum(kv.ema18),
+    ema50: toNum(kv.ema50),
+    rsi: toNum(kv.rsi),
+    atr: toNum(kv.atr),
+    atrPct: toNum(kv.atrPct),
+    adx: toNum(kv.adx),
+
+    oiTrend: toNum(kv.oiTrend) ?? 0,
+    oiDeltaBias: toNum(kv.oiDeltaBias) ?? 0,
+    cvdTrend: toNum(kv.cvdTrend) ?? 0,
+    liqClusterBelow: toNum(kv.liqClusterBelow) ?? 0,
+    priceDropPct: toNum(kv.priceDropPct) ?? 0,
+    patternAReady: toNum(kv.patternAReady) ?? 0,
+    patternAWatch: toNum(kv.patternAWatch) ?? 0,
+
+    // Preserve event time for replay consumers that use body.time.
+    time: logTs,
+  };
+
+  return evt;
+}
+
+function buildTickEvent(logTs, line) {
+  // Example:
+  // 2026-04-08T13:13:16.858762983Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.55 time=2026-04-08T13:13:16.681Z
+  const m = line.match(
+    /🟦 TICK\(3m\)\s+([A-Z0-9:_-]+)\s+price=([^\s]+)\s+time=([^\s]+)/
+  );
+  if (!m) return null;
+
+  const symbol = m[1];
+  const price = toNum(m[2]);
+  const eventTime = m[3];
+
+  if (!Number.isFinite(price)) return null;
+
+  return {
+    src: "tick",
+    symbol,
+    tf: "3",
+    price,
+    time: eventTime || logTs,
+  };
+}
+
+function sanitizeEvent(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+const outputLines = [];
+let featureCount = 0;
+let tickCount = 0;
+
+for (const line of lines) {
+  if (!line.trim()) continue;
+
+  const logTs = parseLeadingTimestamp(line);
+  if (!logTs) continue;
+
+  if (line.includes("🟩 FEAT rx ")) {
+    const evt = buildFeatureEvent(logTs, line);
+    if (evt) {
+      outputLines.push(`${logTs}\t${JSON.stringify(sanitizeEvent(evt))}`);
+      featureCount += 1;
+    }
+    continue;
+  }
+
+  if (line.includes("🟦 TICK(3m) ")) {
+    const evt = buildTickEvent(logTs, line);
+    if (evt) {
+      outputLines.push(`${logTs}\t${JSON.stringify(sanitizeEvent(evt))}`);
+      tickCount += 1;
+    }
+    continue;
+  }
+}
+
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+fs.writeFileSync(outputPath, outputLines.join("\n") + (outputLines.length ? "\n" : ""));
+
+console.log(`Extracted ${outputLines.length} webhook events`);
+console.log(`  features: ${featureCount}`);
+console.log(`  ticks:    ${tickCount}`);
+console.log(`Saved to ${outputPath}`);
