@@ -9,6 +9,7 @@
  * - Restore open position state after reboot
  * - Optionally re-sync periodically
  * - Log full 3Commas API response body for sync debugging
+ * - Log Railway public outbound IP for 3Commas IP allowlist setup
  */
 
 import express from "express";
@@ -53,17 +54,6 @@ const C3_SMARTTRADE_PAIR_MAP = safeJson(
 const C3_SYNC_ONLY_IF_LOCAL_FLAT =
   String(process.env.C3_SYNC_ONLY_IF_LOCAL_FLAT || "1") === "1";
 const C3_SYNC_LOG_VERBOSE = String(process.env.C3_SYNC_LOG_VERBOSE || "1") === "1";
-async function logPublicIp() {
-  try {
-    const res = await fetch("https://api.ipify.org?format=json", {
-      headers: { Accept: "application/json" },
-    });
-    const data = await res.json();
-    console.log(`🌍 PUBLIC_OUTBOUND_IP=${data.ip}`);
-  } catch (err) {
-    console.log(`⚠️ PUBLIC_OUTBOUND_IP lookup failed: ${err?.message || err}`);
-  }
-}
 
 // --------------------------------------------------
 // Warmup / lifecycle
@@ -356,6 +346,18 @@ function verifySecret(req, isTick = false) {
   const expected = isTick ? TICKROUTER_SECRET : WEBHOOK_SECRET;
   if (!expected) return true;
   return String(supplied) === String(expected);
+}
+
+async function logPublicIp() {
+  try {
+    const res = await fetch("https://api.ipify.org?format=json", {
+      headers: { Accept: "application/json" },
+    });
+    const data = await res.json();
+    console.log(`🌍 PUBLIC_OUTBOUND_IP=${data.ip}`);
+  } catch (err) {
+    console.log(`⚠️ PUBLIC_OUTBOUND_IP lookup failed: ${err?.message || err}`);
+  }
 }
 
 function symbolTo3CommasPair(symbol) {
@@ -2300,6 +2302,9 @@ app.post("/tv", async (req, res) => {
 // --------------------------------------------------
 app.listen(PORT, async () => {
   console.log(`✅ ${BRAIN_NAME} listening on :${PORT}`);
+
+  await logPublicIp();
+
   console.log(`📚 MIN_BARS_FOR_SETUPS=${MIN_BARS_FOR_SETUPS}`);
   console.log(`🧭 SYMBOL_BOT_MAP keys=${ALLOW_SYMBOLS.length}`);
   console.log(`🐛 DEBUG=${DEBUG ? 1 : 0}`);
@@ -2362,14 +2367,6 @@ app.listen(PORT, async () => {
   if (C3_SYNC_ENABLE && C3_SYNC_ON_STARTUP) {
     await syncAllPositions("startup");
   }
-
-  app.listen(PORT, async () => {
-  console.log(`✅ ${BRAIN_NAME} listening on :${PORT}`);
-
-  await logPublicIp();
-
-  // ...rest of your startup logs...
-});
 
   if (C3_SYNC_ENABLE && C3_SYNC_INTERVAL_SEC > 0) {
     setInterval(() => {
