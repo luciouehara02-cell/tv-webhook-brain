@@ -8,6 +8,7 @@
  * - Add restart-safe SmartTrade position sync
  * - Restore open position state after reboot
  * - Optionally re-sync periodically
+ * - Log full 3Commas API response body for sync debugging
  */
 
 import express from "express";
@@ -410,6 +411,7 @@ async function fetch3C(path, { method = "GET", query = {}, body = null } = {}) {
 
     if (C3_SYNC_LOG_VERBOSE) {
       dlog(`🔄 3C API ${method} ${path} status=${res.status}`);
+      dlog(`🔄 3C API body=${text || "(empty)"}`);
     }
 
     return { ok: res.ok, status: res.status, text, json };
@@ -614,7 +616,9 @@ async function syncPositionForSymbol(symbol) {
   st.lastSyncMs = nowMs();
 
   if (!found.ok) {
-    dlog(`⚠️ POSITION SYNC failed symbol=${symbol} err=${found.err || found.status}`);
+    dlog(
+      `⚠️ POSITION SYNC failed symbol=${symbol} err=${found.err || found.status} body=${found.text || "(empty)"}`
+    );
     return;
   }
 
