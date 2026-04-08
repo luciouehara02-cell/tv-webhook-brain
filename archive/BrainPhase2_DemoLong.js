@@ -53,6 +53,17 @@ const C3_SMARTTRADE_PAIR_MAP = safeJson(
 const C3_SYNC_ONLY_IF_LOCAL_FLAT =
   String(process.env.C3_SYNC_ONLY_IF_LOCAL_FLAT || "1") === "1";
 const C3_SYNC_LOG_VERBOSE = String(process.env.C3_SYNC_LOG_VERBOSE || "1") === "1";
+async function logPublicIp() {
+  try {
+    const res = await fetch("https://api.ipify.org?format=json", {
+      headers: { Accept: "application/json" },
+    });
+    const data = await res.json();
+    console.log(`🌍 PUBLIC_OUTBOUND_IP=${data.ip}`);
+  } catch (err) {
+    console.log(`⚠️ PUBLIC_OUTBOUND_IP lookup failed: ${err?.message || err}`);
+  }
+}
 
 // --------------------------------------------------
 // Warmup / lifecycle
@@ -2351,6 +2362,14 @@ app.listen(PORT, async () => {
   if (C3_SYNC_ENABLE && C3_SYNC_ON_STARTUP) {
     await syncAllPositions("startup");
   }
+
+  app.listen(PORT, async () => {
+  console.log(`✅ ${BRAIN_NAME} listening on :${PORT}`);
+
+  await logPublicIp();
+
+  // ...rest of your startup logs...
+});
 
   if (C3_SYNC_ENABLE && C3_SYNC_INTERVAL_SEC > 0) {
     setInterval(() => {
