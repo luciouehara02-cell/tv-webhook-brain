@@ -1,20 +1,18 @@
 /**
- * BrainPhase2_DemoLong_v3.7j
+ * BrainPhase2_DemoLong_v3.7k
  *
  * Long-only demo brain
  *
- * v3.7j goals:
- * - Preserve v3.7h breakout / washout / recovery behavior
- * - Tighten shallow recovery after Apr 08 chop losses
- * - Block shallow recovery in range by default
- * - Require healthier ADX floor for shallow recovery
- * - Prevent late shallow recovery entries after edge decays
+ * v3.7k goals:
+ * - Preserve v3.7j shallow recovery tightening
+ * - Preserve current breakout quality rules
+ * - Improve cleanup of stale B-grade breakout setups
+ * - Remove repeated "too extended" zombie breakout setups earlier
  *
- * New vs v3.7h:
- * - shallow recovery is trend-only by default
- * - shallow recovery now requires ADX >= SHALLOW_RECOVERY_ADX_MIN
- * - shallow recovery entry expires after SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN
- * - shallow momentum override also respects the shallow entry age cap
+ * New vs v3.7j:
+ * - repeated B-grade breakout extension failures now clear earlier
+ * - adds BREAKOUT_B_TOO_EXTENDED_FAIL_MAX
+ * - adds BREAKOUT_B_TOO_EXTENDED_CLEAR_MIN_AGE
  */
 
 import express from "express";
@@ -27,7 +25,7 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7j";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7k";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -63,6 +61,14 @@ const BREAKOUT_FAIL_CONFIRM_MAX = Number(
 );
 const BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX = Number(
   process.env.BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX || 4
+);
+
+// NEW: faster cleanup for repeated B-grade too-extended failures
+const BREAKOUT_B_TOO_EXTENDED_FAIL_MAX = Number(
+  process.env.BREAKOUT_B_TOO_EXTENDED_FAIL_MAX || 4
+);
+const BREAKOUT_B_TOO_EXTENDED_CLEAR_MIN_AGE = Number(
+  process.env.BREAKOUT_B_TOO_EXTENDED_CLEAR_MIN_AGE || 2.0
 );
 
 // breakout late / extension controls
@@ -1399,8 +1405,17 @@ function breakoutEntryDecision(st, price) {
         `🚫 breakout blocked | grade=B reason=too_extended nearLevelPct=${fmt(
           nearLevelPct,
           3
-        )} max=${fmt(BREAKOUT_B_MAX_NEAR_LEVEL_PCT, 3)}`
+        )} max=${fmt(BREAKOUT_B_MAX_NEAR_LEVEL_PCT, 3)} failCount=${st.failConfirmCount}`
       );
+
+      if (
+        sAgeMin >= BREAKOUT_B_TOO_EXTENDED_CLEAR_MIN_AGE &&
+        st.failConfirmCount >= BREAKOUT_B_TOO_EXTENDED_FAIL_MAX
+      ) {
+        clearSetup(st, "breakout_B_repeated_extension_fail");
+        return { ok: false, note: "breakout_B_repeated_extension_fail" };
+      }
+
       return { ok: false, note: "breakout_B_too_extended" };
     }
 
@@ -2097,6 +2112,8 @@ app.listen(PORT, () => {
   console.log(`✅ BREAKOUT_B_FAIL_RESET_MAX_BOUNCE_PCT=${BREAKOUT_B_FAIL_RESET_MAX_BOUNCE_PCT}`);
   console.log(`✅ BREAKOUT_FAIL_CONFIRM_MAX=${BREAKOUT_FAIL_CONFIRM_MAX}`);
   console.log(`✅ BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX=${BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX}`);
+  console.log(`✅ BREAKOUT_B_TOO_EXTENDED_FAIL_MAX=${BREAKOUT_B_TOO_EXTENDED_FAIL_MAX}`);
+  console.log(`✅ BREAKOUT_B_TOO_EXTENDED_CLEAR_MIN_AGE=${BREAKOUT_B_TOO_EXTENDED_CLEAR_MIN_AGE}`);
   console.log(`✅ BREAKOUT_HARD_LATE_ENTRY_MIN=${BREAKOUT_HARD_LATE_ENTRY_MIN}`);
   console.log(`✅ BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT=${BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT}`);
   console.log(`✅ BREAKOUT_B_MAX_NEAR_LEVEL_PCT=${BREAKOUT_B_MAX_NEAR_LEVEL_PCT}`);
