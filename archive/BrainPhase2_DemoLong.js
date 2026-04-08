@@ -1,25 +1,17 @@
 /**
- * BrainPhase2_DemoLong_v3.7h
+ * BrainPhase2_DemoLong_v3.7i
  *
  * Long-only demo brain
  *
- * v3.7h goals:
- * - Preserve v3.7g breakout chase protection
- * - Preserve washout / true recovery logic
- * - Make shallow recovery much stricter
- * - Block contradictory shallow long entries
- * - Tighten shallow momentum override
- * - Reduce shallow recovery size again
- *
- * New vs v3.7g:
- * - shallow recovery normal path now prefers flow>=2
- * - shallow recovery flow=1 only allowed if score high AND internals non-hostile
- * - shallow recovery blocked if oiDeltaBias<0 AND cvdTrend<0
- * - shallow momentum override now requires score>=9, flow>=2, RSI>=60, non-hostile internals
- * - shallow recovery sizing reduced further
+ * v3.7i goals:
+ * - Preserve v3.7h trading logic
+ * - Add restart-safe SmartTrade position sync
+ * - Restore open position state after reboot
+ * - Optionally re-sync periodically
  */
 
 import express from "express";
+import crypto from "crypto";
 
 // --------------------------------------------------
 // App / config
@@ -29,7 +21,7 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7h";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7i";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -42,6 +34,24 @@ const MAX_LAG_SEC = Number(process.env.MAX_LAG_SEC || 300);
 
 const SYMBOL_BOT_MAP = safeJson(process.env.SYMBOL_BOT_MAP || "{}", {});
 const ALLOW_SYMBOLS = Object.keys(SYMBOL_BOT_MAP);
+
+// --------------------------------------------------
+// 3Commas SmartTrade sync
+// --------------------------------------------------
+const C3_SYNC_ENABLE = String(process.env.C3_SYNC_ENABLE || "1") === "1";
+const C3_SYNC_ON_STARTUP = String(process.env.C3_SYNC_ON_STARTUP || "1") === "1";
+const C3_SYNC_INTERVAL_SEC = Number(process.env.C3_SYNC_INTERVAL_SEC || 180);
+const C3_API_BASE_URL =
+  process.env.C3_API_BASE_URL || "https://api.3commas.io/public/api";
+const C3_API_KEY = process.env.C3_API_KEY || "";
+const C3_API_SECRET = process.env.C3_API_SECRET || "";
+const C3_SMARTTRADE_PAIR_MAP = safeJson(
+  process.env.C3_SMARTTRADE_PAIR_MAP || "{}",
+  {}
+);
+const C3_SYNC_ONLY_IF_LOCAL_FLAT =
+  String(process.env.C3_SYNC_ONLY_IF_LOCAL_FLAT || "1") === "1";
+const C3_SYNC_LOG_VERBOSE = String(process.env.C3_SYNC_LOG_VERBOSE || "1") === "1";
 
 // --------------------------------------------------
 // Warmup / lifecycle
@@ -336,6 +346,152 @@ function verifySecret(req, isTick = false) {
   return String(supplied) === String(expected);
 }
 
+function symbolTo3CommasPair(symbol) {
+  if (C3_SMARTTRADE_PAIR_MAP[symbol]) return C3_SMARTTRADE_PAIR_MAP[symbol];
+
+  const raw = String(symbol || "").split(":")[1] || "";
+  const quotes = ["USDT", "USDC", "BUSD", "BTC", "ETH", "BNB", "USD"];
+  for (const q of quotes) {
+    if (raw.endsWith(q) && raw.length > q.length) {
+      const base = raw.slice(0, raw.length - q.length);
+      return `${q}_${base}`;
+    }
+  }
+  return raw ? `USDT_${raw.replace(/USDT$/, "")}` : "";
+}
+
+function build3CSignaturePayload(path, queryString = "", body = "") {
+  const qs = queryString ? `?${queryString}` : "";
+  return `${path}${qs}${body || ""}`;
+}
+
+function sign3CRequestHmac(payload) {
+  return crypto.createHmac("sha256", C3_API_SECRET).update(payload).digest("hex");
+}
+
+async function fetch3C(path, { method = "GET", query = {}, body = null } = {}) {
+  if (!C3_API_KEY || !C3_API_SECRET) {
+    return { ok: false, err: "missing 3c api credentials" };
+  }
+
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query || {})) {
+    if (v == null || v === "") continue;
+    qs.set(k, String(v));
+  }
+  const queryString = qs.toString();
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const sigPayload = build3CSignaturePayload(path, queryString, bodyStr);
+  const signature = sign3CRequestHmac(sigPayload);
+  const url = `${C3_API_BASE_URL}${path}${queryString ? `?${queryString}` : ""}`;
+
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), C3_TIMEOUT_MS);
+
+    const res = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        APIKEY: C3_API_KEY,
+        Signature: signature,
+      },
+      body: body ? bodyStr : undefined,
+      signal: ac.signal,
+    }).finally(() => clearTimeout(timer));
+
+    const text = await res.text().catch(() => "");
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+
+    if (C3_SYNC_LOG_VERBOSE) {
+      dlog(`🔄 3C API ${method} ${path} status=${res.status}`);
+    }
+
+    return { ok: res.ok, status: res.status, text, json };
+  } catch (err) {
+    return { ok: false, err: err?.message || String(err) };
+  }
+}
+
+function extractSmartTradeState(trade) {
+  if (!trade || typeof trade !== "object") return null;
+
+  const basicStatus = trade?.status?.basic_type || trade?.status?.type || "";
+  const positionType = trade?.position?.type || "";
+  const data = trade?.data || {};
+
+  const finished = data.finished === true;
+  const enteredAmount =
+    n(data.entered_amount) ??
+    n(trade?.position?.units?.value) ??
+    0;
+  const closedAmount = n(data.closed_amount) ?? 0;
+
+  const avgEnter =
+    n(data.average_enter_price) ??
+    n(data.average_enter_price_without_commission) ??
+    n(trade?.position?.price?.value) ??
+    n(trade?.position?.price?.value_without_commission);
+
+  const currentLast = n(data?.current_price?.last);
+  const createdAtMs = data.created_at ? Date.parse(data.created_at) : 0;
+
+  const stopLoss =
+    n(trade?.stop_loss?.conditional?.price?.value) ??
+    n(trade?.stop_loss?.price?.value);
+
+  const isOpenLong =
+    !finished &&
+    positionType === "buy" &&
+    enteredAmount > closedAmount &&
+    (basicStatus === "waiting_targets" ||
+      basicStatus === "position_opened" ||
+      basicStatus === "order_placed" ||
+      basicStatus === "waiting_position" ||
+      enteredAmount > 0);
+
+  if (!isOpenLong || !Number.isFinite(avgEnter)) return null;
+
+  return {
+    id: trade.id,
+    pair: trade.pair,
+    entryPrice: avgEnter,
+    entryTs: Number.isFinite(createdAtMs) && createdAtMs > 0 ? createdAtMs : nowMs(),
+    peakPrice: Number.isFinite(currentLast) ? currentLast : avgEnter,
+    stopPrice: Number.isFinite(stopLoss) ? stopLoss : avgEnter * 0.985,
+    trailingStop: Number.isFinite(stopLoss) ? stopLoss : avgEnter * 0.985,
+    rawStatus: basicStatus,
+    enteredAmount,
+    closedAmount,
+  };
+}
+
+async function findOpenSmartTradeForSymbol(symbol) {
+  const pair = symbolTo3CommasPair(symbol);
+  if (!pair) return { ok: false, err: "cannot derive 3c pair" };
+
+  const listRes = await fetch3C("/v2/smart_trades", {
+    method: "GET",
+    query: { per_page: 100, page: 1 },
+  });
+
+  if (!listRes.ok) return listRes;
+  const arr = Array.isArray(listRes.json) ? listRes.json : [];
+
+  const candidates = arr.filter((x) => String(x?.pair || "") === pair);
+  for (const item of candidates) {
+    const state = extractSmartTradeState(item);
+    if (state) return { ok: true, trade: item, state };
+  }
+
+  return { ok: true, trade: null, state: null };
+}
+
 // --------------------------------------------------
 // State
 // --------------------------------------------------
@@ -409,6 +565,10 @@ function ensureState(symbol) {
       stopPrice: null,
       trailingStop: null,
 
+      syncedSmartTradeId: null,
+      syncedSmartTradePair: null,
+      lastSyncMs: 0,
+
       enterInFlight: false,
       exitInFlight: false,
       lastEnterMs: 0,
@@ -419,6 +579,62 @@ function ensureState(symbol) {
     };
   }
   return S[symbol];
+}
+
+function applySyncedPosition(st, sync) {
+  if (!sync) return;
+
+  st.inPosition = true;
+  st.entryPrice = sync.entryPrice;
+  st.entryTs = sync.entryTs;
+  st.peakPrice = Math.max(sync.peakPrice ?? sync.entryPrice, sync.entryPrice);
+  st.stopPrice = sync.stopPrice;
+  st.trailingStop = sync.trailingStop;
+  st.syncedSmartTradeId = sync.id;
+  st.syncedSmartTradePair = sync.pair;
+  st.lastSyncMs = nowMs();
+  clearSetup(st, "position_sync");
+  dlog(
+    `🔄 POSITION SYNC restored symbol=${st.symbol} tradeId=${sync.id} entry=${fmt(
+      sync.entryPrice
+    )} peak=${fmt(st.peakPrice)} stop=${fmt(st.stopPrice)} status=${sync.rawStatus}`
+  );
+}
+
+async function syncPositionForSymbol(symbol) {
+  if (!C3_SYNC_ENABLE) return;
+  const st = ensureState(symbol);
+
+  if (C3_SYNC_ONLY_IF_LOCAL_FLAT && st.inPosition) {
+    st.lastSyncMs = nowMs();
+    return;
+  }
+
+  const found = await findOpenSmartTradeForSymbol(symbol);
+  st.lastSyncMs = nowMs();
+
+  if (!found.ok) {
+    dlog(`⚠️ POSITION SYNC failed symbol=${symbol} err=${found.err || found.status}`);
+    return;
+  }
+
+  if (found.state) {
+    applySyncedPosition(st, found.state);
+  } else if (C3_SYNC_LOG_VERBOSE) {
+    dlog(`🔄 POSITION SYNC none symbol=${symbol}`);
+  }
+}
+
+async function syncAllPositions(reason = "manual") {
+  if (!C3_SYNC_ENABLE) return;
+  for (const symbol of ALLOW_SYMBOLS) {
+    try {
+      if (C3_SYNC_LOG_VERBOSE) dlog(`🔄 POSITION SYNC start symbol=${symbol} reason=${reason}`);
+      await syncPositionForSymbol(symbol);
+    } catch (err) {
+      dlog(`⚠️ POSITION SYNC exception symbol=${symbol} err=${err?.message || err}`);
+    }
+  }
 }
 
 // --------------------------------------------------
@@ -486,6 +702,8 @@ function resetPosition(st) {
   st.peakPrice = null;
   st.stopPrice = null;
   st.trailingStop = null;
+  st.syncedSmartTradeId = null;
+  st.syncedSmartTradePair = null;
 }
 
 function computeRegime(st) {
@@ -1692,14 +1910,14 @@ function computeRiskVolumePct(st, entryPrice, stopPrice) {
 }
 
 // --------------------------------------------------
-// 3Commas
+// 3Commas Signal Bot
 // --------------------------------------------------
 async function send3CommasSignal(st, action, price, extra = {}) {
   const botUuid = SYMBOL_BOT_MAP[st.symbol];
   if (!botUuid) return { ok: false, err: "missing bot uuid" };
   if (!C3_SIGNAL_SECRET) return { ok: false, err: "missing 3c secret" };
 
-  const stopPrice = st.invalidation || price * 0.995;
+  const stopPrice = st.invalidation || st.stopPrice || price * 0.995;
   const sizing = computeRiskVolumePct(st, price, stopPrice);
 
   const defaultComment =
@@ -1777,7 +1995,7 @@ async function tryEnterOnTick(st, price) {
 
   st.enterInFlight = true;
   try {
-    const stopPrice = st.invalidation || price * 0.995;
+    const stopPrice = st.invalidation || st.stopPrice || price * 0.995;
     const sizing = computeRiskVolumePct(st, price, stopPrice);
 
     dlog(
@@ -1894,6 +2112,11 @@ app.get("/state", (req, res) => {
   const symbol = req.query.symbol;
   if (symbol && S[symbol]) return res.json({ ok: true, state: S[symbol] });
   return res.json({ ok: true, states: S });
+});
+
+app.get("/sync", async (_req, res) => {
+  await syncAllPositions("manual_route");
+  return res.json({ ok: true, ts: nowMs() });
 });
 
 app.post("/webhook", async (req, res) => {
@@ -2046,9 +2269,11 @@ app.post("/webhook", async (req, res) => {
     failConfirmNoReclaimCount: st.failConfirmNoReclaimCount,
     inPosition: st.inPosition,
     barsSeen: st.barsSeen,
+    syncedSmartTradeId: st.syncedSmartTradeId,
   });
 });
 
+// legacy TV route
 app.post("/tv", async (req, res) => {
   req.body = req.body || {};
   if (!req.body.src) req.body.src = "features";
@@ -2058,7 +2283,7 @@ app.post("/tv", async (req, res) => {
 // --------------------------------------------------
 // Start
 // --------------------------------------------------
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ ${BRAIN_NAME} listening on :${PORT}`);
   console.log(`📚 MIN_BARS_FOR_SETUPS=${MIN_BARS_FOR_SETUPS}`);
   console.log(`🧭 SYMBOL_BOT_MAP keys=${ALLOW_SYMBOLS.length}`);
@@ -2107,6 +2332,10 @@ app.listen(PORT, () => {
   console.log(`✅ BREAKOUT_PREMIUM_MIN_SCORE=${BREAKOUT_PREMIUM_MIN_SCORE}`);
   console.log(`✅ BREAKOUT_PREMIUM_MAX_NEAR_LEVEL_PCT=${BREAKOUT_PREMIUM_MAX_NEAR_LEVEL_PCT}`);
   console.log(`✅ BREAKOUT_PREMIUM_MIN_BOUNCE_PCT=${BREAKOUT_PREMIUM_MIN_BOUNCE_PCT}`);
+  console.log(`✅ C3_SYNC_ENABLE=${C3_SYNC_ENABLE ? 1 : 0}`);
+  console.log(`✅ C3_SYNC_ON_STARTUP=${C3_SYNC_ON_STARTUP ? 1 : 0}`);
+  console.log(`✅ C3_SYNC_INTERVAL_SEC=${C3_SYNC_INTERVAL_SEC}`);
+  console.log(`✅ C3_SYNC_ONLY_IF_LOCAL_FLAT=${C3_SYNC_ONLY_IF_LOCAL_FLAT ? 1 : 0}`);
   console.log(`💰 BOT_MAX_NOTIONAL_USDT=${BOT_MAX_NOTIONAL_USDT}`);
   console.log(`🛡️ BASE_RISK_PCT=${BASE_RISK_PCT}`);
   console.log(`🛡️ MIN_RISK_PCT=${MIN_RISK_PCT}`);
@@ -2114,4 +2343,16 @@ app.listen(PORT, () => {
   console.log(`📉 TREND_MIN_TRAIL_PCT=${TREND_MIN_TRAIL_PCT}`);
   console.log(`⏳ TREND_TIME_STOP_MIN=${TREND_TIME_STOP_MIN}`);
   console.log(`📉 TREND_MIN_PROGRESS_PCT=${TREND_MIN_PROGRESS_PCT}`);
+
+  if (C3_SYNC_ENABLE && C3_SYNC_ON_STARTUP) {
+    await syncAllPositions("startup");
+  }
+
+  if (C3_SYNC_ENABLE && C3_SYNC_INTERVAL_SEC > 0) {
+    setInterval(() => {
+      syncAllPositions("interval").catch((err) =>
+        dlog(`⚠️ POSITION SYNC interval err=${err?.message || err}`)
+      );
+    }, C3_SYNC_INTERVAL_SEC * 1000);
+  }
 });
