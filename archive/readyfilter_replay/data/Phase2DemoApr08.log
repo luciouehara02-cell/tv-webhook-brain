@@ -1,0 +1,532 @@
+2026-04-08T12:22:23.204205762Z [inf]  ✅ RECOVERY_MIN_SCORE=5
+2026-04-08T12:22:23.204212632Z [inf]  ✅ RECOVERY_MAX_NEAR_EMA8_PCT=0.2
+2026-04-08T12:22:23.204217062Z [inf]  ✅ RECOVERY_MAX_NEAR_EMA18_PCT=0.28
+2026-04-08T12:22:23.204332100Z [inf]  ✅ BrainPhase2_DemoLong_v3.7i listening on :8080
+2026-04-08T12:22:23.204337270Z [inf]  🌍 PUBLIC_OUTBOUND_IP=162.220.234.138
+2026-04-08T12:22:23.204342070Z [inf]  📚 MIN_BARS_FOR_SETUPS=8
+2026-04-08T12:22:23.204347240Z [inf]  🧭 SYMBOL_BOT_MAP keys=1
+2026-04-08T12:22:23.204352110Z [inf]  🐛 DEBUG=1
+2026-04-08T12:22:23.204356890Z [inf]  🧾 TICK_LOG_EVERY_MS=180000
+2026-04-08T12:22:23.204365570Z [inf]  🕒 RAY_SIGNAL_TTL_MS=900000
+2026-04-08T12:22:23.204370640Z [inf]  🕒 FWO_SIGNAL_TTL_MS=900000
+2026-04-08T12:22:23.204375410Z [inf]  ⏱️ BREAKOUT_MAX_AGE_MIN=12
+2026-04-08T12:22:23.204381080Z [inf]  ⏱️ BREAKOUT_RETEST_MAX_MIN=4
+2026-04-08T12:22:23.204386750Z [inf]  ⏱️ WASHOUT_MAX_AGE_MIN=12
+2026-04-08T12:22:23.204391770Z [inf]  ⏱️ RECOVERY_MAX_AGE_MIN=6
+2026-04-08T12:22:23.204396820Z [inf]  ✅ BREAKOUT_CONFIRM_BOUNCE_PCT_STRONG=0.08
+2026-04-08T12:22:23.204401350Z [inf]  ✅ BREAKOUT_CONFIRM_BOUNCE_PCT_WEAK=0.12
+2026-04-08T12:22:23.204406140Z [inf]  ✅ BREAKOUT_MIN_FLOW_SUPPORT=2
+2026-04-08T12:22:23.204411260Z [inf]  ✅ BREAKOUT_B_FAIL_RESET_MIN=2.5
+2026-04-08T12:22:23.204416069Z [inf]  ✅ BREAKOUT_B_FAIL_RESET_MAX_BOUNCE_PCT=0.05
+2026-04-08T12:22:23.204486389Z [inf]  ✅ BREAKOUT_FAIL_CONFIRM_MAX=6
+2026-04-08T12:22:23.204505158Z [inf]  ✅ BREAKOUT_FAIL_CONFIRM_NO_RECLAIM_MAX=4
+2026-04-08T12:22:23.204510408Z [inf]  ✅ BREAKOUT_HARD_LATE_ENTRY_MIN=1
+2026-04-08T12:22:23.204516088Z [inf]  ✅ BREAKOUT_HARD_LATE_NEAR_LEVEL_PCT=0.22
+2026-04-08T12:22:23.204521528Z [inf]  ✅ BREAKOUT_B_MAX_NEAR_LEVEL_PCT=0.18
+2026-04-08T12:22:23.204526748Z [inf]  ✅ BREAKOUT_B_LATE_ENTRY_MIN=0.3
+2026-04-08T12:22:23.204531558Z [inf]  ✅ BREAKOUT_B_LATE_NEAR_LEVEL_PCT=0.14
+2026-04-08T12:22:23.205513837Z [inf]  ✅ SHALLOW_RECOVERY_MIN_SCORE=6
+2026-04-08T12:22:23.205526537Z [inf]  ✅ SHALLOW_RECOVERY_RSI_MIN=44
+2026-04-08T12:22:23.205531937Z [inf]  ✅ SHALLOW_RECOVERY_ADX_MAX=28
+2026-04-08T12:22:23.205538377Z [inf]  ✅ SHALLOW_RECOVERY_ATRPCT_MIN=0.07
+2026-04-08T12:22:23.205543097Z [inf]  ✅ SHALLOW_RECOVERY_MAX_NEAR_EMA8_PCT=0.2
+2026-04-08T12:22:23.205547697Z [inf]  ✅ SHALLOW_RECOVERY_MAX_NEAR_EMA18_PCT=0.3
+2026-04-08T12:22:23.205553127Z [inf]  ✅ SHALLOW_RECOVERY_BOUNCE_MIN_PCT=0.015
+2026-04-08T12:22:23.205558587Z [inf]  ✅ SHALLOW_RECOVERY_MIN_FLOW_SUPPORT=2
+2026-04-08T12:22:23.205564836Z [inf]  ✅ SHALLOW_RECOVERY_ALLOW_SCORE9_FLOW1=1
+2026-04-08T12:22:23.205570176Z [inf]  ✅ SHALLOW_RECOVERY_MOMENTUM_RSI_MIN=60
+2026-04-08T12:22:23.205575696Z [inf]  ✅ SHALLOW_RECOVERY_MOMENTUM_MIN_SCORE=9
+2026-04-08T12:22:23.205580906Z [inf]  ✅ SHALLOW_RECOVERY_MOMENTUM_MIN_FLOW=2
+2026-04-08T12:22:23.205585016Z [inf]  ✅ BREAKOUT_PREMIUM_CONFIRM_ENABLE=1
+2026-04-08T12:22:23.205589966Z [inf]  ✅ BREAKOUT_PREMIUM_MIN_SCORE=9
+2026-04-08T12:22:23.205594046Z [inf]  ✅ RECOVERY_BOUNCE_MIN_PCT=0.02
+2026-04-08T12:22:23.205597126Z [inf]  ✅ BREAKOUT_PREMIUM_MAX_NEAR_LEVEL_PCT=0.1
+2026-04-08T12:22:23.205600826Z [inf]  ✅ RECOVERY_RSI_MIN=38
+2026-04-08T12:22:23.205604696Z [inf]  ✅ BREAKOUT_PREMIUM_MIN_BOUNCE_PCT=0.01
+2026-04-08T12:22:23.205610546Z [inf]  ✅ RECOVERY_ADX_MAX=28
+2026-04-08T12:22:23.205614036Z [inf]  ✅ RECOVERY_ATRPCT_MIN=0.16
+2026-04-08T12:22:23.205617536Z [inf]  ✅ RECOVERY_EARLY_TREND_ADX_MAX=32
+2026-04-08T12:22:23.205620176Z [inf]  ✅ SHALLOW_RECOVERY_ENABLE=1
+2026-04-08T12:22:23.205903532Z [inf]  ✅ C3_SYNC_ENABLE=1
+2026-04-08T12:22:23.205911752Z [inf]  ✅ C3_SYNC_ON_STARTUP=1
+2026-04-08T12:22:23.205915552Z [inf]  ✅ C3_SYNC_INTERVAL_SEC=180
+2026-04-08T12:22:23.205919252Z [inf]  ✅ C3_SYNC_ONLY_IF_LOCAL_FLAT=1
+2026-04-08T12:22:23.206681633Z [inf]  💰 BOT_MAX_NOTIONAL_USDT=3000
+2026-04-08T12:22:23.206684103Z [inf]  🛡️ BASE_RISK_PCT=0.35
+2026-04-08T12:22:23.206686613Z [inf]  🛡️ MIN_RISK_PCT=0.2
+2026-04-08T12:22:23.206689243Z [inf]  🛡️ MAX_RISK_PCT=0.7
+2026-04-08T12:22:23.206691743Z [inf]  📉 TREND_MIN_TRAIL_PCT=0.5
+2026-04-08T12:22:23.206694903Z [inf]  ⏳ TREND_TIME_STOP_MIN=60
+2026-04-08T12:22:23.206697673Z [inf]  📉 TREND_MIN_PROGRESS_PCT=0.15
+2026-04-08T12:22:23.206700463Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=startup
+2026-04-08T12:22:23.206702983Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:22:23.206705493Z [inf]  🔄 3C API body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:22:23.206708323Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:22:23.425533979Z [inf]  Starting Container
+2026-04-08T12:22:32.093532740Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.19 time=2026-04-08T12:22:31.899Z
+2026-04-08T12:24:11.925165701Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:24:11.925170211Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.23 ema8=84.39027498288824 ema18=84.43535158814409 ema50=84.51814486748444 rsi=37.447938108506484 atr=0.1356167328550432 atrPct=0.1610076372492499 adx=24.93328826483664 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0830367734282244 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:24:11.925174411Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:24:11.925179201Z [inf]  ⏳ detectSetups waiting bars=1/8
+2026-04-08T12:25:32.290364561Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:25:32.290368321Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:25:32.290371811Z [inf]  🔄 3C API body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:25:32.290374751Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:25:52.296580267Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.24 time=2026-04-08T12:25:50.880Z
+2026-04-08T12:27:11.945563811Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:27:11.945567491Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.29 ema8=84.36799165335752 ema18=84.42005142097102 ema50=84.50919800993603 rsi=41.18711381559553 atr=0.1337869662225401 atrPct=0.1587222282863212 adx=26.04015563942008 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.0712335272468269 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:27:11.945570841Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:27:11.945573241Z [inf]  ⏳ detectSetups waiting bars=2/8
+2026-04-08T12:28:32.001617830Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:28:32.001621800Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:28:32.001626480Z [inf]  🔄 3C API body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:28:32.001629550Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:29:11.687174843Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.35 time=2026-04-08T12:29:03.498Z
+2026-04-08T12:30:11.717979502Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:30:11.717985082Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.36 ema8=84.36621573038919 ema18=84.41373021876355 ema50=84.5033471075856 rsi=45.29565407018937 atr=0.1306593257780722 atrPct=0.1548830319796967 adx=26.611146778267646 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.0830466247478861 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:30:11.717989282Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:30:11.717992452Z [inf]  ⏳ detectSetups waiting bars=3/8
+2026-04-08T12:31:31.832476755Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:31:31.832481035Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:31:31.832485085Z [inf]  🔄 3C API body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:31:31.832489965Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"access_denied","error_description":"This IP address is not allowed to use this key"}
+2026-04-08T12:32:21.534509548Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.38 time=2026-04-08T12:32:16.827Z
+2026-04-08T12:33:11.541152110Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:33:11.541156590Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.39 ema8=84.37150112363604 ema18=84.41123230099896 ema50=84.4989021229744 rsi=47.00434386468232 atr=0.129183659651067 atrPct=0.1530793454805865 adx=26.91219758457569 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.0355618776671422 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:33:11.541159470Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:33:11.541161900Z [inf]  ⏳ detectSetups waiting bars=4/8
+2026-04-08T12:34:31.709499198Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:34:31.709503298Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:34:31.709508108Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:34:31.709512397Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:34:51.367383308Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=50 px=84.51
+2026-04-08T12:35:21.371917227Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.51 time=2026-04-08T12:35:16.868Z
+2026-04-08T12:36:11.406399100Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:36:11.406404070Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.54 ema8=84.40894531838359 ema18=84.42478679563065 ema50=84.50051380442639 rsi=54.63432494638477 atr=0.1306705411045626 atrPct=0.1545665260285813 adx=25.763349994275025 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.1777461784571699 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:36:11.406409019Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:36:11.406414469Z [inf]  ⏳ detectSetups waiting bars=5/8
+2026-04-08T12:37:31.443620135Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:37:31.443623305Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:37:31.443626325Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:37:31.443628804Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:38:41.139677759Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.59 time=2026-04-08T12:38:32.099Z
+2026-04-08T12:39:11.152916461Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:39:11.152921471Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.61 ema8=84.45362413652057 ema18=84.44428292240637 ema50=84.50480738072339 rsi=57.695322882036514 atr=0.1299083595970942 atrPct=0.1535378319313251 adx=23.98253929052325 oiTrend=0 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.0828010409273636 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:39:11.152924511Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:39:11.152927831Z [inf]  ⏳ detectSetups waiting bars=6/8
+2026-04-08T12:40:31.411822383Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:40:31.411826743Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:40:31.411831283Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:40:31.411834513Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:41:51.098849373Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.57 time=2026-04-08T12:41:47.712Z
+2026-04-08T12:42:11.101435442Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:42:11.101439692Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.54 ema8=84.47281877284934 ema18=84.45435840425833 ema50=84.50618748344012 rsi=53.78693935075125 atr=0.1292006196258725 atrPct=0.1528277970497663 adx=22.48588852366432 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=-0.0827325375251072 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:42:11.101443792Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:42:11.101447692Z [inf]  ⏳ detectSetups waiting bars=7/8
+2026-04-08T12:43:30.836633705Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:43:30.836637395Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:43:30.836642215Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:43:30.836646494Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:44:50.891876504Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.58 time=2026-04-08T12:44:47.877Z
+2026-04-08T12:45:10.889296772Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:45:10.889300822Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.62 ema8=84.50552571221615 ema18=84.47179436170482 ema50=84.51065071938363 rsi=57.34341077547856 atr=0.1264005753668808 atrPct=0.1493743504690154 adx=21.096141383009588 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.0946297610598513 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:45:10.889307022Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:45:10.889311742Z [inf]  🔎 SETUPCHK localLow=84.2300 ema50=84.5107 washout=0 reclaimed=1 rsiUp=1
+2026-04-08T12:45:10.889315452Z [inf]  🚫 shallow recovery rejected | score=8.00 flow=1 oiD=-1 cvd=1
+2026-04-08T12:45:10.889319522Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:46:30.603764672Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:46:30.603768062Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:46:30.603771112Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:46:30.603773982Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:47:20.612063431Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=100 px=84.59
+2026-04-08T12:48:10.234234807Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:48:10.234240237Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.56 ema8=84.51763110950145 ema18=84.48107916573589 ema50=84.51258598529016 rsi=53.9876211316714 atr=0.1280862485549612 atrPct=0.1514738038729437 adx=20.144262318385717 oiTrend=0 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=0 priceDropPct=-0.0709052233514562 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:48:10.234246577Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:48:10.234251547Z [inf]  🔎 SETUPCHK localLow=84.2300 ema50=84.5126 washout=0 reclaimed=1 rsiUp=0
+2026-04-08T12:48:10.234259906Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:48:10.234266256Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.56 time=2026-04-08T12:48:02.534Z
+2026-04-08T12:49:30.559797386Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:49:30.559801466Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T12:49:30.559805636Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:49:30.559810165Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T12:51:10.249296219Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.0 nearEma8Pct=0.113 nearEma18Pct=0.168 bouncePct=0.000 score=9 flow=3
+2026-04-08T12:51:10.249341318Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:51:10.249346848Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.64 ema8=84.54482419627891 ema18=84.4978076746058 ema50=84.517582613318 rsi=57.55433272695904 atr=0.1289372308010354 atrPct=0.1523360477327923 adx=19.260374615520693 oiTrend=1 oiDeltaBias=1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.0946073793755893 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:51:10.249354238Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:51:10.249358278Z [inf]  🔎 SETUPCHK localLow=84.2300 ema50=84.5176 washout=0 reclaimed=1 rsiUp=1
+2026-04-08T12:51:10.249366278Z [inf]  🟩 Armed shallow_recovery_reclaim trigger=84.6400 level=84.5448 inv=84.1037 score=9 flow=3
+2026-04-08T12:51:10.249370058Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.64 time=2026-04-08T12:51:03.081Z
+2026-04-08T12:51:17.087721522Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.2 nearEma8Pct=0.113 nearEma18Pct=0.168 bouncePct=0.000 score=9 flow=3
+2026-04-08T12:51:37.148687442Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.5 nearEma8Pct=0.136 nearEma18Pct=0.192 bouncePct=0.024 score=9 flow=3
+2026-04-08T12:51:37.148692292Z [inf]  📥 ENTER BINANCE:SOLUSDT BrainPhase2_DemoLong_v3.7i|shallow_recovery_reclaim|score=9|grade=SR|flow=3|reg=range|riskPct=0.35|riskUsd=4.0|stopDist=0.65715|volPct=20.24|flowCap=45.00|oiT=1|oiD=1|cvd=1|liq=0|drop=0.0946073793755893|pA=0 price=84.66 sizeMult=0.38|note=recovery confirmed
+2026-04-08T12:51:37.148696892Z [inf]  📦 3C PAYLOAD {"secret":"eyJhbGciOiJIUzI1NiJ9.eyJzaWduYWxzX3NvdXJjZV9pZCI6MTUzMTM5fQ.Srf5-FSdAd7Pw3quIqIGiYAdE2cznVvSAETQD1uet8I","bot_uuid":"26626591-bb3e-4cda-8638-d3f6ce328a74","max_lag":"301","timestamp":"2026-04-08T12:51:33.149Z","trigger_price":"84.66","tv_exchange":"BINANCE","tv_instrument":"SOLUSDT","action":"enter_long","comment":"BrainPhase2_DemoLong_v3.7i|shallow_recovery_reclaim|score=9|grade=SR|flow=3|reg=range|riskPct=0.35|riskUsd=3.99|stopDist=0.65715|volPct=20.24|flowCap=45.00|oiT=1|oiD=1|cvd=1|liq=0|drop=0.0946073793755893|pA=0","order":{"amount":"20.24","currency_type":"margin_percent","order_type":"market"}}
+2026-04-08T12:51:37.148702152Z [inf]  📦 3C RESPONSE status=200 body=
+2026-04-08T12:51:37.148706022Z [inf]  📨 3Commas enter_long status=200
+2026-04-08T12:51:37.148711392Z [inf]  🧹 Setup cleared (entered) type=shallow_recovery_reclaim
+2026-04-08T12:52:27.456608145Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:54:07.882189716Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:54:07.882194216Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.58 ema8=84.55264104155026 ema18=84.5064594983315 ema50=84.52003035397219 rsi=54.16320896493564 atr=0.1261560000295331 atrPct=0.1491558288360524 adx=18.53169162007362 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0708884688090764 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:54:07.882198656Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:54:07.882203316Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:54:27.605143747Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.56 time=2026-04-08T12:54:18.844Z
+2026-04-08T12:55:27.638925198Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:57:07.746817608Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T12:57:07.746834188Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:57:07.746839838Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T12:57:07.746854488Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.62 ema8=84.56760969898353 ema18=84.51841113008608 ema50=84.52395073224778 rsi=56.02349510873289 atr=0.1235734285988525 atrPct=0.1460333592517755 adx=17.309865883638565 oiTrend=0 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.0472925041381015 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T12:57:27.882278354Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.61 time=2026-04-08T12:57:19.661Z
+2026-04-08T12:58:28.157923686Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T12:59:57.912539644Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=150 px=84.54
+2026-04-08T13:00:17.911285647Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:00:17.911289977Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.54 ema8=84.56147421032053 ema18=84.5206836427086 ema50=84.52458011529689 rsi=51.5199391254569 atr=0.1283181836989342 atrPct=0.1517839882883064 adx=16.84735599705424 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0945402978019361 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:00:17.911292997Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:00:17.911296057Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:00:37.906875341Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.55 time=2026-04-08T13:00:31.897Z
+2026-04-08T13:01:27.508740240Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:03:07.639184021Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:03:07.639195581Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.51 ema8=84.55003549691597 ema18=84.51955904873928 ema50=84.52400834606955 rsi=49.89998855376049 atr=0.1284383134347243 atrPct=0.1519800182637845 adx=16.19201350790249 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0354861603974463 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:03:07.639200571Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:03:07.639205081Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:03:16.738536356Z [inf]  📦 3C PAYLOAD {"secret":"eyJhbGciOiJIUzI1NiJ9.eyJzaWduYWxzX3NvdXJjZV9pZCI6MTUzMTM5fQ.Srf5-FSdAd7Pw3quIqIGiYAdE2cznVvSAETQD1uet8I","bot_uuid":"26626591-bb3e-4cda-8638-d3f6ce328a74","max_lag":"301","timestamp":"2026-04-08T13:03:16.737Z","trigger_price":"84.51","tv_exchange":"BINANCE","tv_instrument":"SOLUSDT","action":"exit_long","comment":"BrainPhase2_DemoLong_v3.7i|exit|reason=trend_lost"}
+2026-04-08T13:03:17.017631317Z [inf]  📦 3C RESPONSE status=200 body=
+2026-04-08T13:03:17.017652666Z [inf]  📨 3Commas exit_long status=200
+2026-04-08T13:03:17.017658026Z [inf]  🧹 Setup cleared (after_exit) type=na
+2026-04-08T13:03:17.017661836Z [inf]  📤 EXIT BINANCE:SOLUSDT reason=trend_lost price=84.5100 cooldownSec=180
+2026-04-08T13:03:47.029709221Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.48 time=2026-04-08T13:03:46.732Z
+2026-04-08T13:04:27.086110799Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:04:27.086115969Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:04:27.086118909Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:04:27.086121859Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:06:07.267007214Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:06:07.267013034Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.48 ema8=84.53447205315686 ema18=84.51539493834568 ema50=84.52228252857662 rsi=48.26562364971894 atr=0.1264070053322436 atrPct=0.149629504417902 adx=15.244641942814496 oiTrend=1 oiDeltaBias=0 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0354987575434873 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:06:07.267017294Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:07:07.012015818Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.68 time=2026-04-08T13:07:02.369Z
+2026-04-08T13:07:27.039805744Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:07:27.039809194Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:07:27.039812874Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:07:27.039815964Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:09:07.226079094Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:09:07.226084314Z [inf]  🔎 SETUPCHK localLow=84.4800 ema50=84.5328 washout=0 reclaimed=1 rsiUp=1
+2026-04-08T13:09:07.226087774Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:09:07.226137153Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:09:07.226141033Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.79 ema8=84.59125604134422 ema18=84.54430073430929 ema50=84.53278125294617 rsi=62.084914186589856 atr=0.1530922192370834 atrPct=0.1805545692146283 adx=17.171572344468494 oiTrend=1 oiDeltaBias=1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.3669507575757602 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:10:06.950615664Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.81 time=2026-04-08T13:10:04.364Z
+2026-04-08T13:10:26.952307404Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:10:26.952315073Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:10:26.952319943Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:10:26.952324703Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:12:07.131837602Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:12:07.131840972Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.41 ema8=84.5509769210455 ema18=84.5301638149083 ema50=84.52796630185024 rsi=45.89957569504177 atr=0.1728713464344341 atrPct=0.2047996048269566 adx=18.1114893872719 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.4481660573180913 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:12:07.131844482Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T13:12:07.131848232Z [inf]  🔎 SETUPCHK localLow=84.4100 ema50=84.5280 washout=0 reclaimed=0 rsiUp=0
+2026-04-08T13:12:07.131851742Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:12:26.821434815Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=200 px=84.52
+2026-04-08T13:13:16.858762983Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.55 time=2026-04-08T13:13:16.681Z
+2026-04-08T13:13:22.738942244Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:13:22.919836583Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:13:22.919839903Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:13:22.919843803Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:15:13.175765806Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:15:13.175770556Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.58 ema8=84.5574264941465 ema18=84.53540972912849 ema50=84.53000683903258 rsi=51.93631935609128 atr=0.1805233931176888 atrPct=0.2134350829010273 adx=18.984269498446487 oiTrend=1 oiDeltaBias=1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.2013979386328654 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:15:13.175775686Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T13:15:13.175780796Z [inf]  🔎 SETUPCHK localLow=84.4100 ema50=84.5300 washout=0 reclaimed=1 rsiUp=1
+2026-04-08T13:15:13.175786206Z [inf]  🟩 Armed shallow_recovery_reclaim trigger=84.5800 level=84.5574 inv=84.2395 score=9 flow=3
+2026-04-08T13:15:16.648878788Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.2 nearEma8Pct=0.003 nearEma18Pct=0.029 bouncePct=-0.024 score=9 flow=3
+2026-04-08T13:15:36.641672244Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.4 nearEma8Pct=0.068 nearEma18Pct=0.042 bouncePct=-0.095 score=9 flow=3
+2026-04-08T13:15:56.640263130Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.7 nearEma8Pct=0.056 nearEma18Pct=0.030 bouncePct=-0.083 score=9 flow=3
+2026-04-08T13:16:02.541200516Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=0.9 nearEma8Pct=0.015 nearEma18Pct=0.041 bouncePct=-0.012 score=9 flow=3
+2026-04-08T13:16:22.540077690Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.55 time=2026-04-08T13:16:16.777Z
+2026-04-08T13:16:22.540084940Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=1.2 nearEma8Pct=0.009 nearEma18Pct=0.017 bouncePct=-0.035 score=9 flow=3
+2026-04-08T13:16:22.738123066Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:16:22.937226696Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:16:22.937233036Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:16:22.937237116Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:16:31.789953319Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=1.4 nearEma8Pct=0.021 nearEma18Pct=0.005 bouncePct=-0.047 score=9 flow=3
+2026-04-08T13:18:11.941926207Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:18:11.941929307Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.72 ema8=84.59355393989172 ema18=84.55484028395706 ema50=84.53745755122738 rsi=56.26445083577772 atr=0.1840574364664256 atrPct=0.2172538201917205 adx=19.95052334957926 oiTrend=0 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.1655237644833301 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:18:11.941931987Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T13:18:11.941934667Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=1 type=shallow_recovery_reclaim setupAgeMin=2.9 score=9 grade=SR flow=3 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:18:11.941937017Z [inf]  🎯 recovery entry check type=shallow_recovery_reclaim ageMin=2.9 nearEma8Pct=0.149 nearEma18Pct=0.195 bouncePct=0.166 score=9 flow=3
+2026-04-08T13:18:11.941939727Z [inf]  📥 ENTER BINANCE:SOLUSDT BrainPhase2_DemoLong_v3.7i|shallow_recovery_reclaim|score=9|grade=SR|flow=3|reg=trend|riskPct=0.35|riskUsd=4.0|stopDist=0.56712|volPct=23.45|flowCap=45.00|oiT=0|oiD=0|cvd=1|liq=0|drop=0.1655237644833301|pA=0 price=84.72 sizeMult=0.38|note=recovery confirmed
+2026-04-08T13:18:11.941942477Z [inf]  📦 3C PAYLOAD {"secret":"eyJhbGciOiJIUzI1NiJ9.eyJzaWduYWxzX3NvdXJjZV9pZCI6MTUzMTM5fQ.Srf5-FSdAd7Pw3quIqIGiYAdE2cznVvSAETQD1uet8I","bot_uuid":"26626591-bb3e-4cda-8638-d3f6ce328a74","max_lag":"301","timestamp":"2026-04-08T13:18:02.152Z","trigger_price":"84.72","tv_exchange":"BINANCE","tv_instrument":"SOLUSDT","action":"enter_long","comment":"BrainPhase2_DemoLong_v3.7i|shallow_recovery_reclaim|score=9|grade=SR|flow=3|reg=trend|riskPct=0.35|riskUsd=3.99|stopDist=0.56712|volPct=23.45|flowCap=45.00|oiT=0|oiD=0|cvd=1|liq=0|drop=0.1655237644833301|pA=0","order":{"amount":"23.45","currency_type":"margin_percent","order_type":"market"}}
+2026-04-08T13:18:11.941945257Z [inf]  📦 3C RESPONSE status=200 body=
+2026-04-08T13:18:11.941948277Z [inf]  📨 3Commas enter_long status=200
+2026-04-08T13:18:11.942787245Z [inf]  🧹 Setup cleared (entered) type=shallow_recovery_reclaim
+2026-04-08T13:19:21.577014401Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.68 time=2026-04-08T13:19:16.956Z
+2026-04-08T13:19:22.976375954Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:21:02.798700044Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:21:02.798703954Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.53 ema8=84.57943084213801 ema18=84.55222551722474 ema50=84.53716509823806 rsi=49.72064476387368 atr=0.1944819052902522 atrPct=0.2300744177099872 adx=21.378184137831067 oiTrend=1 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=0 priceDropPct=-0.2242681775259652 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:21:02.798708034Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T13:21:02.798710544Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:22:22.809489125Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.6 time=2026-04-08T13:22:18.745Z
+2026-04-08T13:22:22.809493035Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:24:03.171077467Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:24:03.171081087Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.63 ema8=84.59066843277401 ema18=84.56041230488529 ema50=84.54080568262088 rsi=52.83015417260939 atr=0.192018912055234 atrPct=0.2268922510400969 adx=22.703869155493457 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.1183011948420612 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:24:03.171084477Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T13:24:03.171087987Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:24:52.873111058Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=250 px=84.66
+2026-04-08T13:25:22.876303699Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:25:31.924190374Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.69 time=2026-04-08T13:25:31.918Z
+2026-04-08T13:27:02.071147748Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:27:02.071154798Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.71 ema8=84.61718655882423 ema18=84.57615837805525 ema50=84.54744075389065 rsi=55.21629914414863 atr=0.1854461326227179 atrPct=0.2189188202369471 adx=24.257090343199007 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.0945291267871893 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:27:02.071158098Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T13:27:02.071161448Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:28:32.718938107Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:28:52.720554373Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.73 time=2026-04-08T13:28:46.884Z
+2026-04-08T13:30:12.383960653Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:30:12.383972793Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.72 ema8=84.64003399019663 ema18=84.59129960141786 ema50=84.55420778314985 rsi=55.51919941439705 atr=0.1821999802925238 atrPct=0.2150613553972188 adx=25.956631543765546 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.0118049817022844 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:30:12.383979003Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.8
+2026-04-08T13:30:12.383983353Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:31:32.623616457Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:32:12.270821846Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.62 time=2026-04-08T13:32:04.012Z
+2026-04-08T13:33:12.299830140Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:33:12.299836039Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.49 ema8=84.60669310348626 ema18=84.58063648547913 ema50=84.55168983086946 rsi=47.55270232015664 atr=0.2027571245573434 atrPct=0.2399776595541998 adx=25.703269104400242 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=1 priceDropPct=-0.2714825306893343 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:33:12.299840009Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.8
+2026-04-08T13:33:12.299844119Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 grade=na flow=0 inPos=1 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:33:17.154050418Z [inf]  📦 3C PAYLOAD {"secret":"eyJhbGciOiJIUzI1NiJ9.eyJzaWduYWxzX3NvdXJjZV9pZCI6MTUzMTM5fQ.Srf5-FSdAd7Pw3quIqIGiYAdE2cznVvSAETQD1uet8I","bot_uuid":"26626591-bb3e-4cda-8638-d3f6ce328a74","max_lag":"301","timestamp":"2026-04-08T13:33:16.690Z","trigger_price":"84.48","tv_exchange":"BINANCE","tv_instrument":"SOLUSDT","action":"exit_long","comment":"BrainPhase2_DemoLong_v3.7i|exit|reason=trend_lost"}
+2026-04-08T13:33:17.224163760Z [inf]  📦 3C RESPONSE status=200 body=
+2026-04-08T13:33:17.224170219Z [inf]  📨 3Commas exit_long status=200
+2026-04-08T13:33:17.224174399Z [inf]  🧹 Setup cleared (after_exit) type=na
+2026-04-08T13:33:17.224178579Z [inf]  📤 EXIT BINANCE:SOLUSDT reason=trend_lost price=84.4800 cooldownSec=180
+2026-04-08T13:34:26.928469218Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:34:26.928482577Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:34:26.928489267Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:34:26.928494147Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:35:06.927171346Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.51 time=2026-04-08T13:35:06.862Z
+2026-04-08T13:36:07.217887026Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:36:07.217894706Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.4 ema8=84.56076130271154 ema18=84.5616221185866 ema50=84.54574121005105 rsi=44.84125410652511 atr=0.2097030442318187 atrPct=0.2484633225495482 adx=24.430029900910565 oiTrend=0 oiDeltaBias=0 cvdTrend=-1 liqClusterBelow=1 priceDropPct=-0.1065214818321567 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:36:07.217898526Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:37:27.515965266Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:37:27.515975526Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:37:27.515981036Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:37:27.516043935Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=300 px=84.32
+2026-04-08T13:37:27.516050395Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:38:17.269534354Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.18 time=2026-04-08T13:38:16.680Z
+2026-04-08T13:39:07.299196927Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:39:07.299200497Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.23 ema8=84.48725879099787 ema18=84.52671452715643 ema50=84.53335920181375 rsi=40.18072738934703 atr=0.2147242553581174 atrPct=0.2549261015767748 adx=23.226030311602933 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.2014218009478693 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:39:07.299205107Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:39:07.299209227Z [inf]  🔎 SETUPCHK localLow=84.2300 ema50=84.5334 washout=0 reclaimed=0 rsiUp=0
+2026-04-08T13:39:07.299212847Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:40:27.015442072Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:40:27.015445992Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:40:27.015449292Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:40:27.015452281Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:41:37.073478999Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.01 time=2026-04-08T13:41:31.666Z
+2026-04-08T13:42:06.691372484Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:42:06.691383494Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.08 ema8=84.3967568374428 ema18=84.4796919453505 ema50=84.51558040958577 rsi=36.569133249550156 atr=0.2165296656896801 atrPct=0.2575281466337774 adx=22.990298148165035 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.1780838181170672 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:42:06.691388844Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:42:06.691393503Z [inf]  🔎 SETUPCHK localLow=84.0800 ema50=84.5156 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T13:42:06.691397343Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:43:26.734445040Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:43:26.734450830Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:43:26.734455290Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:43:26.734459410Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:44:36.867842431Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.1 time=2026-04-08T13:44:31.902Z
+2026-04-08T13:45:16.624124008Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:45:16.624130488Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.03 ema8=84.31525531801107 ema18=84.43235595110308 ema50=84.49653804058241 rsi=35.4260769142885 atr=0.2174918324261308 atrPct=0.2588264101227309 adx=22.86663381699929 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0594671741198824 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:45:16.624134858Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:45:16.624137928Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4965 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T13:45:16.624140798Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:46:26.643599089Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:46:26.643606229Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:46:26.643610769Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:46:26.643614479Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:47:56.888316953Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.29 time=2026-04-08T13:47:51.765Z
+2026-04-08T13:48:03.347070770Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:48:03.347097459Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.31 ema8=84.31408746956417 ema18=84.41947637730276 ema50=84.48922282330467 rsi=45.66799723018348 atr=0.2290995586814068 atrPct=0.2717347392734039 adx=21.785915978251072 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.3332143282161146 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:48:03.347104479Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:48:03.347113139Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4892 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T13:48:03.347119049Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:49:23.395361800Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:49:23.395365480Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:49:23.395369040Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:49:23.395372320Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:49:53.403295799Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=350 px=84.37
+2026-04-08T13:51:13.141368789Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.42 time=2026-04-08T13:51:03.508Z
+2026-04-08T13:51:13.141376318Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:51:13.141381458Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.42 ema8=84.3376235874388 ema18=84.41953149548141 ema50=84.48650820278291 rsi=49.08458694444303 atr=0.2270210187755923 atrPct=0.268918524965165 adx=20.285146062405342 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.1304708812714974 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:51:13.141385298Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:51:13.141388428Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4865 washout=1 reclaimed=1 rsiUp=1
+2026-04-08T13:51:13.141392218Z [inf]  🚫 shallow recovery rejected | contradictory internals oiD=-1 cvd=-1
+2026-04-08T13:51:13.141395308Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:52:23.217833755Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:52:23.217837725Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:52:23.217841245Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:52:23.217844815Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:54:13.714668723Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:54:13.714680002Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4725 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T13:54:13.714685482Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:54:13.714707882Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:54:13.714713552Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.13 ema8=84.2914850124524 ema18=84.38905449595705 ema50=84.47252748894829 rsi=41.64876126345646 atr=0.2329480888630501 atrPct=0.2768906321919056 adx=19.546996645802345 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=1 priceDropPct=-0.3435204927742315 patternAReady=0 patternAWatch=1 rayFresh=0 fwoFresh=0
+2026-04-08T13:54:17.754303150Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.14 time=2026-04-08T13:54:17.751Z
+2026-04-08T13:55:27.485128895Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:55:27.485134275Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:55:27.485140155Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:55:27.485146095Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:57:07.528147840Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T13:57:07.528154980Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.19 ema8=84.26893278746297 ema18=84.36810139111947 ema50=84.46144797957777 rsi=43.55402446005947 atr=0.2291660825156889 atrPct=0.2722010719986802 adx=19.256971651836654 oiTrend=0 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=1 priceDropPct=0.0713181980268659 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:57:07.528159930Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T13:57:07.528163720Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4614 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T13:57:07.528167920Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T13:57:37.538645027Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.2 time=2026-04-08T13:57:31.820Z
+2026-04-08T13:58:27.658233749Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T13:58:27.658238379Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T13:58:27.658274458Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T13:58:27.658281788Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:00:17.430200155Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:00:17.430204915Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.05 ema8=84.22028105691564 ema18=84.33461703415952 ema50=84.44531276469236 rsi=40.25148318000039 atr=0.2335113623359963 atrPct=0.2778243454324762 adx=19.491319226594282 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=1 priceDropPct=-0.1662905333174968 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:00:17.430208035Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:00:17.430211185Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4453 washout=0 reclaimed=0 rsiUp=0
+2026-04-08T14:00:17.430214705Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:00:47.429000182Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=84.1 time=2026-04-08T14:00:46.672Z
+2026-04-08T14:01:27.430706579Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:01:27.430711709Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:01:27.430716249Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:01:27.430720239Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:02:17.434067116Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=400 px=84.11
+2026-04-08T14:03:07.536033298Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:03:07.536039238Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=84.07 ema8=84.18688526648994 ema18=84.30676260951115 ema50=84.43059461705737 rsi=40.940447544057086 atr=0.2261176935977105 atrPct=0.2689635941450107 adx=19.70892768886922 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=1 priceDropPct=0.0237953599048138 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:03:07.536045258Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:03:07.536050158Z [inf]  🔎 SETUPCHK localLow=84.0300 ema50=84.4306 washout=0 reclaimed=0 rsiUp=1
+2026-04-08T14:03:07.536054828Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:03:47.209262143Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.92 time=2026-04-08T14:03:46.692Z
+2026-04-08T14:04:27.213533597Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:04:27.213538507Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:04:27.213542467Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:04:27.213545926Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:06:07.262002364Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:06:07.262006264Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.88 ema8=84.11868854060329 ema18=84.26184022956261 ema50=84.40900267129041 rsi=36.62028899120541 atr=0.2306807154835877 atrPct=0.2750127747777631 adx=20.908430956359403 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.2260021410729127 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:06:07.262011244Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:06:07.262015664Z [inf]  🔎 SETUPCHK localLow=83.8800 ema50=84.4090 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:06:07.262019494Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:06:47.267052103Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.9 time=2026-04-08T14:06:46.692Z
+2026-04-08T14:07:27.351508906Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:07:27.351512806Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:07:27.351516246Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:07:27.351519476Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:09:07.066064526Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:09:07.066070206Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.65 ema8=84.01453553158034 ema18=84.19743599487181 ema50=84.37923786065157 rsi=32.191838454300736 atr=0.2392035215204739 atrPct=0.2859575869939915 adx=22.60541231709895 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.2742012398664637 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:09:07.066075946Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:09:07.066081526Z [inf]  🔎 SETUPCHK localLow=83.6500 ema50=84.3792 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:09:07.066086396Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:10:08.383956953Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.46 time=2026-04-08T14:10:05.890Z
+2026-04-08T14:10:27.084387261Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:10:27.084389900Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:10:27.084393130Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:10:27.084396250Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:12:07.287838105Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:12:07.287878394Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:12:07.287882314Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.74 ema8=83.9535276356736 ema18=84.14928483751689 ema50=84.35416970925347 rsi=35.479788208429696 atr=0.2456889842690114 atrPct=0.2933950134571428 adx=24.61686556551777 oiTrend=1 oiDeltaBias=1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.1075911536162453 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:12:07.287886674Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:12:07.287891294Z [inf]  🔎 SETUPCHK localLow=83.6500 ema50=84.3542 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T14:13:16.933575153Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.79 time=2026-04-08T14:13:16.692Z
+2026-04-08T14:13:22.743543531Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:13:23.587843671Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:13:23.587849871Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:13:23.587855091Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:14:53.311138474Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=450 px=83.91
+2026-04-08T14:15:13.781287577Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:15:13.781297047Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.88 ema8=83.93718816107946 ema18=84.12093906514669 ema50=84.33557481869451 rsi=40.32699265194842 atr=0.2495683425355104 atrPct=0.2975302128463405 adx=24.88405787133072 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.1671841413900174 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:15:13.781303497Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:15:13.781309167Z [inf]  🔎 SETUPCHK localLow=83.6500 ema50=84.3356 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T14:15:13.781314407Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:16:23.317103615Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.87 time=2026-04-08T14:16:17.035Z
+2026-04-08T14:16:23.317107145Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:16:23.317110025Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:16:23.317112615Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:16:23.317127185Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:18:03.648677310Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:18:03.648680950Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.85 ema8=83.9178130141729 ema18=84.0924191635523 ema50=84.31653266894179 rsi=39.639758932225384 atr=0.2410277466401164 atrPct=0.2874510991533887 adx=25.13216501244275 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=-0.03576537911302 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:18:03.648685000Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:18:03.648688419Z [inf]  🔎 SETUPCHK localLow=83.6500 ema50=84.3165 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:18:03.648692269Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:19:23.373402067Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:19:23.373405927Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:19:23.373408807Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:19:23.373411687Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:19:31.697901377Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.58 time=2026-04-08T14:19:31.695Z
+2026-04-08T14:20:11.689810335Z [inf]  📩 WEBHOOK src=fwo_buy signal=sniper_buy symbol=BINANCE:SOLUSDT
+2026-04-08T14:20:11.689814225Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.57 ema8=null ema18=null ema50=null rsi=null atr=null atrPct=null adx=null oiTrend=0 oiDeltaBias=0 cvdTrend=0 liqClusterBelow=0 priceDropPct=0 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:20:11.689818195Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=range conf=0.4
+2026-04-08T14:20:11.689822025Z [inf]  📌 STATE BINANCE:SOLUSDT reg=range armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:21:11.701389706Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:21:11.701392796Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.59 ema8=83.84496567769004 ema18=84.03953293580994 ema50=84.28804119172838 rsi=34.200088041276956 atr=0.2445257647372514 atrPct=0.2925299255141182 adx=26.16569662432542 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=-0.3100775193798341 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:21:11.701395696Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:21:11.701399576Z [inf]  🔎 SETUPCHK localLow=83.5700 ema50=84.2880 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T14:21:11.701402436Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:22:31.920309192Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:22:31.920314032Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:22:31.920319172Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:22:31.920323911Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:22:32.021253062Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.64 time=2026-04-08T14:22:32.018Z
+2026-04-08T14:24:12.076902193Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:24:12.076902383Z [inf]  🔎 SETUPCHK localLow=83.4600 ema50=84.2556 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:24:12.076910193Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.46 ema8=83.75941774931448 ema18=83.97852946888258 ema50=84.25556898813119 rsi=31.84686549033789 atr=0.2420596386845912 atrPct=0.2900307197275236 adx=27.403339118324702 oiTrend=0 oiDeltaBias=-1 cvdTrend=1 liqClusterBelow=0 priceDropPct=-0.1555209953343817 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:24:12.076914113Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:24:12.076922133Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:25:31.733806020Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:25:31.733812720Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:25:31.733816920Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:25:31.733822220Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:25:51.731232018Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.55 time=2026-04-08T14:25:46.757Z
+2026-04-08T14:27:11.757340447Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:27:11.757344757Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.57 ema8=83.71732491613348 ema18=83.93552636689495 ema50=84.2286839297731 rsi=35.86796494760051 atr=0.2433410930642626 atrPct=0.2911823537923449 adx=28.836572686064024 oiTrend=0 oiDeltaBias=0 cvdTrend=1 liqClusterBelow=0 priceDropPct=0.1317996645099442 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:27:11.757349117Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:27:11.757353336Z [inf]  🔎 SETUPCHK localLow=83.4600 ema50=84.2287 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T14:27:11.757357296Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:27:16.710907920Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=500 px=83.54
+2026-04-08T14:28:26.320367962Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:28:26.320371482Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:28:26.320374752Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:28:26.320379282Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:28:56.324708306Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.52 time=2026-04-08T14:28:46.867Z
+2026-04-08T14:30:16.357781609Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:30:16.357789139Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.46 ema8=83.66014160143715 ema18=83.88547095985338 ema50=84.19853946193886 rsi=33.72509021618038 atr=0.2352453007025302 atrPct=0.2818659246375871 adx=30.16743242753625 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.13162618164413 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:30:16.357792539Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:30:16.357796008Z [inf]  🔎 SETUPCHK localLow=83.4600 ema50=84.1985 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:30:16.357799408Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:31:26.440624431Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:31:26.440627491Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:31:26.440630191Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:31:26.440632740Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:32:06.088516573Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.23 time=2026-04-08T14:32:03.332Z
+2026-04-08T14:33:06.117725000Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:33:06.117730790Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=82.96 ema8=83.50455457889555 ema18=83.78805296407934 ema50=84.14996928696087 rsi=26.09391679965887 atr=0.2620134935094923 atrPct=0.3158311156093206 adx=32.383446350175724 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.5990893841361131 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:33:06.117734490Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:33:06.117737120Z [inf]  🔎 SETUPCHK localLow=82.9600 ema50=84.1500 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:33:06.117739600Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=1
+2026-04-08T14:34:26.332802740Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:34:26.332806150Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:34:26.332809549Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:34:26.332812489Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:35:06.090968746Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=82.89 time=2026-04-08T14:35:05.259Z
+2026-04-08T14:36:06.097503766Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:36:06.097508616Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=82.73 ema8=83.33243133914098 ema18=83.67667896786047 ema50=84.09428421688398 rsi=23.463778050083008 atr=0.2732982439731002 atrPct=0.3303496240458119 adx=34.86110707285753 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.2772420443587148 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:36:06.097511916Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:36:06.097514786Z [inf]  🔎 SETUPCHK localLow=82.7300 ema50=84.0943 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:36:06.097517536Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:37:26.790895921Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:37:26.790900510Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:37:26.790903920Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:37:26.790907230Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:38:16.580161533Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83 time=2026-04-08T14:38:16.539Z
+2026-04-08T14:39:06.599600077Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:39:06.599607637Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.09 ema8=83.27855770822076 ema18=83.61492328703305 ema50=84.05490052210422 rsi=34.578951295577994 atr=0.2894912265464501 atrPct=0.348406819769467 adx=36.54630164657902 oiTrend=1 oiDeltaBias=1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=0.4351504895443 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:39:06.599612827Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:39:06.599616516Z [inf]  🔎 SETUPCHK localLow=82.7300 ema50=84.0549 washout=1 reclaimed=0 rsiUp=1
+2026-04-08T14:39:06.599620016Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:39:56.754295111Z [inf]  🟦 LIVE TICKS BINANCE:SOLUSDT count=550 px=83.04
+2026-04-08T14:40:26.434734768Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
+2026-04-08T14:40:26.434740508Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:40:26.434751067Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:40:26.434754897Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:41:26.440294278Z [inf]  🟦 TICK(3m) BINANCE:SOLUSDT price=83.02 time=2026-04-08T14:41:17.725Z
+2026-04-08T14:42:06.446170870Z [inf]  📩 WEBHOOK src=features signal= symbol=BINANCE:SOLUSDT
+2026-04-08T14:42:06.446189900Z [inf]  🟩 FEAT rx BINANCE:SOLUSDT close=83.04 ema8=83.2255448841717 ema18=83.55440504629273 ema50=84.01510050162955 rsi=33.84379371138172 atr=0.2788132817931323 atrPct=0.3357578056275677 adx=38.11112517932039 oiTrend=0 oiDeltaBias=-1 cvdTrend=-1 liqClusterBelow=0 priceDropPct=-0.0601757130821966 patternAReady=0 patternAWatch=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:42:06.446195730Z [inf]  🧭 REGIME BINANCE:SOLUSDT mode=trend conf=0.6
+2026-04-08T14:42:06.446201049Z [inf]  🔎 SETUPCHK localLow=82.7300 ema50=84.0151 washout=1 reclaimed=0 rsiUp=0
+2026-04-08T14:42:06.446206959Z [inf]  📌 STATE BINANCE:SOLUSDT reg=trend armed=0 type= setupAgeMin=0 score=0 inPos=0 cooldown=0 rayFresh=0 fwoFresh=0
+2026-04-08T14:43:26.798737964Z [inf]  🔄 3C API GET /v2/smart_trades status=401
+2026-04-08T14:43:26.798744614Z [inf]  🔄 3C API body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:43:26.798748164Z [inf]  ⚠️ POSITION SYNC failed symbol=BINANCE:SOLUSDT err=401 body={"error":"api_key_invalid_or_expired","error_description":"Unauthorized. Invalid or expired api key."}
+2026-04-08T14:43:26.798779754Z [inf]  🔄 POSITION SYNC start symbol=BINANCE:SOLUSDT reason=interval
