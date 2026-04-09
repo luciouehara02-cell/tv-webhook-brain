@@ -1,5 +1,5 @@
 /**
- * Brain_READYFilter_v4.4-LONG
+ * Brain_READYFilter_v4.5-LONG
  *
  * Architecture:
  * - RayAlgo BUY/SELL remains the external trigger
@@ -7,22 +7,23 @@
  * - Brain evaluates BUY quality at the exact BUY moment
  * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
- * v4.4:
- * - keeps existing 3 modes:
+ * v4.5:
+ * - preserves all v4.4 entry modes:
  *   1) reversal_reclaim
  *   2) breakout_continuation
  *   3) hold_continuation
- * - adds new mode:
  *   4) early_breakout_launch
+ * - adds internal exit stack inspired by BrainPhase2:
+ *   1) initial_stop
+ *   2) dynamic trailing stop
+ *   3) trend_lost
+ *   4) time_stop
+ *   5) Ray SELL remains active as external exit trigger
  *
- * Main goal of early_breakout_launch:
- * - catch the first clean breakout thrust after reclaim
- * - before normal continuation metrics fully mature
- * - without globally loosening continuation logic
- *
- * ADX behavior:
- * - reversal remains strict
- * - continuation / early-launch do not fail solely because ADX is null
+ * Notes:
+ * - entry logic remains unchanged
+ * - exits are managed on tick path while in position
+ * - Ray SELL still exits immediately if position is open
  */
 
 import express from "express";
@@ -30,7 +31,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "Brain_READYFilter_v4.4-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.5-LONG";
 
 // ========================================
 // CONFIG
@@ -71,12 +72,16 @@ const MAX_BARS = Number(process.env.MAX_BARS || "300");
 // Logging
 const TICK_LOG_EVERY_MS = Number(process.env.TICK_LOG_EVERY_MS || "180000");
 const STATE_LOG_EVERY_MS = Number(process.env.STATE_LOG_EVERY_MS || "180000");
-const DEBUG_FILTER = String(process.env.DEBUG_FILTER || "true").toLowerCase() === "true";
+const DEBUG_FILTER =
+  String(process.env.DEBUG_FILTER || "true").toLowerCase() === "true";
 
 // Heartbeat
 const REQUIRE_FRESH_HEARTBEAT =
-  String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() === "true";
-const HEARTBEAT_MAX_AGE_SEC = Number(process.env.HEARTBEAT_MAX_AGE_SEC || "90");
+  String(process.env.REQUIRE_FRESH_HEARTBEAT || "true").toLowerCase() ===
+  "true";
+const HEARTBEAT_MAX_AGE_SEC = Number(
+  process.env.HEARTBEAT_MAX_AGE_SEC || "90"
+);
 
 // Enter dedupe
 const ENTER_DEDUP_SEC = Number(process.env.ENTER_DEDUP_SEC || "25");
@@ -89,10 +94,18 @@ const FILTER_MIN_BARS = Number(process.env.FILTER_MIN_BARS || "12");
 const FILTER_ADX_MIN = Number(process.env.FILTER_ADX_MIN || "14");
 const FILTER_RSI_MIN = Number(process.env.FILTER_RSI_MIN || "46");
 
-const FILTER_WASH_LOOKBACK_BARS = Number(process.env.FILTER_WASH_LOOKBACK_BARS || "18");
-const FILTER_DROP_LOOKBACK_BARS = Number(process.env.FILTER_DROP_LOOKBACK_BARS || "12");
-const FILTER_MAX_BARS_SINCE_LOW = Number(process.env.FILTER_MAX_BARS_SINCE_LOW || "4");
-const FILTER_MAX_BARS_SINCE_RECLAIM = Number(process.env.FILTER_MAX_BARS_SINCE_RECLAIM || "3");
+const FILTER_WASH_LOOKBACK_BARS = Number(
+  process.env.FILTER_WASH_LOOKBACK_BARS || "18"
+);
+const FILTER_DROP_LOOKBACK_BARS = Number(
+  process.env.FILTER_DROP_LOOKBACK_BARS || "12"
+);
+const FILTER_MAX_BARS_SINCE_LOW = Number(
+  process.env.FILTER_MAX_BARS_SINCE_LOW || "4"
+);
+const FILTER_MAX_BARS_SINCE_RECLAIM = Number(
+  process.env.FILTER_MAX_BARS_SINCE_RECLAIM || "3"
+);
 
 const FILTER_MIN_DROP_PCT = Number(process.env.FILTER_MIN_DROP_PCT || "0.60");
 const FILTER_MIN_RECLAIM_FROM_LOW_PCT = Number(
@@ -115,7 +128,8 @@ const FILTER_MAX_BUY_FROM_RECLAIM_PCT = Number(
 
 // Breakout continuation mode
 const FILTER_BREAKOUT_ENABLED =
-  String(process.env.FILTER_BREAKOUT_ENABLED || "true").toLowerCase() === "true";
+  String(process.env.FILTER_BREAKOUT_ENABLED || "true").toLowerCase() ===
+  "true";
 
 const FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM = Number(
   process.env.FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "8"
@@ -129,10 +143,16 @@ const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT = Number(
 const FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT = Number(
   process.env.FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT || "1.25"
 );
-const FILTER_BREAKOUT_MIN_RSI = Number(process.env.FILTER_BREAKOUT_MIN_RSI || "44");
-const FILTER_BREAKOUT_MIN_ADX = Number(process.env.FILTER_BREAKOUT_MIN_ADX || "6");
+const FILTER_BREAKOUT_MIN_RSI = Number(
+  process.env.FILTER_BREAKOUT_MIN_RSI || "44"
+);
+const FILTER_BREAKOUT_MIN_ADX = Number(
+  process.env.FILTER_BREAKOUT_MIN_ADX || "6"
+);
 const FILTER_BREAKOUT_REQUIRE_BULL_CANDLE =
-  String(process.env.FILTER_BREAKOUT_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
+  String(
+    process.env.FILTER_BREAKOUT_REQUIRE_BULL_CANDLE || "false"
+  ).toLowerCase() === "true";
 const FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
   process.env.FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT || "0.00"
 );
@@ -149,22 +169,30 @@ const FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT = Number(
   process.env.FILTER_HOLD_MAX_ENTRY_EXT_EMA21_PCT || "1.40"
 );
 const FILTER_HOLD_REQUIRE_BULL_CANDLE =
-  String(process.env.FILTER_HOLD_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
+  String(process.env.FILTER_HOLD_REQUIRE_BULL_CANDLE || "false").toLowerCase() ===
+  "true";
 const FILTER_HOLD_REQUIRE_RSI_RISING =
-  String(process.env.FILTER_HOLD_REQUIRE_RSI_RISING || "false").toLowerCase() === "true";
+  String(process.env.FILTER_HOLD_REQUIRE_RSI_RISING || "false").toLowerCase() ===
+  "true";
 const FILTER_HOLD_REQUIRE_FWO_RECOVERED =
-  String(process.env.FILTER_HOLD_REQUIRE_FWO_RECOVERED || "false").toLowerCase() === "true";
+  String(
+    process.env.FILTER_HOLD_REQUIRE_FWO_RECOVERED || "false"
+  ).toLowerCase() === "true";
 const FILTER_HOLD_REQUIRE_EMA8_RISING =
-  String(process.env.FILTER_HOLD_REQUIRE_EMA8_RISING || "false").toLowerCase() === "true";
+  String(process.env.FILTER_HOLD_REQUIRE_EMA8_RISING || "false").toLowerCase() ===
+  "true";
 const FILTER_HOLD_RECENT_RECLAIM_LOOKBACK = Number(
   process.env.FILTER_HOLD_RECENT_RECLAIM_LOOKBACK || "8"
 );
 const FILTER_HOLD_REQUIRE_RECENT_RECLAIM =
-  String(process.env.FILTER_HOLD_REQUIRE_RECENT_RECLAIM || "true").toLowerCase() === "true";
+  String(
+    process.env.FILTER_HOLD_REQUIRE_RECENT_RECLAIM || "true"
+  ).toLowerCase() === "true";
 
 // Early breakout launch mode
 const FILTER_EARLY_BREAKOUT_ENABLED =
-  String(process.env.FILTER_EARLY_BREAKOUT_ENABLED || "true").toLowerCase() === "true";
+  String(process.env.FILTER_EARLY_BREAKOUT_ENABLED || "true").toLowerCase() ===
+  "true";
 const FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM = Number(
   process.env.FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM || "2"
 );
@@ -187,13 +215,21 @@ const FILTER_EARLY_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT = Number(
   process.env.FILTER_EARLY_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT || "0.00"
 );
 const FILTER_EARLY_BREAKOUT_REQUIRE_BREAK_FLAG =
-  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BREAK_FLAG || "true").toLowerCase() === "true";
+  String(
+    process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BREAK_FLAG || "true"
+  ).toLowerCase() === "true";
 const FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 =
-  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 || "true").toLowerCase() === "true";
+  String(
+    process.env.FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 || "true"
+  ).toLowerCase() === "true";
 const FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING =
-  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING || "false").toLowerCase() === "true";
+  String(
+    process.env.FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING || "false"
+  ).toLowerCase() === "true";
 const FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE =
-  String(process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE || "false").toLowerCase() === "true";
+  String(
+    process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE || "false"
+  ).toLowerCase() === "true";
 
 // Hostility
 const FILTER_HOSTILE_MAX_EMA_GAP_PCT = Number(
@@ -208,7 +244,41 @@ const FILTER_HOSTILE_MAX_MINUS_DI_LEAD = Number(
 
 // Position
 const ALLOW_ONLY_ONE_POSITION =
-  String(process.env.ALLOW_ONLY_ONE_POSITION || "true").toLowerCase() === "true";
+  String(process.env.ALLOW_ONLY_ONE_POSITION || "true").toLowerCase() ===
+  "true";
+
+// ========================================
+// EXIT STACK CONFIG
+// ========================================
+const INTERNAL_EXITS_ENABLED =
+  String(process.env.INTERNAL_EXITS_ENABLED || "true").toLowerCase() ===
+  "true";
+
+const INITIAL_STOP_BUFFER_PCT = Number(
+  process.env.INITIAL_STOP_BUFFER_PCT || "0.18"
+);
+
+const FALLBACK_INITIAL_STOP_PCT = Number(
+  process.env.FALLBACK_INITIAL_STOP_PCT || "0.60"
+);
+
+const TRAIL_ATR_LEN = Number(process.env.TRAIL_ATR_LEN || "14");
+const TRAIL_ATR_MULT = Number(process.env.TRAIL_ATR_MULT || "2.0");
+const TREND_MIN_TRAIL_PCT = Number(
+  process.env.TREND_MIN_TRAIL_PCT || "0.45"
+);
+
+const TREND_STOP_ACTIVATE_MIN = Number(
+  process.env.TREND_STOP_ACTIVATE_MIN || "9"
+);
+const TREND_TIME_STOP_MIN = Number(
+  process.env.TREND_TIME_STOP_MIN || "60"
+);
+const TREND_MIN_PROGRESS_PCT = Number(
+  process.env.TREND_MIN_PROGRESS_PCT || "0.12"
+);
+
+const EXIT_DEDUP_SEC = Number(process.env.EXIT_DEDUP_SEC || "20");
 
 // ========================================
 // MEMORY
@@ -222,9 +292,18 @@ function createSymbolState(symbol) {
     lastStateLogMs: 0,
     currentBar: null,
     bars: [],
+
     inPosition: false,
     entryPrice: null,
     entryAtMs: 0,
+    entryMode: "",
+    entryEval: null,
+
+    peakPrice: null,
+    stopPrice: null,
+    trailingStop: null,
+    lastExitTs: 0,
+
     lastAction: "none",
     lastEnterAcceptedTs: 0,
     lastEval: null,
@@ -309,7 +388,12 @@ function getTickPrice(payload) {
 }
 
 function getRayPrice(payload) {
-  return toNum(payload?.price) ?? toNum(payload?.close) ?? toNum(payload?.trigger_price) ?? null;
+  return (
+    toNum(payload?.price) ??
+    toNum(payload?.close) ??
+    toNum(payload?.trigger_price) ??
+    null
+  );
 }
 
 function isHeartbeatFresh(s) {
@@ -321,6 +405,11 @@ function isHeartbeatFresh(s) {
 function enterDedupeActive(s, ts) {
   if (!ENTER_DEDUP_SEC || ENTER_DEDUP_SEC <= 0) return false;
   return s.lastEnterAcceptedTs && ts - s.lastEnterAcceptedTs < ENTER_DEDUP_SEC * 1000;
+}
+
+function exitDedupeActive(s, ts) {
+  if (!EXIT_DEDUP_SEC || EXIT_DEDUP_SEC <= 0) return false;
+  return s.lastExitTs && ts - s.lastExitTs < EXIT_DEDUP_SEC * 1000;
 }
 
 function floorToTfMs(tsMs, tfSec) {
@@ -344,7 +433,7 @@ function maybeLogState(s) {
     const e = s.lastEval;
     const reasons = e?.reasons?.length ? e.reasons.join(",") : "na";
     console.log(
-      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} mode=${e?.mode || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} reasons=${reasons} lastAction=${s.lastAction}`
+      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} mode=${e?.mode || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} trail=${s.trailingStop != null ? s.trailingStop.toFixed(4) : "na"} stop=${s.stopPrice != null ? s.stopPrice.toFixed(4) : "na"} reasons=${reasons} lastAction=${s.lastAction}`
     );
     s.lastStateLogMs = now;
   }
@@ -358,6 +447,15 @@ function adxBelowThresholdContinuation(adxValue, minAdx) {
   if (!Number.isFinite(minAdx) || minAdx <= 0) return false;
   if (!Number.isFinite(adxValue)) return false;
   return adxValue < minAdx;
+}
+
+function pctChange(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return null;
+  return ((a - b) / b) * 100;
+}
+
+function fmt(x, d = 4) {
+  return Number.isFinite(x) ? Number(x).toFixed(d) : "na";
 }
 
 // ========================================
@@ -533,6 +631,27 @@ function wtSeries(bars, n1, n2, sigLen) {
   return { fwo, fwoSignal };
 }
 
+function atrSeries(bars, len) {
+  if (bars.length < len + 1) return [];
+  const tr = [null];
+  for (let i = 1; i < bars.length; i++) {
+    const h = bars[i].h;
+    const l = bars[i].l;
+    const pc = bars[i - 1].c;
+    tr.push(Math.max(h - l, Math.max(Math.abs(h - pc), Math.abs(l - pc))));
+  }
+
+  const out = new Array(bars.length).fill(null);
+  let seed = 0;
+  for (let i = 1; i <= len; i++) seed += tr[i];
+  out[len] = seed / len;
+
+  for (let i = len + 1; i < bars.length; i++) {
+    out[i] = ((out[i - 1] * (len - 1)) + tr[i]) / len;
+  }
+  return out;
+}
+
 function barsSinceLowestLow(bars, lookback) {
   const start = Math.max(0, bars.length - lookback);
   let idx = start;
@@ -593,7 +712,12 @@ function findRecentReclaimBar(bars, ema21, maxBarsSinceReclaim) {
     if (crossed) {
       const age = bars.length - 1 - i;
       if (age <= maxBarsSinceReclaim) {
-        return { index: i, ageBars: age, reclaimPrice: bars[i].c, reclaimLow: bars[i].l };
+        return {
+          index: i,
+          ageBars: age,
+          reclaimPrice: bars[i].c,
+          reclaimLow: bars[i].l,
+        };
       }
       return null;
     }
@@ -609,12 +733,24 @@ function evaluateLongFilter(s) {
   const reasons = [];
 
   if (!FILTER_ENABLED) {
-    return { allow: true, reasons, mode: "disabled", barsCount: bars.length, hostileBear: false };
+    return {
+      allow: true,
+      reasons,
+      mode: "disabled",
+      barsCount: bars.length,
+      hostileBear: false,
+    };
   }
 
   if (bars.length < FILTER_MIN_BARS) {
     reasons.push("not_enough_bars");
-    return { allow: false, reasons, mode: "warmup", barsCount: bars.length, hostileBear: false };
+    return {
+      allow: false,
+      reasons,
+      mode: "warmup",
+      barsCount: bars.length,
+      hostileBear: false,
+    };
   }
 
   const closes = bars.map((b) => b.c);
@@ -623,6 +759,7 @@ function evaluateLongFilter(s) {
   const ema18 = emaSeries(closes, 18);
   const ema21 = emaSeries(closes, 21);
   const rsi = rsiSeries(closes, 14);
+  const atr = atrSeries(bars, TRAIL_ATR_LEN);
   const { adx, plusDI, minusDI } = adxSeries(bars, 14);
   const { fwo, fwoSignal } = wtSeries(bars, 10, 21, 4);
 
@@ -658,6 +795,7 @@ function evaluateLongFilter(s) {
   const ema8Now = ema8[i];
   const ema18Now = ema18[i];
   const ema21Now = ema21[i];
+  const atrNow = atr[i];
   const ema8Prev = ema8[i - 1];
   const ema21Prev = ema21[i - 1];
 
@@ -672,15 +810,27 @@ function evaluateLongFilter(s) {
   const barsSinceLow = lowInfo.barsSince;
   const recentHigh = highestClose(bars, FILTER_DROP_LOOKBACK_BARS);
   const dropPct = recentHigh > 0 ? ((recentHigh - bar.c) / recentHigh) * 100 : 0;
-  const maxStretchBelow = highestStretchBelowEma(bars, ema21, FILTER_WASH_LOOKBACK_BARS);
-  const maxBelowStreak = highestBelowStreak(bars, ema21, FILTER_WASH_LOOKBACK_BARS);
+  const maxStretchBelow = highestStretchBelowEma(
+    bars,
+    ema21,
+    FILTER_WASH_LOOKBACK_BARS
+  );
+  const maxBelowStreak = highestBelowStreak(
+    bars,
+    ema21,
+    FILTER_WASH_LOOKBACK_BARS
+  );
 
   const hadDamage =
     dropPct >= FILTER_MIN_DROP_PCT ||
     maxStretchBelow >= FILTER_MIN_DROP_PCT ||
     maxBelowStreak >= 3;
 
-  const reclaimReversal = findRecentReclaimBar(bars, ema21, FILTER_MAX_BARS_SINCE_RECLAIM);
+  const reclaimReversal = findRecentReclaimBar(
+    bars,
+    ema21,
+    FILTER_MAX_BARS_SINCE_RECLAIM
+  );
   const reclaimBreakout = findRecentReclaimBar(
     bars,
     ema21,
@@ -700,28 +850,43 @@ function evaluateLongFilter(s) {
   const reclaimAny = reclaimBreakout || reclaimReversal || reclaimHold || reclaimEarly;
   const reclaimAgeBars = reclaimAny ? reclaimAny.ageBars : null;
   const reclaimPrice = reclaimAny ? reclaimAny.reclaimPrice : null;
+  const reclaimLow = reclaimAny ? reclaimAny.reclaimLow : null;
 
   const reclaimFromLowPct =
-    Number.isFinite(recentLow) && recentLow > 0 ? ((bar.c - recentLow) / recentLow) * 100 : null;
+    Number.isFinite(recentLow) && recentLow > 0
+      ? ((bar.c - recentLow) / recentLow) * 100
+      : null;
+
   const impulseFromLowPct =
-    Number.isFinite(recentLow) && recentLow > 0 ? ((bar.h - recentLow) / recentLow) * 100 : null;
+    Number.isFinite(recentLow) && recentLow > 0
+      ? ((bar.h - recentLow) / recentLow) * 100
+      : null;
+
   const bodyPct = bar.o > 0 ? (Math.abs(bar.c - bar.o) / bar.o) * 100 : null;
 
   const emaGapPct = ema21Now > 0 ? ((ema21Now - ema8Now) / ema21Now) * 100 : 0;
   const ema21SlopePct =
-    Number.isFinite(ema21Prev) && ema21Prev > 0 ? ((ema21Now - ema21Prev) / ema21Prev) * 100 : 0;
+    Number.isFinite(ema21Prev) && ema21Prev > 0
+      ? ((ema21Now - ema21Prev) / ema21Prev) * 100
+      : 0;
   const minusLead =
-    Number.isFinite(minusDINow) && Number.isFinite(plusDINow) ? minusDINow - plusDINow : 0;
+    Number.isFinite(minusDINow) && Number.isFinite(plusDINow)
+      ? minusDINow - plusDINow
+      : 0;
 
   const hostileBear =
     emaGapPct > FILTER_HOSTILE_MAX_EMA_GAP_PCT ||
     ema21SlopePct < -FILTER_HOSTILE_MAX_NEG_SLOPE_PCT ||
     minusLead > FILTER_HOSTILE_MAX_MINUS_DI_LEAD;
 
-  const entryExtEma21Pct = ema21Now > 0 ? ((bar.c - ema21Now) / ema21Now) * 100 : null;
-  const entryExtEma18Pct = ema18Now > 0 ? ((bar.c - ema18Now) / ema18Now) * 100 : null;
+  const entryExtEma21Pct =
+    ema21Now > 0 ? ((bar.c - ema21Now) / ema21Now) * 100 : null;
+  const entryExtEma18Pct =
+    ema18Now > 0 ? ((bar.c - ema18Now) / ema18Now) * 100 : null;
   const buyFromReclaimPct =
-    Number.isFinite(reclaimPrice) && reclaimPrice > 0 ? ((bar.c - reclaimPrice) / reclaimPrice) * 100 : null;
+    Number.isFinite(reclaimPrice) && reclaimPrice > 0
+      ? ((bar.c - reclaimPrice) / reclaimPrice) * 100
+      : null;
 
   const fwoRecovered = Number.isFinite(fwoSigNow) && fwoNow > fwoSigNow;
   const fwoRising = Number.isFinite(fwoPrev) && fwoNow > fwoPrev;
@@ -735,13 +900,17 @@ function evaluateLongFilter(s) {
     bar.c > ema21Now;
   const aboveEma8 = Number.isFinite(ema8Now) ? bar.c > ema8Now : false;
 
-  const prev6High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1)) : null;
-  const prev4High = i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(4, bars.length - 1)) : null;
+  const prev6High =
+    i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(6, bars.length - 1)) : null;
+  const prev4High =
+    i >= 1 ? highestHigh(bars.slice(0, -1), Math.min(4, bars.length - 1)) : null;
   const breakoutNow = Number.isFinite(prev6High) ? bar.c > prev6High : false;
   const holdBreakNow = Number.isFinite(prev4High) ? bar.c >= prev4High : false;
 
   const closeOverReclaimPct =
-    Number.isFinite(reclaimPrice) && reclaimPrice > 0 ? ((bar.c - reclaimPrice) / reclaimPrice) * 100 : null;
+    Number.isFinite(reclaimPrice) && reclaimPrice > 0
+      ? ((bar.c - reclaimPrice) / reclaimPrice) * 100
+      : null;
 
   // ---------- MODE 1: REVERSAL RECLAIM ----------
   const reversalReasons = [];
@@ -749,8 +918,10 @@ function evaluateLongFilter(s) {
   if (!hadDamage) reversalReasons.push("no_recent_damage");
   if (barsSinceLow > FILTER_MAX_BARS_SINCE_LOW) reversalReasons.push("low_too_old");
   if (!reclaimReversal) reversalReasons.push("no_fresh_reclaim");
-  if (!(reclaimFromLowPct >= FILTER_MIN_RECLAIM_FROM_LOW_PCT)) reversalReasons.push("weak_reclaim_from_low");
-  if (!(impulseFromLowPct >= FILTER_MIN_IMPULSE_FROM_LOW_PCT)) reversalReasons.push("weak_impulse_from_low");
+  if (!(reclaimFromLowPct >= FILTER_MIN_RECLAIM_FROM_LOW_PCT))
+    reversalReasons.push("weak_reclaim_from_low");
+  if (!(impulseFromLowPct >= FILTER_MIN_IMPULSE_FROM_LOW_PCT))
+    reversalReasons.push("weak_impulse_from_low");
   if (!(bodyPct >= FILTER_MIN_BODY_PCT)) reversalReasons.push("weak_body");
   if (!aboveEma18_21) reversalReasons.push("not_above_ema18_21");
   if (!(rsiNow >= FILTER_RSI_MIN)) reversalReasons.push("rsi_too_low");
@@ -759,15 +930,24 @@ function evaluateLongFilter(s) {
   if (!fwoRecovered) reversalReasons.push("fwo_not_recovered");
   if (!fwoRising) reversalReasons.push("fwo_not_rising");
   if (!bullCandle) reversalReasons.push("not_bull_candle");
-  if (adxBelowThresholdStrict(adxNow, FILTER_ADX_MIN)) reversalReasons.push("adx_too_low");
+  if (adxBelowThresholdStrict(adxNow, FILTER_ADX_MIN))
+    reversalReasons.push("adx_too_low");
   if (!ema8Rising) reversalReasons.push("ema8_not_rising");
   if (hostileBear) reversalReasons.push("hostile_bear");
-  if (!(entryExtEma21Pct <= FILTER_MAX_ENTRY_EXT_EMA21_PCT)) reversalReasons.push("too_extended_ema21");
-  if (!(entryExtEma18Pct <= FILTER_MAX_ENTRY_EXT_EMA18_PCT)) reversalReasons.push("too_extended_ema18");
-  if (!(buyFromReclaimPct == null || buyFromReclaimPct <= FILTER_MAX_BUY_FROM_RECLAIM_PCT)) {
+  if (!(entryExtEma21Pct <= FILTER_MAX_ENTRY_EXT_EMA21_PCT))
+    reversalReasons.push("too_extended_ema21");
+  if (!(entryExtEma18Pct <= FILTER_MAX_ENTRY_EXT_EMA18_PCT))
+    reversalReasons.push("too_extended_ema18");
+  if (
+    !(
+      buyFromReclaimPct == null ||
+      buyFromReclaimPct <= FILTER_MAX_BUY_FROM_RECLAIM_PCT
+    )
+  ) {
     reversalReasons.push("too_far_from_reclaim");
   }
-  if (reclaimReversal && lowInfo.index > reclaimReversal.index) reversalReasons.push("fresh_low_after_reclaim");
+  if (reclaimReversal && lowInfo.index > reclaimReversal.index)
+    reversalReasons.push("fresh_low_after_reclaim");
 
   const reversalAllow = reversalReasons.length === 0;
 
@@ -782,7 +962,8 @@ function evaluateLongFilter(s) {
     if (FILTER_EARLY_BREAKOUT_REQUIRE_ABOVE_EMA8 && !aboveEma8) {
       earlyBreakoutReasons.push("not_above_ema8");
     }
-    if (!(rsiNow >= FILTER_EARLY_BREAKOUT_MIN_RSI)) earlyBreakoutReasons.push("rsi_too_low");
+    if (!(rsiNow >= FILTER_EARLY_BREAKOUT_MIN_RSI))
+      earlyBreakoutReasons.push("rsi_too_low");
     if (FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING && !rsiRising) {
       earlyBreakoutReasons.push("rsi_not_rising");
     }
@@ -833,12 +1014,24 @@ function evaluateLongFilter(s) {
   } else {
     if (!reclaimBreakout) breakoutReasons.push("no_recent_reclaim");
     if (!aboveEma18_21) breakoutReasons.push("not_above_ema18_21");
-    if (!(rsiNow >= FILTER_BREAKOUT_MIN_RSI)) breakoutReasons.push("rsi_too_low");
-    if (adxBelowThresholdContinuation(adxNow, FILTER_BREAKOUT_MIN_ADX)) breakoutReasons.push("adx_too_low");
-    if (!(closeOverReclaimPct != null && closeOverReclaimPct >= FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT)) {
+    if (!(rsiNow >= FILTER_BREAKOUT_MIN_RSI))
+      breakoutReasons.push("rsi_too_low");
+    if (adxBelowThresholdContinuation(adxNow, FILTER_BREAKOUT_MIN_ADX))
+      breakoutReasons.push("adx_too_low");
+    if (
+      !(
+        closeOverReclaimPct != null &&
+        closeOverReclaimPct >= FILTER_BREAKOUT_MIN_CLOSE_OVER_RECLAIM_PCT
+      )
+    ) {
       breakoutReasons.push("no_breakout_clearance");
     }
-    if (!(buyFromReclaimPct == null || buyFromReclaimPct <= FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT)) {
+    if (
+      !(
+        buyFromReclaimPct == null ||
+        buyFromReclaimPct <= FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT
+      )
+    ) {
       breakoutReasons.push("too_far_from_reclaim");
     }
     if (!(entryExtEma18Pct <= FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT)) {
@@ -863,12 +1056,17 @@ function evaluateLongFilter(s) {
   } else {
     if (!aboveEma18_21) holdReasons.push("not_above_ema18_21");
     if (!(rsiNow >= FILTER_HOLD_MIN_RSI)) holdReasons.push("rsi_too_low");
-    if (adxBelowThresholdContinuation(adxNow, FILTER_HOLD_MIN_ADX)) holdReasons.push("adx_too_low");
+    if (adxBelowThresholdContinuation(adxNow, FILTER_HOLD_MIN_ADX))
+      holdReasons.push("adx_too_low");
 
-    if (FILTER_HOLD_REQUIRE_RSI_RISING && !rsiRising) holdReasons.push("rsi_not_rising");
-    if (FILTER_HOLD_REQUIRE_FWO_RECOVERED && !fwoRecovered) holdReasons.push("fwo_not_recovered");
-    if (FILTER_HOLD_REQUIRE_EMA8_RISING && !ema8Rising) holdReasons.push("ema8_not_rising");
-    if (FILTER_HOLD_REQUIRE_BULL_CANDLE && !bullCandle) holdReasons.push("not_bull_candle");
+    if (FILTER_HOLD_REQUIRE_RSI_RISING && !rsiRising)
+      holdReasons.push("rsi_not_rising");
+    if (FILTER_HOLD_REQUIRE_FWO_RECOVERED && !fwoRecovered)
+      holdReasons.push("fwo_not_recovered");
+    if (FILTER_HOLD_REQUIRE_EMA8_RISING && !ema8Rising)
+      holdReasons.push("ema8_not_rising");
+    if (FILTER_HOLD_REQUIRE_BULL_CANDLE && !bullCandle)
+      holdReasons.push("not_bull_candle");
 
     if (FILTER_HOLD_REQUIRE_RECENT_RECLAIM && !reclaimHold) {
       holdReasons.push("no_recent_reclaim");
@@ -881,7 +1079,13 @@ function evaluateLongFilter(s) {
       holdReasons.push("too_extended_ema21");
     }
 
-    if (!(holdBreakNow || breakoutNow || (closeOverReclaimPct != null && closeOverReclaimPct >= 0))) {
+    if (
+      !(
+        holdBreakNow ||
+        breakoutNow ||
+        (closeOverReclaimPct != null && closeOverReclaimPct >= 0)
+      )
+    ) {
       holdReasons.push("no_hold_continuation_clearance");
     }
 
@@ -927,6 +1131,7 @@ function evaluateLongFilter(s) {
     maxBelowStreak,
     reclaimAgeBars,
     reclaimPrice,
+    reclaimLow,
     reclaimFromLowPct,
     impulseFromLowPct,
     bodyPct,
@@ -935,9 +1140,11 @@ function evaluateLongFilter(s) {
     adx: adxNow,
     plusDI: plusDINow,
     minusDI: minusDINow,
+    atr: atrNow,
     ema8: ema8Now,
     ema18: ema18Now,
     ema21: ema21Now,
+    close: bar.c,
     emaGapPct,
     ema21SlopePct,
     minusLead,
@@ -953,6 +1160,106 @@ function evaluateLongFilter(s) {
     breakoutReasons,
     holdReasons,
   };
+}
+
+// ========================================
+// EXIT HELPERS
+// ========================================
+function buildInitialStop(entryPrice, evalResult) {
+  const candidates = [];
+
+  const buf = INITIAL_STOP_BUFFER_PCT / 100;
+
+  if (
+    Number.isFinite(evalResult?.reclaimPrice) &&
+    evalResult.reclaimPrice < entryPrice
+  ) {
+    candidates.push(evalResult.reclaimPrice * (1 - buf));
+  }
+
+  if (
+    Number.isFinite(evalResult?.reclaimLow) &&
+    evalResult.reclaimLow < entryPrice
+  ) {
+    candidates.push(evalResult.reclaimLow * (1 - buf));
+  }
+
+  if (
+    Number.isFinite(evalResult?.recentLow) &&
+    evalResult.recentLow < entryPrice
+  ) {
+    candidates.push(evalResult.recentLow * (1 - buf));
+  }
+
+  if (
+    Number.isFinite(evalResult?.ema21) &&
+    evalResult.ema21 < entryPrice
+  ) {
+    candidates.push(evalResult.ema21 * (1 - buf));
+  }
+
+  if (
+    Number.isFinite(evalResult?.ema18) &&
+    evalResult.ema18 < entryPrice
+  ) {
+    candidates.push(evalResult.ema18 * (1 - buf));
+  }
+
+  const valid = candidates.filter((x) => Number.isFinite(x) && x < entryPrice);
+
+  if (valid.length) {
+    return Math.max(...valid);
+  }
+
+  return entryPrice * (1 - FALLBACK_INITIAL_STOP_PCT / 100);
+}
+
+function updateTrailingStop(s, price, evalResult) {
+  if (!s.inPosition || !Number.isFinite(s.entryPrice)) return;
+
+  if (!Number.isFinite(s.peakPrice) || price > s.peakPrice) {
+    s.peakPrice = price;
+  }
+
+  const atrTrail =
+    Number.isFinite(evalResult?.atr) && Number.isFinite(s.peakPrice)
+      ? s.peakPrice - evalResult.atr * TRAIL_ATR_MULT
+      : null;
+
+  const minPctTrail =
+    Number.isFinite(s.peakPrice)
+      ? s.peakPrice * (1 - TREND_MIN_TRAIL_PCT / 100)
+      : null;
+
+  let wideTrail = null;
+  if (Number.isFinite(atrTrail) && Number.isFinite(minPctTrail)) {
+    wideTrail = Math.min(atrTrail, minPctTrail);
+  } else if (Number.isFinite(atrTrail)) {
+    wideTrail = atrTrail;
+  } else if (Number.isFinite(minPctTrail)) {
+    wideTrail = minPctTrail;
+  }
+
+  if (Number.isFinite(wideTrail)) {
+    s.trailingStop = Math.max(
+      Number.isFinite(s.stopPrice) ? s.stopPrice : -Infinity,
+      wideTrail
+    );
+  } else {
+    s.trailingStop = s.stopPrice;
+  }
+}
+
+function getOpenPnLPct(s, price) {
+  if (!Number.isFinite(s.entryPrice) || !Number.isFinite(price) || s.entryPrice <= 0) {
+    return null;
+  }
+  return ((price - s.entryPrice) / s.entryPrice) * 100;
+}
+
+function getTimeInMinutes(s) {
+  if (!s.entryAtMs) return 0;
+  return (nowMs() - s.entryAtMs) / 60000;
 }
 
 // ========================================
@@ -977,8 +1284,12 @@ async function postTo3Commas(action, payload) {
         toNum(payload?.close) ??
         ""
     ),
-    tv_exchange: String(payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? ""),
-    tv_instrument: String(payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? ""),
+    tv_exchange: String(
+      payload?.tv_exchange ?? payload?.exchange ?? derived.tv_exchange ?? ""
+    ),
+    tv_instrument: String(
+      payload?.tv_instrument ?? payload?.ticker ?? derived.tv_instrument ?? ""
+    ),
     action,
     bot_uuid: THREECOMMAS_BOT_UUID,
   };
@@ -994,10 +1305,15 @@ async function postTo3Commas(action, payload) {
       signal: ac.signal,
     });
     const text = await resp.text();
-    console.log(`📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`);
+    console.log(
+      `📨 3Commas POST -> ${action} | status=${resp.status} | resp=${text || ""}`
+    );
     return { ok: resp.ok, status: resp.status, resp: text };
   } catch (e) {
-    console.log("⛔ 3Commas POST failed:", e?.name === "AbortError" ? "timeout" : e?.message || e);
+    console.log(
+      "⛔ 3Commas POST failed:",
+      e?.name === "AbortError" ? "timeout" : e?.message || e
+    );
     return { ok: false, error: String(e?.message || e) };
   } finally {
     clearTimeout(t);
@@ -1023,7 +1339,102 @@ async function handleTick(payload, res) {
   pushTickToBars(s, price, tsMs);
   maybeLogTick(s, payload?.time ?? new Date(tsMs).toISOString());
 
-  s.lastEval = evaluateLongFilter(s);
+  const evalResult = evaluateLongFilter(s);
+  s.lastEval = evalResult;
+
+  // internal exit stack first
+  if (INTERNAL_EXITS_ENABLED && s.inPosition) {
+    const now = nowMs();
+
+    if (exitDedupeActive(s, now)) {
+      maybeLogState(s);
+      return res.json({
+        ok: true,
+        tick: true,
+        symbol,
+        price,
+        bars: getBarsForCalc(s).length,
+        inPosition: true,
+        ignored: "exit_dedup",
+        filter: evalResult,
+      });
+    }
+
+    updateTrailingStop(s, price, evalResult);
+
+    const pnlPct = getOpenPnLPct(s, price);
+    const timeInMin = getTimeInMinutes(s);
+    const belowTrail =
+      Number.isFinite(s.trailingStop) && price <= s.trailingStop;
+    const trendStopActive = timeInMin >= TREND_STOP_ACTIVATE_MIN;
+    const weakProgress =
+      timeInMin >= TREND_TIME_STOP_MIN &&
+      Number.isFinite(pnlPct) &&
+      pnlPct < TREND_MIN_PROGRESS_PCT;
+
+    let exitReason = "";
+
+    if (belowTrail) {
+      exitReason = "trail_hit";
+    } else if (
+      trendStopActive &&
+      Number.isFinite(evalResult?.close) &&
+      Number.isFinite(evalResult?.ema18) &&
+      evalResult.close < evalResult.ema18
+    ) {
+      exitReason = "trend_lost";
+    } else if (weakProgress) {
+      exitReason = "time_stop";
+    }
+
+    if (exitReason) {
+      s.inPosition = false;
+      s.lastExitTs = now;
+      s.lastAction = `exit_${exitReason}`;
+
+      const exitPrice = price;
+
+      const prevEntry = s.entryPrice;
+      s.entryPrice = null;
+      s.entryAtMs = 0;
+      s.entryMode = "";
+      s.entryEval = null;
+      s.peakPrice = null;
+      s.stopPrice = null;
+      s.trailingStop = null;
+
+      console.log(
+        `📤 EXIT LONG (internal) | symbol=${symbol} reason=${exitReason} price=${fmt(
+          exitPrice
+        )} pnlPct=${fmt(pnlPct, 3)} timeMin=${fmt(timeInMin, 1)} prevEntry=${fmt(
+          prevEntry
+        )}`
+      );
+
+      const fwd = await postTo3Commas("exit_long", {
+        ...payload,
+        symbol,
+        price: exitPrice,
+      });
+
+      maybeLogState(s);
+
+      return res.json({
+        ok: true,
+        tick: true,
+        symbol,
+        action: "exit_long",
+        source: "internal_exit_stack",
+        reason: exitReason,
+        price: exitPrice,
+        pnlPct,
+        timeInMin,
+        trailingStop: s.trailingStop,
+        threecommas: fwd,
+      });
+    }
+  }
+
   maybeLogState(s);
 
   return res.json({
@@ -1033,6 +1444,9 @@ async function handleTick(payload, res) {
     price,
     bars: getBarsForCalc(s).length,
     filter: s.lastEval,
+    inPosition: s.inPosition,
+    trailingStop: s.trailingStop,
+    stopPrice: s.stopPrice,
   });
 }
 
@@ -1059,7 +1473,11 @@ async function handleEnterLong(payload, res, sourceTag) {
 
   if (enterDedupeActive(s, ts)) {
     s.lastAction = "enter_long_deduped";
-    return res.json({ ok: true, ignored: "enter_dedup", window_sec: ENTER_DEDUP_SEC });
+    return res.json({
+      ok: true,
+      ignored: "enter_dedup",
+      window_sec: ENTER_DEDUP_SEC,
+    });
   }
 
   const evalResult = evaluateLongFilter(s);
@@ -1084,11 +1502,20 @@ async function handleEnterLong(payload, res, sourceTag) {
   s.inPosition = true;
   s.entryPrice = price;
   s.entryAtMs = ts;
+  s.entryMode = evalResult.mode;
+  s.entryEval = evalResult;
+
+  s.peakPrice = price;
+  s.stopPrice = buildInitialStop(price, evalResult);
+  s.trailingStop = s.stopPrice;
+
   s.lastEnterAcceptedTs = ts;
   s.lastAction = "enter_long";
 
   console.log(
-    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} mode=${evalResult.mode} reclaimAge=${evalResult.reclaimAgeBars} ext18=${evalResult.entryExtEma18Pct?.toFixed(3)}% ext21=${evalResult.entryExtEma21Pct?.toFixed(3)}%`
+    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} mode=${evalResult.mode} reclaimAge=${evalResult.reclaimAgeBars} ext18=${evalResult.entryExtEma18Pct?.toFixed(3)}% ext21=${evalResult.entryExtEma21Pct?.toFixed(3)}% stop=${fmt(
+      s.stopPrice
+    )}`
   );
 
   const fwd = await postTo3Commas("enter_long", {
@@ -1102,6 +1529,8 @@ async function handleEnterLong(payload, res, sourceTag) {
     action: "enter_long",
     source: sourceTag,
     mode: evalResult.mode,
+    stopPrice: s.stopPrice,
+    trailingStop: s.trailingStop,
     filter: evalResult,
     threecommas: fwd,
   });
@@ -1125,6 +1554,12 @@ async function handleExitLong(payload, res, sourceTag) {
   s.inPosition = false;
   s.entryPrice = null;
   s.entryAtMs = 0;
+  s.entryMode = "";
+  s.entryEval = null;
+  s.peakPrice = null;
+  s.stopPrice = null;
+  s.trailingStop = null;
+  s.lastExitTs = nowMs();
   s.lastAction = "exit_long";
 
   console.log(`✅ EXIT LONG (${sourceTag}) | symbol=${symbol} price=${price ?? "na"}`);
@@ -1152,8 +1587,11 @@ app.get("/", (_req, res) => {
     out[sym] = {
       inPosition: s.inPosition,
       entryPrice: s.entryPrice,
+      entryMode: s.entryMode,
       lastTickPrice: s.lastTickPrice,
       bars: getBarsForCalc(s).length,
+      stopPrice: s.stopPrice,
+      trailingStop: s.trailingStop,
       lastAction: s.lastAction,
       lastEval: s.lastEval,
     };
@@ -1167,8 +1605,11 @@ app.get("/status", (_req, res) => {
     out[sym] = {
       inPosition: s.inPosition,
       entryPrice: s.entryPrice,
+      entryMode: s.entryMode,
       lastTickPrice: s.lastTickPrice,
       bars: getBarsForCalc(s).length,
+      stopPrice: s.stopPrice,
+      trailingStop: s.trailingStop,
       lastAction: s.lastAction,
       lastEval: s.lastEval,
     };
@@ -1236,6 +1677,9 @@ app.listen(PORT, () => {
   );
   console.log(
     `Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`
+  );
+  console.log(
+    `ExitStack: enabled=${INTERNAL_EXITS_ENABLED} | initBuf=${INITIAL_STOP_BUFFER_PCT}% | fallbackInitStop=${FALLBACK_INITIAL_STOP_PCT}% | atrLen=${TRAIL_ATR_LEN} | atrMult=${TRAIL_ATR_MULT} | minTrailPct=${TREND_MIN_TRAIL_PCT}% | trendStopMin=${TREND_STOP_ACTIVATE_MIN} | timeStopMin=${TREND_TIME_STOP_MIN} | minProgress=${TREND_MIN_PROGRESS_PCT}%`
   );
   console.log(
     `3Commas: URL=${THREECOMMAS_WEBHOOK_URL} | BOT_UUID=${THREECOMMAS_BOT_UUID ? "(set)" : "(missing)"} | SECRET=${THREECOMMAS_SECRET ? "(set)" : "(missing)"}`
