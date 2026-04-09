@@ -8,31 +8,27 @@
  * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
  * v4.6:
- * - preserves v4.5 internal exit stack
- * - preserves all prior entry modes:
+ * - preserves v4.5 entry modes:
  *   1) reversal_reclaim
- *   2) early_breakout_launch
- *   3) breakout_continuation
- *   4) hold_continuation
- * - adds new entry mode:
- *   5) trend_momentum_continuation
- *
- * Main goal of trend_momentum_continuation:
- * - catch Ray BUYs that arrive after the initial reclaim
- * - allow strong post-reclaim trend continuation
- * - avoid loosening reversal / reclaim logic globally
+ *   2) breakout_continuation
+ *   3) hold_continuation
+ *   4) early_breakout_launch
+ * - preserves internal exit stack from v4.5:
+ *   1) initial_stop
+ *   2) dynamic trailing stop
+ *   3) trend_lost
+ *   4) time_stop
+ *   5) Ray SELL remains active as external exit trigger
+ * - adds breakout follow-through memory:
+ *   - if early_breakout_launch or breakout_continuation becomes valid,
+ *     brain stores a short-lived memory window
+ *   - if Ray BUY arrives slightly later, brain can still allow entry
+ *     if structure is still healthy and extension is still acceptable
  *
  * Notes:
- * - this mode does NOT require recent reclaim
- * - this mode does NOT require recent damage
- * - this mode still requires:
- *   - strong RSI
- *   - healthy ADX
- *   - bullish structure above EMA18/EMA21
- *   - positive EMA21 slope
- *   - breakout/hold continuation flag
- *   - controlled extension
- *   - non-hostile structure
+ * - entry logic remains unchanged except for breakout memory fallback
+ * - exits are managed on tick path while in position
+ * - Ray SELL still exits immediately if position is open
  */
 
 import express from "express";
@@ -240,48 +236,6 @@ const FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE =
     process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE || "false"
   ).toLowerCase() === "true";
 
-// NEW: Trend momentum continuation mode
-const FILTER_TREND_CONTINUATION_ENABLED =
-  String(
-    process.env.FILTER_TREND_CONTINUATION_ENABLED || "true"
-  ).toLowerCase() === "true";
-
-const FILTER_TREND_CONTINUATION_MIN_RSI = Number(
-  process.env.FILTER_TREND_CONTINUATION_MIN_RSI || "62"
-);
-const FILTER_TREND_CONTINUATION_MIN_ADX = Number(
-  process.env.FILTER_TREND_CONTINUATION_MIN_ADX || "20"
-);
-const FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT = Number(
-  process.env.FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT || "0.00"
-);
-const FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT = Number(
-  process.env.FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT || "0.45"
-);
-const FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT = Number(
-  process.env.FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT || "0.55"
-);
-const FILTER_TREND_CONTINUATION_REQUIRE_BREAK_FLAG =
-  String(
-    process.env.FILTER_TREND_CONTINUATION_REQUIRE_BREAK_FLAG || "true"
-  ).toLowerCase() === "true";
-const FILTER_TREND_CONTINUATION_REQUIRE_ABOVE_EMA8 =
-  String(
-    process.env.FILTER_TREND_CONTINUATION_REQUIRE_ABOVE_EMA8 || "true"
-  ).toLowerCase() === "true";
-const FILTER_TREND_CONTINUATION_REQUIRE_RSI_ABOVE_MA =
-  String(
-    process.env.FILTER_TREND_CONTINUATION_REQUIRE_RSI_ABOVE_MA || "false"
-  ).toLowerCase() === "true";
-const FILTER_TREND_CONTINUATION_REQUIRE_FWO_RECOVERED =
-  String(
-    process.env.FILTER_TREND_CONTINUATION_REQUIRE_FWO_RECOVERED || "false"
-  ).toLowerCase() === "true";
-const FILTER_TREND_CONTINUATION_REQUIRE_BULL_CANDLE =
-  String(
-    process.env.FILTER_TREND_CONTINUATION_REQUIRE_BULL_CANDLE || "false"
-  ).toLowerCase() === "true";
-
 // Hostility
 const FILTER_HOSTILE_MAX_EMA_GAP_PCT = Number(
   process.env.FILTER_HOSTILE_MAX_EMA_GAP_PCT || "0.60"
@@ -297,6 +251,53 @@ const FILTER_HOSTILE_MAX_MINUS_DI_LEAD = Number(
 const ALLOW_ONLY_ONE_POSITION =
   String(process.env.ALLOW_ONLY_ONE_POSITION || "true").toLowerCase() ===
   "true";
+
+// ========================================
+// BREAKOUT MEMORY CONFIG
+// ========================================
+const BREAKOUT_MEMORY_ENABLE =
+  String(process.env.BREAKOUT_MEMORY_ENABLE || "true").toLowerCase() ===
+  "true";
+
+const BREAKOUT_MEMORY_MAX_BARS = Number(
+  process.env.BREAKOUT_MEMORY_MAX_BARS || "8"
+);
+
+const BREAKOUT_MEMORY_MAX_BUY_FROM_RECLAIM_PCT = Number(
+  process.env.BREAKOUT_MEMORY_MAX_BUY_FROM_RECLAIM_PCT || "0.85"
+);
+
+const BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA18_PCT = Number(
+  process.env.BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA18_PCT || "0.80"
+);
+
+const BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA21_PCT = Number(
+  process.env.BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA21_PCT || "0.95"
+);
+
+const BREAKOUT_MEMORY_RSI_FLOOR = Number(
+  process.env.BREAKOUT_MEMORY_RSI_FLOOR || "48"
+);
+
+const BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA18 =
+  String(process.env.BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA18 || "true").toLowerCase() ===
+  "true";
+
+const BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA21 =
+  String(process.env.BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA21 || "false").toLowerCase() ===
+  "true";
+
+const BREAKOUT_MEMORY_REQUIRE_BREAK_FLAG =
+  String(process.env.BREAKOUT_MEMORY_REQUIRE_BREAK_FLAG || "false").toLowerCase() ===
+  "true";
+
+const BREAKOUT_MEMORY_BLOCK_IF_HOSTILE =
+  String(process.env.BREAKOUT_MEMORY_BLOCK_IF_HOSTILE || "true").toLowerCase() ===
+  "true";
+
+const BREAKOUT_MEMORY_CLEAR_ON_RSI_BELOW = Number(
+  process.env.BREAKOUT_MEMORY_CLEAR_ON_RSI_BELOW || "46"
+);
 
 // ========================================
 // EXIT STACK CONFIG
@@ -354,6 +355,20 @@ function createSymbolState(symbol) {
     stopPrice: null,
     trailingStop: null,
     lastExitTs: 0,
+
+    breakoutMemory: {
+      active: false,
+      mode: "",
+      armedAtBarIndex: 0,
+      expiresAtBarIndex: 0,
+      reclaimPrice: null,
+      reclaimLow: null,
+      ema18AtArm: null,
+      ema21AtArm: null,
+      maxPriceSeen: null,
+      lastAllowBarIndex: 0,
+      sourceReasons: [],
+    },
 
     lastAction: "none",
     lastEnterAcceptedTs: 0,
@@ -483,8 +498,9 @@ function maybeLogState(s) {
   if (!s.lastStateLogMs || now - s.lastStateLogMs >= STATE_LOG_EVERY_MS) {
     const e = s.lastEval;
     const reasons = e?.reasons?.length ? e.reasons.join(",") : "na";
+    const bm = s.breakoutMemory;
     console.log(
-      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} mode=${e?.mode || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} trail=${s.trailingStop != null ? s.trailingStop.toFixed(4) : "na"} stop=${s.stopPrice != null ? s.stopPrice.toFixed(4) : "na"} reasons=${reasons} lastAction=${s.lastAction}`
+      `📌 STATE ${s.symbol} inPos=${s.inPosition ? 1 : 0} bars=${s.bars.length} price=${s.lastTickPrice ?? "na"} allow=${e?.allow ? 1 : 0} mode=${e?.mode || "na"} reclaimAge=${e?.reclaimAgeBars ?? "na"} ext21=${e?.entryExtEma21Pct != null ? e.entryExtEma21Pct.toFixed(3) : "na"} hostile=${e?.hostileBear ? 1 : 0} trail=${s.trailingStop != null ? s.trailingStop.toFixed(4) : "na"} stop=${s.stopPrice != null ? s.stopPrice.toFixed(4) : "na"} bmem=${bm?.active ? 1 : 0} bmemMode=${bm?.mode || "na"} bmemExp=${bm?.expiresAtBarIndex ?? "na"} reasons=${reasons} lastAction=${s.lastAction}`
     );
     s.lastStateLogMs = now;
   }
@@ -507,6 +523,10 @@ function pctChange(a, b) {
 
 function fmt(x, d = 4) {
   return Number.isFinite(x) ? Number(x).toFixed(d) : "na";
+}
+
+function getBarCount(s) {
+  return getBarsForCalc(s).length;
 }
 
 // ========================================
@@ -898,8 +918,7 @@ function evaluateLongFilter(s) {
     FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM
   );
 
-  const reclaimAny =
-    reclaimBreakout || reclaimReversal || reclaimHold || reclaimEarly;
+  const reclaimAny = reclaimBreakout || reclaimReversal || reclaimHold || reclaimEarly;
   const reclaimAgeBars = reclaimAny ? reclaimAny.ageBars : null;
   const reclaimPrice = reclaimAny ? reclaimAny.reclaimPrice : null;
   const reclaimLow = reclaimAny ? reclaimAny.reclaimLow : null;
@@ -1058,72 +1077,7 @@ function evaluateLongFilter(s) {
 
   const earlyBreakoutAllow = earlyBreakoutReasons.length === 0;
 
-  // ---------- MODE 3: TREND MOMENTUM CONTINUATION ----------
-  const trendContinuationReasons = [];
-
-  if (!FILTER_TREND_CONTINUATION_ENABLED) {
-    trendContinuationReasons.push("trend_continuation_disabled");
-  } else {
-    if (!aboveEma18_21) trendContinuationReasons.push("not_above_ema18_21");
-
-    if (FILTER_TREND_CONTINUATION_REQUIRE_ABOVE_EMA8 && !aboveEma8) {
-      trendContinuationReasons.push("not_above_ema8");
-    }
-
-    if (!(rsiNow >= FILTER_TREND_CONTINUATION_MIN_RSI)) {
-      trendContinuationReasons.push("rsi_too_low");
-    }
-
-    if (adxBelowThresholdContinuation(adxNow, FILTER_TREND_CONTINUATION_MIN_ADX)) {
-      trendContinuationReasons.push("adx_too_low");
-    }
-
-    if (!(ema21SlopePct >= FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT)) {
-      trendContinuationReasons.push("ema21_slope_too_low");
-    }
-
-    if (
-      FILTER_TREND_CONTINUATION_REQUIRE_BREAK_FLAG &&
-      !(breakoutNow || holdBreakNow)
-    ) {
-      trendContinuationReasons.push("no_trend_continuation_flag");
-    }
-
-    if (!(entryExtEma18Pct <= FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT)) {
-      trendContinuationReasons.push("too_extended_ema18");
-    }
-
-    if (!(entryExtEma21Pct <= FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT)) {
-      trendContinuationReasons.push("too_extended_ema21");
-    }
-
-    if (
-      FILTER_TREND_CONTINUATION_REQUIRE_RSI_ABOVE_MA &&
-      !rsiAboveMa
-    ) {
-      trendContinuationReasons.push("rsi_not_above_ma");
-    }
-
-    if (
-      FILTER_TREND_CONTINUATION_REQUIRE_FWO_RECOVERED &&
-      !fwoRecovered
-    ) {
-      trendContinuationReasons.push("fwo_not_recovered");
-    }
-
-    if (
-      FILTER_TREND_CONTINUATION_REQUIRE_BULL_CANDLE &&
-      !bullCandle
-    ) {
-      trendContinuationReasons.push("not_bull_candle");
-    }
-
-    if (hostileBear) trendContinuationReasons.push("hostile_bear");
-  }
-
-  const trendContinuationAllow = trendContinuationReasons.length === 0;
-
-  // ---------- MODE 4: BREAKOUT CONTINUATION ----------
+  // ---------- MODE 3: BREAKOUT CONTINUATION ----------
   const breakoutReasons = [];
 
   if (!FILTER_BREAKOUT_ENABLED) {
@@ -1165,7 +1119,7 @@ function evaluateLongFilter(s) {
 
   const breakoutAllow = breakoutReasons.length === 0;
 
-  // ---------- MODE 5: HOLD CONTINUATION ----------
+  // ---------- MODE 4: HOLD CONTINUATION ----------
   const holdReasons = [];
 
   if (!FILTER_HOLD_ENABLED) {
@@ -1220,9 +1174,6 @@ function evaluateLongFilter(s) {
   } else if (earlyBreakoutAllow) {
     allow = true;
     mode = "early_breakout_launch";
-  } else if (trendContinuationAllow) {
-    allow = true;
-    mode = "trend_momentum_continuation";
   } else if (breakoutAllow) {
     allow = true;
     mode = "breakout_continuation";
@@ -1233,7 +1184,6 @@ function evaluateLongFilter(s) {
     const combined = new Set();
     for (const r of reversalReasons) combined.add(r);
     for (const r of earlyBreakoutReasons) combined.add(r);
-    for (const r of trendContinuationReasons) combined.add(r);
     for (const r of breakoutReasons) combined.add(r);
     for (const r of holdReasons) combined.add(r);
     reasons.push(...combined);
@@ -1278,9 +1228,241 @@ function evaluateLongFilter(s) {
     holdBreakNow,
     reversalReasons,
     earlyBreakoutReasons,
-    trendContinuationReasons,
     breakoutReasons,
     holdReasons,
+  };
+}
+
+// ========================================
+// BREAKOUT MEMORY HELPERS
+// ========================================
+function clearBreakoutMemory(s, reason = "") {
+  if (s.breakoutMemory?.active && reason) {
+    console.log(`🧹 BREAKOUT MEMORY CLEARED | symbol=${s.symbol} reason=${reason}`);
+  }
+  s.breakoutMemory = {
+    active: false,
+    mode: "",
+    armedAtBarIndex: 0,
+    expiresAtBarIndex: 0,
+    reclaimPrice: null,
+    reclaimLow: null,
+    ema18AtArm: null,
+    ema21AtArm: null,
+    maxPriceSeen: null,
+    lastAllowBarIndex: 0,
+    sourceReasons: [],
+  };
+}
+
+function shouldArmBreakoutMemory(evalResult) {
+  if (!BREAKOUT_MEMORY_ENABLE) return false;
+  if (!evalResult?.allow) return false;
+  return (
+    evalResult.mode === "early_breakout_launch" ||
+    evalResult.mode === "breakout_continuation"
+  );
+}
+
+function updateBreakoutMemory(s, evalResult) {
+  if (!BREAKOUT_MEMORY_ENABLE) return;
+
+  const barIndex = evalResult?.barsCount ?? getBarCount(s);
+  const bm = s.breakoutMemory;
+
+  if (shouldArmBreakoutMemory(evalResult)) {
+    if (!bm.active) {
+      console.log(
+        `🟨 BREAKOUT MEMORY ARMED | symbol=${s.symbol} mode=${evalResult.mode} bar=${barIndex} reclaim=${fmt(
+          evalResult.reclaimPrice
+        )} ext18=${fmt(evalResult.entryExtEma18Pct, 3)} ext21=${fmt(
+          evalResult.entryExtEma21Pct,
+          3
+        )}`
+      );
+    }
+
+    bm.active = true;
+    bm.mode = evalResult.mode;
+    bm.armedAtBarIndex = bm.armedAtBarIndex || barIndex;
+    bm.expiresAtBarIndex = barIndex + BREAKOUT_MEMORY_MAX_BARS;
+    bm.reclaimPrice = evalResult.reclaimPrice;
+    bm.reclaimLow = evalResult.reclaimLow;
+    bm.ema18AtArm = evalResult.ema18;
+    bm.ema21AtArm = evalResult.ema21;
+    bm.maxPriceSeen = Number.isFinite(bm.maxPriceSeen)
+      ? Math.max(bm.maxPriceSeen, evalResult.close ?? s.lastTickPrice ?? -Infinity)
+      : (evalResult.close ?? s.lastTickPrice ?? null);
+    bm.lastAllowBarIndex = barIndex;
+    bm.sourceReasons = [];
+    return;
+  }
+
+  if (!bm.active) return;
+
+  if (Number.isFinite(evalResult?.close)) {
+    bm.maxPriceSeen = Number.isFinite(bm.maxPriceSeen)
+      ? Math.max(bm.maxPriceSeen, evalResult.close)
+      : evalResult.close;
+  }
+
+  if (barIndex > bm.expiresAtBarIndex) {
+    clearBreakoutMemory(s, "expired");
+    return;
+  }
+
+  if (
+    BREAKOUT_MEMORY_BLOCK_IF_HOSTILE &&
+    evalResult?.hostileBear
+  ) {
+    clearBreakoutMemory(s, "hostile_bear");
+    return;
+  }
+
+  if (
+    Number.isFinite(evalResult?.rsi) &&
+    evalResult.rsi < BREAKOUT_MEMORY_CLEAR_ON_RSI_BELOW
+  ) {
+    clearBreakoutMemory(s, "rsi_below_clear_floor");
+    return;
+  }
+
+  if (
+    BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA18 &&
+    Number.isFinite(evalResult?.close) &&
+    Number.isFinite(evalResult?.ema18) &&
+    evalResult.close <= evalResult.ema18
+  ) {
+    clearBreakoutMemory(s, "lost_ema18");
+    return;
+  }
+
+  if (
+    BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA21 &&
+    Number.isFinite(evalResult?.close) &&
+    Number.isFinite(evalResult?.ema21) &&
+    evalResult.close <= evalResult.ema21
+  ) {
+    clearBreakoutMemory(s, "lost_ema21");
+  }
+}
+
+function evaluateBreakoutMemoryEntry(s, evalResult, price) {
+  const bm = s.breakoutMemory;
+  const reasons = [];
+
+  if (!BREAKOUT_MEMORY_ENABLE) {
+    return { allow: false, mode: "memory_disabled", reasons: ["memory_disabled"] };
+  }
+
+  if (!bm?.active) {
+    return { allow: false, mode: "no_memory", reasons: ["no_memory"] };
+  }
+
+  const barIndex = evalResult?.barsCount ?? getBarCount(s);
+  if (barIndex > bm.expiresAtBarIndex) {
+    return { allow: false, mode: "memory_expired", reasons: ["memory_expired"] };
+  }
+
+  if (!(bm.mode === "early_breakout_launch" || bm.mode === "breakout_continuation")) {
+    return { allow: false, mode: "memory_mode_invalid", reasons: ["memory_mode_invalid"] };
+  }
+
+  if (
+    BREAKOUT_MEMORY_BLOCK_IF_HOSTILE &&
+    evalResult?.hostileBear
+  ) {
+    reasons.push("hostile_bear");
+  }
+
+  if (
+    !Number.isFinite(evalResult?.rsi) ||
+    evalResult.rsi < BREAKOUT_MEMORY_RSI_FLOOR
+  ) {
+    reasons.push("rsi_below_memory_floor");
+  }
+
+  if (
+    BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA18 &&
+    !(Number.isFinite(evalResult?.ema18) && price > evalResult.ema18)
+  ) {
+    reasons.push("not_above_ema18");
+  }
+
+  if (
+    BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA21 &&
+    !(Number.isFinite(evalResult?.ema21) && price > evalResult.ema21)
+  ) {
+    reasons.push("not_above_ema21");
+  }
+
+  if (
+    BREAKOUT_MEMORY_REQUIRE_BREAK_FLAG &&
+    !(evalResult?.breakoutNow || evalResult?.holdBreakNow)
+  ) {
+    reasons.push("no_break_flag");
+  }
+
+  const buyFromReclaimPct =
+    Number.isFinite(bm.reclaimPrice) && bm.reclaimPrice > 0
+      ? ((price - bm.reclaimPrice) / bm.reclaimPrice) * 100
+      : null;
+
+  const entryExtEma18Pct =
+    Number.isFinite(evalResult?.ema18) && evalResult.ema18 > 0
+      ? ((price - evalResult.ema18) / evalResult.ema18) * 100
+      : null;
+
+  const entryExtEma21Pct =
+    Number.isFinite(evalResult?.ema21) && evalResult.ema21 > 0
+      ? ((price - evalResult.ema21) / evalResult.ema21) * 100
+      : null;
+
+  if (
+    Number.isFinite(buyFromReclaimPct) &&
+    buyFromReclaimPct > BREAKOUT_MEMORY_MAX_BUY_FROM_RECLAIM_PCT
+  ) {
+    reasons.push("too_far_from_reclaim_memory");
+  }
+
+  if (
+    Number.isFinite(entryExtEma18Pct) &&
+    entryExtEma18Pct > BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA18_PCT
+  ) {
+    reasons.push("too_extended_ema18_memory");
+  }
+
+  if (
+    Number.isFinite(entryExtEma21Pct) &&
+    entryExtEma21Pct > BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA21_PCT
+  ) {
+    reasons.push("too_extended_ema21_memory");
+  }
+
+  if (reasons.length > 0) {
+    return {
+      allow: false,
+      mode: "breakout_memory_followthrough",
+      reasons,
+      buyFromReclaimPct,
+      entryExtEma18Pct,
+      entryExtEma21Pct,
+      memoryAgeBars: barIndex - bm.armedAtBarIndex,
+      memoryExpiryBarsLeft: bm.expiresAtBarIndex - barIndex,
+      reclaimPrice: bm.reclaimPrice,
+    };
+  }
+
+  return {
+    allow: true,
+    mode: "breakout_memory_followthrough",
+    reasons: [],
+    buyFromReclaimPct,
+    entryExtEma18Pct,
+    entryExtEma21Pct,
+    memoryAgeBars: barIndex - bm.armedAtBarIndex,
+    memoryExpiryBarsLeft: bm.expiresAtBarIndex - barIndex,
+    reclaimPrice: bm.reclaimPrice,
   };
 }
 
@@ -1464,6 +1646,8 @@ async function handleTick(payload, res) {
   const evalResult = evaluateLongFilter(s);
   s.lastEval = evalResult;
 
+  updateBreakoutMemory(s, evalResult);
+
   // internal exit stack first
   if (INTERNAL_EXITS_ENABLED && s.inPosition) {
     const now = nowMs();
@@ -1511,13 +1695,13 @@ async function handleTick(payload, res) {
 
     if (exitReason) {
       const exitPrice = price;
-      const exitTrailingStop = s.trailingStop;
-      const exitStopPrice = s.stopPrice;
-      const prevEntry = s.entryPrice;
+      const trailingStopSnapshot = s.trailingStop;
 
       s.inPosition = false;
       s.lastExitTs = now;
       s.lastAction = `exit_${exitReason}`;
+
+      const prevEntry = s.entryPrice;
       s.entryPrice = null;
       s.entryAtMs = 0;
       s.entryMode = "";
@@ -1552,8 +1736,7 @@ async function handleTick(payload, res) {
         price: exitPrice,
         pnlPct,
         timeInMin,
-        trailingStop: exitTrailingStop,
-        stopPrice: exitStopPrice,
+        trailingStop: trailingStopSnapshot,
         threecommas: fwd,
       });
     }
@@ -1571,6 +1754,7 @@ async function handleTick(payload, res) {
     inPosition: s.inPosition,
     trailingStop: s.trailingStop,
     stopPrice: s.stopPrice,
+    breakoutMemory: s.breakoutMemory,
   });
 }
 
@@ -1604,15 +1788,51 @@ async function handleEnterLong(payload, res, sourceTag) {
     });
   }
 
-  const evalResult = evaluateLongFilter(s);
+  let evalResult = evaluateLongFilter(s);
   s.lastEval = evalResult;
 
+  let finalEval = evalResult;
+  let usedBreakoutMemory = false;
+  let memoryEval = null;
+
   if (!evalResult.allow) {
+    memoryEval = evaluateBreakoutMemoryEntry(s, evalResult, price);
+    if (memoryEval.allow) {
+      usedBreakoutMemory = true;
+      finalEval = {
+        ...evalResult,
+        allow: true,
+        mode: memoryEval.mode,
+        reasons: [],
+        memoryOverride: true,
+        memoryMeta: memoryEval,
+      };
+
+      console.log(
+        `🟨 BUY MEMORY OVERRIDE | symbol=${symbol} price=${fmt(
+          price
+        )} mode=${memoryEval.mode} memAgeBars=${memoryEval.memoryAgeBars} memBarsLeft=${memoryEval.memoryExpiryBarsLeft} buyFromReclaim=${fmt(
+          memoryEval.buyFromReclaimPct,
+          3
+        )} ext18=${fmt(memoryEval.entryExtEma18Pct, 3)} ext21=${fmt(
+          memoryEval.entryExtEma21Pct,
+          3
+        )}`
+      );
+    }
+  }
+
+  if (!finalEval.allow) {
     s.lastAction = "enter_long_blocked_filter";
     if (DEBUG_FILTER) {
       console.log(
         `⛔ BUY BLOCKED | symbol=${symbol} price=${price} | mode=${evalResult.mode} | reasons=${evalResult.reasons.join(",")}`
       );
+      if (memoryEval && !memoryEval.allow) {
+        console.log(
+          `⛔ BUY MEMORY BLOCKED | symbol=${symbol} price=${price} | reasons=${memoryEval.reasons.join(",")}`
+        );
+      }
     }
     return res.json({
       ok: false,
@@ -1620,26 +1840,27 @@ async function handleEnterLong(payload, res, sourceTag) {
       mode: evalResult.mode,
       reasons: evalResult.reasons,
       filter: evalResult,
+      memory: memoryEval,
     });
   }
 
   s.inPosition = true;
   s.entryPrice = price;
   s.entryAtMs = ts;
-  s.entryMode = evalResult.mode;
-  s.entryEval = evalResult;
+  s.entryMode = finalEval.mode;
+  s.entryEval = finalEval;
 
   s.peakPrice = price;
-  s.stopPrice = buildInitialStop(price, evalResult);
+  s.stopPrice = buildInitialStop(price, finalEval);
   s.trailingStop = s.stopPrice;
 
   s.lastEnterAcceptedTs = ts;
-  s.lastAction = "enter_long";
+  s.lastAction = usedBreakoutMemory ? "enter_long_breakout_memory" : "enter_long";
 
   console.log(
-    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} mode=${evalResult.mode} reclaimAge=${evalResult.reclaimAgeBars} ext18=${evalResult.entryExtEma18Pct?.toFixed(3)}% ext21=${evalResult.entryExtEma21Pct?.toFixed(3)}% stop=${fmt(
+    `🚀 ENTER LONG (${sourceTag}) | symbol=${symbol} price=${price} mode=${finalEval.mode} reclaimAge=${finalEval.reclaimAgeBars} ext18=${finalEval.entryExtEma18Pct?.toFixed(3)}% ext21=${finalEval.entryExtEma21Pct?.toFixed(3)}% stop=${fmt(
       s.stopPrice
-    )}`
+    )}${usedBreakoutMemory ? ` memAge=${memoryEval.memoryAgeBars}` : ""}`
   );
 
   const fwd = await postTo3Commas("enter_long", {
@@ -1648,14 +1869,18 @@ async function handleEnterLong(payload, res, sourceTag) {
     price,
   });
 
+  clearBreakoutMemory(s, "entered");
+
   return res.json({
     ok: true,
     action: "enter_long",
     source: sourceTag,
-    mode: evalResult.mode,
+    mode: finalEval.mode,
     stopPrice: s.stopPrice,
     trailingStop: s.trailingStop,
-    filter: evalResult,
+    usedBreakoutMemory,
+    filter: finalEval,
+    memory: memoryEval,
     threecommas: fwd,
   });
 }
@@ -1716,6 +1941,7 @@ app.get("/", (_req, res) => {
       bars: getBarsForCalc(s).length,
       stopPrice: s.stopPrice,
       trailingStop: s.trailingStop,
+      breakoutMemory: s.breakoutMemory,
       lastAction: s.lastAction,
       lastEval: s.lastEval,
     };
@@ -1734,6 +1960,7 @@ app.get("/status", (_req, res) => {
       bars: getBarsForCalc(s).length,
       stopPrice: s.stopPrice,
       trailingStop: s.trailingStop,
+      breakoutMemory: s.breakoutMemory,
       lastAction: s.lastAction,
       lastEval: s.lastEval,
     };
@@ -1791,9 +2018,6 @@ app.listen(PORT, () => {
     `EarlyBreakout: enabled=${FILTER_EARLY_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | minRsi=${FILTER_EARLY_BREAKOUT_MIN_RSI} | maxExt18=${FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}% | maxBuyFromReclaim=${FILTER_EARLY_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}%`
   );
   console.log(
-    `TrendContinuation: enabled=${FILTER_TREND_CONTINUATION_ENABLED} | minRsi=${FILTER_TREND_CONTINUATION_MIN_RSI} | minAdx=${FILTER_TREND_CONTINUATION_MIN_ADX} | minEma21Slope=${FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT}% | maxExt18=${FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT}%`
-  );
-  console.log(
     `Breakout: enabled=${FILTER_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | maxBuyFromReclaim=${FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}%`
   );
   console.log(
@@ -1804,6 +2028,9 @@ app.listen(PORT, () => {
   );
   console.log(
     `Hostility: maxEmaGap=${FILTER_HOSTILE_MAX_EMA_GAP_PCT}% | maxNegSlope=${FILTER_HOSTILE_MAX_NEG_SLOPE_PCT}% | maxMinusLead=${FILTER_HOSTILE_MAX_MINUS_DI_LEAD}`
+  );
+  console.log(
+    `BreakoutMemory: enabled=${BREAKOUT_MEMORY_ENABLE} | maxBars=${BREAKOUT_MEMORY_MAX_BARS} | maxBuyFromReclaim=${BREAKOUT_MEMORY_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${BREAKOUT_MEMORY_MAX_ENTRY_EXT_EMA21_PCT}% | rsiFloor=${BREAKOUT_MEMORY_RSI_FLOOR} | aboveEma18=${BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA18} | aboveEma21=${BREAKOUT_MEMORY_REQUIRE_ABOVE_EMA21} | blockIfHostile=${BREAKOUT_MEMORY_BLOCK_IF_HOSTILE}`
   );
   console.log(
     `ExitStack: enabled=${INTERNAL_EXITS_ENABLED} | initBuf=${INITIAL_STOP_BUFFER_PCT}% | fallbackInitStop=${FALLBACK_INITIAL_STOP_PCT}% | atrLen=${TRAIL_ATR_LEN} | atrMult=${TRAIL_ATR_MULT} | minTrailPct=${TREND_MIN_TRAIL_PCT}% | trendStopMin=${TREND_STOP_ACTIVATE_MIN} | timeStopMin=${TREND_TIME_STOP_MIN} | minProgress=${TREND_MIN_PROGRESS_PCT}%`
