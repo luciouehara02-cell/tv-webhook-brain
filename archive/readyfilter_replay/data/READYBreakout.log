@@ -1,3 +1,64 @@
+2026-04-09T11:46:02.780636118Z [inf]  Starting Container
+2026-04-09T11:46:03.547265614Z [inf]  Reclaim: minReclaimFromLow=0.45% | minImpulseFromLow=0.55% | minBody=0.2% | maxBarsSinceReclaim=3
+2026-04-09T11:46:03.547341188Z [inf]  ✅ Brain Brain_READYFilter_v4.4-LONG listening on port 8080
+2026-04-09T11:46:03.547344921Z [inf]  Heartbeat: REQUIRE_FRESH_HEARTBEAT=true | HEARTBEAT_MAX_AGE_SEC=90
+2026-04-09T11:46:03.547348585Z [inf]  Bars: BAR_TF_SEC=180 | MAX_BARS=300
+2026-04-09T11:46:03.547352461Z [inf]  Filter: ENABLED=true | MIN_BARS=12 | ADX_MIN=14 | RSI_MIN=46
+2026-04-09T11:46:03.547355767Z [inf]  Damage: washLookback=18 | dropLookback=12 | maxBarsSinceLow=4 | minDropPct=0.6
+2026-04-09T11:46:03.547411541Z [inf]  EarlyBreakout: enabled=true | maxBarsSinceReclaim=2 | minRsi=48 | maxExt18=0.2% | maxExt21=0.2% | maxBuyFromReclaim=0.35%
+2026-04-09T11:46:03.547417621Z [inf]  Breakout: enabled=true | maxBarsSinceReclaim=8 | maxBuyFromReclaim=0.8% | maxExt18=1.1% | maxExt21=1.25%
+2026-04-09T11:46:03.547422312Z [inf]  Hold: enabled=true | minRsi=42 | minAdx=0 | maxExt18=1.2% | maxExt21=1.4% | recentReclaimLookback=8 | requireRecent=true
+2026-04-09T11:46:03.547427291Z [inf]  Extension: maxExt21=0.8% | maxExt18=0.6% | maxBuyFromReclaim=0.4%
+2026-04-09T11:46:03.547433982Z [inf]  Hostility: maxEmaGap=0.6% | maxNegSlope=0.12% | maxMinusLead=10
+2026-04-09T11:46:03.547439334Z [inf]  3Commas: URL=https://api.3commas.io/signal_bots/webhooks | BOT_UUID=(set) | SECRET=(set)
+2026-04-09T11:46:06.829330689Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.27 time=2026-04-09T11:46:06Z
+2026-04-09T11:46:06.829338281Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=0 price=82.27 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T11:49:17.724817969Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.34 time=2026-04-09T11:49:17Z
+2026-04-09T11:49:17.724820780Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=1 price=82.34 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T11:52:37.909226642Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.31 time=2026-04-09T11:52:31Z
+2026-04-09T11:52:37.909236910Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=2 price=82.31 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T11:55:38.766859833Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.25 time=2026-04-09T11:55:37Z
+2026-04-09T11:55:38.766864147Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=3 price=82.25 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T11:58:48.788058328Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.19 time=2026-04-09T11:58:46Z
+2026-04-09T11:58:48.788061921Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=4 price=82.19 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:02:08.854190180Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.18 time=2026-04-09T12:02:02Z
+2026-04-09T12:02:08.854197070Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=5 price=82.18 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:05:09.120792022Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.18 time=2026-04-09T12:05:02Z
+2026-04-09T12:05:09.120799429Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=6 price=82.18 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:08:09.158044697Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.21 time=2026-04-09T12:08:05Z
+2026-04-09T12:08:09.158050924Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=7 price=82.21 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:11:19.058582297Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.32 time=2026-04-09T12:11:16Z
+2026-04-09T12:11:19.058588192Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=8 price=82.32 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:14:29.048257052Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.26 time=2026-04-09T12:14:20Z
+2026-04-09T12:14:29.048261548Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=9 price=82.26 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:17:38.933057508Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.28 time=2026-04-09T12:17:32Z
+2026-04-09T12:17:38.933061745Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=10 price=82.28 allow=0 mode=warmup reclaimAge=na ext21=na hostile=0 reasons=not_enough_bars lastAction=none
+2026-04-09T12:20:38.787184102Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.15 time=2026-04-09T12:20:33Z
+2026-04-09T12:20:38.787191704Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=11 price=82.15 allow=0 mode=blocked reclaimAge=4 ext21=-0.111 hostile=0 reasons=no_fresh_reclaim,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_too_low,rsi_not_rising,rsi_not_above_ma,fwo_not_recovered,fwo_not_rising,not_bull_candle,adx_too_low,ema8_not_rising,not_above_ema8,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:23:49.853700370Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.08 time=2026-04-09T12:23:48Z
+2026-04-09T12:23:49.853705493Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=12 price=82.08 allow=0 mode=blocked reclaimAge=5 ext21=-0.180 hostile=0 reasons=no_fresh_reclaim,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_too_low,rsi_not_rising,rsi_not_above_ma,fwo_not_recovered,fwo_not_rising,not_bull_candle,adx_too_low,ema8_not_rising,not_above_ema8,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:27:09.894681162Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.21 time=2026-04-09T12:27:04Z
+2026-04-09T12:27:09.894686242Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=14 price=82.21 allow=0 mode=blocked reclaimAge=7 ext21=-0.013 hostile=0 reasons=no_fresh_reclaim,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_not_rising,rsi_not_above_ma,fwo_not_recovered,not_bull_candle,adx_too_low,rsi_too_low,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:30:09.938347021Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.17 time=2026-04-09T12:30:01Z
+2026-04-09T12:30:09.938354791Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=15 price=82.17 allow=0 mode=blocked reclaimAge=8 ext21=-0.055 hostile=0 reasons=no_fresh_reclaim,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_too_low,rsi_not_rising,rsi_not_above_ma,fwo_not_recovered,fwo_not_rising,not_bull_candle,adx_too_low,ema8_not_rising,not_above_ema8,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:33:19.891696958Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.22 time=2026-04-09T12:33:19Z
+2026-04-09T12:33:19.891702443Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=16 price=82.22 allow=0 mode=blocked reclaimAge=0 ext21=0.003 hostile=1 reasons=weak_reclaim_from_low,weak_impulse_from_low,weak_body,rsi_not_above_ma,adx_too_low,hostile_bear,rsi_too_low,no_launch_break_flag lastAction=none
+2026-04-09T12:36:40.796237962Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.3 time=2026-04-09T12:36:32Z
+2026-04-09T12:36:40.796241910Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=17 price=82.3 allow=1 mode=early_breakout_launch reclaimAge=1 ext21=0.088 hostile=0 reasons=na lastAction=none
+2026-04-09T12:39:50.759949857Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.16 time=2026-04-09T12:39:46Z
+2026-04-09T12:39:50.759955572Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=18 price=82.16 allow=0 mode=blocked reclaimAge=2 ext21=-0.066 hostile=0 reasons=weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_too_low,rsi_not_rising,rsi_not_above_ma,fwo_not_rising,not_bull_candle,adx_too_low,ema8_not_rising,not_above_ema8,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:43:10.750190581Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.3 time=2026-04-09T12:43:01Z
+2026-04-09T12:43:10.750196010Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=19 price=82.3 allow=1 mode=early_breakout_launch reclaimAge=1 ext21=0.080 hostile=0 reasons=na lastAction=none
+2026-04-09T12:46:10.679947012Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.2 time=2026-04-09T12:46:01Z
+2026-04-09T12:46:10.679952697Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=20 price=82.2 allow=0 mode=blocked reclaimAge=2 ext21=-0.033 hostile=0 reasons=low_too_old,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_not_rising,rsi_not_above_ma,not_bull_candle,adx_too_low,ema8_not_rising,not_above_ema8,rsi_too_low,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:49:20.573488442Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.19 time=2026-04-09T12:49:16Z
+2026-04-09T12:49:20.573494357Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=21 price=82.19 allow=0 mode=blocked reclaimAge=3 ext21=-0.034 hostile=1 reasons=low_too_old,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_not_above_ma,fwo_not_recovered,fwo_not_rising,adx_too_low,ema8_not_rising,hostile_bear,no_fresh_reclaim,not_above_ema8,rsi_too_low,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:52:20.455765722Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.17 time=2026-04-09T12:52:17Z
+2026-04-09T12:52:20.455770888Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=22 price=82.17 allow=0 mode=blocked reclaimAge=4 ext21=-0.053 hostile=1 reasons=low_too_old,no_fresh_reclaim,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,rsi_too_low,rsi_not_rising,rsi_not_above_ma,fwo_not_recovered,fwo_not_rising,not_bull_candle,adx_too_low,ema8_not_rising,hostile_bear,not_above_ema8,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:55:40.287954991Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.19 time=2026-04-09T12:55:31Z
+2026-04-09T12:55:40.287959898Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=23 price=82.19 allow=0 mode=blocked reclaimAge=5 ext21=-0.027 hostile=1 reasons=low_too_old,no_fresh_reclaim,weak_reclaim_from_low,weak_impulse_from_low,weak_body,not_above_ema18_21,fwo_not_recovered,fwo_not_rising,not_bull_candle,adx_too_low,ema8_not_rising,hostile_bear,not_above_ema8,rsi_too_low,no_launch_break_flag,no_breakout_clearance,no_hold_continuation_clearance lastAction=none
+2026-04-09T12:58:40.090081859Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.3 time=2026-04-09T12:58:31Z
+2026-04-09T12:58:40.090088999Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=24 price=82.3 allow=1 mode=early_breakout_launch reclaimAge=1 ext21=0.090 hostile=0 reasons=na lastAction=none
 2026-04-09T13:02:00.718919300Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.29 time=2026-04-09T13:01:50Z
 2026-04-09T13:02:00.718924076Z [inf]  📌 STATE BINANCE:SOLUSDT inPos=0 bars=25 price=82.29 allow=1 mode=breakout_continuation reclaimAge=2 ext21=0.074 hostile=0 reasons=na lastAction=none
 2026-04-09T13:05:10.546815548Z [inf]  🟦 TICK(15s) BINANCE:SOLUSDT price=82.24 time=2026-04-09T13:05:01Z
