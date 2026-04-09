@@ -1,19 +1,19 @@
 /**
- * BrainPhase2_DemoLong_v3.7x
+ * BrainPhase2_DemoLong_v3.7y
  *
  * Long-only demo brain
  *
- * v3.7x goals:
- * - Preserve v3.7h breakout chase protection
- * - Preserve washout / true recovery / shallow recovery logic
- * - Fix repeated missed strong-trend breakouts caused by over-strict B-grade extension blocking
- * - Allow controlled breakout continuation entry only when trend context proves itself
+ * v3.7y goals:
+ * - Preserve v3.7x breakout chase protection
+ * - Preserve washout / true recovery logic
+ * - Harden shallow recovery so weak/range chop does not keep triggering bad longs
+ * - Keep intrabar trailing / exit behaviour unchanged
  *
- * New vs v3.7h:
- * - breakout B-grade extension rule is now adaptive in strong trend
- * - repeated B-grade extension failures can unlock a controlled continuation entry
- * - old/stubborn B-grade setups clear earlier instead of failing endlessly
- * - keeps existing protection in weak trend / range / low-flow cases
+ * New vs v3.7x:
+ * - shallow recovery is trend-only by default
+ * - shallow recovery requires stronger internals by default
+ * - shallow recovery entry expires quickly if not confirmed
+ * - shallow recovery requires stronger bounce before entry
  */
 
 import express from "express";
@@ -26,7 +26,7 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEBUG = String(process.env.DEBUG || "1") === "1";
-const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7x";
+const BRAIN_NAME = process.env.BRAIN_NAME || "BrainPhase2_DemoLong_v3.7y";
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const TICKROUTER_SECRET = process.env.TICKROUTER_SECRET || "";
@@ -191,6 +191,23 @@ const SHALLOW_RECOVERY_MOMENTUM_MIN_SCORE = Number(
 );
 const SHALLOW_RECOVERY_MOMENTUM_MIN_FLOW = Number(
   process.env.SHALLOW_RECOVERY_MOMENTUM_MIN_FLOW || 2
+);
+
+// NEW: shallow recovery hardening
+const SHALLOW_RECOVERY_TREND_ONLY =
+  String(process.env.SHALLOW_RECOVERY_TREND_ONLY || "1") === "1";
+const SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN = Number(
+  process.env.SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN || 1.2
+);
+const SHALLOW_RECOVERY_REQUIRE_POSITIVE_OI_DELTA =
+  String(process.env.SHALLOW_RECOVERY_REQUIRE_POSITIVE_OI_DELTA || "1") === "1";
+const SHALLOW_RECOVERY_REQUIRE_POSITIVE_CVD =
+  String(process.env.SHALLOW_RECOVERY_REQUIRE_POSITIVE_CVD || "1") === "1";
+const SHALLOW_RECOVERY_ENTRY_MIN_BOUNCE_PCT = Number(
+  process.env.SHALLOW_RECOVERY_ENTRY_MIN_BOUNCE_PCT || 0.08
+);
+const SHALLOW_RECOVERY_ENTRY_MIN_FLOW = Number(
+  process.env.SHALLOW_RECOVERY_ENTRY_MIN_FLOW || 2
 );
 
 // premium breakout tiny-bounce exception
@@ -1078,7 +1095,11 @@ function detectShallowRecoverySetup(st) {
     return null;
   }
 
-  if (!(st.regime === "range" || isEarlyTrendRecovery(st))) return null;
+  if (SHALLOW_RECOVERY_TREND_ONLY) {
+    if (!isEarlyTrendRecovery(st)) return null;
+  } else {
+    if (!(st.regime === "range" || isEarlyTrendRecovery(st))) return null;
+  }
 
   const prev1 = getPrevClose(st);
   const upTick = prev1 != null ? st.close > prev1 : false;
@@ -1100,6 +1121,18 @@ function detectShallowRecoverySetup(st) {
     if (st.cvdTrend < 0) return null;
   }
 
+  if (SHALLOW_RECOVERY_REQUIRE_POSITIVE_OI_DELTA && st.oiDeltaBias <= 0) {
+    dlog(
+      `🚫 shallow recovery rejected | oiDeltaBias=${st.oiDeltaBias} requires > 0`
+    );
+    return null;
+  }
+
+  if (SHALLOW_RECOVERY_REQUIRE_POSITIVE_CVD && st.cvdTrend <= 0) {
+    dlog(`🚫 shallow recovery rejected | cvdTrend=${st.cvdTrend} requires > 0`);
+    return null;
+  }
+
   if (hasContradictoryShallowInternals(st)) {
     dlog(
       `🚫 shallow recovery rejected | contradictory internals oiD=${st.oiDeltaBias} cvd=${st.cvdTrend}`
@@ -1118,6 +1151,13 @@ function detectShallowRecoverySetup(st) {
 
   const scored = scoreShallowRecovery(st);
   if (scored.score < SHALLOW_RECOVERY_MIN_SCORE) return null;
+
+  if (scored.flowSupport < SHALLOW_RECOVERY_ENTRY_MIN_FLOW) {
+    dlog(
+      `🚫 shallow recovery rejected | flow=${scored.flowSupport} min=${SHALLOW_RECOVERY_ENTRY_MIN_FLOW}`
+    );
+    return null;
+  }
 
   if (!shallowRecoveryQualityPass(st, scored.score, scored.flowSupport)) {
     dlog(
@@ -1301,6 +1341,14 @@ function manageSetupLifecycle(st) {
       clearSetup(st, "recovery_invalidated");
       return;
     }
+  }
+
+  if (
+    st.setupType === "shallow_recovery_reclaim" &&
+    sAgeMin > SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN
+  ) {
+    clearSetup(st, "shallow_recovery_entry_timeout");
+    return;
   }
 
   if (st.setupType === "breakout_pullback") {
@@ -1699,6 +1747,11 @@ function recoveryEntryDecision(st, price) {
     return { ok: false, note: "recovery_timeout" };
   }
 
+  if (isShallow && sAgeMin > SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN) {
+    clearSetup(st, "shallow_recovery_entry_timeout");
+    return { ok: false, note: "shallow_recovery_entry_timeout" };
+  }
+
   const maxNear8 = isShallow
     ? SHALLOW_RECOVERY_MAX_NEAR_EMA8_PCT
     : RECOVERY_MAX_NEAR_EMA8_PCT;
@@ -1706,7 +1759,10 @@ function recoveryEntryDecision(st, price) {
     ? SHALLOW_RECOVERY_MAX_NEAR_EMA18_PCT
     : RECOVERY_MAX_NEAR_EMA18_PCT;
   const minBounce = isShallow
-    ? SHALLOW_RECOVERY_BOUNCE_MIN_PCT
+    ? Math.max(
+        SHALLOW_RECOVERY_BOUNCE_MIN_PCT,
+        SHALLOW_RECOVERY_ENTRY_MIN_BOUNCE_PCT
+      )
     : RECOVERY_BOUNCE_MIN_PCT;
 
   if (nearEma8Pct > maxNear8) {
@@ -1718,15 +1774,38 @@ function recoveryEntryDecision(st, price) {
   }
 
   if (isShallow) {
+    if (SHALLOW_RECOVERY_TREND_ONLY && !isEarlyTrendRecovery(st)) {
+      return { ok: false, note: "shallow_recovery_trend_only" };
+    }
+
+    if (st.flowSupport < SHALLOW_RECOVERY_ENTRY_MIN_FLOW) {
+      return { ok: false, note: "shallow_recovery_weak_flow" };
+    }
+
+    if (
+      SHALLOW_RECOVERY_REQUIRE_POSITIVE_OI_DELTA &&
+      st.oiDeltaBias <= 0
+    ) {
+      return { ok: false, note: "shallow_recovery_bad_oi_delta" };
+    }
+
+    if (
+      SHALLOW_RECOVERY_REQUIRE_POSITIVE_CVD &&
+      st.cvdTrend <= 0
+    ) {
+      return { ok: false, note: "shallow_recovery_bad_cvd" };
+    }
+
     const shallowMomentumPass =
       st.setupScore >= SHALLOW_RECOVERY_MOMENTUM_MIN_SCORE &&
       st.flowSupport >= SHALLOW_RECOVERY_MOMENTUM_MIN_FLOW &&
       (st.rsi || 0) >= SHALLOW_RECOVERY_MOMENTUM_RSI_MIN &&
-      st.oiDeltaBias >= 0 &&
-      st.cvdTrend >= 0 &&
+      st.oiDeltaBias > 0 &&
+      st.cvdTrend > 0 &&
       (st.regime === "trend" || isEarlyTrendRecovery(st)) &&
       price > st.ema8 &&
-      price > st.ema18;
+      price > st.ema18 &&
+      bouncePct >= minBounce;
 
     if (shallowMomentumPass) {
       return { ok: true, note: "shallow recovery momentum entry" };
@@ -1788,11 +1867,9 @@ function computeRiskVolumePct(st, entryPrice, stopPrice) {
     else if (st.setupScore >= 6) sizeMult = 0.6;
     else sizeMult = 0.5;
   } else if (st.setupType === "shallow_recovery_reclaim") {
-    if (st.setupScore >= 9 && st.flowSupport >= 2) sizeMult = 0.38;
-    else if (st.setupScore >= 9 && st.flowSupport === 1) sizeMult = 0.28;
-    else if (st.setupScore >= 8 && st.flowSupport >= 2) sizeMult = 0.3;
-    else if (st.setupScore >= 7 && st.flowSupport >= 2) sizeMult = 0.24;
-    else if (st.setupScore >= 6 && st.flowSupport >= 2) sizeMult = 0.18;
+    if (st.setupScore >= 9 && st.flowSupport >= 2) sizeMult = 0.30;
+    else if (st.setupScore >= 8 && st.flowSupport >= 2) sizeMult = 0.24;
+    else if (st.setupScore >= 7 && st.flowSupport >= 2) sizeMult = 0.18;
     else sizeMult = 0.12;
   } else if (st.setupType === "breakout_pullback") {
     if (st.flowSupport >= 3 && st.setupScore >= 9) sizeMult = 1.0;
@@ -2348,6 +2425,28 @@ app.listen(PORT, () => {
   );
   console.log(
     `✅ SHALLOW_RECOVERY_MOMENTUM_MIN_FLOW=${SHALLOW_RECOVERY_MOMENTUM_MIN_FLOW}`
+  );
+  console.log(
+    `✅ SHALLOW_RECOVERY_TREND_ONLY=${SHALLOW_RECOVERY_TREND_ONLY ? 1 : 0}`
+  );
+  console.log(
+    `✅ SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN=${SHALLOW_RECOVERY_MAX_ENTRY_AGE_MIN}`
+  );
+  console.log(
+    `✅ SHALLOW_RECOVERY_REQUIRE_POSITIVE_OI_DELTA=${
+      SHALLOW_RECOVERY_REQUIRE_POSITIVE_OI_DELTA ? 1 : 0
+    }`
+  );
+  console.log(
+    `✅ SHALLOW_RECOVERY_REQUIRE_POSITIVE_CVD=${
+      SHALLOW_RECOVERY_REQUIRE_POSITIVE_CVD ? 1 : 0
+    }`
+  );
+  console.log(
+    `✅ SHALLOW_RECOVERY_ENTRY_MIN_BOUNCE_PCT=${SHALLOW_RECOVERY_ENTRY_MIN_BOUNCE_PCT}`
+  );
+  console.log(
+    `✅ SHALLOW_RECOVERY_ENTRY_MIN_FLOW=${SHALLOW_RECOVERY_ENTRY_MIN_FLOW}`
   );
   console.log(
     `✅ BREAKOUT_PREMIUM_CONFIRM_ENABLE=${
