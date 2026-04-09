@@ -1,5 +1,5 @@
 /**
- * Brain_READYFilter_v4.5-LONG
+ * Brain_READYFilter_v4.6-LONG
  *
  * Architecture:
  * - RayAlgo BUY/SELL remains the external trigger
@@ -7,23 +7,32 @@
  * - Brain evaluates BUY quality at the exact BUY moment
  * - Brain blocks unwanted BUYs and forwards only approved BUYs to 3Commas
  *
- * v4.5:
- * - preserves all v4.4 entry modes:
+ * v4.6:
+ * - preserves v4.5 internal exit stack
+ * - preserves all prior entry modes:
  *   1) reversal_reclaim
- *   2) breakout_continuation
- *   3) hold_continuation
- *   4) early_breakout_launch
- * - adds internal exit stack inspired by BrainPhase2:
- *   1) initial_stop
- *   2) dynamic trailing stop
- *   3) trend_lost
- *   4) time_stop
- *   5) Ray SELL remains active as external exit trigger
+ *   2) early_breakout_launch
+ *   3) breakout_continuation
+ *   4) hold_continuation
+ * - adds new entry mode:
+ *   5) trend_momentum_continuation
+ *
+ * Main goal of trend_momentum_continuation:
+ * - catch Ray BUYs that arrive after the initial reclaim
+ * - allow strong post-reclaim trend continuation
+ * - avoid loosening reversal / reclaim logic globally
  *
  * Notes:
- * - entry logic remains unchanged
- * - exits are managed on tick path while in position
- * - Ray SELL still exits immediately if position is open
+ * - this mode does NOT require recent reclaim
+ * - this mode does NOT require recent damage
+ * - this mode still requires:
+ *   - strong RSI
+ *   - healthy ADX
+ *   - bullish structure above EMA18/EMA21
+ *   - positive EMA21 slope
+ *   - breakout/hold continuation flag
+ *   - controlled extension
+ *   - non-hostile structure
  */
 
 import express from "express";
@@ -31,7 +40,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-const BRAIN_VERSION = "Brain_READYFilter_v4.5-LONG";
+const BRAIN_VERSION = "Brain_READYFilter_v4.6-LONG";
 
 // ========================================
 // CONFIG
@@ -229,6 +238,48 @@ const FILTER_EARLY_BREAKOUT_REQUIRE_RSI_RISING =
 const FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE =
   String(
     process.env.FILTER_EARLY_BREAKOUT_REQUIRE_BULL_CANDLE || "false"
+  ).toLowerCase() === "true";
+
+// NEW: Trend momentum continuation mode
+const FILTER_TREND_CONTINUATION_ENABLED =
+  String(
+    process.env.FILTER_TREND_CONTINUATION_ENABLED || "true"
+  ).toLowerCase() === "true";
+
+const FILTER_TREND_CONTINUATION_MIN_RSI = Number(
+  process.env.FILTER_TREND_CONTINUATION_MIN_RSI || "62"
+);
+const FILTER_TREND_CONTINUATION_MIN_ADX = Number(
+  process.env.FILTER_TREND_CONTINUATION_MIN_ADX || "20"
+);
+const FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT = Number(
+  process.env.FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT || "0.00"
+);
+const FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT = Number(
+  process.env.FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT || "0.45"
+);
+const FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT = Number(
+  process.env.FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT || "0.55"
+);
+const FILTER_TREND_CONTINUATION_REQUIRE_BREAK_FLAG =
+  String(
+    process.env.FILTER_TREND_CONTINUATION_REQUIRE_BREAK_FLAG || "true"
+  ).toLowerCase() === "true";
+const FILTER_TREND_CONTINUATION_REQUIRE_ABOVE_EMA8 =
+  String(
+    process.env.FILTER_TREND_CONTINUATION_REQUIRE_ABOVE_EMA8 || "true"
+  ).toLowerCase() === "true";
+const FILTER_TREND_CONTINUATION_REQUIRE_RSI_ABOVE_MA =
+  String(
+    process.env.FILTER_TREND_CONTINUATION_REQUIRE_RSI_ABOVE_MA || "false"
+  ).toLowerCase() === "true";
+const FILTER_TREND_CONTINUATION_REQUIRE_FWO_RECOVERED =
+  String(
+    process.env.FILTER_TREND_CONTINUATION_REQUIRE_FWO_RECOVERED || "false"
+  ).toLowerCase() === "true";
+const FILTER_TREND_CONTINUATION_REQUIRE_BULL_CANDLE =
+  String(
+    process.env.FILTER_TREND_CONTINUATION_REQUIRE_BULL_CANDLE || "false"
   ).toLowerCase() === "true";
 
 // Hostility
@@ -847,7 +898,8 @@ function evaluateLongFilter(s) {
     FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM
   );
 
-  const reclaimAny = reclaimBreakout || reclaimReversal || reclaimHold || reclaimEarly;
+  const reclaimAny =
+    reclaimBreakout || reclaimReversal || reclaimHold || reclaimEarly;
   const reclaimAgeBars = reclaimAny ? reclaimAny.ageBars : null;
   const reclaimPrice = reclaimAny ? reclaimAny.reclaimPrice : null;
   const reclaimLow = reclaimAny ? reclaimAny.reclaimLow : null;
@@ -1006,7 +1058,72 @@ function evaluateLongFilter(s) {
 
   const earlyBreakoutAllow = earlyBreakoutReasons.length === 0;
 
-  // ---------- MODE 3: BREAKOUT CONTINUATION ----------
+  // ---------- MODE 3: TREND MOMENTUM CONTINUATION ----------
+  const trendContinuationReasons = [];
+
+  if (!FILTER_TREND_CONTINUATION_ENABLED) {
+    trendContinuationReasons.push("trend_continuation_disabled");
+  } else {
+    if (!aboveEma18_21) trendContinuationReasons.push("not_above_ema18_21");
+
+    if (FILTER_TREND_CONTINUATION_REQUIRE_ABOVE_EMA8 && !aboveEma8) {
+      trendContinuationReasons.push("not_above_ema8");
+    }
+
+    if (!(rsiNow >= FILTER_TREND_CONTINUATION_MIN_RSI)) {
+      trendContinuationReasons.push("rsi_too_low");
+    }
+
+    if (adxBelowThresholdContinuation(adxNow, FILTER_TREND_CONTINUATION_MIN_ADX)) {
+      trendContinuationReasons.push("adx_too_low");
+    }
+
+    if (!(ema21SlopePct >= FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT)) {
+      trendContinuationReasons.push("ema21_slope_too_low");
+    }
+
+    if (
+      FILTER_TREND_CONTINUATION_REQUIRE_BREAK_FLAG &&
+      !(breakoutNow || holdBreakNow)
+    ) {
+      trendContinuationReasons.push("no_trend_continuation_flag");
+    }
+
+    if (!(entryExtEma18Pct <= FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT)) {
+      trendContinuationReasons.push("too_extended_ema18");
+    }
+
+    if (!(entryExtEma21Pct <= FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT)) {
+      trendContinuationReasons.push("too_extended_ema21");
+    }
+
+    if (
+      FILTER_TREND_CONTINUATION_REQUIRE_RSI_ABOVE_MA &&
+      !rsiAboveMa
+    ) {
+      trendContinuationReasons.push("rsi_not_above_ma");
+    }
+
+    if (
+      FILTER_TREND_CONTINUATION_REQUIRE_FWO_RECOVERED &&
+      !fwoRecovered
+    ) {
+      trendContinuationReasons.push("fwo_not_recovered");
+    }
+
+    if (
+      FILTER_TREND_CONTINUATION_REQUIRE_BULL_CANDLE &&
+      !bullCandle
+    ) {
+      trendContinuationReasons.push("not_bull_candle");
+    }
+
+    if (hostileBear) trendContinuationReasons.push("hostile_bear");
+  }
+
+  const trendContinuationAllow = trendContinuationReasons.length === 0;
+
+  // ---------- MODE 4: BREAKOUT CONTINUATION ----------
   const breakoutReasons = [];
 
   if (!FILTER_BREAKOUT_ENABLED) {
@@ -1048,7 +1165,7 @@ function evaluateLongFilter(s) {
 
   const breakoutAllow = breakoutReasons.length === 0;
 
-  // ---------- MODE 4: HOLD CONTINUATION ----------
+  // ---------- MODE 5: HOLD CONTINUATION ----------
   const holdReasons = [];
 
   if (!FILTER_HOLD_ENABLED) {
@@ -1103,6 +1220,9 @@ function evaluateLongFilter(s) {
   } else if (earlyBreakoutAllow) {
     allow = true;
     mode = "early_breakout_launch";
+  } else if (trendContinuationAllow) {
+    allow = true;
+    mode = "trend_momentum_continuation";
   } else if (breakoutAllow) {
     allow = true;
     mode = "breakout_continuation";
@@ -1113,6 +1233,7 @@ function evaluateLongFilter(s) {
     const combined = new Set();
     for (const r of reversalReasons) combined.add(r);
     for (const r of earlyBreakoutReasons) combined.add(r);
+    for (const r of trendContinuationReasons) combined.add(r);
     for (const r of breakoutReasons) combined.add(r);
     for (const r of holdReasons) combined.add(r);
     reasons.push(...combined);
@@ -1157,6 +1278,7 @@ function evaluateLongFilter(s) {
     holdBreakNow,
     reversalReasons,
     earlyBreakoutReasons,
+    trendContinuationReasons,
     breakoutReasons,
     holdReasons,
   };
@@ -1388,13 +1510,14 @@ async function handleTick(payload, res) {
     }
 
     if (exitReason) {
+      const exitPrice = price;
+      const exitTrailingStop = s.trailingStop;
+      const exitStopPrice = s.stopPrice;
+      const prevEntry = s.entryPrice;
+
       s.inPosition = false;
       s.lastExitTs = now;
       s.lastAction = `exit_${exitReason}`;
-
-      const exitPrice = price;
-
-      const prevEntry = s.entryPrice;
       s.entryPrice = null;
       s.entryAtMs = 0;
       s.entryMode = "";
@@ -1429,7 +1552,8 @@ async function handleTick(payload, res) {
         price: exitPrice,
         pnlPct,
         timeInMin,
-        trailingStop: s.trailingStop,
+        trailingStop: exitTrailingStop,
+        stopPrice: exitStopPrice,
         threecommas: fwd,
       });
     }
@@ -1665,6 +1789,9 @@ app.listen(PORT, () => {
   );
   console.log(
     `EarlyBreakout: enabled=${FILTER_EARLY_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_EARLY_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | minRsi=${FILTER_EARLY_BREAKOUT_MIN_RSI} | maxExt18=${FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_EARLY_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}% | maxBuyFromReclaim=${FILTER_EARLY_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}%`
+  );
+  console.log(
+    `TrendContinuation: enabled=${FILTER_TREND_CONTINUATION_ENABLED} | minRsi=${FILTER_TREND_CONTINUATION_MIN_RSI} | minAdx=${FILTER_TREND_CONTINUATION_MIN_ADX} | minEma21Slope=${FILTER_TREND_CONTINUATION_MIN_EMA21_SLOPE_PCT}% | maxExt18=${FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_TREND_CONTINUATION_MAX_ENTRY_EXT_EMA21_PCT}%`
   );
   console.log(
     `Breakout: enabled=${FILTER_BREAKOUT_ENABLED} | maxBarsSinceReclaim=${FILTER_BREAKOUT_MAX_BARS_SINCE_RECLAIM} | maxBuyFromReclaim=${FILTER_BREAKOUT_MAX_BUY_FROM_RECLAIM_PCT}% | maxExt18=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA18_PCT}% | maxExt21=${FILTER_BREAKOUT_MAX_ENTRY_EXT_EMA21_PCT}%`
