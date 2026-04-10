@@ -1,3 +1,5 @@
+//REPLAY Cases
+
 cd /workspaces/tv-webhook-brain/BrainRAY/Replay
 export BRAINRAY_URL="https://brainraycontinuation-production.up.railway.app/webhook"
 
@@ -10,3 +12,11 @@ v2
 node scripts/replay_brainray_case.cjs cases/case4_tp_exit_then_reentry.json "$BRAINRAY_URL"
 node scripts/replay_brainray_case.cjs cases/case5_tp_exit_no_reentry.json "$BRAINRAY_URL"
 node scripts/replay_brainray_case.cjs cases/case6_bearish_regime_break.json "$BRAINRAY_URL"
+
+//Manual RESET before Replay
+curl -X POST "https://brainraycontinuation-production.up.railway.app/reset" \
+  -H "content-type: application/json" \
+  -d '{
+    "secret":"BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "reason":"before_replay"
+  }'
