@@ -1,0 +1,59 @@
+[
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 83.55,
+    "time": "2026-04-10T12:12:20Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-04-10T12:12:25Z",
+    "open": 83.52,
+    "high": 83.62,
+    "low": 83.49,
+    "close": 83.54,
+    "ema8": 83.5936,
+    "ema18": 83.5438,
+    "ema50": 83.41,
+    "rsi": 53.236,
+    "atr": 0.22,
+    "atrPct": 0.263,
+    "adx": 21.859,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 0,
+    "priceDropPct": -0.02,
+    "patternAReady": 0,
+    "patternAWatch": 0
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish Trend Change",
+    "price": 83.56,
+    "time": "2026-04-10T12:12:31Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 83.54,
+    "time": "2026-04-10T12:13:40Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish Trend Continuation",
+    "price": 83.54,
+    "time": "2026-04-10T12:13:56Z"
+  }
+]
