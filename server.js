@@ -90,6 +90,18 @@ function secretFor(url) {
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOPHASE5" };
   }
 
+  // NEW: BrainRAY Continuation
+  if (u.includes("brainraycontinuation-production")) {
+    const s = String(process.env.BRAIN_SECRET_BRAINRAYCONTINUATION || "");
+    if (s) {
+      return { secret: s, source: "ENV:BRAIN_SECRET_BRAINRAYCONTINUATION" };
+    }
+    return {
+      secret: "",
+      source: "MISSING_ENV:BRAIN_SECRET_BRAINRAYCONTINUATION",
+    };
+  }
+
   if (!STRICT_DEST_SECRET) {
     if (BRAIN_SECRET) {
       return { secret: BRAIN_SECRET, source: "ENV:BRAIN_SECRET(default)" };
@@ -147,6 +159,9 @@ app.get("/", (_req, res) => {
       hasDemoLong: Boolean(process.env.BRAIN_SECRET_DEMOLONG),
       hasDemoShort: Boolean(process.env.BRAIN_SECRET_DEMOSHORT),
       hasDemoPhase5: Boolean(process.env.BRAIN_SECRET_DEMOPHASE5),
+      hasBrainRayContinuation: Boolean(
+        process.env.BRAIN_SECRET_BRAINRAYCONTINUATION
+      ),
     },
   });
 });
@@ -229,6 +244,7 @@ app.listen(PORT, () => {
     `Per-brain secrets set: ACT=${process.env.BRAIN_SECRET_ACTLONG ? "YES" : "NO"}, ` +
       `DEMO_LONG=${process.env.BRAIN_SECRET_DEMOLONG ? "YES" : "NO"}, ` +
       `DEMO_SHORT=${process.env.BRAIN_SECRET_DEMOSHORT ? "YES" : "NO"}, ` +
-      `DEMO_PHASE5=${process.env.BRAIN_SECRET_DEMOPHASE5 ? "YES" : "NO"}`
+      `DEMO_PHASE5=${process.env.BRAIN_SECRET_DEMOPHASE5 ? "YES" : "NO"}, ` +
+      `BRAINRAY_CONTINUATION=${process.env.BRAIN_SECRET_BRAINRAYCONTINUATION ? "YES" : "NO"}`
   );
 });
