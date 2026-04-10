@@ -1,0 +1,93 @@
+[
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 83.60,
+    "time": "2026-04-10T13:30:00Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish Trend Change",
+    "price": 83.60,
+    "time": "2026-04-10T13:30:05Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-04-10T13:30:10Z",
+    "open": 83.52,
+    "high": 83.66,
+    "low": 83.50,
+    "close": 83.64,
+    "ema8": 83.59,
+    "ema18": 83.55,
+    "ema50": 83.42,
+    "rsi": 56.8,
+    "atr": 0.23,
+    "atrPct": 0.275,
+    "adx": 20.8,
+    "oiTrend": 1,
+    "oiDeltaBias": 1,
+    "cvdTrend": 1,
+    "liqClusterBelow": 0,
+    "priceDropPct": 0.10,
+    "patternAReady": 1,
+    "patternAWatch": 0
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish Trend Continuation",
+    "price": 83.64,
+    "time": "2026-04-10T13:30:20Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 83.92,
+    "time": "2026-04-10T13:31:10Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bearish Trend Change",
+    "price": 83.88,
+    "time": "2026-04-10T13:31:30Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-04-10T13:35:10Z",
+    "open": 83.90,
+    "high": 83.94,
+    "low": 83.72,
+    "close": 83.76,
+    "ema8": 83.83,
+    "ema18": 83.79,
+    "ema50": 83.60,
+    "rsi": 47.8,
+    "atr": 0.24,
+    "atrPct": 0.286,
+    "adx": 18.5,
+    "oiTrend": -1,
+    "oiDeltaBias": -1,
+    "cvdTrend": -1,
+    "liqClusterBelow": 0,
+    "priceDropPct": -0.22,
+    "patternAReady": 0,
+    "patternAWatch": 0
+  }
+]
