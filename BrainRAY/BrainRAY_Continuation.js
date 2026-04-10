@@ -1,10 +1,21 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v1.0
-// Long-only, Ray-led continuation brain for SOLUSDT
-// Entry structure: 5m features/signals
-// Execution/protection: live ticks
+// BrainRAY_Continuation_v2.0
+// Phase 2A
+//
+// Adds:
+// - bull regime persistence across TP exits
+// - cycle exits vs regime-break exits
+// - re-entry eligibility and reclaim re-entry
+// - max re-entries per bull regime
+//
+// Keeps:
+// - long-only
+// - SOLUSDT
+// - Ray-led continuation logic
+// - breakout memory fallback
+// - tick-based protection
 // ============================================================
 
 const app = express();
@@ -40,13 +51,9 @@ function isoNow() {
 
 function pctDiff(from, to) {
   const a = Number(from);
-  const b = Number(to);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a === 0) return 0;
-  return ((b - a) / a) * 100;
-}
-
-function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
+  const b2 = Number(to);
+  if (!Number.isFinite(a) || !Number.isFinite(b2) || a === 0) return 0;
+  return ((b2 - a) / a) * 100;
 }
 
 function safeJsonParse(raw, fallback) {
@@ -81,11 +88,6 @@ function ageSec(iso) {
   return Math.max(0, (Date.now() - t) / 1000);
 }
 
-function fmt(x, dp = 4) {
-  const v = Number(x);
-  return Number.isFinite(v) ? v.toFixed(dp) : "na";
-}
-
 function pickFirst(obj, keys, def = undefined) {
   for (const k of keys) {
     if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
@@ -111,7 +113,7 @@ function reasonPush(arr, cond, text) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v1.0"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.0"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -130,7 +132,6 @@ const CONFIG = {
   C3_SIGNAL_SECRET: s(process.env.C3_SIGNAL_SECRET || process.env.THREECOMMAS_SECRET, ""),
   C3_TIMEOUT_MS: n(process.env.C3_TIMEOUT_MS || process.env.THREECOMMAS_TIMEOUT_MS, 8000),
   MAX_LAG_SEC: n(process.env.MAX_LAG_SEC || process.env.THREECOMMAS_MAX_LAG, 300),
-
   SYMBOL_BOT_MAP: safeJsonParse(process.env.SYMBOL_BOT_MAP || "{}", {}),
 
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
@@ -139,7 +140,7 @@ const CONFIG = {
   RAY_USE_BEARISH_TREND_CHANGE: b(process.env.RAY_USE_BEARISH_TREND_CHANGE, true),
   RAY_USE_BEARISH_TREND_CONTINUATION: b(process.env.RAY_USE_BEARISH_TREND_CONTINUATION, true),
 
-  FVVO_USE_SNIPER_BUY: b(process.env.FVVO_USE_SNIPER_BUY, true),
+  FVVO_USE_SNIPER_BUY: b(process.env.FVVO_USE_SNIPER_BUY, false),
   FVVO_SNIPER_LOOKBACK_BARS: n(process.env.FVVO_SNIPER_LOOKBACK_BARS, 3),
 
   REQUIRE_EMA8_ABOVE_EMA18: b(process.env.REQUIRE_EMA8_ABOVE_EMA18, true),
@@ -158,8 +159,6 @@ const CONFIG = {
   BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM: b(process.env.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM, true),
   BREAKOUT_MEMORY_INVALIDATE_PCT: n(process.env.BREAKOUT_MEMORY_INVALIDATE_PCT, 0.10),
 
-  REGIME_MAX_BARS_WITHOUT_BULL_SUPPORT: n(process.env.REGIME_MAX_BARS_WITHOUT_BULL_SUPPORT, 8),
-
   HARD_STOP_PCT: n(process.env.HARD_STOP_PCT, 0.80),
   BREAKEVEN_ARM_PCT: n(process.env.BREAKEVEN_ARM_PCT, 0.40),
   BREAKEVEN_OFFSET_PCT: n(process.env.BREAKEVEN_OFFSET_PCT, 0.05),
@@ -172,6 +171,20 @@ const CONFIG = {
   EXIT_ON_BEARISH_TREND_CONTINUATION: b(process.env.EXIT_ON_BEARISH_TREND_CONTINUATION, false),
   EXIT_ON_5M_CLOSE_BELOW_EMA8: b(process.env.EXIT_ON_5M_CLOSE_BELOW_EMA8, true),
   EXIT_ON_5M_CLOSE_BELOW_EMA18: b(process.env.EXIT_ON_5M_CLOSE_BELOW_EMA18, false),
+
+  // Phase 2A
+  PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
+  MAX_REENTRIES_PER_BULL_REGIME: n(process.env.MAX_REENTRIES_PER_BULL_REGIME, 2),
+  REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
+  REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.REENTRY_REQUIRE_BULL_CONTEXT, true),
+  REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  REENTRY_MAX_CHASE_PCT: n(process.env.REENTRY_MAX_CHASE_PCT, 0.20),
+  REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.15),
+
+  LOCAL_TP_EXIT_ENABLED: b(process.env.LOCAL_TP_EXIT_ENABLED, true),
+  LOCAL_TP_MIN_PROFIT_PCT: n(process.env.LOCAL_TP_MIN_PROFIT_PCT, 0.60),
+  LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8: b(process.env.LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8, true),
+  KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
 };
@@ -209,8 +222,15 @@ const S = {
   lastExitAtMs: 0,
   lastAction: null,
 
+  cycleState: "flat", // flat | long | tp_exit_wait_reentry | cooldown_hard | disabled_by_bear_regime
+  lastExitClass: null, // cycle_exit | regime_break | stop_exit
+
   ray: {
     bullContext: false,
+    bullRegimeId: 0,
+    bullRegimeStartedAt: null,
+    reentryCountInRegime: 0,
+
     lastBullTrendChangeAt: null,
     lastBullTrendContinuationAt: null,
     lastBullBosAt: null,
@@ -234,6 +254,16 @@ const S = {
     armedAt: null,
   },
 
+  reentry: {
+    eligible: false,
+    eligibleUntilBar: null,
+    eligibleFromBar: null,
+    exitPrice: null,
+    peakBeforeExit: null,
+    anchorPrice: null,
+    bullRegimeId: null,
+  },
+
   logs: [],
 };
 
@@ -241,7 +271,7 @@ function log(msg, data = null) {
   const line = data ? `${msg} | ${JSON.stringify(data)}` : msg;
   const out = `${isoNow()} ${line}`;
   S.logs.push(out);
-  if (S.logs.length > 300) S.logs.shift();
+  if (S.logs.length > 400) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
 }
 
@@ -278,6 +308,21 @@ function clearBreakoutMemory(reason = "reset") {
   };
 }
 
+function clearReentry(reason = "reset") {
+  if (S.reentry.eligible) {
+    log("🔁 REENTRY_DISABLED", { reason });
+  }
+  S.reentry = {
+    eligible: false,
+    eligibleUntilBar: null,
+    eligibleFromBar: null,
+    exitPrice: null,
+    peakBeforeExit: null,
+    anchorPrice: null,
+    bullRegimeId: null,
+  };
+}
+
 // ------------------------------------------------------------
 // Parsing inbound event types
 // ------------------------------------------------------------
@@ -290,7 +335,6 @@ function parseInboundType(body) {
   if (src === "ray") return { family: "ray", name: event };
   if (src === "fvvo") return { family: "fvvo", name: event };
 
-  // Flexible fallbacks
   const cond = String(body.condition || "").trim();
   const label = event || cond;
 
@@ -308,21 +352,49 @@ function parseInboundType(body) {
 // ------------------------------------------------------------
 // Regime / signal memory
 // ------------------------------------------------------------
+function turnBullRegimeOn(ts, source) {
+  if (!S.ray.bullContext) {
+    S.ray.bullContext = true;
+    S.ray.bullRegimeId += 1;
+    S.ray.bullRegimeStartedAt = ts;
+    S.ray.reentryCountInRegime = 0;
+    S.cycleState = S.inPosition ? "long" : "flat";
+    clearReentry("new_bull_regime");
+    log("🟢 BULL_REGIME_ON", {
+      source,
+      bullRegimeId: S.ray.bullRegimeId,
+      ts,
+    });
+  }
+}
+
+function turnBullRegimeOff(ts, reason) {
+  if (S.ray.bullContext) {
+    S.ray.bullContext = false;
+    S.cycleState = S.inPosition ? "long" : "disabled_by_bear_regime";
+    clearBreakoutMemory("bull_regime_off");
+    clearReentry("bull_regime_off");
+    log("🔴 BULL_REGIME_OFF", { reason, ts, bullRegimeId: S.ray.bullRegimeId });
+  }
+}
+
 function handleRayEvent(body) {
   const name = String(body.event || body.signal || body.alert || body.action || "").trim();
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
   const price = n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()));
 
   if (/Bullish Trend Change/i.test(name) && CONFIG.RAY_USE_BULLISH_TREND_CHANGE) {
-    S.ray.bullContext = true;
     S.ray.lastBullTrendChangeAt = ts;
+    turnBullRegimeOn(ts, "ray_bullish_trend_change");
     log("🟢 RAY_BULLISH_TREND_CHANGE", { price, ts });
     return;
   }
 
   if (/Bullish Trend Continuation/i.test(name) && CONFIG.RAY_USE_BULLISH_TREND_CONTINUATION) {
-    S.ray.bullContext = true;
     S.ray.lastBullTrendContinuationAt = ts;
+    if (!S.ray.bullContext) {
+      turnBullRegimeOn(ts, "ray_bullish_trend_continuation");
+    }
     log("🟩 RAY_BULLISH_TREND_CONTINUATION", { price, ts });
     tryEntry("ray_bullish_trend_continuation", body);
     return;
@@ -336,20 +408,23 @@ function handleRayEvent(body) {
 
   if (/Bearish Trend Change/i.test(name) && CONFIG.RAY_USE_BEARISH_TREND_CHANGE) {
     S.ray.lastBearTrendChangeAt = ts;
-    S.ray.bullContext = false;
     log("🔴 RAY_BEARISH_TREND_CHANGE", { price, ts });
+
     if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CHANGE) {
-      doExit("ray_bearish_trend_change", price, ts);
+      doExit("ray_bearish_trend_change", price, ts, "regime_break");
     }
-    clearBreakoutMemory("bearish_trend_change");
+
+    turnBullRegimeOff(ts, "ray_bearish_trend_change");
     return;
   }
 
   if (/Bearish Trend Continuation/i.test(name) && CONFIG.RAY_USE_BEARISH_TREND_CONTINUATION) {
     S.ray.lastBearTrendContinuationAt = ts;
     log("🟥 RAY_BEARISH_TREND_CONTINUATION", { price, ts });
+
     if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION) {
-      doExit("ray_bearish_trend_continuation", price, ts);
+      doExit("ray_bearish_trend_continuation", price, ts, "regime_break");
+      turnBullRegimeOff(ts, "ray_bearish_trend_continuation");
     }
     return;
   }
@@ -374,6 +449,7 @@ function updateBarProgress(ts) {
     S.barIndex += 1;
     S.lastBarKey = key;
     invalidateBreakoutMemory();
+    invalidateReentry();
   }
 }
 
@@ -418,6 +494,7 @@ function handleFeature(body) {
   });
 
   evaluateStructureAndArmMemory(feature);
+  evaluateReentryEligibilityFromFeature(feature);
 
   if (S.inPosition) {
     evaluateBarExit(feature);
@@ -445,28 +522,24 @@ function evaluateStructureAndArmMemory(f) {
 
   if (!structureOk) return;
 
-  const reclaimPrice = Number.isFinite(f.ema8) ? f.ema8 : f.close;
-  const triggerPrice = f.close;
-  const breakoutHigh = f.high;
-
   S.breakoutMemory = {
     active: true,
     used: false,
     armedBar: S.barIndex,
     expiresBar: S.barIndex + CONFIG.BREAKOUT_MEMORY_BARS,
-    triggerPrice,
-    reclaimPrice,
-    breakoutHigh,
+    triggerPrice: f.close,
+    reclaimPrice: Number.isFinite(f.ema8) ? f.ema8 : f.close,
+    breakoutHigh: f.high,
     mode: "breakout_continuation_memory",
     armedAt: isoNow(),
   };
 
   log("🧠 BREAKOUT_MEMORY_ARMED", {
-    armedBar: S.barIndex,
+    armedBar: S.breakoutMemory.armedBar,
     expiresBar: S.breakoutMemory.expiresBar,
-    triggerPrice,
-    reclaimPrice,
-    breakoutHigh,
+    triggerPrice: S.breakoutMemory.triggerPrice,
+    reclaimPrice: S.breakoutMemory.reclaimPrice,
+    breakoutHigh: S.breakoutMemory.breakoutHigh,
   });
 }
 
@@ -483,6 +556,35 @@ function invalidateBreakoutMemory() {
     if (px < floor) {
       return clearBreakoutMemory("lost_reclaim");
     }
+  }
+}
+
+function invalidateReentry() {
+  if (!S.reentry.eligible) return;
+  if (S.barIndex > n(S.reentry.eligibleUntilBar, -1)) {
+    return clearReentry("expired");
+  }
+}
+
+function evaluateReentryEligibilityFromFeature(feature) {
+  if (!CONFIG.PHASE2_REENTRY_ENABLED) return;
+  if (!S.ray.bullContext) return;
+  if (!S.reentry.eligible) return;
+  if (S.reentry.bullRegimeId !== S.ray.bullRegimeId) return;
+
+  const peak = n(S.reentry.peakBeforeExit, NaN);
+  const close = n(feature.close, NaN);
+  if (!Number.isFinite(peak) || !Number.isFinite(close)) return;
+
+  const resetFromPeakPct = pctDiff(peak, close);
+  if (resetFromPeakPct <= -CONFIG.REENTRY_MIN_RESET_FROM_PEAK_PCT) {
+    S.reentry.anchorPrice = Number.isFinite(feature.ema8) ? feature.ema8 : close;
+    log("🔁 REENTRY_ELIGIBLE", {
+      bullRegimeId: S.ray.bullRegimeId,
+      barIndex: S.barIndex,
+      resetFromPeakPct,
+      anchorPrice: S.reentry.anchorPrice,
+    });
   }
 }
 
@@ -543,7 +645,44 @@ function evaluateEntry(source, body) {
   const recentSniperBuy =
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
-  // Normal continuation path
+  // --------------------------------------------------------
+  // Re-entry path
+  // --------------------------------------------------------
+  if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible) {
+    const rr = [];
+    reasonPush(rr, CONFIG.REENTRY_REQUIRE_BULL_CONTEXT && !S.ray.bullContext, "reentry_no_bull_context");
+    reasonPush(rr, S.reentry.bullRegimeId !== S.ray.bullRegimeId, "reentry_regime_mismatch");
+    reasonPush(rr, S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME, "max_reentry_reached");
+    reasonPush(rr, S.barIndex < n(S.reentry.eligibleFromBar, 0), "reentry_too_early");
+
+    const reentryCloseAboveEma8Ok =
+      !CONFIG.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
+    const anchor = Number.isFinite(S.reentry.anchorPrice) ? S.reentry.anchorPrice : ema8;
+    const reentryChasePct = Number.isFinite(anchor) ? pctDiff(anchor, px) : 999;
+
+    reasonPush(rr, !emaBullOk, "reentry_ema_invalid");
+    reasonPush(rr, !reentryCloseAboveEma8Ok, "reentry_close_below_ema8");
+    reasonPush(rr, !rsiOk, "reentry_rsi_too_low");
+    reasonPush(rr, !adxOk, "reentry_adx_too_low");
+    reasonPush(rr, reentryChasePct > CONFIG.REENTRY_MAX_CHASE_PCT, "reentry_chase_too_high");
+
+    if (rr.length === 0) {
+      return {
+        allow: true,
+        source,
+        mode: "pullback_reclaim_reentry_long",
+        entryPrice: px,
+        reentryChasePct,
+        anchor,
+        bullRegimeId: S.ray.bullRegimeId,
+      };
+    }
+  }
+
+  // --------------------------------------------------------
+  // Direct continuation path
+  // --------------------------------------------------------
   const contReasons = [];
   reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
   reasonPush(contReasons, !closeAboveEma8Ok, "close_below_ema8");
@@ -552,13 +691,11 @@ function evaluateEntry(source, body) {
   reasonPush(contReasons, extFromEma8 > CONFIG.MAX_EXT_FROM_EMA8_PCT, "too_extended_from_ema8");
   reasonPush(contReasons, extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT, "too_extended_from_ema18");
 
-  let contAnchor = Number.isFinite(ema8) ? ema8 : close;
-  let contChasePct = Number.isFinite(contAnchor) ? pctDiff(contAnchor, px) : 999;
+  const contAnchor = Number.isFinite(ema8) ? ema8 : close;
+  const contChasePct = Number.isFinite(contAnchor) ? pctDiff(contAnchor, px) : 999;
   reasonPush(contReasons, contChasePct > CONFIG.CONTINUATION_MAX_CHASE_PCT, "continuation_chase_too_high");
 
-  const continuationOk = contReasons.length === 0;
-
-  if (continuationOk) {
+  if (contReasons.length === 0) {
     return {
       allow: true,
       source,
@@ -571,13 +708,14 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // --------------------------------------------------------
   // Breakout memory fallback
+  // --------------------------------------------------------
   const mem = S.breakoutMemory;
   const memReasons = [];
   const memActive = CONFIG.BREAKOUT_MEMORY_ENABLED && mem.active && !mem.used;
 
   reasonPush(memReasons, !memActive, "no_breakout_memory");
-  reasonPush(memReasons, S.barIndex > n(mem.expiresBar, -1), "memory_expired");
 
   const memAnchor = Math.max(n(mem.reclaimPrice, NaN), n(mem.breakoutHigh, NaN));
   const memChasePct = Number.isFinite(memAnchor) ? pctDiff(memAnchor, px) : 999;
@@ -629,6 +767,12 @@ function doEnter(mode, price, decision = {}) {
   S.peakPrice = price;
   S.lastEnterAtMs = nowMs();
   S.lastAction = "enter";
+  S.cycleState = "long";
+
+  if (mode === "pullback_reclaim_reentry_long") {
+    S.ray.reentryCountInRegime += 1;
+    clearReentry("consumed_on_reentry");
+  }
 
   if (S.breakoutMemory.active) {
     S.breakoutMemory.used = true;
@@ -683,32 +827,69 @@ function updatePositionFromTick(price) {
   }
 
   if (price <= S.stopPrice) {
-    return doExit("hard_or_breakeven_stop", price, isoNow());
+    const exitClass = S.beArmed ? "cycle_exit" : "stop_exit";
+    return doExit("hard_or_breakeven_stop", price, isoNow(), exitClass);
   }
 
   if (S.plArmed && drawFromPeakPct <= -CONFIG.PROFIT_LOCK_GIVEBACK_PCT) {
-    return doExit("profit_lock_giveback", price, isoNow());
+    return doExit("profit_lock_giveback", price, isoNow(), "cycle_exit");
   }
 
   if (S.trailArmed && drawFromPeakPct <= -CONFIG.TRAIL_GIVEBACK_PCT) {
-    return doExit("trail_giveback", price, isoNow());
+    return doExit("trail_giveback", price, isoNow(), "cycle_exit");
   }
 }
 
 function evaluateBarExit(feature) {
   if (!S.inPosition) return;
   const price = n(feature.close, currentPrice());
+  const pnlPct = pctDiff(S.entryPrice, price);
 
-  if (CONFIG.EXIT_ON_5M_CLOSE_BELOW_EMA8 && Number.isFinite(feature.ema8) && price < feature.ema8) {
-    return doExit("close_below_ema8_5m", price, feature.time);
+  if (
+    CONFIG.LOCAL_TP_EXIT_ENABLED &&
+    CONFIG.LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8 &&
+    Number.isFinite(feature.ema8) &&
+    price < feature.ema8 &&
+    pnlPct >= CONFIG.LOCAL_TP_MIN_PROFIT_PCT
+  ) {
+    return doExit("local_tp_close_below_ema8", price, feature.time, "cycle_exit");
   }
 
   if (CONFIG.EXIT_ON_5M_CLOSE_BELOW_EMA18 && Number.isFinite(feature.ema18) && price < feature.ema18) {
-    return doExit("close_below_ema18_5m", price, feature.time);
+    return doExit("close_below_ema18_5m", price, feature.time, "regime_break");
   }
 }
 
-function doExit(reason, price, ts) {
+function markReentryEligible(reason, exitPrice) {
+  if (!CONFIG.PHASE2_REENTRY_ENABLED) return;
+  if (!CONFIG.KEEP_BULL_CONTEXT_ON_TP_EXIT) return;
+  if (!S.ray.bullContext) return;
+  if (S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME) return;
+
+  S.reentry = {
+    eligible: true,
+    eligibleUntilBar: S.barIndex + 6,
+    eligibleFromBar: S.barIndex + CONFIG.REENTRY_MIN_BARS_AFTER_EXIT,
+    exitPrice,
+    peakBeforeExit: S.peakPrice,
+    anchorPrice: S.lastFeature?.ema8 ?? exitPrice,
+    bullRegimeId: S.ray.bullRegimeId,
+  };
+
+  S.cycleState = "tp_exit_wait_reentry";
+
+  log("🔁 TP_EXIT_WAIT_REENTRY", {
+    reason,
+    bullRegimeId: S.ray.bullRegimeId,
+    reentryCountInRegime: S.ray.reentryCountInRegime,
+    eligibleFromBar: S.reentry.eligibleFromBar,
+    eligibleUntilBar: S.reentry.eligibleUntilBar,
+    peakBeforeExit: S.reentry.peakBeforeExit,
+    anchorPrice: S.reentry.anchorPrice,
+  });
+}
+
+function doExit(reason, price, ts, exitClass = "stop_exit") {
   const now = nowMs();
   if (!S.inPosition) return;
   if (now - S.lastExitAtMs < CONFIG.EXIT_DEDUP_MS) return;
@@ -718,6 +899,7 @@ function doExit(reason, price, ts) {
 
   log("📤 EXIT", {
     reason,
+    exitClass,
     price: exitPrice,
     pnlPct: Number(pnlPct.toFixed(4)),
     entryPrice: S.entryPrice,
@@ -733,6 +915,16 @@ function doExit(reason, price, ts) {
     log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
   });
 
+  if (exitClass === "cycle_exit") {
+    markReentryEligible(reason, exitPrice);
+  } else {
+    clearReentry("non_cycle_exit");
+  }
+
+  if (exitClass === "regime_break") {
+    turnBullRegimeOff(ts, reason);
+  }
+
   S.inPosition = false;
   S.entryPrice = null;
   S.entryAt = null;
@@ -744,7 +936,14 @@ function doExit(reason, price, ts) {
   S.peakPrice = null;
   S.lastExitAtMs = now;
   S.lastAction = "exit";
-  S.cooldownUntilMs = now + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
+  S.lastExitClass = exitClass;
+
+  if (exitClass === "cycle_exit") {
+    S.cooldownUntilMs = 0;
+  } else {
+    S.cooldownUntilMs = now + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
+    S.cycleState = "cooldown_hard";
+  }
 }
 
 // ------------------------------------------------------------
@@ -852,6 +1051,10 @@ app.get("/status", (_req, res) => {
     peakPrice: S.peakPrice,
     cooldownUntil: S.cooldownUntilMs ? new Date(S.cooldownUntilMs).toISOString() : null,
     bullContext: S.ray.bullContext,
+    bullRegimeId: S.ray.bullRegimeId,
+    reentryCountInRegime: S.ray.reentryCountInRegime,
+    cycleState: S.cycleState,
+    reentry: S.reentry,
     lastTickPrice: S.lastTickPrice,
     lastTickTime: S.lastTickTime,
     tickFresh: isTickFresh(),
@@ -861,7 +1064,7 @@ app.get("/status", (_req, res) => {
     ray: S.ray,
     fvvo: S.fvvo,
     barIndex: S.barIndex,
-    recentLogs: S.logs.slice(-20),
+    recentLogs: S.logs.slice(-30),
   });
 });
 
