@@ -1,0 +1,12 @@
+cd /workspaces/tv-webhook-brain/BrainRAY/Replay
+export BRAINRAY_URL="https://brainraycontinuation-production.up.railway.app/webhook"
+
+v1
+node scripts/replay_brainray_case.cjs cases/case1_validcontinuationentry.json "$BRAINRAY_URL" | tee data/case1_run.log
+node scripts/replay_brainray_case.cjs cases/case2_blockedweakcontinuation.json "$BRAINRAY_URL" | tee data/case2_run.log
+node scripts/replay_brainray_case.cjs cases/case4_true_delayedmemoryentry.json "$BRAINRAY_URL"
+
+v2
+node scripts/replay_brainray_case.cjs cases/case4_tp_exit_then_reentry.json "$BRAINRAY_URL"
+node scripts/replay_brainray_case.cjs cases/case5_tp_exit_no_reentry.json "$BRAINRAY_URL"
+node scripts/replay_brainray_case.cjs cases/case6_bearish_regime_break.json "$BRAINRAY_URL"
