@@ -36,10 +36,14 @@ function postJson(urlString, data) {
   });
 }
 
+function shiftedIso(baseMs, offsetMs) {
+  return new Date(baseMs + offsetMs).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 async function main() {
   const file = process.argv[2];
   const url = process.argv[3];
-  const delayMs = Number(process.argv[4] || 400);
+  const delayMs = Number(process.argv[4] || 600);
 
   if (!file || !url) {
     console.error("Usage: node replay_brainray_case.cjs <case.json> <webhook_url> [delay_ms]");
@@ -52,10 +56,21 @@ async function main() {
   console.log(`Loaded ${events.length} events from ${file}`);
   console.log(`Posting to ${url}`);
   console.log(`Delay between events: ${delayMs} ms`);
+  console.log(`Timestamp mode: rewrite to current time`);
+
+  const startMs = Date.now();
 
   for (let i = 0; i < events.length; i++) {
-    const ev = events[i];
-    console.log(`\n[${i + 1}/${events.length}] -> src=${ev.src || ""} event=${ev.event || ""} time=${ev.time || ""}`);
+    const ev = { ...events[i] };
+
+    // Rewrite time/timestamp to "now + sequence offset"
+    const eventMs = startMs + i * delayMs;
+    if ("time" in ev) ev.time = shiftedIso(startMs, i * delayMs);
+    if ("timestamp" in ev) ev.timestamp = shiftedIso(startMs, i * delayMs);
+
+    console.log(
+      `\n[${i + 1}/${events.length}] -> src=${ev.src || ""} event=${ev.event || ""} time=${ev.time || ev.timestamp || ""}`
+    );
 
     const res = await postJson(url, ev);
     console.log(`status=${res.status} body=${res.body}`);
