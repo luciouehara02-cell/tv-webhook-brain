@@ -9,6 +9,7 @@ import express from "express";
 // - cycle exits vs regime-break exits
 // - re-entry eligibility and reclaim re-entry
 // - max re-entries per bull regime
+// - manual /reset route for replay and retest only
 //
 // Keeps:
 // - long-only
@@ -192,78 +193,83 @@ const CONFIG = {
 const fetchFn = globalThis.fetch;
 
 // ------------------------------------------------------------
-// State
+// Initial runtime state / reset support
 // ------------------------------------------------------------
+function buildInitialRuntimeState() {
+  return {
+    startedAt: isoNow(),
+    barIndex: 0,
+    lastBarKey: null,
+
+    lastTickPrice: null,
+    lastTickTime: null,
+    tickCount: 0,
+
+    lastFeature: null,
+    lastFeatureTime: null,
+    lastFeatureBarKey: null,
+
+    inPosition: false,
+    entryPrice: null,
+    entryAt: null,
+    entryMode: null,
+    stopPrice: null,
+    beArmed: false,
+    plArmed: false,
+    trailArmed: false,
+    peakPrice: null,
+    cooldownUntilMs: 0,
+
+    lastEnterAtMs: 0,
+    lastExitAtMs: 0,
+    lastAction: null,
+
+    cycleState: "flat", // flat | long | tp_exit_wait_reentry | cooldown_hard | disabled_by_bear_regime
+    lastExitClass: null, // cycle_exit | regime_break | stop_exit
+
+    ray: {
+      bullContext: false,
+      bullRegimeId: 0,
+      bullRegimeStartedAt: null,
+      reentryCountInRegime: 0,
+
+      lastBullTrendChangeAt: null,
+      lastBullTrendContinuationAt: null,
+      lastBullBosAt: null,
+      lastBearTrendChangeAt: null,
+      lastBearTrendContinuationAt: null,
+    },
+
+    fvvo: {
+      lastSniperBuyAt: null,
+    },
+
+    breakoutMemory: {
+      active: false,
+      used: false,
+      armedBar: null,
+      expiresBar: null,
+      triggerPrice: null,
+      reclaimPrice: null,
+      breakoutHigh: null,
+      mode: null,
+      armedAt: null,
+    },
+
+    reentry: {
+      eligible: false,
+      eligibleUntilBar: null,
+      eligibleFromBar: null,
+      exitPrice: null,
+      peakBeforeExit: null,
+      anchorPrice: null,
+      bullRegimeId: null,
+    },
+  };
+}
+
 const S = {
-  startedAt: isoNow(),
-  barIndex: 0,
-  lastBarKey: null,
-
-  lastTickPrice: null,
-  lastTickTime: null,
-  tickCount: 0,
-
-  lastFeature: null,
-  lastFeatureTime: null,
-  lastFeatureBarKey: null,
-
-  inPosition: false,
-  entryPrice: null,
-  entryAt: null,
-  entryMode: null,
-  stopPrice: null,
-  beArmed: false,
-  plArmed: false,
-  trailArmed: false,
-  peakPrice: null,
-  cooldownUntilMs: 0,
-
-  lastEnterAtMs: 0,
-  lastExitAtMs: 0,
-  lastAction: null,
-
-  cycleState: "flat", // flat | long | tp_exit_wait_reentry | cooldown_hard | disabled_by_bear_regime
-  lastExitClass: null, // cycle_exit | regime_break | stop_exit
-
-  ray: {
-    bullContext: false,
-    bullRegimeId: 0,
-    bullRegimeStartedAt: null,
-    reentryCountInRegime: 0,
-
-    lastBullTrendChangeAt: null,
-    lastBullTrendContinuationAt: null,
-    lastBullBosAt: null,
-    lastBearTrendChangeAt: null,
-    lastBearTrendContinuationAt: null,
-  },
-
-  fvvo: {
-    lastSniperBuyAt: null,
-  },
-
-  breakoutMemory: {
-    active: false,
-    used: false,
-    armedBar: null,
-    expiresBar: null,
-    triggerPrice: null,
-    reclaimPrice: null,
-    breakoutHigh: null,
-    mode: null,
-    armedAt: null,
-  },
-
-  reentry: {
-    eligible: false,
-    eligibleUntilBar: null,
-    eligibleFromBar: null,
-    exitPrice: null,
-    peakBeforeExit: null,
-    anchorPrice: null,
-    bullRegimeId: null,
-  },
-
+  ...buildInitialRuntimeState(),
   logs: [],
 };
 
@@ -273,6 +279,18 @@ function log(msg, data = null) {
   S.logs.push(out);
   if (S.logs.length > 400) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
+}
+
+function resetRuntimeState(reason = "manual_reset") {
+  const keepLogs = Array.isArray(S.logs) ? S.logs : [];
+  const fresh = buildInitialRuntimeState();
+
+  for (const key of Object.keys(fresh)) {
+    S[key] = fresh[key];
+  }
+
+  S.logs = keepLogs;
+  log("♻️ STATE_RESET", { reason });
 }
 
 function currentPrice() {
@@ -515,7 +533,10 @@ function evaluateStructureAndArmMemory(f) {
   const rsiOk = !Number.isFinite(f.rsi) || f.rsi >= CONFIG.MIN_RSI_LONG;
   const adxOk = !Number.isFinite(f.adx) || f.adx >= CONFIG.MIN_ADX_CONTINUATION;
 
-  const bullRayContext = S.ray.bullContext || ageSec(S.ray.lastBullTrendChangeAt) < 3600 || ageSec(S.ray.lastBullTrendContinuationAt) < 1800;
+  const bullRayContext =
+    S.ray.bullContext ||
+    ageSec(S.ray.lastBullTrendChangeAt) < 3600 ||
+    ageSec(S.ray.lastBullTrendContinuationAt) < 1800;
   const bullishBosRecent = ageSec(S.ray.lastBullBosAt) < 1800;
 
   const structureOk = bullEmaOk && closeAboveEma8Ok && rsiOk && adxOk && (bullRayContext || bullishBosRecent);
@@ -1065,6 +1086,37 @@ app.get("/status", (_req, res) => {
     fvvo: S.fvvo,
     barIndex: S.barIndex,
     recentLogs: S.logs.slice(-30),
+  });
+});
+
+app.post("/reset", (req, res) => {
+  const body = req.body || {};
+
+  // Uses normal WEBHOOK_SECRET auth. This route is for replay / retest only.
+  if (!checkSecret({ ...body, src: "admin" })) {
+    log("⛔ RESET_UNAUTHORIZED");
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const reason = String(body.reason || "manual_reset");
+  resetRuntimeState(reason);
+
+  return res.json({
+    ok: true,
+    reset: true,
+    reason,
+    brain: CONFIG.BRAIN_NAME,
+    symbol: CONFIG.SYMBOL,
+    tf: CONFIG.ENTRY_TF,
+    state: {
+      inPosition: S.inPosition,
+      bullContext: S.ray.bullContext,
+      bullRegimeId: S.ray.bullRegimeId,
+      cycleState: S.cycleState,
+      barIndex: S.barIndex,
+      breakoutMemory: S.breakoutMemory,
+      reentry: S.reentry,
+    },
   });
 });
 
