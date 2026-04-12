@@ -1,4 +1,3 @@
-cat > /workspaces/tv-webhook-brain/BrainRAY/Replay/scripts/extract_brainray_replay_from_log.cjs <<'EOF'
 #!/usr/bin/env node
 const fs = require("fs");
 
@@ -170,4 +169,3 @@ if (events.length > 0) {
   console.log("First event:  " + events[0].time + " " + events[0].src + " " + (events[0].event || ""));
   console.log("Last event:   " + events[events.length - 1].time + " " + events[events.length - 1].src + " " + (events[events.length - 1].event || ""));
 }
-EOF
