@@ -1,4 +1,3 @@
-cat > /workspaces/tv-webhook-brain/BrainRAY/Replay/scripts/extract_brainray_replay_from_log.cjs <<'EOF'
 const fs = require("fs");
 
 function usage() {
@@ -119,4 +118,3 @@ for (const line of lines) {
 
 fs.writeFileSync(output, JSON.stringify(events, null, 2));
 console.log("Wrote " + events.length + " events to " + output);
-EOF
