@@ -18,6 +18,7 @@ if (!input || !output || !secret) usage();
 
 const raw = fs.readFileSync(input, "utf8");
 const lines = raw.split(/\r?\n/);
+
 const events = [];
 
 function parseJsonAfterPipe(line) {
@@ -32,9 +33,9 @@ function parseJsonAfterPipe(line) {
 }
 
 function extractEventTime(line) {
-  const matches = line.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g);
-  if (!matches || !matches.length) return null;
-  return matches[matches.length - 1];
+  const m = line.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/g);
+  if (!m || !m.length) return null;
+  return m[m.length - 1];
 }
 
 for (const line of lines) {
@@ -50,13 +51,16 @@ for (const line of lines) {
       symbol,
       tf,
       time,
+      open: payload.open ?? null,
+      high: payload.high ?? null,
+      low: payload.low ?? null,
       close: payload.close ?? null,
       ema8: payload.ema8 ?? null,
       ema18: payload.ema18 ?? null,
       ema50: payload.ema50 ?? null,
       rsi: payload.rsi ?? null,
       adx: payload.adx ?? null,
-      atrPct: payload.atrPct ?? null
+      atrPct: payload.atrPct ?? null,
     });
     continue;
   }
@@ -69,7 +73,7 @@ for (const line of lines) {
       tf,
       event: "Bullish Trend Change",
       price: payload.price ?? null,
-      time: payload.ts || time
+      time: payload.ts || time,
     });
     continue;
   }
@@ -82,7 +86,7 @@ for (const line of lines) {
       tf,
       event: "Bullish Trend Continuation",
       price: payload.price ?? null,
-      time: payload.ts || time
+      time: payload.ts || time,
     });
     continue;
   }
@@ -95,7 +99,7 @@ for (const line of lines) {
       tf,
       event: "Bearish Trend Change",
       price: payload.price ?? null,
-      time: payload.ts || time
+      time: payload.ts || time,
     });
     continue;
   }
@@ -108,8 +112,9 @@ for (const line of lines) {
       tf,
       event: "Bearish Trend Continuation",
       price: payload.price ?? null,
-      time: payload.ts || time
+      time: payload.ts || time,
     });
+    continue;
   }
 }
 
