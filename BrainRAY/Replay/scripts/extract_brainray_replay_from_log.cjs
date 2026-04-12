@@ -2,9 +2,7 @@ cat > /workspaces/tv-webhook-brain/BrainRAY/Replay/scripts/extract_brainray_repl
 const fs = require("fs");
 
 function usage() {
-  console.error(
-    "Usage: node extract_brainray_replay_from_log.cjs <input.log> <output.json> <secret> [symbol] [tf]"
-  );
+  console.error("Usage: node extract_brainray_replay_from_log.cjs <input.log> <output.json> <secret> [symbol] [tf]");
   process.exit(1);
 }
 
@@ -17,7 +15,7 @@ const tf = process.argv[6] || "5";
 if (!input || !output || !secret) usage();
 
 const raw = fs.readFileSync(input, "utf8");
-const lines = raw.split(/\r?\n/);
+const lines = raw.split("\n");
 const events = [];
 
 function parseJsonAfterPipe(line) {
@@ -32,9 +30,14 @@ function parseJsonAfterPipe(line) {
 }
 
 function extractEventTime(line) {
-  const matches = line.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g);
-  if (!matches || !matches.length) return null;
-  return matches[matches.length - 1];
+  const parts = line.split(" ");
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i].trim();
+    if (p.length >= 20 && p.includes("T") && p.endsWith("Z")) {
+      return p;
+    }
+  }
+  return null;
 }
 
 for (const line of lines) {
@@ -110,9 +113,10 @@ for (const line of lines) {
       price: payload.price ?? null,
       time: payload.ts || time
     });
+    continue;
   }
 }
 
 fs.writeFileSync(output, JSON.stringify(events, null, 2));
-console.log(`Wrote ${events.length} events to ${output}`);
+console.log("Wrote " + events.length + " events to " + output);
 EOF
