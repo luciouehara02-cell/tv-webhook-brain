@@ -1,22 +1,23 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.1
+// BrainRAY_Continuation_v2.2
 //
-// Adds:
-// - dynamic TP tiers
-// - faster reclaim-based re-entry
-// - strong bullish trend-change launch entry
-// - manual /reset route for replay and retest only
+// Fixes missed strong launch case:
+// - Ray Bullish Trend Change can arrive BEFORE the strong feature bar
+// - Adds deferred trend-change launch memory
+// - If next 1-2 feature bars are strong, enter as launch
 //
 // Keeps:
 // - long-only
 // - SOLUSDT
-// - Ray-led continuation logic
+// - dynamic TP tiers
+// - faster reclaim re-entry
 // - breakout memory fallback
 // - bull regime persistence
 // - cycle exits vs regime-break exits
 // - 3Commas integration
+// - /reset route
 // ============================================================
 
 const app = express();
@@ -118,7 +119,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.1"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.2"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -201,7 +202,7 @@ const CONFIG = {
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.80),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
 
-  // Phase 2B: faster re-entry
+  // Faster re-entry
   FAST_REENTRY_ENABLED: b(process.env.FAST_REENTRY_ENABLED, true),
   FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.20),
   FAST_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FAST_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
@@ -210,12 +211,13 @@ const CONFIG = {
   FAST_REENTRY_MIN_ADX: n(process.env.FAST_REENTRY_MIN_ADX, 14),
   FAST_REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.FAST_REENTRY_REQUIRE_BULL_CONTEXT, true),
 
-  // New: trend-change launch
+  // Trend-change launch
   TREND_CHANGE_LAUNCH_ENABLED: b(process.env.TREND_CHANGE_LAUNCH_ENABLED, true),
   TREND_CHANGE_LAUNCH_MIN_RSI: n(process.env.TREND_CHANGE_LAUNCH_MIN_RSI, 60),
   TREND_CHANGE_LAUNCH_MIN_ADX: n(process.env.TREND_CHANGE_LAUNCH_MIN_ADX, 14),
   TREND_CHANGE_LAUNCH_MAX_CHASE_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT, 0.35),
   TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.20),
+  TREND_CHANGE_LAUNCH_MEMORY_BARS: n(process.env.TREND_CHANGE_LAUNCH_MEMORY_BARS, 2),
 
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
 };
@@ -295,6 +297,14 @@ function buildInitialRuntimeState() {
       anchorPrice: null,
       bullRegimeId: null,
     },
+
+    trendChangeLaunch: {
+      pending: false,
+      armedBar: null,
+      expiresBar: null,
+      rayPrice: null,
+      rayTime: null,
+    },
   };
 }
 
@@ -307,7 +317,7 @@ function log(msg, data = null) {
   const line = data ? `${msg} | ${JSON.stringify(data)}` : msg;
   const out = `${isoNow()} ${line}`;
   S.logs.push(out);
-  if (S.logs.length > 500) S.logs.shift();
+  if (S.logs.length > 600) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
 }
 
@@ -371,6 +381,36 @@ function clearReentry(reason = "reset") {
   };
 }
 
+function armTrendChangeLaunch(rayPrice, rayTime) {
+  S.trendChangeLaunch = {
+    pending: true,
+    armedBar: S.barIndex,
+    expiresBar: S.barIndex + CONFIG.TREND_CHANGE_LAUNCH_MEMORY_BARS,
+    rayPrice: rayPrice,
+    rayTime: rayTime,
+  };
+
+  log("🚀 TREND_CHANGE_LAUNCH_ARMED", {
+    armedBar: S.trendChangeLaunch.armedBar,
+    expiresBar: S.trendChangeLaunch.expiresBar,
+    rayPrice,
+    rayTime,
+  });
+}
+
+function clearTrendChangeLaunch(reason = "reset") {
+  if (S.trendChangeLaunch.pending) {
+    log("🚀 TREND_CHANGE_LAUNCH_CLEARED", { reason });
+  }
+  S.trendChangeLaunch = {
+    pending: false,
+    armedBar: null,
+    expiresBar: null,
+    rayPrice: null,
+    rayTime: null,
+  };
+}
+
 // ------------------------------------------------------------
 // Parsing inbound event types
 // ------------------------------------------------------------
@@ -422,6 +462,7 @@ function turnBullRegimeOff(ts, reason) {
     S.cycleState = S.inPosition ? "long" : "disabled_by_bear_regime";
     clearBreakoutMemory("bull_regime_off");
     clearReentry("bull_regime_off");
+    clearTrendChangeLaunch("bull_regime_off");
     log("🔴 BULL_REGIME_OFF", { reason, ts, bullRegimeId: S.ray.bullRegimeId });
   }
 }
@@ -437,7 +478,7 @@ function handleRayEvent(body) {
     log("🟢 RAY_BULLISH_TREND_CHANGE", { price, ts });
 
     if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
-      tryEntry("ray_bullish_trend_change_launch", body);
+      armTrendChangeLaunch(price, ts);
     }
     return;
   }
@@ -500,6 +541,7 @@ function updateBarProgress(ts) {
     S.lastBarKey = key;
     invalidateBreakoutMemory();
     invalidateReentry();
+    invalidateTrendChangeLaunch();
   }
 }
 
@@ -545,6 +587,17 @@ function handleFeature(body) {
 
   evaluateStructureAndArmMemory(feature);
   evaluateReentryEligibilityFromFeature(feature);
+
+  if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED && S.trendChangeLaunch.pending) {
+    tryEntry("deferred_trend_change_launch", {
+      src: "ray",
+      symbol: CONFIG.SYMBOL,
+      tf: CONFIG.ENTRY_TF,
+      event: "Bullish Trend Change",
+      price: feature.close,
+      time: feature.time,
+    });
+  }
 
   if (S.inPosition) {
     evaluateBarExit(feature);
@@ -616,6 +669,13 @@ function invalidateReentry() {
   }
 }
 
+function invalidateTrendChangeLaunch() {
+  if (!S.trendChangeLaunch.pending) return;
+  if (S.barIndex > n(S.trendChangeLaunch.expiresBar, -1)) {
+    clearTrendChangeLaunch("expired");
+  }
+}
+
 function evaluateReentryEligibilityFromFeature(feature) {
   if (!CONFIG.PHASE2_REENTRY_ENABLED) return;
   if (!S.ray.bullContext) return;
@@ -648,7 +708,11 @@ function evaluateReentryEligibilityFromFeature(feature) {
 function tryEntry(source, body) {
   const decision = evaluateEntry(source, body);
   if (!decision.allow) {
-    log("🚫 ENTRY_BLOCKED", decision);
+    if (source === "deferred_trend_change_launch") {
+      log("🚫 LAUNCH_ENTRY_BLOCKED", decision);
+    } else {
+      log("🚫 ENTRY_BLOCKED", decision);
+    }
     return decision;
   }
 
@@ -700,13 +764,15 @@ function evaluateEntry(source, body) {
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
   // --------------------------------------------------------
-  // New: strong bullish trend-change launch
+  // Deferred strong trend-change launch
   // --------------------------------------------------------
-  if (source === "ray_bullish_trend_change_launch" && CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
+  if ((source === "ray_bullish_trend_change_launch" || source === "deferred_trend_change_launch") && CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
     const launchReasons = [];
     const launchAnchor = Number.isFinite(ema8) ? ema8 : close;
     const launchChasePct = Number.isFinite(launchAnchor) ? pctDiff(launchAnchor, px) : 999;
 
+    reasonPush(launchReasons, !S.trendChangeLaunch.pending, "launch_not_pending");
+    reasonPush(launchReasons, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
     reasonPush(launchReasons, !emaBullOk, "launch_ema8_below_ema18");
     reasonPush(launchReasons, !closeAboveEma8Ok, "launch_close_below_ema8");
     reasonPush(launchReasons, Number.isFinite(rsi) && rsi < CONFIG.TREND_CHANGE_LAUNCH_MIN_RSI, "launch_rsi_too_low");
@@ -723,6 +789,8 @@ function evaluateEntry(source, body) {
         extFromEma8,
         extFromEma18,
         launchChasePct,
+        armedBar: S.trendChangeLaunch.armedBar,
+        expiresBar: S.trendChangeLaunch.expiresBar,
       };
     }
 
@@ -733,6 +801,8 @@ function evaluateEntry(source, body) {
       extFromEma8,
       extFromEma18,
       launchChasePct,
+      armedBar: S.trendChangeLaunch.armedBar,
+      expiresBar: S.trendChangeLaunch.expiresBar,
     };
   }
 
@@ -871,6 +941,10 @@ function doEnter(mode, price, decision = {}) {
   if (mode === "pullback_reclaim_reentry_long") {
     S.ray.reentryCountInRegime += 1;
     clearReentry("consumed_on_reentry");
+  }
+
+  if (mode === "bullish_trend_change_launch_long") {
+    clearTrendChangeLaunch("consumed_on_entry");
   }
 
   if (S.breakoutMemory.active) {
@@ -1187,6 +1261,7 @@ app.get("/status", (_req, res) => {
     reentryCountInRegime: S.ray.reentryCountInRegime,
     cycleState: S.cycleState,
     reentry: S.reentry,
+    trendChangeLaunch: S.trendChangeLaunch,
     lastTickPrice: S.lastTickPrice,
     lastTickTime: S.lastTickTime,
     tickFresh: isTickFresh(),
@@ -1226,6 +1301,7 @@ app.post("/reset", (req, res) => {
       barIndex: S.barIndex,
       breakoutMemory: S.breakoutMemory,
       reentry: S.reentry,
+      trendChangeLaunch: S.trendChangeLaunch,
     },
   });
 });
