@@ -1,12 +1,12 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.2
+// BrainRAY_Continuation_v2.2b
 //
 // Fixes missed strong launch case:
 // - Ray Bullish Trend Change can arrive BEFORE the strong feature bar
 // - Adds deferred trend-change launch memory
-// - If next 1-2 feature bars are strong, enter as launch
+// - Adds replay-safe freshness bypass via REPLAY_ALLOW_STALE_DATA
 //
 // Keeps:
 // - long-only
@@ -119,7 +119,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.2"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.2b"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -129,6 +129,7 @@ const CONFIG = {
   ENTRY_TF: s(process.env.ENTRY_TF || "5"),
   TICK_MAX_AGE_SEC: n(process.env.TICK_MAX_AGE_SEC, 60),
   FEATURE_MAX_AGE_SEC: n(process.env.FEATURE_MAX_AGE_SEC, 900),
+  REPLAY_ALLOW_STALE_DATA: b(process.env.REPLAY_ALLOW_STALE_DATA, false),
 
   ENTER_DEDUP_MS: n(process.env.ENTER_DEDUP_MS, 90000),
   EXIT_DEDUP_MS: n(process.env.EXIT_DEDUP_MS, 60000),
@@ -168,7 +169,6 @@ const CONFIG = {
   BREAKEVEN_ARM_PCT: n(process.env.BREAKEVEN_ARM_PCT, 0.40),
   BREAKEVEN_OFFSET_PCT: n(process.env.BREAKEVEN_OFFSET_PCT, 0.05),
 
-  // Legacy fallback
   PROFIT_LOCK_ARM_PCT: n(process.env.PROFIT_LOCK_ARM_PCT, 0.60),
   PROFIT_LOCK_GIVEBACK_PCT: n(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.35),
   TRAIL_ARM_PCT: n(process.env.TRAIL_ARM_PCT, 1.00),
@@ -179,7 +179,6 @@ const CONFIG = {
   EXIT_ON_5M_CLOSE_BELOW_EMA8: b(process.env.EXIT_ON_5M_CLOSE_BELOW_EMA8, true),
   EXIT_ON_5M_CLOSE_BELOW_EMA18: b(process.env.EXIT_ON_5M_CLOSE_BELOW_EMA18, false),
 
-  // Phase 2A baseline
   PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
   MAX_REENTRIES_PER_BULL_REGIME: n(process.env.MAX_REENTRIES_PER_BULL_REGIME, 2),
   REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
@@ -193,7 +192,6 @@ const CONFIG = {
   LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8: b(process.env.LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8, true),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // Phase 2B: dynamic TP
   DYNAMIC_TP_ENABLED: b(process.env.DYNAMIC_TP_ENABLED, true),
   DTP_TIER1_ARM_PCT: n(process.env.DTP_TIER1_ARM_PCT, 0.60),
   DTP_TIER1_GIVEBACK_PCT: n(process.env.DTP_TIER1_GIVEBACK_PCT, 0.35),
@@ -202,7 +200,6 @@ const CONFIG = {
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.80),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
 
-  // Faster re-entry
   FAST_REENTRY_ENABLED: b(process.env.FAST_REENTRY_ENABLED, true),
   FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.20),
   FAST_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FAST_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
@@ -211,7 +208,6 @@ const CONFIG = {
   FAST_REENTRY_MIN_ADX: n(process.env.FAST_REENTRY_MIN_ADX, 14),
   FAST_REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.FAST_REENTRY_REQUIRE_BULL_CONTEXT, true),
 
-  // Trend-change launch
   TREND_CHANGE_LAUNCH_ENABLED: b(process.env.TREND_CHANGE_LAUNCH_ENABLED, true),
   TREND_CHANGE_LAUNCH_MIN_RSI: n(process.env.TREND_CHANGE_LAUNCH_MIN_RSI, 60),
   TREND_CHANGE_LAUNCH_MIN_ADX: n(process.env.TREND_CHANGE_LAUNCH_MIN_ADX, 14),
@@ -338,10 +334,12 @@ function currentPrice() {
 }
 
 function isTickFresh() {
+  if (CONFIG.REPLAY_ALLOW_STALE_DATA) return true;
   return ageSec(S.lastTickTime) <= CONFIG.TICK_MAX_AGE_SEC;
 }
 
 function isFeatureFresh() {
+  if (CONFIG.REPLAY_ALLOW_STALE_DATA) return true;
   return ageSec(S.lastFeatureTime) <= CONFIG.FEATURE_MAX_AGE_SEC;
 }
 
@@ -386,8 +384,8 @@ function armTrendChangeLaunch(rayPrice, rayTime) {
     pending: true,
     armedBar: S.barIndex,
     expiresBar: S.barIndex + CONFIG.TREND_CHANGE_LAUNCH_MEMORY_BARS,
-    rayPrice: rayPrice,
-    rayTime: rayTime,
+    rayPrice,
+    rayTime,
   };
 
   log("🚀 TREND_CHANGE_LAUNCH_ARMED", {
@@ -763,9 +761,6 @@ function evaluateEntry(source, body) {
   const recentSniperBuy =
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
-  // --------------------------------------------------------
-  // Deferred strong trend-change launch
-  // --------------------------------------------------------
   if ((source === "ray_bullish_trend_change_launch" || source === "deferred_trend_change_launch") && CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
     const launchReasons = [];
     const launchAnchor = Number.isFinite(ema8) ? ema8 : close;
@@ -806,9 +801,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // --------------------------------------------------------
-  // Re-entry path
-  // --------------------------------------------------------
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
@@ -850,9 +842,6 @@ function evaluateEntry(source, body) {
     }
   }
 
-  // --------------------------------------------------------
-  // Direct continuation path
-  // --------------------------------------------------------
   const contReasons = [];
   reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
   reasonPush(contReasons, !closeAboveEma8Ok, "close_below_ema8");
@@ -878,9 +867,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // --------------------------------------------------------
-  // Breakout memory fallback
-  // --------------------------------------------------------
   const mem = S.breakoutMemory;
   const memReasons = [];
   const memActive = CONFIG.BREAKOUT_MEMORY_ENABLED && mem.active && !mem.used;
@@ -1271,6 +1257,7 @@ app.get("/status", (_req, res) => {
     ray: S.ray,
     fvvo: S.fvvo,
     barIndex: S.barIndex,
+    replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
     recentLogs: S.logs.slice(-30),
   });
 });
