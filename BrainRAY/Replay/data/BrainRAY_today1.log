@@ -1,0 +1,21 @@
+cat > /workspaces/tv-webhook-brain/BrainRAY/Replay/data/BrainRAY_today.log <<'EOF'
+2026-04-10T23:04:58.767162388Z [inf]  2026-04-10T23:04:56.381Z ✅ brain listening | {"port":8080,"path":"/webhook","symbol":"BINANCE:SOLUSDT","tf":"5","brain":"BrainRAY_Continuation_v2.0"}
+2026-04-10T23:05:02.391927432Z [inf]  2026-04-10T23:05:01.971Z 📊 FEATURE_5M | {"close":84.79,"ema8":84.86,"ema18":84.9571,"rsi":37.527,"adx":19.035,"barIndex":1}
+2026-04-10T23:10:06.632436534Z [inf]  2026-04-10T23:10:02.003Z 📊 FEATURE_5M | {"close":84.8,"ema8":84.8467,"ema18":84.9406,"rsi":38.237,"adx":19.732,"barIndex":2}
+2026-04-10T23:15:09.209422209Z [inf]  2026-04-10T23:15:02.909Z 📊 FEATURE_5M | {"close":84.81,"ema8":84.8385,"ema18":84.9268,"rsi":38.985,"adx":20.5,"barIndex":3}
+2026-04-10T23:20:02.073083023Z [inf]  2026-04-10T23:20:01.755Z 📊 FEATURE_5M | {"close":84.77,"ema8":84.8233,"ema18":84.9103,"rsi":37.054,"adx":21.213,"barIndex":4}
+2026-04-10T23:25:06.411620988Z [inf]  2026-04-10T23:25:02.974Z 📊 FEATURE_5M | {"close":84.85,"ema8":84.8292,"ema18":84.904,"rsi":43.121,"adx":20.554,"barIndex":5}
+2026-04-10T23:30:11.500554830Z [inf]  2026-04-10T23:30:03.748Z 📊 FEATURE_5M | {"close":84.87,"ema8":84.8383,"ema18":84.9004,"rsi":44.56,"adx":19.942,"barIndex":6}
+2026-04-10T23:35:03.964843500Z [inf]  2026-04-10T23:35:02.032Z 📊 FEATURE_5M | {"close":84.86,"ema8":84.8431,"ema18":84.8961,"rsi":43.961,"adx":19.7,"barIndex":7}
+2026-04-10T23:40:05.004606083Z [inf]  2026-04-10T23:40:01.870Z 📊 FEATURE_5M | {"close":84.81,"ema8":84.8358,"ema18":84.8871,"rsi":40.995,"adx":19.361,"barIndex":8}
+2026-04-10T23:45:03.149647861Z [inf]  2026-04-10T23:45:02.857Z 📊 FEATURE_5M | {"close":84.79,"ema8":84.8256,"ema18":84.8769,"rsi":39.837,"adx":19.221,"barIndex":9}
+2026-04-10T23:50:04.903133613Z [inf]  2026-04-10T23:50:02.801Z 📊 FEATURE_5M | {"close":84.8,"ema8":84.8199,"ema18":84.8688,"rsi":40.738,"adx":19.437,"barIndex":10}
+2026-04-10T23:50:04.903137944Z [inf]  2026-04-10T23:50:02.812Z 🟢 BULL_REGIME_ON | {"source":"ray_bullish_trend_continuation","bullRegimeId":1,"ts":"2026-04-10T23:50:02Z"}
+2026-04-10T23:50:04.903142034Z [inf]  2026-04-10T23:50:02.812Z 🟩 RAY_BULLISH_TREND_CONTINUATION | {"price":84.8,"ts":"2026-04-10T23:50:02Z"}
+2026-04-10T23:50:04.903145902Z [inf]  2026-04-10T23:50:02.813Z 🚫 ENTRY_BLOCKED | {"allow":false,"source":"ray_bullish_trend_continuation","reasons":["ema8_below_ema18","close_below_ema8","rsi_too_low","no_breakout_memory","ema_bull_invalid"],"extFromEma8":-0.02346147543207067,"extFromEma18":-0.08106630469618514,"contChasePct":-0.02346147543207067,"memChasePct":0}
+2026-04-10T23:55:12.519353935Z [inf]  2026-04-10T23:55:02.716Z 📊 FEATURE_5M | {"close":84.76,"ema8":84.8066,"ema18":84.8573,"rsi":38.269,"adx":19.502,"barIndex":11}
+2026-04-11T00:00:07.337719933Z [inf]  2026-04-11T00:00:06.572Z 📊 FEATURE_5M | {"close":84.83,"ema8":84.8118,"ema18":84.8544,"rsi":44.598,"adx":19.562,"barIndex":12}
+2026-04-11T00:05:10.497810993Z [inf]  2026-04-11T00:05:03.024Z 📊 FEATURE_5M | {"close":84.63,"ema8":84.7714,"ema18":84.8308,"rsi":33.903,"adx":20.628,"barIndex":13}
+2026-04-11T00:05:10.497818729Z [inf]  2026-04-11T00:05:03.140Z 🔴 RAY_BEARISH_TREND_CHANGE | {"price":84.63,"ts":"2026-04-11T00:05:02Z"}
+2026-04-11T00:05:10.497826248Z [inf]  2026-04-11T00:05:03.141Z 🔴 BULL_REGIME_OFF | {"reason":"ray_bearish_trend_change","ts":"2026-04-11T00:05:02Z","bullRegimeId":1}
+EOF
