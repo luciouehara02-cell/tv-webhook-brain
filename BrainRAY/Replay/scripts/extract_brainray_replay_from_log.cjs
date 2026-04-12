@@ -25,199 +25,186 @@
  *   REPLAY_TIMESTAMP_MODE=rewrite  node replay_brainray_case.cjs cases/replay_today.json https://.../webhook
  */
 
+#!/usr/bin/env node
+
 const fs = require("fs");
 
+function usage() {
+  console.error(
+    "Usage: node extract_brainray_replay_from_log.cjs <input.log> <output.json> <secret> [symbol] [tf] [start_time] [end_time]"
+  );
+  console.error("");
+  console.error("Example:");
+  console.error(
+    'node extract_brainray_replay_from_log.cjs data/BrainRAY_today.log cases/replay_1620.json BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7 BINANCE:SOLUSDT 5 2026-04-11T15:00:00Z 2026-04-11T17:00:00Z'
+  );
+  process.exit(1);
+}
+
 const input = process.argv[2];
-const webhookUrl = process.argv[3];
+const output = process.argv[3];
+const secret = process.argv[4];
+const symbol = process.argv[5] || "BINANCE:SOLUSDT";
+const tf = process.argv[6] || "5";
+const startTimeRaw = process.argv[7] || "";
+const endTimeRaw = process.argv[8] || "";
 
-if (!input || !webhookUrl) {
-  console.error("Usage: node replay_brainray_case.cjs <case.json> <webhook_url>");
-  process.exit(1);
-}
+if (!input || !output || !secret) usage();
 
-const REPLAY_DELAY_MS = Number(process.env.REPLAY_DELAY_MS || 600);
-const REPLAY_TIMESTAMP_MODE = String(process.env.REPLAY_TIMESTAMP_MODE || "preserve").toLowerCase();
-const REPLAY_MIN_GAP_MS = Number(process.env.REPLAY_MIN_GAP_MS || 200);
-const REPLAY_MAX_GAP_MS = Number(process.env.REPLAY_MAX_GAP_MS || 300000);
-
-if (!["preserve", "rewrite"].includes(REPLAY_TIMESTAMP_MODE)) {
-  console.error(`Invalid REPLAY_TIMESTAMP_MODE="${REPLAY_TIMESTAMP_MODE}". Use "preserve" or "rewrite".`);
-  process.exit(1);
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isFiniteNumber(v) {
-  return Number.isFinite(Number(v));
-}
-
-function parseIsoMs(v) {
+function toMs(v) {
   if (!v) return null;
   const t = new Date(v).getTime();
   return Number.isFinite(t) ? t : null;
 }
 
-function clone(obj) {
-  return JSON.parse(JSON.stringify(obj));
-}
+const startMs = toMs(startTimeRaw);
+const endMs = toMs(endTimeRaw);
 
-function eventLabel(evt) {
-  return String(evt?.event || evt?.signal || evt?.action || "");
-}
-
-function eventSource(evt) {
-  return String(evt?.src || "");
-}
-
-function eventTime(evt) {
-  return String(evt?.time || evt?.timestamp || "");
-}
-
-function setEventTime(evt, iso) {
-  if ("time" in evt || !("timestamp" in evt)) {
-    evt.time = iso;
-  }
-  if ("timestamp" in evt) {
-    evt.timestamp = iso;
-  }
-  return evt;
-}
-
-function rewriteEventTimes(events) {
-  if (!Array.isArray(events) || events.length === 0) return [];
-
-  const out = [];
-  const baseNow = Date.now();
-
-  let firstMs = null;
-  let previousEffectiveMs = baseNow;
-
-  for (let i = 0; i < events.length; i += 1) {
-    const original = clone(events[i]);
-    const currentMs = parseIsoMs(eventTime(original));
-
-    let effectiveMs;
-
-    if (i === 0) {
-      effectiveMs = baseNow;
-      if (currentMs != null) firstMs = currentMs;
-    } else {
-      if (currentMs != null && firstMs != null) {
-        const prevOriginalMs = parseIsoMs(eventTime(events[i - 1]));
-        if (prevOriginalMs != null) {
-          let gap = currentMs - prevOriginalMs;
-
-          if (!Number.isFinite(gap) || gap <= 0) {
-            gap = REPLAY_DELAY_MS;
-          }
-
-          gap = Math.max(REPLAY_MIN_GAP_MS, Math.min(REPLAY_MAX_GAP_MS, gap));
-          effectiveMs = previousEffectiveMs + gap;
-        } else {
-          effectiveMs = previousEffectiveMs + REPLAY_DELAY_MS;
-        }
-      } else {
-        effectiveMs = previousEffectiveMs + REPLAY_DELAY_MS;
-      }
-    }
-
-    previousEffectiveMs = effectiveMs;
-    setEventTime(original, new Date(effectiveMs).toISOString());
-    out.push(original);
-  }
-
-  return out;
-}
-
-function preserveEventTimes(events) {
-  return events.map((e) => clone(e));
-}
-
-async function postJson(url, payload) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  const text = await res.text().catch(() => "");
-  return {
-    status: res.status,
-    body: text,
-  };
-}
-
-function computeInterEventDelay(prevEvt, nextEvt) {
-  if (REPLAY_TIMESTAMP_MODE !== "preserve") {
-    return REPLAY_DELAY_MS;
-  }
-
-  const prevMs = parseIsoMs(eventTime(prevEvt));
-  const nextMs = parseIsoMs(eventTime(nextEvt));
-
-  if (prevMs == null || nextMs == null) {
-    return REPLAY_DELAY_MS;
-  }
-
-  let gap = nextMs - prevMs;
-  if (!Number.isFinite(gap) || gap <= 0) {
-    return REPLAY_DELAY_MS;
-  }
-
-  return Math.max(REPLAY_MIN_GAP_MS, Math.min(REPLAY_MAX_GAP_MS, gap));
-}
-
-async function main() {
-  const raw = fs.readFileSync(input, "utf8");
-  const parsed = JSON.parse(raw);
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("Case JSON must be an array of events.");
-  }
-
-  const events =
-    REPLAY_TIMESTAMP_MODE === "rewrite"
-      ? rewriteEventTimes(parsed)
-      : preserveEventTimes(parsed);
-
-  console.log(`Loaded ${events.length} events from ${input}`);
-  console.log(`Posting to ${webhookUrl}`);
-  console.log(`Delay between events: ${REPLAY_DELAY_MS} ms`);
-  console.log(
-    `Timestamp mode: ${
-      REPLAY_TIMESTAMP_MODE === "preserve"
-        ? "preserve original time"
-        : "rewrite to now preserving spacing"
-    }`
-  );
-
-  for (let i = 0; i < events.length; i += 1) {
-    const evt = events[i];
-    const src = eventSource(evt);
-    const ev = eventLabel(evt);
-    const ts = eventTime(evt);
-
-    console.log(`\n[${i + 1}/${events.length}] -> src=${src} event=${ev} time=${ts}`);
-
-    try {
-      const resp = await postJson(webhookUrl, evt);
-      console.log(`status=${resp.status} body=${resp.body}`);
-    } catch (err) {
-      console.log(`status=ERR body=${String(err?.message || err)}`);
-    }
-
-    if (i < events.length - 1) {
-      const delayMs = computeInterEventDelay(events[i], events[i + 1]);
-      await sleep(delayMs);
-    }
-  }
-
-  console.log("\nReplay finished.");
-}
-
-main().catch((err) => {
-  console.error(err);
+if (startTimeRaw && startMs == null) {
+  console.error(`Invalid start_time: ${startTimeRaw}`);
   process.exit(1);
+}
+if (endTimeRaw && endMs == null) {
+  console.error(`Invalid end_time: ${endTimeRaw}`);
+  process.exit(1);
+}
+
+const raw = fs.readFileSync(input, "utf8");
+const lines = raw.split(/\r?\n/);
+const events = [];
+
+function parseJsonAfterPipe(line) {
+  const idx = line.indexOf("|");
+  if (idx === -1) return null;
+  const jsonPart = line.slice(idx + 1).trim();
+  try {
+    return JSON.parse(jsonPart);
+  } catch {
+    return null;
+  }
+}
+
+function extractEventTime(line, payload) {
+  if (payload && typeof payload.ts === "string" && payload.ts.endsWith("Z")) {
+    return payload.ts;
+  }
+  if (payload && typeof payload.time === "string" && payload.time.endsWith("Z")) {
+    return payload.time;
+  }
+
+  const matches = line.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g);
+  if (!matches || !matches.length) return null;
+
+  // Prefer the second timestamp in Railway logs:
+  // outer Railway timestamp + inner app timestamp
+  return matches[matches.length - 1];
+}
+
+function withinWindow(iso) {
+  const t = toMs(iso);
+  if (t == null) return false;
+  if (startMs != null && t < startMs) return false;
+  if (endMs != null && t > endMs) return false;
+  return true;
+}
+
+function pushEvent(evt) {
+  if (!evt || !evt.time) return;
+  if (!withinWindow(evt.time)) return;
+  events.push(evt);
+}
+
+for (const line of lines) {
+  if (!line.trim()) continue;
+
+  const payload = parseJsonAfterPipe(line);
+  const time = extractEventTime(line, payload);
+
+  if (!time) continue;
+
+  if (line.includes("📊 FEATURE_5M") && payload) {
+    pushEvent({
+      secret,
+      src: "features",
+      symbol,
+      tf,
+      time,
+      close: payload.close ?? null,
+      ema8: payload.ema8 ?? null,
+      ema18: payload.ema18 ?? null,
+      ema50: payload.ema50 ?? null,
+      rsi: payload.rsi ?? null,
+      adx: payload.adx ?? null,
+      atrPct: payload.atrPct ?? null,
+    });
+    continue;
+  }
+
+  if (line.includes("🟢 RAY_BULLISH_TREND_CHANGE") && payload) {
+    pushEvent({
+      secret,
+      src: "ray",
+      symbol,
+      tf,
+      event: "Bullish Trend Change",
+      price: payload.price ?? null,
+      time,
+    });
+    continue;
+  }
+
+  if (line.includes("🟩 RAY_BULLISH_TREND_CONTINUATION") && payload) {
+    pushEvent({
+      secret,
+      src: "ray",
+      symbol,
+      tf,
+      event: "Bullish Trend Continuation",
+      price: payload.price ?? null,
+      time,
+    });
+    continue;
+  }
+
+  if (line.includes("🔴 RAY_BEARISH_TREND_CHANGE") && payload) {
+    pushEvent({
+      secret,
+      src: "ray",
+      symbol,
+      tf,
+      event: "Bearish Trend Change",
+      price: payload.price ?? null,
+      time,
+    });
+    continue;
+  }
+
+  if (line.includes("🟥 RAY_BEARISH_TREND_CONTINUATION") && payload) {
+    pushEvent({
+      secret,
+      src: "ray",
+      symbol,
+      tf,
+      event: "Bearish Trend Continuation",
+      price: payload.price ?? null,
+      time,
+    });
+    continue;
+  }
+}
+
+events.sort((a, b) => {
+  const ta = toMs(a.time) || 0;
+  const tb = toMs(b.time) || 0;
+  return ta - tb;
 });
+
+fs.writeFileSync(output, JSON.stringify(events, null, 2));
+
+console.log(`Wrote ${events.length} events to ${output}`);
+console.log(`Window start: ${startTimeRaw || "(none)"}`);
+console.log(`Window end:   ${endTimeRaw || "(none)"}`);
+if (events.length > 0) {
+  console.log(`First event:  ${events[0].time} ${events[0].src} ${events[0].event || ""}`.trim());
+  console.log(`Last event:   ${events[events.length - 1].time} ${events[events.length - 1].src} ${events[events.length - 1].event || ""}`.trim());
+}
