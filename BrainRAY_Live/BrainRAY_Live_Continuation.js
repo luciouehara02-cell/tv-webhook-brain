@@ -1,18 +1,18 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.2b
+// BrainRAY_Continuation_v2.3
 //
-// Fixes missed strong launch case:
-// - Ray Bullish Trend Change can arrive BEFORE the strong feature bar
-// - Adds deferred trend-change launch memory
-// - Adds replay-safe freshness bypass via REPLAY_ALLOW_STALE_DATA
+// New in v2.3
+// - immediate Ray BUY launch evaluation on Bullish Trend Change
+// - deferred trend-change launch memory kept as fallback
+// - strong-launch override for exceptional momentum bars
+// - feature-led re-entry once reentry is eligible
 //
-// Keeps:
+// Keeps
 // - long-only
 // - SOLUSDT
 // - dynamic TP tiers
-// - faster reclaim re-entry
 // - breakout memory fallback
 // - bull regime persistence
 // - cycle exits vs regime-break exits
@@ -119,7 +119,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.2b"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.3"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -214,6 +214,13 @@ const CONFIG = {
   TREND_CHANGE_LAUNCH_MAX_CHASE_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT, 0.35),
   TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.20),
   TREND_CHANGE_LAUNCH_MEMORY_BARS: n(process.env.TREND_CHANGE_LAUNCH_MEMORY_BARS, 2),
+
+  // New strong-launch override
+  STRONG_LAUNCH_OVERRIDE_ENABLED: b(process.env.STRONG_LAUNCH_OVERRIDE_ENABLED, true),
+  STRONG_LAUNCH_MIN_RSI: n(process.env.STRONG_LAUNCH_MIN_RSI, 72),
+  STRONG_LAUNCH_MIN_ADX: n(process.env.STRONG_LAUNCH_MIN_ADX, 24),
+  STRONG_LAUNCH_MAX_CHASE_PCT: n(process.env.STRONG_LAUNCH_MAX_CHASE_PCT, 0.55),
+  STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
 
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
 };
@@ -477,6 +484,14 @@ function handleRayEvent(body) {
 
     if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
       armTrendChangeLaunch(price, ts);
+      // New in v2.3: immediate same-bar launch attempt
+      tryEntry("immediate_trend_change_launch", {
+        ...body,
+        src: "ray",
+        event: "Bullish Trend Change",
+        price,
+        time: ts,
+      });
     }
     return;
   }
@@ -597,6 +612,18 @@ function handleFeature(body) {
     });
   }
 
+  // New in v2.3: feature-led re-entry once eligible
+  if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible && !S.inPosition) {
+    tryEntry("feature_reentry", {
+      src: "features",
+      symbol: CONFIG.SYMBOL,
+      tf: CONFIG.ENTRY_TF,
+      close: feature.close,
+      price: feature.close,
+      time: feature.time,
+    });
+  }
+
   if (S.inPosition) {
     evaluateBarExit(feature);
   }
@@ -706,7 +733,7 @@ function evaluateReentryEligibilityFromFeature(feature) {
 function tryEntry(source, body) {
   const decision = evaluateEntry(source, body);
   if (!decision.allow) {
-    if (source === "deferred_trend_change_launch") {
+    if (source === "deferred_trend_change_launch" || source === "immediate_trend_change_launch") {
       log("🚫 LAUNCH_ENTRY_BLOCKED", decision);
     } else {
       log("🚫 ENTRY_BLOCKED", decision);
@@ -750,8 +777,14 @@ function evaluateEntry(source, body) {
   const rsi = n(feature.rsi, NaN);
   const adx = n(feature.adx, NaN);
 
-  const emaBullOk = !CONFIG.REQUIRE_EMA8_ABOVE_EMA18 || (Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18);
-  const closeAboveEma8Ok = !CONFIG.REQUIRE_CLOSE_ABOVE_EMA8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+  const emaBullOk =
+    !CONFIG.REQUIRE_EMA8_ABOVE_EMA18 ||
+    (Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18);
+
+  const closeAboveEma8Ok =
+    !CONFIG.REQUIRE_CLOSE_ABOVE_EMA8 ||
+    (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
   const rsiOk = !Number.isFinite(rsi) || rsi >= CONFIG.MIN_RSI_LONG;
   const adxOk = !Number.isFinite(adx) || adx >= CONFIG.MIN_ADX_CONTINUATION;
 
@@ -761,10 +794,35 @@ function evaluateEntry(source, body) {
   const recentSniperBuy =
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
-  if ((source === "ray_bullish_trend_change_launch" || source === "deferred_trend_change_launch") && CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
+  // --------------------------------------------------------
+  // Immediate or deferred strong trend-change launch
+  // --------------------------------------------------------
+  if (
+    (source === "immediate_trend_change_launch" ||
+      source === "deferred_trend_change_launch" ||
+      source === "ray_bullish_trend_change_launch") &&
+    CONFIG.TREND_CHANGE_LAUNCH_ENABLED
+  ) {
     const launchReasons = [];
     const launchAnchor = Number.isFinite(ema8) ? ema8 : close;
     const launchChasePct = Number.isFinite(launchAnchor) ? pctDiff(launchAnchor, px) : 999;
+
+    const strongOverride =
+      CONFIG.STRONG_LAUNCH_OVERRIDE_ENABLED &&
+      Number.isFinite(rsi) &&
+      Number.isFinite(adx) &&
+      rsi >= CONFIG.STRONG_LAUNCH_MIN_RSI &&
+      adx >= CONFIG.STRONG_LAUNCH_MIN_ADX &&
+      extFromEma18 <= CONFIG.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT &&
+      launchChasePct <= CONFIG.STRONG_LAUNCH_MAX_CHASE_PCT;
+
+    const allowedLaunchChase = strongOverride
+      ? CONFIG.STRONG_LAUNCH_MAX_CHASE_PCT
+      : CONFIG.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT;
+
+    const allowedLaunchExtEma18 = strongOverride
+      ? CONFIG.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT
+      : CONFIG.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT;
 
     reasonPush(launchReasons, !S.trendChangeLaunch.pending, "launch_not_pending");
     reasonPush(launchReasons, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
@@ -772,20 +830,23 @@ function evaluateEntry(source, body) {
     reasonPush(launchReasons, !closeAboveEma8Ok, "launch_close_below_ema8");
     reasonPush(launchReasons, Number.isFinite(rsi) && rsi < CONFIG.TREND_CHANGE_LAUNCH_MIN_RSI, "launch_rsi_too_low");
     reasonPush(launchReasons, Number.isFinite(adx) && adx < CONFIG.TREND_CHANGE_LAUNCH_MIN_ADX, "launch_adx_too_low");
-    reasonPush(launchReasons, launchChasePct > CONFIG.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT, "launch_chase_too_high");
-    reasonPush(launchReasons, extFromEma18 > CONFIG.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT, "launch_too_extended_from_ema18");
+    reasonPush(launchReasons, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
+    reasonPush(launchReasons, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
 
     if (launchReasons.length === 0) {
       return {
         allow: true,
         source,
-        mode: "bullish_trend_change_launch_long",
+        mode: strongOverride
+          ? "bullish_trend_change_launch_long_strong"
+          : "bullish_trend_change_launch_long",
         entryPrice: px,
         extFromEma8,
         extFromEma18,
         launchChasePct,
         armedBar: S.trendChangeLaunch.armedBar,
         expiresBar: S.trendChangeLaunch.expiresBar,
+        strongOverride,
       };
     }
 
@@ -798,14 +859,28 @@ function evaluateEntry(source, body) {
       launchChasePct,
       armedBar: S.trendChangeLaunch.armedBar,
       expiresBar: S.trendChangeLaunch.expiresBar,
+      strongOverrideCandidate:
+        CONFIG.STRONG_LAUNCH_OVERRIDE_ENABLED &&
+        Number.isFinite(rsi) &&
+        Number.isFinite(adx) &&
+        rsi >= CONFIG.STRONG_LAUNCH_MIN_RSI &&
+        adx >= CONFIG.STRONG_LAUNCH_MIN_ADX,
     };
   }
 
+  // --------------------------------------------------------
+  // Re-entry path, including feature-led re-entry
+  // --------------------------------------------------------
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
 
-    reasonPush(rr, (useFast ? CONFIG.FAST_REENTRY_REQUIRE_BULL_CONTEXT : CONFIG.REENTRY_REQUIRE_BULL_CONTEXT) && !S.ray.bullContext, "reentry_no_bull_context");
+    reasonPush(
+      rr,
+      (useFast ? CONFIG.FAST_REENTRY_REQUIRE_BULL_CONTEXT : CONFIG.REENTRY_REQUIRE_BULL_CONTEXT) &&
+        !S.ray.bullContext,
+      "reentry_no_bull_context"
+    );
     reasonPush(rr, S.reentry.bullRegimeId !== S.ray.bullRegimeId, "reentry_regime_mismatch");
     reasonPush(rr, S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME, "max_reentry_reached");
     reasonPush(rr, S.barIndex < n(S.reentry.eligibleFromBar, 0), "reentry_too_early");
@@ -833,7 +908,10 @@ function evaluateEntry(source, body) {
       return {
         allow: true,
         source,
-        mode: "pullback_reclaim_reentry_long",
+        mode:
+          source === "feature_reentry"
+            ? "feature_pullback_reclaim_reentry_long"
+            : "pullback_reclaim_reentry_long",
         entryPrice: px,
         reentryChasePct,
         anchor: round4(anchor),
@@ -842,6 +920,9 @@ function evaluateEntry(source, body) {
     }
   }
 
+  // --------------------------------------------------------
+  // Direct continuation path
+  // --------------------------------------------------------
   const contReasons = [];
   reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
   reasonPush(contReasons, !closeAboveEma8Ok, "close_below_ema8");
@@ -867,6 +948,9 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // --------------------------------------------------------
+  // Breakout memory fallback
+  // --------------------------------------------------------
   const mem = S.breakoutMemory;
   const memReasons = [];
   const memActive = CONFIG.BREAKOUT_MEMORY_ENABLED && mem.active && !mem.used;
@@ -924,12 +1008,12 @@ function doEnter(mode, price, decision = {}) {
   S.lastAction = "enter";
   S.cycleState = "long";
 
-  if (mode === "pullback_reclaim_reentry_long") {
+  if (mode === "pullback_reclaim_reentry_long" || mode === "feature_pullback_reclaim_reentry_long") {
     S.ray.reentryCountInRegime += 1;
     clearReentry("consumed_on_reentry");
   }
 
-  if (mode === "bullish_trend_change_launch_long") {
+  if (mode === "bullish_trend_change_launch_long" || mode === "bullish_trend_change_launch_long_strong") {
     clearTrendChangeLaunch("consumed_on_entry");
   }
 
