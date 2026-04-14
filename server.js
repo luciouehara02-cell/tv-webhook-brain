@@ -90,7 +90,7 @@ function secretFor(url) {
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOPHASE5" };
   }
 
-  // NEW: BrainRAY Continuation
+  // BrainRAY Continuation
   if (u.includes("brainraycontinuation-production")) {
     const s = String(process.env.BRAIN_SECRET_BRAINRAYCONTINUATION || "");
     if (s) {
@@ -99,6 +99,18 @@ function secretFor(url) {
     return {
       secret: "",
       source: "MISSING_ENV:BRAIN_SECRET_BRAINRAYCONTINUATION",
+    };
+  }
+
+  // NEW: Live BrainRAY
+  if (u.includes("brainraylivecontinuationjs-production")) {
+    const s = String(process.env.BRAIN_SECRET_LIVE_BRAINRAY || "");
+    if (s) {
+      return { secret: s, source: "ENV:BRAIN_SECRET_LIVE_BRAINRAY" };
+    }
+    return {
+      secret: "",
+      source: "MISSING_ENV:BRAIN_SECRET_LIVE_BRAINRAY",
     };
   }
 
@@ -162,6 +174,7 @@ app.get("/", (_req, res) => {
       hasBrainRayContinuation: Boolean(
         process.env.BRAIN_SECRET_BRAINRAYCONTINUATION
       ),
+      hasLiveBrainRay: Boolean(process.env.BRAIN_SECRET_LIVE_BRAINRAY),
     },
   });
 });
@@ -221,7 +234,9 @@ app.post("/webhook", async (req, res) => {
         `❌ Forward SKIPPED -> ${r.url} | ${r.resp} | via=${r.source}`
       );
     } else {
-      console.error(`❌ Forward FAIL -> ${r.url} | status=${r.status} | ${r.resp}`);
+      console.error(
+        `❌ Forward FAIL -> ${r.url} | status=${r.status} | ${r.resp}`
+      );
     }
   }
 
@@ -245,6 +260,7 @@ app.listen(PORT, () => {
       `DEMO_LONG=${process.env.BRAIN_SECRET_DEMOLONG ? "YES" : "NO"}, ` +
       `DEMO_SHORT=${process.env.BRAIN_SECRET_DEMOSHORT ? "YES" : "NO"}, ` +
       `DEMO_PHASE5=${process.env.BRAIN_SECRET_DEMOPHASE5 ? "YES" : "NO"}, ` +
-      `BRAINRAY_CONTINUATION=${process.env.BRAIN_SECRET_BRAINRAYCONTINUATION ? "YES" : "NO"}`
+      `BRAINRAY_CONTINUATION=${process.env.BRAIN_SECRET_BRAINRAYCONTINUATION ? "YES" : "NO"}, ` +
+      `LIVE_BRAINRAY=${process.env.BRAIN_SECRET_LIVE_BRAINRAY ? "YES" : "NO"}`
   );
 });
