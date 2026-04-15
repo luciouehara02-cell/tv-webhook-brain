@@ -1,23 +1,19 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.3
+// BrainRAY_Continuation_v2.4
 //
-// New in v2.3
-// - immediate Ray BUY launch evaluation on Bullish Trend Change
-// - deferred trend-change launch memory kept as fallback
-// - strong-launch override for exceptional momentum bars
-// - feature-led re-entry once reentry is eligible
+// New in v2.4
+// - keeps immediate Ray BUY launch
+// - keeps deferred launch memory fallback
+// - keeps strong-launch override
+// - adds stricter thresholds for deferred launch only
+//   so weak delayed launches are blocked
+// - keeps feature-led re-entry
 //
-// Keeps
-// - long-only
-// - SOLUSDT
-// - dynamic TP tiers
-// - breakout memory fallback
-// - bull regime persistence
-// - cycle exits vs regime-break exits
-// - 3Commas integration
-// - /reset route
+// Goal of v2.4
+// - block today's weaker deferred launch
+// - still allow strong delayed launch like yesterday's pink case
 // ============================================================
 
 const app = express();
@@ -119,7 +115,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.3"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.4"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -215,7 +211,11 @@ const CONFIG = {
   TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.20),
   TREND_CHANGE_LAUNCH_MEMORY_BARS: n(process.env.TREND_CHANGE_LAUNCH_MEMORY_BARS, 2),
 
-  // New strong-launch override
+  // v2.4 deferred launch stricter thresholds
+  DEFERRED_LAUNCH_MIN_RSI: n(process.env.DEFERRED_LAUNCH_MIN_RSI, 68),
+  DEFERRED_LAUNCH_MIN_ADX: n(process.env.DEFERRED_LAUNCH_MIN_ADX, 18),
+
+  // strong override
   STRONG_LAUNCH_OVERRIDE_ENABLED: b(process.env.STRONG_LAUNCH_OVERRIDE_ENABLED, true),
   STRONG_LAUNCH_MIN_RSI: n(process.env.STRONG_LAUNCH_MIN_RSI, 72),
   STRONG_LAUNCH_MIN_ADX: n(process.env.STRONG_LAUNCH_MIN_ADX, 24),
@@ -484,7 +484,6 @@ function handleRayEvent(body) {
 
     if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
       armTrendChangeLaunch(price, ts);
-      // New in v2.3: immediate same-bar launch attempt
       tryEntry("immediate_trend_change_launch", {
         ...body,
         src: "ray",
@@ -612,7 +611,6 @@ function handleFeature(body) {
     });
   }
 
-  // New in v2.3: feature-led re-entry once eligible
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible && !S.inPosition) {
     tryEntry("feature_reentry", {
       src: "features",
@@ -795,7 +793,7 @@ function evaluateEntry(source, body) {
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
   // --------------------------------------------------------
-  // Immediate or deferred strong trend-change launch
+  // Immediate or deferred trend-change launch
   // --------------------------------------------------------
   if (
     (source === "immediate_trend_change_launch" ||
@@ -806,6 +804,18 @@ function evaluateEntry(source, body) {
     const launchReasons = [];
     const launchAnchor = Number.isFinite(ema8) ? ema8 : close;
     const launchChasePct = Number.isFinite(launchAnchor) ? pctDiff(launchAnchor, px) : 999;
+
+    const isDeferredLaunch =
+      source === "deferred_trend_change_launch" ||
+      source === "ray_bullish_trend_change_launch";
+
+    const minLaunchRsi = isDeferredLaunch
+      ? CONFIG.DEFERRED_LAUNCH_MIN_RSI
+      : CONFIG.TREND_CHANGE_LAUNCH_MIN_RSI;
+
+    const minLaunchAdx = isDeferredLaunch
+      ? CONFIG.DEFERRED_LAUNCH_MIN_ADX
+      : CONFIG.TREND_CHANGE_LAUNCH_MIN_ADX;
 
     const strongOverride =
       CONFIG.STRONG_LAUNCH_OVERRIDE_ENABLED &&
@@ -828,8 +838,8 @@ function evaluateEntry(source, body) {
     reasonPush(launchReasons, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
     reasonPush(launchReasons, !emaBullOk, "launch_ema8_below_ema18");
     reasonPush(launchReasons, !closeAboveEma8Ok, "launch_close_below_ema8");
-    reasonPush(launchReasons, Number.isFinite(rsi) && rsi < CONFIG.TREND_CHANGE_LAUNCH_MIN_RSI, "launch_rsi_too_low");
-    reasonPush(launchReasons, Number.isFinite(adx) && adx < CONFIG.TREND_CHANGE_LAUNCH_MIN_ADX, "launch_adx_too_low");
+    reasonPush(launchReasons, Number.isFinite(rsi) && rsi < minLaunchRsi, "launch_rsi_too_low");
+    reasonPush(launchReasons, Number.isFinite(adx) && adx < minLaunchAdx, "launch_adx_too_low");
     reasonPush(launchReasons, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
     reasonPush(launchReasons, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
 
@@ -847,6 +857,9 @@ function evaluateEntry(source, body) {
         armedBar: S.trendChangeLaunch.armedBar,
         expiresBar: S.trendChangeLaunch.expiresBar,
         strongOverride,
+        isDeferredLaunch,
+        minLaunchRsi,
+        minLaunchAdx,
       };
     }
 
@@ -865,11 +878,14 @@ function evaluateEntry(source, body) {
         Number.isFinite(adx) &&
         rsi >= CONFIG.STRONG_LAUNCH_MIN_RSI &&
         adx >= CONFIG.STRONG_LAUNCH_MIN_ADX,
+      isDeferredLaunch,
+      minLaunchRsi,
+      minLaunchAdx,
     };
   }
 
   // --------------------------------------------------------
-  // Re-entry path, including feature-led re-entry
+  // Re-entry path
   // --------------------------------------------------------
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible) {
     const rr = [];
@@ -921,7 +937,7 @@ function evaluateEntry(source, body) {
   }
 
   // --------------------------------------------------------
-  // Direct continuation path
+  // Continuation path
   // --------------------------------------------------------
   const contReasons = [];
   reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
