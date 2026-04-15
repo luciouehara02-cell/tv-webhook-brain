@@ -1,20 +1,20 @@
 [
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 83.58,
     "time": "2026-04-10T12:09:50Z"
   },
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 83.60,
     "time": "2026-04-10T12:09:58Z"
   },
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "ray",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
@@ -23,7 +23,7 @@
     "time": "2026-04-10T12:10:01Z"
   },
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "features",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
@@ -48,14 +48,14 @@
     "patternAWatch": 0
   },
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 83.64,
     "time": "2026-04-10T12:10:10Z"
   },
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "ray",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
@@ -64,7 +64,7 @@
     "time": "2026-04-10T12:10:20Z"
   },
   {
-    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 83.67,
