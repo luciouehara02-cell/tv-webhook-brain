@@ -1,19 +1,19 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.4
+// BrainRAY_Continuation_v2.5
 //
-// New in v2.4
-// - keeps immediate Ray BUY launch
-// - keeps deferred launch memory fallback
-// - keeps strong-launch override
-// - adds stricter thresholds for deferred launch only
-//   so weak delayed launches are blocked
-// - keeps feature-led re-entry
+// New in v2.5
+// - keeps v2.4 immediate launch
+// - keeps v2.4 stricter deferred launch
+// - adds fast tick-confirmed launch after Ray BUY
 //
-// Goal of v2.4
-// - block today's weaker deferred launch
-// - still allow strong delayed launch like yesterday's pink case
+// New entry path:
+// - tick_confirmed_launch_long
+//
+// Design:
+// - feature = structure / quality anchor
+// - tick = timing / breakout confirmation
 // ============================================================
 
 const app = express();
@@ -115,7 +115,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.4"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.5"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -130,6 +130,7 @@ const CONFIG = {
   ENTER_DEDUP_MS: n(process.env.ENTER_DEDUP_MS, 90000),
   EXIT_DEDUP_MS: n(process.env.EXIT_DEDUP_MS, 60000),
   EXIT_COOLDOWN_MIN: n(process.env.EXIT_COOLDOWN_MIN, 12),
+  REENTRY_ENTER_DEDUP_MS: n(process.env.REENTRY_ENTER_DEDUP_MS, 8000),
 
   C3_SIGNAL_URL: s(process.env.C3_SIGNAL_URL || process.env.THREECOMMAS_WEBHOOK_URL, ""),
   C3_SIGNAL_SECRET: s(process.env.C3_SIGNAL_SECRET || process.env.THREECOMMAS_SECRET, ""),
@@ -211,16 +212,26 @@ const CONFIG = {
   TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.20),
   TREND_CHANGE_LAUNCH_MEMORY_BARS: n(process.env.TREND_CHANGE_LAUNCH_MEMORY_BARS, 2),
 
-  // v2.4 deferred launch stricter thresholds
   DEFERRED_LAUNCH_MIN_RSI: n(process.env.DEFERRED_LAUNCH_MIN_RSI, 68),
   DEFERRED_LAUNCH_MIN_ADX: n(process.env.DEFERRED_LAUNCH_MIN_ADX, 18),
 
-  // strong override
   STRONG_LAUNCH_OVERRIDE_ENABLED: b(process.env.STRONG_LAUNCH_OVERRIDE_ENABLED, true),
   STRONG_LAUNCH_MIN_RSI: n(process.env.STRONG_LAUNCH_MIN_RSI, 72),
   STRONG_LAUNCH_MIN_ADX: n(process.env.STRONG_LAUNCH_MIN_ADX, 24),
   STRONG_LAUNCH_MAX_CHASE_PCT: n(process.env.STRONG_LAUNCH_MAX_CHASE_PCT, 0.55),
   STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
+
+  // New in v2.5
+  FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
+  FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
+  FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
+  FAST_TICK_LAUNCH_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_MIN_ADX, 18),
+  FAST_TICK_LAUNCH_CONFIRM_PCT: n(process.env.FAST_TICK_LAUNCH_CONFIRM_PCT, 0.05),
+  FAST_TICK_LAUNCH_MAX_CHASE_PCT: n(process.env.FAST_TICK_LAUNCH_MAX_CHASE_PCT, 0.35),
+  FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM: n(process.env.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM, 2),
+  FAST_TICK_LAUNCH_STRONG_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_RSI, 60),
+  FAST_TICK_LAUNCH_STRONG_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_ADX, 22),
+  FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT: n(process.env.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT, 0.45),
 
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
 };
@@ -308,6 +319,24 @@ function buildInitialRuntimeState() {
       rayPrice: null,
       rayTime: null,
     },
+
+    fastTickLaunch: {
+      active: false,
+      openedAtMs: null,
+      expiresAtMs: null,
+      bullRegimeId: null,
+      source: null,
+      rayPrice: null,
+      confirmPrice: null,
+      featureClose: null,
+      ema8: null,
+      ema18: null,
+      rsi: null,
+      adx: null,
+      breakoutHigh: null,
+      ticksAboveConfirm: 0,
+      lastConfirmedTickPrice: null,
+    },
   };
 }
 
@@ -320,7 +349,7 @@ function log(msg, data = null) {
   const line = data ? `${msg} | ${JSON.stringify(data)}` : msg;
   const out = `${isoNow()} ${line}`;
   S.logs.push(out);
-  if (S.logs.length > 600) S.logs.shift();
+  if (S.logs.length > 700) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
 }
 
@@ -416,6 +445,67 @@ function clearTrendChangeLaunch(reason = "reset") {
   };
 }
 
+function armFastTickLaunch(source, rayPrice) {
+  if (!CONFIG.FAST_TICK_LAUNCH_ENABLED) return;
+  const f = S.lastFeature;
+  if (!f) return;
+
+  const confirmPrice = rayPrice * (1 + CONFIG.FAST_TICK_LAUNCH_CONFIRM_PCT / 100);
+
+  S.fastTickLaunch = {
+    active: true,
+    openedAtMs: nowMs(),
+    expiresAtMs: nowMs() + CONFIG.FAST_TICK_LAUNCH_WINDOW_SEC * 1000,
+    bullRegimeId: S.ray.bullRegimeId,
+    source,
+    rayPrice,
+    confirmPrice,
+    featureClose: f.close,
+    ema8: f.ema8,
+    ema18: f.ema18,
+    rsi: f.rsi,
+    adx: f.adx,
+    breakoutHigh: Number.isFinite(S.breakoutMemory.breakoutHigh) ? S.breakoutMemory.breakoutHigh : f.high,
+    ticksAboveConfirm: 0,
+    lastConfirmedTickPrice: null,
+  };
+
+  log("⚡ FAST_TICK_LAUNCH_ARMED", {
+    source,
+    bullRegimeId: S.fastTickLaunch.bullRegimeId,
+    rayPrice,
+    confirmPrice: round4(confirmPrice),
+    expiresAt: new Date(S.fastTickLaunch.expiresAtMs).toISOString(),
+    rsi: f.rsi,
+    adx: f.adx,
+    ema8: f.ema8,
+    ema18: f.ema18,
+  });
+}
+
+function clearFastTickLaunch(reason = "reset") {
+  if (S.fastTickLaunch.active) {
+    log("⚡ FAST_TICK_LAUNCH_CLEARED", { reason });
+  }
+  S.fastTickLaunch = {
+    active: false,
+    openedAtMs: null,
+    expiresAtMs: null,
+    bullRegimeId: null,
+    source: null,
+    rayPrice: null,
+    confirmPrice: null,
+    featureClose: null,
+    ema8: null,
+    ema18: null,
+    rsi: null,
+    adx: null,
+    breakoutHigh: null,
+    ticksAboveConfirm: 0,
+    lastConfirmedTickPrice: null,
+  };
+}
+
 // ------------------------------------------------------------
 // Parsing inbound event types
 // ------------------------------------------------------------
@@ -468,6 +558,7 @@ function turnBullRegimeOff(ts, reason) {
     clearBreakoutMemory("bull_regime_off");
     clearReentry("bull_regime_off");
     clearTrendChangeLaunch("bull_regime_off");
+    clearFastTickLaunch("bull_regime_off");
     log("🔴 BULL_REGIME_OFF", { reason, ts, bullRegimeId: S.ray.bullRegimeId });
   }
 }
@@ -484,13 +575,16 @@ function handleRayEvent(body) {
 
     if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
       armTrendChangeLaunch(price, ts);
-      tryEntry("immediate_trend_change_launch", {
+      const decision = tryEntry("immediate_trend_change_launch", {
         ...body,
         src: "ray",
         event: "Bullish Trend Change",
         price,
         time: ts,
       });
+      if (!decision.allow) {
+        armFastTickLaunch("ray_bullish_trend_change", price);
+      }
     }
     return;
   }
@@ -499,7 +593,12 @@ function handleRayEvent(body) {
     S.ray.lastBullTrendContinuationAt = ts;
     if (!S.ray.bullContext) turnBullRegimeOn(ts, "ray_bullish_trend_continuation");
     log("🟩 RAY_BULLISH_TREND_CONTINUATION", { price, ts });
-    tryEntry("ray_bullish_trend_continuation", body);
+
+    const decision = tryEntry("ray_bullish_trend_continuation", body);
+
+    if (!decision.allow && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
+      armFastTickLaunch("ray_bullish_trend_continuation", price);
+    }
     return;
   }
 
@@ -554,6 +653,7 @@ function updateBarProgress(ts) {
     invalidateBreakoutMemory();
     invalidateReentry();
     invalidateTrendChangeLaunch();
+    invalidateFastTickLaunch();
   }
 }
 
@@ -699,6 +799,17 @@ function invalidateTrendChangeLaunch() {
   }
 }
 
+function invalidateFastTickLaunch() {
+  if (!S.fastTickLaunch.active) return;
+  if (nowMs() > n(S.fastTickLaunch.expiresAtMs, 0)) {
+    clearFastTickLaunch("expired");
+    return;
+  }
+  if (S.fastTickLaunch.bullRegimeId !== S.ray.bullRegimeId) {
+    clearFastTickLaunch("regime_changed");
+  }
+}
+
 function evaluateReentryEligibilityFromFeature(feature) {
   if (!CONFIG.PHASE2_REENTRY_ENABLED) return;
   if (!S.ray.bullContext) return;
@@ -728,10 +839,21 @@ function evaluateReentryEligibilityFromFeature(feature) {
 // ------------------------------------------------------------
 // Entry logic
 // ------------------------------------------------------------
+function activeEnterDedupMs(source) {
+  if (source === "feature_reentry" || source === "pullback_reclaim_reentry_long") {
+    return CONFIG.REENTRY_ENTER_DEDUP_MS;
+  }
+  return CONFIG.ENTER_DEDUP_MS;
+}
+
 function tryEntry(source, body) {
   const decision = evaluateEntry(source, body);
   if (!decision.allow) {
-    if (source === "deferred_trend_change_launch" || source === "immediate_trend_change_launch") {
+    if (
+      source === "deferred_trend_change_launch" ||
+      source === "immediate_trend_change_launch" ||
+      source === "tick_confirmed_fast_launch"
+    ) {
       log("🚫 LAUNCH_ENTRY_BLOCKED", decision);
     } else {
       log("🚫 ENTRY_BLOCKED", decision);
@@ -758,12 +880,16 @@ function evaluateEntry(source, body) {
   reasonPush(reasons, normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)) !== CONFIG.SYMBOL, "symbol_mismatch");
   reasonPush(reasons, S.inPosition, "already_in_position");
   reasonPush(reasons, now < S.cooldownUntilMs, "cooldown_active");
-  reasonPush(reasons, now - S.lastEnterAtMs < CONFIG.ENTER_DEDUP_MS, "enter_dedup");
-  reasonPush(reasons, !isTickFresh(), "stale_tick");
+  reasonPush(reasons, now - S.lastEnterAtMs < activeEnterDedupMs(source), "enter_dedup");
   reasonPush(reasons, !isFeatureFresh(), "stale_feature");
   reasonPush(reasons, !S.ray.bullContext, "no_bull_context");
   reasonPush(reasons, !Number.isFinite(px), "bad_price");
   reasonPush(reasons, !feature, "no_feature");
+
+  // tick freshness only for tick-based launch
+  if (source === "tick_confirmed_fast_launch") {
+    reasonPush(reasons, !isTickFresh(), "stale_tick");
+  }
 
   if (reasons.length) {
     return { allow: false, source, reasons };
@@ -791,6 +917,71 @@ function evaluateEntry(source, body) {
 
   const recentSniperBuy =
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
+
+  // --------------------------------------------------------
+  // New in v2.5: tick-confirmed fast launch
+  // --------------------------------------------------------
+  if (source === "tick_confirmed_fast_launch" && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
+    const tl = S.fastTickLaunch;
+    const tlReasons = [];
+
+    reasonPush(tlReasons, !tl.active, "fast_tick_launch_not_active");
+    reasonPush(tlReasons, now > n(tl.expiresAtMs, 0), "fast_tick_launch_expired");
+    reasonPush(tlReasons, tl.bullRegimeId !== S.ray.bullRegimeId, "fast_tick_launch_regime_mismatch");
+    reasonPush(tlReasons, !emaBullOk, "fast_tick_launch_ema_invalid");
+
+    const minRsi = CONFIG.FAST_TICK_LAUNCH_MIN_RSI;
+    const minAdx = CONFIG.FAST_TICK_LAUNCH_MIN_ADX;
+    const strongRsi = CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_RSI;
+    const strongAdx = CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_ADX;
+
+    const strongFastLaunch =
+      Number.isFinite(rsi) &&
+      Number.isFinite(adx) &&
+      rsi >= strongRsi &&
+      adx >= strongAdx;
+
+    const allowedChase = strongFastLaunch
+      ? CONFIG.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT
+      : CONFIG.FAST_TICK_LAUNCH_MAX_CHASE_PCT;
+
+    reasonPush(tlReasons, Number.isFinite(rsi) && rsi < minRsi, "fast_tick_launch_rsi_too_low");
+    reasonPush(tlReasons, Number.isFinite(adx) && adx < minAdx, "fast_tick_launch_adx_too_low");
+    reasonPush(tlReasons, extFromEma8 > allowedChase, "fast_tick_launch_chase_too_high");
+    reasonPush(tlReasons, px < n(tl.confirmPrice, Infinity), "fast_tick_launch_below_confirm");
+    reasonPush(
+      tlReasons,
+      n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM,
+      "fast_tick_launch_not_enough_confirm_ticks"
+    );
+
+    if (tlReasons.length === 0) {
+      return {
+        allow: true,
+        source,
+        mode: strongFastLaunch
+          ? "tick_confirmed_launch_long_strong"
+          : "tick_confirmed_launch_long",
+        entryPrice: px,
+        extFromEma8,
+        extFromEma18,
+        ticksAboveConfirm: tl.ticksAboveConfirm,
+        confirmPrice: round4(tl.confirmPrice),
+        strongFastLaunch,
+      };
+    }
+
+    return {
+      allow: false,
+      source,
+      reasons: tlReasons,
+      extFromEma8,
+      extFromEma18,
+      ticksAboveConfirm: tl.ticksAboveConfirm,
+      confirmPrice: round4(tl.confirmPrice),
+      strongFastLaunchCandidate: strongFastLaunch,
+    };
+  }
 
   // --------------------------------------------------------
   // Immediate or deferred trend-change launch
@@ -1029,8 +1220,14 @@ function doEnter(mode, price, decision = {}) {
     clearReentry("consumed_on_reentry");
   }
 
-  if (mode === "bullish_trend_change_launch_long" || mode === "bullish_trend_change_launch_long_strong") {
+  if (
+    mode === "bullish_trend_change_launch_long" ||
+    mode === "bullish_trend_change_launch_long_strong" ||
+    mode === "tick_confirmed_launch_long" ||
+    mode === "tick_confirmed_launch_long_strong"
+  ) {
     clearTrendChangeLaunch("consumed_on_entry");
+    clearFastTickLaunch("consumed_on_entry");
   }
 
   if (S.breakoutMemory.active) {
@@ -1194,7 +1391,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
     pnlPct: round4(pnlPct),
     entryPrice: round4(S.entryPrice),
     entryMode: S.entryMode,
-    heldSec: S.entryAt ? Math.round((new Date(ts).getTime() - new Date(S.entryAt).getTime()) / 1000) : null,
+    heldSec: S.entryAt ? Math.max(0, Math.round((new Date(ts).getTime() - new Date(S.entryAt).getTime()) / 1000)) : null,
   });
 
   forward3Commas("exit_long", exitPrice, {
@@ -1316,6 +1513,52 @@ function checkSecret(body) {
 }
 
 // ------------------------------------------------------------
+// Tick handling
+// ------------------------------------------------------------
+function handleTick(body) {
+  const ts = pickFirst(body, ["time", "timestamp"], isoNow());
+  const px = n(body.price, NaN);
+  if (!Number.isFinite(px)) {
+    throw new Error("bad_tick_price");
+  }
+
+  S.lastTickPrice = px;
+  S.lastTickTime = ts;
+  S.tickCount += 1;
+
+  invalidateFastTickLaunch();
+
+  if (S.fastTickLaunch.active && !S.inPosition) {
+    if (px >= n(S.fastTickLaunch.confirmPrice, Infinity)) {
+      S.fastTickLaunch.ticksAboveConfirm += 1;
+      S.fastTickLaunch.lastConfirmedTickPrice = px;
+      log("⚡ FAST_TICK_CONFIRM", {
+        price: px,
+        ticksAboveConfirm: S.fastTickLaunch.ticksAboveConfirm,
+        confirmPrice: round4(S.fastTickLaunch.confirmPrice),
+      });
+
+      tryEntry("tick_confirmed_fast_launch", {
+        src: "tick",
+        symbol: CONFIG.SYMBOL,
+        tf: CONFIG.ENTRY_TF,
+        price: px,
+        time: ts,
+      });
+    }
+  }
+
+  updatePositionFromTick(px);
+
+  return {
+    ok: true,
+    kind: "tick",
+    price: px,
+    inPosition: S.inPosition,
+  };
+}
+
+// ------------------------------------------------------------
 // Routes
 // ------------------------------------------------------------
 app.get("/", (_req, res) => {
@@ -1348,6 +1591,7 @@ app.get("/status", (_req, res) => {
     cycleState: S.cycleState,
     reentry: S.reentry,
     trendChangeLaunch: S.trendChangeLaunch,
+    fastTickLaunch: S.fastTickLaunch,
     lastTickPrice: S.lastTickPrice,
     lastTickTime: S.lastTickTime,
     tickFresh: isTickFresh(),
@@ -1358,7 +1602,7 @@ app.get("/status", (_req, res) => {
     fvvo: S.fvvo,
     barIndex: S.barIndex,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
-    recentLogs: S.logs.slice(-30),
+    recentLogs: S.logs.slice(-40),
   });
 });
 
@@ -1380,16 +1624,6 @@ app.post("/reset", (req, res) => {
     brain: CONFIG.BRAIN_NAME,
     symbol: CONFIG.SYMBOL,
     tf: CONFIG.ENTRY_TF,
-    state: {
-      inPosition: S.inPosition,
-      bullContext: S.ray.bullContext,
-      bullRegimeId: S.ray.bullRegimeId,
-      cycleState: S.cycleState,
-      barIndex: S.barIndex,
-      breakoutMemory: S.breakoutMemory,
-      reentry: S.reentry,
-      trendChangeLaunch: S.trendChangeLaunch,
-    },
   });
 });
 
@@ -1411,22 +1645,7 @@ app.post(CONFIG.WEBHOOK_PATH, (req, res) => {
 
   try {
     if (parsed.family === "tick") {
-      const ts = pickFirst(body, ["time", "timestamp"], isoNow());
-      const px = n(body.price, NaN);
-      if (!Number.isFinite(px)) return res.status(400).json({ ok: false, error: "bad_tick_price" });
-
-      S.lastTickPrice = px;
-      S.lastTickTime = ts;
-      S.tickCount += 1;
-
-      updatePositionFromTick(px);
-
-      return res.json({
-        ok: true,
-        kind: "tick",
-        price: px,
-        inPosition: S.inPosition,
-      });
+      return res.json(handleTick(body));
     }
 
     if (parsed.family === "feature") {
