@@ -1,35 +1,33 @@
 import express from "express";
 
-// ============================================================
-// BrainRAY_Continuation_v2.8
-//
-// New in v2.8
-// - fixes re-entry fallback leak
-// - if source === feature_reentry, only dedicated re-entry logic
-//   is allowed to decide entry
-// - no fallthrough into continuation / breakout-memory paths
-//
-// Purpose:
-// - preserve stable entry side
-// - preserve improved exit side
-// - make re-entry replay results trustworthy
-// ============================================================
+/**
+ * BrainRAY_Continuation_v3.0
+ *
+ * v3.0:
+ * - real separate FVVO webhook support
+ * - Ray remains primary directional layer
+ * - FVVO acts as confidence / anti-chase / re-entry helper
+ *
+ * Supported webhook families:
+ * - tick
+ * - features
+ * - ray
+ * - fvvo
+ */
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// ------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------
+// --------------------------------------------------
+// helpers
+// --------------------------------------------------
 function n(v, d = 0) {
   const x = Number(v);
   return Number.isFinite(x) ? x : d;
 }
-
 function s(v, d = "") {
   return v == null ? d : String(v);
 }
-
 function b(v, d = false) {
   if (v == null) return d;
   const x = String(v).trim().toLowerCase();
@@ -37,22 +35,27 @@ function b(v, d = false) {
   if (["0", "false", "no", "off"].includes(x)) return false;
   return d;
 }
-
 function nowMs() {
   return Date.now();
 }
-
 function isoNow() {
   return new Date().toISOString();
 }
-
+function round4(x) {
+  return Math.round(Number(x) * 10000) / 10000;
+}
 function pctDiff(from, to) {
   const a = Number(from);
   const b2 = Number(to);
   if (!Number.isFinite(a) || !Number.isFinite(b2) || a === 0) return 0;
   return ((b2 - a) / a) * 100;
 }
-
+function normalizeSymbol(raw) {
+  const v = String(raw || "").trim().toUpperCase();
+  if (!v) return "";
+  if (v.includes(":")) return v;
+  return `BINANCE:${v}`;
+}
 function safeJsonParse(raw, fallback) {
   try {
     return JSON.parse(raw);
@@ -60,61 +63,42 @@ function safeJsonParse(raw, fallback) {
     return fallback;
   }
 }
-
-function upper(x) {
-  return String(x || "").trim().toUpperCase();
-}
-
-function normalizeSymbol(raw) {
-  const v = upper(raw);
-  if (!v) return "";
-  if (v.includes(":")) return v;
-  return `BINANCE:${v}`;
-}
-
-function symbolParts(symbol) {
-  const sym = normalizeSymbol(symbol);
-  const [ex, inst] = sym.includes(":") ? sym.split(":") : ["BINANCE", sym];
-  return { tv_exchange: ex || "BINANCE", tv_instrument: inst || "SOLUSDT" };
-}
-
 function ageSec(iso) {
   if (!iso) return Number.POSITIVE_INFINITY;
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
   return Math.max(0, (Date.now() - t) / 1000);
 }
-
+function symbolParts(symbol) {
+  const sym = normalizeSymbol(symbol);
+  const [tv_exchange, tv_instrument] = sym.includes(":")
+    ? sym.split(":")
+    : ["BINANCE", sym];
+  return { tv_exchange, tv_instrument };
+}
 function pickFirst(obj, keys, def = undefined) {
   for (const k of keys) {
     if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
   }
   return def;
 }
-
-function barTimeKey(iso, tfMin = 5) {
-  const t = new Date(iso || Date.now());
-  if (!Number.isFinite(t.getTime())) return "na";
-  const ms = t.getTime();
-  const bucket = Math.floor(ms / (tfMin * 60 * 1000)) * (tfMin * 60 * 1000);
-  return new Date(bucket).toISOString();
-}
-
 function reasonPush(arr, cond, text) {
   if (cond) arr.push(text);
 }
-
-function round4(x) {
-  return Math.round(Number(x) * 10000) / 10000;
+function barTimeKey(iso, tfMin = 5) {
+  const t = new Date(iso || Date.now());
+  if (!Number.isFinite(t.getTime())) return "na";
+  const bucketMs = Math.floor(t.getTime() / (tfMin * 60 * 1000)) * (tfMin * 60 * 1000);
+  return new Date(bucketMs).toISOString();
 }
 
-// ------------------------------------------------------------
-// Config
-// ------------------------------------------------------------
+// --------------------------------------------------
+// config
+// --------------------------------------------------
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.8"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.0"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -137,15 +121,16 @@ const CONFIG = {
   MAX_LAG_SEC: n(process.env.MAX_LAG_SEC || process.env.THREECOMMAS_MAX_LAG, 300),
   SYMBOL_BOT_MAP: safeJsonParse(process.env.SYMBOL_BOT_MAP || "{}", {}),
 
+  ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
+
+  // Ray toggles
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
   RAY_USE_BULLISH_TREND_CONTINUATION: b(process.env.RAY_USE_BULLISH_TREND_CONTINUATION, true),
   RAY_USE_BULLISH_BOS: b(process.env.RAY_USE_BULLISH_BOS, true),
   RAY_USE_BEARISH_TREND_CHANGE: b(process.env.RAY_USE_BEARISH_TREND_CHANGE, true),
   RAY_USE_BEARISH_TREND_CONTINUATION: b(process.env.RAY_USE_BEARISH_TREND_CONTINUATION, true),
 
-  FVVO_USE_SNIPER_BUY: b(process.env.FVVO_USE_SNIPER_BUY, false),
-  FVVO_SNIPER_LOOKBACK_BARS: n(process.env.FVVO_SNIPER_LOOKBACK_BARS, 3),
-
+  // core filters
   REQUIRE_EMA8_ABOVE_EMA18: b(process.env.REQUIRE_EMA8_ABOVE_EMA18, true),
   REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.REQUIRE_CLOSE_ABOVE_EMA8, true),
   MIN_RSI_LONG: n(process.env.MIN_RSI_LONG, 48),
@@ -155,12 +140,14 @@ const CONFIG = {
   MAX_EXT_FROM_EMA8_PCT: n(process.env.MAX_EXT_FROM_EMA8_PCT, 0.75),
   MAX_EXT_FROM_EMA18_PCT: n(process.env.MAX_EXT_FROM_EMA18_PCT, 1.20),
 
+  // breakout memory
   BREAKOUT_MEMORY_ENABLED: b(process.env.BREAKOUT_MEMORY_ENABLED, true),
   BREAKOUT_MEMORY_BARS: n(process.env.BREAKOUT_MEMORY_BARS, 4),
   BREAKOUT_MEMORY_MAX_CHASE_PCT: n(process.env.BREAKOUT_MEMORY_MAX_CHASE_PCT, 0.25),
   BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM: b(process.env.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM, true),
   BREAKOUT_MEMORY_INVALIDATE_PCT: n(process.env.BREAKOUT_MEMORY_INVALIDATE_PCT, 0.10),
 
+  // risk / exits
   HARD_STOP_PCT: n(process.env.HARD_STOP_PCT, 0.80),
   BREAKEVEN_ARM_PCT: n(process.env.BREAKEVEN_ARM_PCT, 0.40),
   BREAKEVEN_OFFSET_PCT: n(process.env.BREAKEVEN_OFFSET_PCT, 0.05),
@@ -175,14 +162,6 @@ const CONFIG = {
   EXIT_ON_5M_CLOSE_BELOW_EMA8: b(process.env.EXIT_ON_5M_CLOSE_BELOW_EMA8, true),
   EXIT_ON_5M_CLOSE_BELOW_EMA18: b(process.env.EXIT_ON_5M_CLOSE_BELOW_EMA18, false),
 
-  PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
-  MAX_REENTRIES_PER_BULL_REGIME: n(process.env.MAX_REENTRIES_PER_BULL_REGIME, 2),
-  REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
-  REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.REENTRY_REQUIRE_BULL_CONTEXT, true),
-  REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
-  REENTRY_MAX_CHASE_PCT: n(process.env.REENTRY_MAX_CHASE_PCT, 0.20),
-  REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.15),
-
   LOCAL_TP_EXIT_ENABLED: b(process.env.LOCAL_TP_EXIT_ENABLED, true),
   LOCAL_TP_MIN_PROFIT_PCT: n(process.env.LOCAL_TP_MIN_PROFIT_PCT, 0.60),
   LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8: b(process.env.LOCAL_TP_EXIT_ON_CLOSE_BELOW_EMA8, true),
@@ -195,6 +174,15 @@ const CONFIG = {
   DTP_TIER2_GIVEBACK_PCT: n(process.env.DTP_TIER2_GIVEBACK_PCT, 0.22),
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.80),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
+
+  // re-entry
+  PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
+  MAX_REENTRIES_PER_BULL_REGIME: n(process.env.MAX_REENTRIES_PER_BULL_REGIME, 2),
+  REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
+  REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.REENTRY_REQUIRE_BULL_CONTEXT, true),
+  REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  REENTRY_MAX_CHASE_PCT: n(process.env.REENTRY_MAX_CHASE_PCT, 0.20),
+  REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.15),
 
   FAST_REENTRY_ENABLED: b(process.env.FAST_REENTRY_ENABLED, true),
   FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.20),
@@ -209,6 +197,7 @@ const CONFIG = {
   STRONG_REENTRY_MIN_ADX: n(process.env.STRONG_REENTRY_MIN_ADX, 30),
   STRONG_REENTRY_MAX_CHASE_PCT: n(process.env.STRONG_REENTRY_MAX_CHASE_PCT, 0.38),
 
+  // trend-change launch
   TREND_CHANGE_LAUNCH_ENABLED: b(process.env.TREND_CHANGE_LAUNCH_ENABLED, true),
   TREND_CHANGE_LAUNCH_MIN_RSI: n(process.env.TREND_CHANGE_LAUNCH_MIN_RSI, 60),
   TREND_CHANGE_LAUNCH_MIN_ADX: n(process.env.TREND_CHANGE_LAUNCH_MIN_ADX, 14),
@@ -225,6 +214,7 @@ const CONFIG = {
   STRONG_LAUNCH_MAX_CHASE_PCT: n(process.env.STRONG_LAUNCH_MAX_CHASE_PCT, 0.55),
   STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
 
+  // fast tick launch
   FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
   FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
   FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
@@ -242,14 +232,31 @@ const CONFIG = {
   DEFERRED_SLOW_RAMP_MAX_CHASE_PCT: n(process.env.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT, 0.25),
   DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT: n(process.env.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT, 0.60),
 
-  ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
+  // FVVO
+  FVVO_ENABLED: b(process.env.FVVO_ENABLED, true),
+  FVVO_MEMORY_SEC: n(process.env.FVVO_MEMORY_SEC, 1800),
+
+  FVVO_SNIPER_BUY_BOOST: n(process.env.FVVO_SNIPER_BUY_BOOST, 1),
+  FVVO_BURST_BULLISH_BOOST: n(process.env.FVVO_BURST_BULLISH_BOOST, 2),
+  FVVO_SNIPER_SELL_PENALTY: n(process.env.FVVO_SNIPER_SELL_PENALTY, 1),
+  FVVO_BURST_BEARISH_PENALTY: n(process.env.FVVO_BURST_BEARISH_PENALTY, 2),
+
+  FVVO_REENTRY_RSI_RELAX: n(process.env.FVVO_REENTRY_RSI_RELAX, 3),
+  FVVO_REENTRY_MAX_CHASE_BONUS_PCT: n(process.env.FVVO_REENTRY_MAX_CHASE_BONUS_PCT, 0.08),
+  FVVO_CONT_RSI_RELAX: n(process.env.FVVO_CONT_RSI_RELAX, 2),
+  FVVO_CONT_MAX_CHASE_BONUS_PCT: n(process.env.FVVO_CONT_MAX_CHASE_BONUS_PCT, 0.06),
+  FVVO_LAUNCH_RSI_RELAX: n(process.env.FVVO_LAUNCH_RSI_RELAX, 2),
+  FVVO_LAUNCH_MAX_CHASE_BONUS_PCT: n(process.env.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT, 0.05),
+
+  FVVO_SNIPER_SELL_CHASE_PENALTY_PCT: n(process.env.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT, 0.08),
+  FVVO_BURST_BEARISH_CHASE_PENALTY_PCT: n(process.env.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT, 0.10),
 };
 
 const fetchFn = globalThis.fetch;
 
-// ------------------------------------------------------------
-// Initial runtime state / reset support
-// ------------------------------------------------------------
+// --------------------------------------------------
+// state
+// --------------------------------------------------
 function buildInitialRuntimeState() {
   return {
     startedAt: isoNow(),
@@ -287,7 +294,6 @@ function buildInitialRuntimeState() {
       bullRegimeId: 0,
       bullRegimeStartedAt: null,
       reentryCountInRegime: 0,
-
       lastBullTrendChangeAt: null,
       lastBullTrendContinuationAt: null,
       lastBullBosAt: null,
@@ -297,6 +303,9 @@ function buildInitialRuntimeState() {
 
     fvvo: {
       lastSniperBuyAt: null,
+      lastSniperSellAt: null,
+      lastBurstBullishAt: null,
+      lastBurstBearishAt: null,
     },
 
     breakoutMemory: {
@@ -358,18 +367,14 @@ function log(msg, data = null) {
   const line = data ? `${msg} | ${JSON.stringify(data)}` : msg;
   const out = `${isoNow()} ${line}`;
   S.logs.push(out);
-  if (S.logs.length > 700) S.logs.shift();
+  if (S.logs.length > 800) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
 }
 
 function resetRuntimeState(reason = "manual_reset") {
   const keepLogs = Array.isArray(S.logs) ? S.logs : [];
   const fresh = buildInitialRuntimeState();
-
-  for (const key of Object.keys(fresh)) {
-    S[key] = fresh[key];
-  }
-
+  for (const key of Object.keys(fresh)) S[key] = fresh[key];
   S.logs = keepLogs;
   log("♻️ STATE_RESET", { reason });
 }
@@ -377,25 +382,23 @@ function resetRuntimeState(reason = "manual_reset") {
 function currentPrice() {
   return Number.isFinite(S.lastTickPrice) ? S.lastTickPrice : n(S.lastFeature?.close, NaN);
 }
-
 function isTickFresh() {
   if (CONFIG.REPLAY_ALLOW_STALE_DATA) return true;
   return ageSec(S.lastTickTime) <= CONFIG.TICK_MAX_AGE_SEC;
 }
-
 function isFeatureFresh() {
   if (CONFIG.REPLAY_ALLOW_STALE_DATA) return true;
   return ageSec(S.lastFeatureTime) <= CONFIG.FEATURE_MAX_AGE_SEC;
 }
-
 function getBotUuid(symbol) {
   return CONFIG.SYMBOL_BOT_MAP[symbol] || "";
 }
 
+// --------------------------------------------------
+// clear / arm helpers
+// --------------------------------------------------
 function clearBreakoutMemory(reason = "reset") {
-  if (S.breakoutMemory.active) {
-    log("🧠 BREAKOUT_MEMORY_CLEARED", { reason });
-  }
+  if (S.breakoutMemory.active) log("🧠 BREAKOUT_MEMORY_CLEARED", { reason });
   S.breakoutMemory = {
     active: false,
     used: false,
@@ -408,11 +411,8 @@ function clearBreakoutMemory(reason = "reset") {
     armedAt: null,
   };
 }
-
 function clearReentry(reason = "reset") {
-  if (S.reentry.eligible) {
-    log("🔁 REENTRY_DISABLED", { reason });
-  }
+  if (S.reentry.eligible) log("🔁 REENTRY_DISABLED", { reason });
   S.reentry = {
     eligible: false,
     eligibleUntilBar: null,
@@ -423,7 +423,6 @@ function clearReentry(reason = "reset") {
     bullRegimeId: null,
   };
 }
-
 function armTrendChangeLaunch(rayPrice, rayTime) {
   S.trendChangeLaunch = {
     pending: true,
@@ -432,7 +431,6 @@ function armTrendChangeLaunch(rayPrice, rayTime) {
     rayPrice,
     rayTime,
   };
-
   log("🚀 TREND_CHANGE_LAUNCH_ARMED", {
     armedBar: S.trendChangeLaunch.armedBar,
     expiresBar: S.trendChangeLaunch.expiresBar,
@@ -440,11 +438,8 @@ function armTrendChangeLaunch(rayPrice, rayTime) {
     rayTime,
   });
 }
-
 function clearTrendChangeLaunch(reason = "reset") {
-  if (S.trendChangeLaunch.pending) {
-    log("🚀 TREND_CHANGE_LAUNCH_CLEARED", { reason });
-  }
+  if (S.trendChangeLaunch.pending) log("🚀 TREND_CHANGE_LAUNCH_CLEARED", { reason });
   S.trendChangeLaunch = {
     pending: false,
     armedBar: null,
@@ -453,7 +448,6 @@ function clearTrendChangeLaunch(reason = "reset") {
     rayTime: null,
   };
 }
-
 function armFastTickLaunch(source, rayPrice) {
   if (!CONFIG.FAST_TICK_LAUNCH_ENABLED) return;
   const f = S.lastFeature;
@@ -491,11 +485,8 @@ function armFastTickLaunch(source, rayPrice) {
     ema18: f.ema18,
   });
 }
-
 function clearFastTickLaunch(reason = "reset") {
-  if (S.fastTickLaunch.active) {
-    log("⚡ FAST_TICK_LAUNCH_CLEARED", { reason });
-  }
+  if (S.fastTickLaunch.active) log("⚡ FAST_TICK_LAUNCH_CLEARED", { reason });
   S.fastTickLaunch = {
     active: false,
     openedAtMs: null,
@@ -515,9 +506,51 @@ function clearFastTickLaunch(reason = "reset") {
   };
 }
 
-// ------------------------------------------------------------
-// Parsing inbound event types
-// ------------------------------------------------------------
+// --------------------------------------------------
+// FVVO memory / score
+// --------------------------------------------------
+function fvvoRecent(iso, maxSec = CONFIG.FVVO_MEMORY_SEC) {
+  return ageSec(iso) <= maxSec;
+}
+
+function getFvvoSnapshot() {
+  return {
+    sniperBuy: fvvoRecent(S.fvvo.lastSniperBuyAt),
+    sniperSell: fvvoRecent(S.fvvo.lastSniperSellAt),
+    burstBullish: fvvoRecent(S.fvvo.lastBurstBullishAt),
+    burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt),
+  };
+}
+
+function getFvvoScore() {
+  if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot() };
+  const snap = getFvvoSnapshot();
+  let score = 0;
+  const tags = [];
+
+  if (snap.sniperBuy) {
+    score += CONFIG.FVVO_SNIPER_BUY_BOOST;
+    tags.push("sniper_buy");
+  }
+  if (snap.burstBullish) {
+    score += CONFIG.FVVO_BURST_BULLISH_BOOST;
+    tags.push("burst_bullish");
+  }
+  if (snap.sniperSell) {
+    score -= CONFIG.FVVO_SNIPER_SELL_PENALTY;
+    tags.push("sniper_sell");
+  }
+  if (snap.burstBearish) {
+    score -= CONFIG.FVVO_BURST_BEARISH_PENALTY;
+    tags.push("burst_bearish");
+  }
+
+  return { score, tags, snap };
+}
+
+// --------------------------------------------------
+// parse inbound family
+// --------------------------------------------------
 function parseInboundType(body) {
   const src = String(body.src || "").toLowerCase();
   const event = String(body.event || body.signal || body.alert || body.action || "").trim();
@@ -527,23 +560,12 @@ function parseInboundType(body) {
   if (src === "ray") return { family: "ray", name: event };
   if (src === "fvvo") return { family: "fvvo", name: event };
 
-  const cond = String(body.condition || "").trim();
-  const label = event || cond;
-
-  if (/sniper buy alert/i.test(label)) return { family: "fvvo", name: "Sniper Buy Alert" };
-  if (/bullish trend change/i.test(label)) return { family: "ray", name: "Bullish Trend Change" };
-  if (/bearish trend change/i.test(label)) return { family: "ray", name: "Bearish Trend Change" };
-  if (/bullish trend continuation/i.test(label)) return { family: "ray", name: "Bullish Trend Continuation" };
-  if (/bearish trend continuation/i.test(label)) return { family: "ray", name: "Bearish Trend Continuation" };
-  if (/bullish bos/i.test(label)) return { family: "ray", name: "Bullish BOS" };
-  if (/bearish bos/i.test(label)) return { family: "ray", name: "Bearish BOS" };
-
-  return { family: "unknown", name: label || "unknown" };
+  return { family: "unknown", name: event || "unknown" };
 }
 
-// ------------------------------------------------------------
-// Regime / signal memory
-// ------------------------------------------------------------
+// --------------------------------------------------
+// regime / signal memory
+// --------------------------------------------------
 function turnBullRegimeOn(ts, source) {
   if (!S.ray.bullContext) {
     S.ray.bullContext = true;
@@ -573,7 +595,7 @@ function turnBullRegimeOff(ts, reason) {
 }
 
 function handleRayEvent(body) {
-  const name = String(body.event || body.signal || body.alert || body.action || "").trim();
+  const name = String(body.event || "").trim();
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
   const price = n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()));
 
@@ -591,9 +613,7 @@ function handleRayEvent(body) {
         price,
         time: ts,
       });
-      if (!decision.allow) {
-        armFastTickLaunch("ray_bullish_trend_change", price);
-      }
+      if (!decision.allow) armFastTickLaunch("ray_bullish_trend_change", price);
     }
     return;
   }
@@ -604,7 +624,6 @@ function handleRayEvent(body) {
     log("🟩 RAY_BULLISH_TREND_CONTINUATION", { price, ts });
 
     const decision = tryEntry("ray_bullish_trend_continuation", body);
-
     if (!decision.allow && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
       armFastTickLaunch("ray_bullish_trend_continuation", price);
     }
@@ -624,7 +643,6 @@ function handleRayEvent(body) {
     if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CHANGE) {
       doExit("ray_bearish_trend_change", price, ts, "regime_break");
     }
-
     turnBullRegimeOff(ts, "ray_bearish_trend_change");
     return;
   }
@@ -637,23 +655,45 @@ function handleRayEvent(body) {
       doExit("ray_bearish_trend_continuation", price, ts, "regime_break");
       turnBullRegimeOff(ts, "ray_bearish_trend_continuation");
     }
-    return;
   }
 }
 
 function handleFvvoEvent(body) {
-  const name = String(body.event || body.signal || body.alert || body.action || "").trim();
+  const name = String(body.event || "").trim();
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
 
-  if (/Sniper Buy Alert/i.test(name) && CONFIG.FVVO_USE_SNIPER_BUY) {
-    S.fvvo.lastSniperBuyAt = ts;
-    log("🎯 FVVO_SNIPER_BUY", { ts });
+  if (!CONFIG.FVVO_ENABLED) {
+    log("🧿 FVVO_IGNORED_DISABLED", { name, ts });
+    return;
   }
+
+  if (/Sniper Buy Alert/i.test(name)) {
+    S.fvvo.lastSniperBuyAt = ts;
+    log("🧿 FVVO_SNIPER_BUY", { ts });
+    return;
+  }
+  if (/Sniper Sell Alert/i.test(name)) {
+    S.fvvo.lastSniperSellAt = ts;
+    log("🧿 FVVO_SNIPER_SELL", { ts });
+    return;
+  }
+  if (/Burst Bullish Alert/i.test(name)) {
+    S.fvvo.lastBurstBullishAt = ts;
+    log("🧿 FVVO_BURST_BULLISH", { ts });
+    return;
+  }
+  if (/Burst Bearish Alert/i.test(name)) {
+    S.fvvo.lastBurstBearishAt = ts;
+    log("🧿 FVVO_BURST_BEARISH", { ts });
+    return;
+  }
+
+  log("🧿 FVVO_UNKNOWN", { name, ts });
 }
 
-// ------------------------------------------------------------
-// Feature handling
-// ------------------------------------------------------------
+// --------------------------------------------------
+// feature handling
+// --------------------------------------------------
 function updateBarProgress(ts) {
   const key = barTimeKey(ts, n(CONFIG.ENTRY_TF, 5));
   if (key !== S.lastBarKey) {
@@ -687,10 +727,6 @@ function handleFeature(body) {
     rsi: n(body.rsi, NaN),
     adx: n(body.adx, NaN),
     atrPct: n(body.atrPct, NaN),
-
-    regime: s(body.regime, ""),
-    oiTrend: n(body.oiTrend, 0),
-    cvdTrend: n(body.cvdTrend, 0),
   };
 
   S.lastFeature = feature;
@@ -704,6 +740,7 @@ function handleFeature(body) {
     rsi: feature.rsi,
     adx: feature.adx,
     barIndex: S.barIndex,
+    fvvo: getFvvoScore(),
   });
 
   evaluateStructureAndArmMemory(feature);
@@ -731,9 +768,7 @@ function handleFeature(body) {
     });
   }
 
-  if (S.inPosition) {
-    evaluateBarExit(feature);
-  }
+  if (S.inPosition) evaluateBarExit(feature);
 }
 
 function evaluateStructureAndArmMemory(f) {
@@ -742,18 +777,27 @@ function evaluateStructureAndArmMemory(f) {
   if (String(f.tf) !== String(CONFIG.ENTRY_TF)) return;
 
   const bullEmaOk =
-    !CONFIG.REQUIRE_EMA8_ABOVE_EMA18 || (Number.isFinite(f.ema8) && Number.isFinite(f.ema18) && f.ema8 >= f.ema18);
+    !CONFIG.REQUIRE_EMA8_ABOVE_EMA18 ||
+    (Number.isFinite(f.ema8) && Number.isFinite(f.ema18) && f.ema8 >= f.ema18);
 
   const closeAboveEma8Ok =
-    !CONFIG.REQUIRE_CLOSE_ABOVE_EMA8 || (Number.isFinite(f.close) && Number.isFinite(f.ema8) && f.close >= f.ema8);
+    !CONFIG.REQUIRE_CLOSE_ABOVE_EMA8 ||
+    (Number.isFinite(f.close) && Number.isFinite(f.ema8) && f.close >= f.ema8);
 
-  const rsiOk = !Number.isFinite(f.rsi) || f.rsi >= CONFIG.MIN_RSI_LONG;
+  const fv = getFvvoScore();
+  const rsiFloor = Math.max(
+    0,
+    CONFIG.MIN_RSI_LONG - Math.max(0, fv.score > 0 ? CONFIG.FVVO_CONT_RSI_RELAX : 0)
+  );
+
+  const rsiOk = !Number.isFinite(f.rsi) || f.rsi >= rsiFloor;
   const adxOk = !Number.isFinite(f.adx) || f.adx >= CONFIG.MIN_ADX_CONTINUATION;
 
   const bullRayContext =
     S.ray.bullContext ||
     ageSec(S.ray.lastBullTrendChangeAt) < 3600 ||
     ageSec(S.ray.lastBullTrendContinuationAt) < 1800;
+
   const bullishBosRecent = ageSec(S.ray.lastBullBosAt) < 1800;
 
   const structureOk = bullEmaOk && closeAboveEma8Ok && rsiOk && adxOk && (bullRayContext || bullishBosRecent);
@@ -796,27 +840,16 @@ function invalidateBreakoutMemory() {
 
 function invalidateReentry() {
   if (!S.reentry.eligible) return;
-  if (S.barIndex > n(S.reentry.eligibleUntilBar, -1)) {
-    return clearReentry("expired");
-  }
+  if (S.barIndex > n(S.reentry.eligibleUntilBar, -1)) clearReentry("expired");
 }
-
 function invalidateTrendChangeLaunch() {
   if (!S.trendChangeLaunch.pending) return;
-  if (S.barIndex > n(S.trendChangeLaunch.expiresBar, -1)) {
-    clearTrendChangeLaunch("expired");
-  }
+  if (S.barIndex > n(S.trendChangeLaunch.expiresBar, -1)) clearTrendChangeLaunch("expired");
 }
-
 function invalidateFastTickLaunch() {
   if (!S.fastTickLaunch.active) return;
-  if (nowMs() > n(S.fastTickLaunch.expiresAtMs, 0)) {
-    clearFastTickLaunch("expired");
-    return;
-  }
-  if (S.fastTickLaunch.bullRegimeId !== S.ray.bullRegimeId) {
-    clearFastTickLaunch("regime_changed");
-  }
+  if (nowMs() > n(S.fastTickLaunch.expiresAtMs, 0)) return clearFastTickLaunch("expired");
+  if (S.fastTickLaunch.bullRegimeId !== S.ray.bullRegimeId) clearFastTickLaunch("regime_changed");
 }
 
 function evaluateReentryEligibilityFromFeature(feature) {
@@ -845,18 +878,16 @@ function evaluateReentryEligibilityFromFeature(feature) {
   }
 }
 
-// ------------------------------------------------------------
-// Entry logic
-// ------------------------------------------------------------
+// --------------------------------------------------
+// entry logic
+// --------------------------------------------------
 function activeEnterDedupMs(source) {
-  if (source === "feature_reentry" || source === "pullback_reclaim_reentry_long") {
-    return CONFIG.REENTRY_ENTER_DEDUP_MS;
-  }
-  return CONFIG.ENTER_DEDUP_MS;
+  return source === "feature_reentry" ? CONFIG.REENTRY_ENTER_DEDUP_MS : CONFIG.ENTER_DEDUP_MS;
 }
 
 function tryEntry(source, body) {
   const decision = evaluateEntry(source, body);
+
   if (!decision.allow) {
     if (
       source === "deferred_trend_change_launch" ||
@@ -885,6 +916,7 @@ function evaluateEntry(source, body) {
   const now = nowMs();
   const px = n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()), NaN);
   const feature = S.lastFeature;
+  const fv = getFvvoScore();
 
   reasonPush(reasons, normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)) !== CONFIG.SYMBOL, "symbol_mismatch");
   reasonPush(reasons, S.inPosition, "already_in_position");
@@ -894,14 +926,9 @@ function evaluateEntry(source, body) {
   reasonPush(reasons, !S.ray.bullContext, "no_bull_context");
   reasonPush(reasons, !Number.isFinite(px), "bad_price");
   reasonPush(reasons, !feature, "no_feature");
+  if (source === "tick_confirmed_fast_launch") reasonPush(reasons, !isTickFresh(), "stale_tick");
 
-  if (source === "tick_confirmed_fast_launch") {
-    reasonPush(reasons, !isTickFresh(), "stale_tick");
-  }
-
-  if (reasons.length) {
-    return { allow: false, source, reasons };
-  }
+  if (reasons.length) return { allow: false, source, reasons, fvvo: fv };
 
   const ema8 = n(feature.ema8, NaN);
   const ema18 = n(feature.ema18, NaN);
@@ -917,102 +944,92 @@ function evaluateEntry(source, body) {
     !CONFIG.REQUIRE_CLOSE_ABOVE_EMA8 ||
     (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
 
-  const rsiOk = !Number.isFinite(rsi) || rsi >= CONFIG.MIN_RSI_LONG;
-  const adxOk = !Number.isFinite(adx) || adx >= CONFIG.MIN_ADX_CONTINUATION;
-
   const extFromEma8 = Number.isFinite(ema8) ? pctDiff(ema8, px) : 0;
   const extFromEma18 = Number.isFinite(ema18) ? pctDiff(ema18, px) : 0;
 
-  const recentSniperBuy =
-    ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
+  const bullishFvvo = fv.score > 0;
 
-  // --------------------------------------------------------
   // fast tick launch
-  // --------------------------------------------------------
   if (source === "tick_confirmed_fast_launch" && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
     const tl = S.fastTickLaunch;
-    const tlReasons = [];
+    const rr = [];
 
-    reasonPush(tlReasons, !tl.active, "fast_tick_launch_not_active");
-    reasonPush(tlReasons, now > n(tl.expiresAtMs, 0), "fast_tick_launch_expired");
-    reasonPush(tlReasons, tl.bullRegimeId !== S.ray.bullRegimeId, "fast_tick_launch_regime_mismatch");
-    reasonPush(tlReasons, !emaBullOk, "fast_tick_launch_ema_invalid");
+    reasonPush(rr, !tl.active, "fast_tick_launch_not_active");
+    reasonPush(rr, now > n(tl.expiresAtMs, 0), "fast_tick_launch_expired");
+    reasonPush(rr, tl.bullRegimeId !== S.ray.bullRegimeId, "fast_tick_launch_regime_mismatch");
+    reasonPush(rr, !emaBullOk, "fast_tick_launch_ema_invalid");
 
-    const minRsi = CONFIG.FAST_TICK_LAUNCH_MIN_RSI;
+    const minRsi = Math.max(0, CONFIG.FAST_TICK_LAUNCH_MIN_RSI - (bullishFvvo ? CONFIG.FVVO_LAUNCH_RSI_RELAX : 0));
     const minAdx = CONFIG.FAST_TICK_LAUNCH_MIN_ADX;
-    const strongRsi = CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_RSI;
-    const strongAdx = CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_ADX;
 
     const strongFastLaunch =
       Number.isFinite(rsi) &&
       Number.isFinite(adx) &&
-      rsi >= strongRsi &&
-      adx >= strongAdx;
+      rsi >= CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_RSI &&
+      adx >= CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_ADX;
 
-    const allowedChase = strongFastLaunch
+    let allowedChase = strongFastLaunch
       ? CONFIG.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT
       : CONFIG.FAST_TICK_LAUNCH_MAX_CHASE_PCT;
 
-    reasonPush(tlReasons, Number.isFinite(rsi) && rsi < minRsi, "fast_tick_launch_rsi_too_low");
-    reasonPush(tlReasons, Number.isFinite(adx) && adx < minAdx, "fast_tick_launch_adx_too_low");
-    reasonPush(tlReasons, extFromEma8 > allowedChase, "fast_tick_launch_chase_too_high");
-    reasonPush(tlReasons, px < n(tl.confirmPrice, Infinity), "fast_tick_launch_below_confirm");
-    reasonPush(
-      tlReasons,
-      n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM,
-      "fast_tick_launch_not_enough_confirm_ticks"
-    );
+    if (bullishFvvo) allowedChase += CONFIG.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT;
+    if (fv.snap.sniperSell) allowedChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+    if (fv.snap.burstBearish) allowedChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
 
-    if (tlReasons.length === 0) {
+    reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi, "fast_tick_launch_rsi_too_low");
+    reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "fast_tick_launch_adx_too_low");
+    reasonPush(rr, extFromEma8 > allowedChase, "fast_tick_launch_chase_too_high");
+    reasonPush(rr, px < n(tl.confirmPrice, Infinity), "fast_tick_launch_below_confirm");
+    reasonPush(rr, n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM, "fast_tick_launch_not_enough_confirm_ticks");
+
+    if (rr.length === 0) {
       return {
         allow: true,
         source,
-        mode: strongFastLaunch
-          ? "tick_confirmed_launch_long_strong"
-          : "tick_confirmed_launch_long",
+        mode: strongFastLaunch ? "tick_confirmed_launch_long_strong" : "tick_confirmed_launch_long",
         entryPrice: px,
         extFromEma8,
         extFromEma18,
         ticksAboveConfirm: tl.ticksAboveConfirm,
         confirmPrice: round4(tl.confirmPrice),
         strongFastLaunch,
+        fvvo: fv,
       };
     }
 
     return {
       allow: false,
       source,
-      reasons: tlReasons,
+      reasons: rr,
       extFromEma8,
       extFromEma18,
       ticksAboveConfirm: tl.ticksAboveConfirm,
       confirmPrice: round4(tl.confirmPrice),
       strongFastLaunchCandidate: strongFastLaunch,
+      fvvo: fv,
     };
   }
 
-  // --------------------------------------------------------
-  // immediate / deferred launch
-  // --------------------------------------------------------
+  // trend change launch
   if (
-    (source === "immediate_trend_change_launch" ||
-      source === "deferred_trend_change_launch" ||
-      source === "ray_bullish_trend_change_launch") &&
+    (source === "immediate_trend_change_launch" || source === "deferred_trend_change_launch") &&
     CONFIG.TREND_CHANGE_LAUNCH_ENABLED
   ) {
-    const launchReasons = [];
+    const rr = [];
     const launchAnchor = Number.isFinite(ema8) ? ema8 : close;
     const launchChasePct = Number.isFinite(launchAnchor) ? pctDiff(launchAnchor, px) : 999;
 
-    const isDeferredLaunch =
-      source === "deferred_trend_change_launch" ||
-      source === "ray_bullish_trend_change_launch";
+    const isDeferred = source === "deferred_trend_change_launch";
 
-    const minLaunchRsi = isDeferredLaunch
+    const minLaunchRsiBase = isDeferred
       ? CONFIG.DEFERRED_LAUNCH_MIN_RSI
       : CONFIG.TREND_CHANGE_LAUNCH_MIN_RSI;
 
-    const minLaunchAdx = isDeferredLaunch
+    const minLaunchRsi = Math.max(
+      0,
+      minLaunchRsiBase - (bullishFvvo ? CONFIG.FVVO_LAUNCH_RSI_RELAX : 0)
+    );
+    const minLaunchAdx = isDeferred
       ? CONFIG.DEFERRED_LAUNCH_MIN_ADX
       : CONFIG.TREND_CHANGE_LAUNCH_MIN_ADX;
 
@@ -1026,7 +1043,7 @@ function evaluateEntry(source, body) {
       launchChasePct <= CONFIG.STRONG_LAUNCH_MAX_CHASE_PCT;
 
     const slowRampOverride =
-      isDeferredLaunch &&
+      isDeferred &&
       CONFIG.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED &&
       Number.isFinite(rsi) &&
       Number.isFinite(adx) &&
@@ -1037,28 +1054,32 @@ function evaluateEntry(source, body) {
       launchChasePct <= CONFIG.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT &&
       extFromEma18 <= CONFIG.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT;
 
-    const allowedLaunchChase = strongOverride
+    let allowedLaunchChase = strongOverride
       ? CONFIG.STRONG_LAUNCH_MAX_CHASE_PCT
       : CONFIG.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT;
+
+    if (bullishFvvo) allowedLaunchChase += CONFIG.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT;
+    if (fv.snap.sniperSell) allowedLaunchChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+    if (fv.snap.burstBearish) allowedLaunchChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
 
     const allowedLaunchExtEma18 = strongOverride
       ? CONFIG.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT
       : CONFIG.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT;
 
-    reasonPush(launchReasons, !S.trendChangeLaunch.pending, "launch_not_pending");
-    reasonPush(launchReasons, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
-    reasonPush(launchReasons, !emaBullOk, "launch_ema8_below_ema18");
-    reasonPush(launchReasons, !closeAboveEma8Ok, "launch_close_below_ema8");
+    reasonPush(rr, !S.trendChangeLaunch.pending, "launch_not_pending");
+    reasonPush(rr, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
+    reasonPush(rr, !emaBullOk, "launch_ema8_below_ema18");
+    reasonPush(rr, !closeAboveEma8Ok, "launch_close_below_ema8");
 
     if (!slowRampOverride) {
-      reasonPush(launchReasons, Number.isFinite(rsi) && rsi < minLaunchRsi, "launch_rsi_too_low");
-      reasonPush(launchReasons, Number.isFinite(adx) && adx < minLaunchAdx, "launch_adx_too_low");
+      reasonPush(rr, Number.isFinite(rsi) && rsi < minLaunchRsi, "launch_rsi_too_low");
+      reasonPush(rr, Number.isFinite(adx) && adx < minLaunchAdx, "launch_adx_too_low");
     }
 
-    reasonPush(launchReasons, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
-    reasonPush(launchReasons, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
+    reasonPush(rr, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
+    reasonPush(rr, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
 
-    if (launchReasons.length === 0) {
+    if (rr.length === 0) {
       return {
         allow: true,
         source,
@@ -1075,48 +1096,32 @@ function evaluateEntry(source, body) {
         expiresBar: S.trendChangeLaunch.expiresBar,
         strongOverride,
         slowRampOverride,
-        isDeferredLaunch,
+        isDeferredLaunch: isDeferred,
         minLaunchRsi,
         minLaunchAdx,
+        fvvo: fv,
       };
     }
 
     return {
       allow: false,
       source,
-      reasons: launchReasons,
+      reasons: rr,
       extFromEma8,
       extFromEma18,
       launchChasePct,
       armedBar: S.trendChangeLaunch.armedBar,
       expiresBar: S.trendChangeLaunch.expiresBar,
-      strongOverrideCandidate:
-        CONFIG.STRONG_LAUNCH_OVERRIDE_ENABLED &&
-        Number.isFinite(rsi) &&
-        Number.isFinite(adx) &&
-        rsi >= CONFIG.STRONG_LAUNCH_MIN_RSI &&
-        adx >= CONFIG.STRONG_LAUNCH_MIN_ADX,
-      slowRampOverrideCandidate:
-        isDeferredLaunch &&
-        CONFIG.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED &&
-        Number.isFinite(rsi) &&
-        Number.isFinite(adx) &&
-        emaBullOk &&
-        closeAboveEma8Ok &&
-        rsi >= CONFIG.DEFERRED_SLOW_RAMP_MIN_RSI &&
-        adx >= CONFIG.DEFERRED_SLOW_RAMP_MIN_ADX &&
-        launchChasePct <= CONFIG.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT &&
-        extFromEma18 <= CONFIG.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT,
-      isDeferredLaunch,
+      strongOverrideCandidate: strongOverride,
+      slowRampOverrideCandidate: slowRampOverride,
+      isDeferredLaunch: isDeferred,
       minLaunchRsi,
       minLaunchAdx,
+      fvvo: fv,
     };
   }
 
-  // --------------------------------------------------------
-  // dedicated re-entry path
-  // v2.8 fix: feature_reentry does NOT fall through
-  // --------------------------------------------------------
+  // re-entry
   if (source === "feature_reentry" || (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible)) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
@@ -1140,8 +1145,13 @@ function evaluateEntry(source, body) {
 
     const anchor = Number.isFinite(S.reentry.anchorPrice) ? S.reentry.anchorPrice : ema8;
     const reentryChasePct = Number.isFinite(anchor) ? pctDiff(anchor, px) : 999;
+
     const baseMaxReentryChase = useFast ? CONFIG.FAST_REENTRY_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
-    const minRsi = useFast ? CONFIG.FAST_REENTRY_MIN_RSI : CONFIG.MIN_RSI_LONG;
+    const minRsiBase = useFast ? CONFIG.FAST_REENTRY_MIN_RSI : CONFIG.MIN_RSI_LONG;
+    const minRsi = Math.max(
+      0,
+      minRsiBase - (bullishFvvo ? CONFIG.FVVO_REENTRY_RSI_RELAX : 0)
+    );
     const minAdx = useFast ? CONFIG.FAST_REENTRY_MIN_ADX : CONFIG.MIN_ADX_CONTINUATION;
 
     const strongReentryOverride =
@@ -1155,9 +1165,13 @@ function evaluateEntry(source, body) {
       adx >= CONFIG.STRONG_REENTRY_MIN_ADX &&
       reentryChasePct <= CONFIG.STRONG_REENTRY_MAX_CHASE_PCT;
 
-    const allowedReentryChase = strongReentryOverride
+    let allowedReentryChase = strongReentryOverride
       ? CONFIG.STRONG_REENTRY_MAX_CHASE_PCT
       : baseMaxReentryChase;
+
+    if (bullishFvvo) allowedReentryChase += CONFIG.FVVO_REENTRY_MAX_CHASE_BONUS_PCT;
+    if (fv.snap.sniperSell) allowedReentryChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+    if (fv.snap.burstBearish) allowedReentryChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
 
     reasonPush(rr, !emaBullOk, "reentry_ema_invalid");
     reasonPush(rr, !reentryCloseAboveEma8Ok, "reentry_close_below_ema8");
@@ -1177,6 +1191,7 @@ function evaluateEntry(source, body) {
         anchor: round4(anchor),
         bullRegimeId: S.ray.bullRegimeId,
         strongReentryOverride,
+        fvvo: fv,
       };
     }
 
@@ -1187,50 +1202,48 @@ function evaluateEntry(source, body) {
       reentryChasePct,
       anchor: round4(anchor),
       bullRegimeId: S.ray.bullRegimeId,
-      strongReentryOverrideCandidate:
-        CONFIG.STRONG_REENTRY_OVERRIDE_ENABLED &&
-        S.ray.bullContext &&
-        emaBullOk &&
-        reentryCloseAboveEma8Ok &&
-        Number.isFinite(rsi) &&
-        Number.isFinite(adx) &&
-        rsi >= CONFIG.STRONG_REENTRY_MIN_RSI &&
-        adx >= CONFIG.STRONG_REENTRY_MIN_ADX &&
-        reentryChasePct <= CONFIG.STRONG_REENTRY_MAX_CHASE_PCT,
+      strongReentryOverrideCandidate: strongReentryOverride,
+      fvvo: fv,
     };
   }
 
-  // --------------------------------------------------------
-  // continuation path
-  // --------------------------------------------------------
+  // continuation
   const contReasons = [];
-  reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
-  reasonPush(contReasons, !closeAboveEma8Ok, "close_below_ema8");
-  reasonPush(contReasons, !rsiOk, "rsi_too_low");
-  reasonPush(contReasons, !adxOk, "adx_too_low");
-  reasonPush(contReasons, extFromEma8 > CONFIG.MAX_EXT_FROM_EMA8_PCT, "too_extended_from_ema8");
-  reasonPush(contReasons, extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT, "too_extended_from_ema18");
+  const contMinRsi = Math.max(
+    0,
+    CONFIG.MIN_RSI_LONG - (bullishFvvo ? CONFIG.FVVO_CONT_RSI_RELAX : 0)
+  );
+
+  let contMaxChase = CONFIG.CONTINUATION_MAX_CHASE_PCT;
+  if (bullishFvvo) contMaxChase += CONFIG.FVVO_CONT_MAX_CHASE_BONUS_PCT;
+  if (fv.snap.sniperSell) contMaxChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+  if (fv.snap.burstBearish) contMaxChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
 
   const contAnchor = Number.isFinite(ema8) ? ema8 : close;
   const contChasePct = Number.isFinite(contAnchor) ? pctDiff(contAnchor, px) : 999;
-  reasonPush(contReasons, contChasePct > CONFIG.CONTINUATION_MAX_CHASE_PCT, "continuation_chase_too_high");
+
+  reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
+  reasonPush(contReasons, !closeAboveEma8Ok, "close_below_ema8");
+  reasonPush(contReasons, Number.isFinite(rsi) && rsi < contMinRsi, "rsi_too_low");
+  reasonPush(contReasons, Number.isFinite(adx) && adx < CONFIG.MIN_ADX_CONTINUATION, "adx_too_low");
+  reasonPush(contReasons, extFromEma8 > CONFIG.MAX_EXT_FROM_EMA8_PCT, "too_extended_from_ema8");
+  reasonPush(contReasons, extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT, "too_extended_from_ema18");
+  reasonPush(contReasons, contChasePct > contMaxChase, "continuation_chase_too_high");
 
   if (contReasons.length === 0) {
     return {
       allow: true,
       source,
-      mode: recentSniperBuy ? "breakout_continuation_long_sniper" : "breakout_continuation_long",
+      mode: bullishFvvo ? "breakout_continuation_long_fvvo" : "breakout_continuation_long",
       entryPrice: px,
       extFromEma8,
       extFromEma18,
       contChasePct,
-      recentSniperBuy,
+      fvvo: fv,
     };
   }
 
-  // --------------------------------------------------------
   // breakout memory fallback
-  // --------------------------------------------------------
   const mem = S.breakoutMemory;
   const memReasons = [];
   const memActive = CONFIG.BREAKOUT_MEMORY_ENABLED && mem.active && !mem.used;
@@ -1245,7 +1258,12 @@ function evaluateEntry(source, body) {
     reasonPush(memReasons, px < reclaimFloor, "below_memory_reclaim_floor");
   }
 
-  reasonPush(memReasons, memChasePct > CONFIG.BREAKOUT_MEMORY_MAX_CHASE_PCT, "memory_chase_too_high");
+  let allowedMemoryChase = CONFIG.BREAKOUT_MEMORY_MAX_CHASE_PCT;
+  if (bullishFvvo) allowedMemoryChase += CONFIG.FVVO_CONT_MAX_CHASE_BONUS_PCT;
+  if (fv.snap.sniperSell) allowedMemoryChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+  if (fv.snap.burstBearish) allowedMemoryChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+
+  reasonPush(memReasons, memChasePct > allowedMemoryChase, "memory_chase_too_high");
   reasonPush(memReasons, !emaBullOk, "ema_bull_invalid");
   reasonPush(memReasons, extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT, "too_extended_from_ema18");
 
@@ -1253,11 +1271,12 @@ function evaluateEntry(source, body) {
     return {
       allow: true,
       source,
-      mode: "delayed_breakout_memory_long",
+      mode: bullishFvvo ? "delayed_breakout_memory_long_fvvo" : "delayed_breakout_memory_long",
       entryPrice: px,
       memChasePct,
       memAnchor: round4(memAnchor),
       reclaimPrice: round4(mem.reclaimPrice),
+      fvvo: fv,
     };
   }
 
@@ -1269,6 +1288,7 @@ function evaluateEntry(source, body) {
     extFromEma18,
     contChasePct,
     memChasePct,
+    fvvo: fv,
   };
 }
 
@@ -1289,7 +1309,6 @@ function doEnter(mode, price, decision = {}) {
   S.cycleState = "long";
 
   if (
-    mode === "pullback_reclaim_reentry_long" ||
     mode === "feature_pullback_reclaim_reentry_long" ||
     mode === "feature_pullback_reclaim_reentry_long_strong"
   ) {
@@ -1330,9 +1349,9 @@ function doEnter(mode, price, decision = {}) {
   });
 }
 
-// ------------------------------------------------------------
-// Exit logic
-// ------------------------------------------------------------
+// --------------------------------------------------
+// exit logic
+// --------------------------------------------------
 function currentDynamicTpTier(pnlPct) {
   if (!CONFIG.DYNAMIC_TP_ENABLED) return 0;
   if (pnlPct >= CONFIG.DTP_TIER3_ARM_PCT) return 3;
@@ -1340,7 +1359,6 @@ function currentDynamicTpTier(pnlPct) {
   if (pnlPct >= CONFIG.DTP_TIER1_ARM_PCT) return 1;
   return 0;
 }
-
 function dynamicTpGivebackForTier(tier) {
   if (tier === 3) return CONFIG.DTP_TIER3_GIVEBACK_PCT;
   if (tier === 2) return CONFIG.DTP_TIER2_GIVEBACK_PCT;
@@ -1351,9 +1369,7 @@ function dynamicTpGivebackForTier(tier) {
 function updatePositionFromTick(price) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
 
-  if (!Number.isFinite(S.peakPrice) || price > S.peakPrice) {
-    S.peakPrice = price;
-  }
+  if (!Number.isFinite(S.peakPrice) || price > S.peakPrice) S.peakPrice = price;
 
   const pnlPct = pctDiff(S.entryPrice, price);
   S.peakPnlPct = Math.max(S.peakPnlPct || 0, pnlPct);
@@ -1385,12 +1401,7 @@ function updatePositionFromTick(price) {
     const pnlGiveback = peakPnl - pnlPct;
 
     if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
-      return doExit(
-        `dynamic_tp_tier${S.dynamicTpTier}_giveback`,
-        price,
-        isoNow(),
-        "cycle_exit"
-      );
+      return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, isoNow(), "cycle_exit");
     }
   } else {
     const drawFromPeakPct = Number.isFinite(S.peakPrice) ? -pctDiff(S.peakPrice, price) : 0;
@@ -1460,7 +1471,10 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   if (now - S.lastExitAtMs < CONFIG.EXIT_DEDUP_MS) return;
 
   const exitPrice = Number.isFinite(price) ? price : currentPrice();
-  const pnlPct = Number.isFinite(exitPrice) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, exitPrice) : 0;
+  const pnlPct =
+    Number.isFinite(exitPrice) && Number.isFinite(S.entryPrice)
+      ? pctDiff(S.entryPrice, exitPrice)
+      : 0;
 
   log("📤 EXIT", {
     reason,
@@ -1469,7 +1483,9 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
     pnlPct: round4(pnlPct),
     entryPrice: round4(S.entryPrice),
     entryMode: S.entryMode,
-    heldSec: S.entryAt ? Math.max(0, Math.round((new Date(ts).getTime() - new Date(S.entryAt).getTime()) / 1000)) : null,
+    heldSec: S.entryAt
+      ? Math.max(0, Math.round((new Date(ts).getTime() - new Date(S.entryAt).getTime()) / 1000))
+      : null,
   });
 
   forward3Commas("exit_long", exitPrice, {
@@ -1486,9 +1502,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
     clearReentry("non_cycle_exit");
   }
 
-  if (exitClass === "regime_break") {
-    turnBullRegimeOff(ts, reason);
-  }
+  if (exitClass === "regime_break") turnBullRegimeOff(ts, reason);
 
   S.inPosition = false;
   S.entryPrice = null;
@@ -1511,15 +1525,14 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   }
 }
 
-// ------------------------------------------------------------
+// --------------------------------------------------
 // 3Commas forwarding
-// ------------------------------------------------------------
+// --------------------------------------------------
 async function forward3Commas(action, triggerPrice, meta = {}) {
   if (!CONFIG.ENABLE_HTTP_FORWARD) {
     log("📦 SIGNAL_PREVIEW", { action, triggerPrice, meta, enabled: false });
     return;
   }
-
   if (!fetchFn) {
     log("⚠️ FETCH_UNAVAILABLE", { action });
     return;
@@ -1574,9 +1587,9 @@ async function forward3Commas(action, triggerPrice, meta = {}) {
   }
 }
 
-// ------------------------------------------------------------
-// Secret checks
-// ------------------------------------------------------------
+// --------------------------------------------------
+// secrets
+// --------------------------------------------------
 function checkSecret(body) {
   const inbound = String(body.secret || "");
   const src = String(body.src || "").toLowerCase();
@@ -1590,15 +1603,13 @@ function checkSecret(body) {
   return inbound === CONFIG.WEBHOOK_SECRET;
 }
 
-// ------------------------------------------------------------
-// Tick handling
-// ------------------------------------------------------------
+// --------------------------------------------------
+// tick handling
+// --------------------------------------------------
 function handleTick(body) {
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
   const px = n(body.price, NaN);
-  if (!Number.isFinite(px)) {
-    throw new Error("bad_tick_price");
-  }
+  if (!Number.isFinite(px)) throw new Error("bad_tick_price");
 
   S.lastTickPrice = px;
   S.lastTickTime = ts;
@@ -1610,6 +1621,7 @@ function handleTick(body) {
     if (px >= n(S.fastTickLaunch.confirmPrice, Infinity)) {
       S.fastTickLaunch.ticksAboveConfirm += 1;
       S.fastTickLaunch.lastConfirmedTickPrice = px;
+
       log("⚡ FAST_TICK_CONFIRM", {
         price: px,
         ticksAboveConfirm: S.fastTickLaunch.ticksAboveConfirm,
@@ -1636,9 +1648,9 @@ function handleTick(body) {
   };
 }
 
-// ------------------------------------------------------------
-// Routes
-// ------------------------------------------------------------
+// --------------------------------------------------
+// routes
+// --------------------------------------------------
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
@@ -1678,15 +1690,15 @@ app.get("/status", (_req, res) => {
     breakoutMemory: S.breakoutMemory,
     ray: S.ray,
     fvvo: S.fvvo,
+    fvvoScore: getFvvoScore(),
     barIndex: S.barIndex,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
-    recentLogs: S.logs.slice(-40),
+    recentLogs: S.logs.slice(-50),
   });
 });
 
 app.post("/reset", (req, res) => {
   const body = req.body || {};
-
   if (!checkSecret({ ...body, src: "admin" })) {
     log("⛔ RESET_UNAUTHORIZED");
     return res.status(401).json({ ok: false, error: "unauthorized" });
@@ -1753,6 +1765,7 @@ app.post(CONFIG.WEBHOOK_PATH, (req, res) => {
         ok: true,
         kind: "fvvo",
         event: parsed.name,
+        fvvoScore: getFvvoScore(),
       });
     }
 
