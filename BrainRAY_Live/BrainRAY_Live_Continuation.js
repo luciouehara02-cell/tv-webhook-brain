@@ -1,16 +1,18 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.6
+// BrainRAY_Continuation_v2.7
 //
-// New in v2.6
-// - keeps v2.5 fast tick launch
-// - keeps strict deferred launch filter
-// - adds deferred slow-ramp override
+// New in v2.7
+// - keeps v2.6 entry logic
+// - keeps v2.6 exit logic
+// - adds strong re-entry override
 //
 // Purpose:
-// - still block weak deferred launches
-// - allow structured slow bullish ramp setups
+// - preserve stable entry side
+// - preserve improved exit side
+// - allow quality re-entries after cycle exits even when
+//   normal re-entry chase is slightly too strict
 // ============================================================
 
 const app = express();
@@ -112,7 +114,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.6"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.7"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -202,6 +204,12 @@ const CONFIG = {
   FAST_REENTRY_MIN_ADX: n(process.env.FAST_REENTRY_MIN_ADX, 14),
   FAST_REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.FAST_REENTRY_REQUIRE_BULL_CONTEXT, true),
 
+  // New in v2.7
+  STRONG_REENTRY_OVERRIDE_ENABLED: b(process.env.STRONG_REENTRY_OVERRIDE_ENABLED, true),
+  STRONG_REENTRY_MIN_RSI: n(process.env.STRONG_REENTRY_MIN_RSI, 60),
+  STRONG_REENTRY_MIN_ADX: n(process.env.STRONG_REENTRY_MIN_ADX, 30),
+  STRONG_REENTRY_MAX_CHASE_PCT: n(process.env.STRONG_REENTRY_MAX_CHASE_PCT, 0.38),
+
   TREND_CHANGE_LAUNCH_ENABLED: b(process.env.TREND_CHANGE_LAUNCH_ENABLED, true),
   TREND_CHANGE_LAUNCH_MIN_RSI: n(process.env.TREND_CHANGE_LAUNCH_MIN_RSI, 60),
   TREND_CHANGE_LAUNCH_MIN_ADX: n(process.env.TREND_CHANGE_LAUNCH_MIN_ADX, 14),
@@ -229,7 +237,6 @@ const CONFIG = {
   FAST_TICK_LAUNCH_STRONG_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_ADX, 22),
   FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT: n(process.env.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT, 0.45),
 
-  // New in v2.6
   DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED: b(process.env.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED, true),
   DEFERRED_SLOW_RAMP_MIN_RSI: n(process.env.DEFERRED_SLOW_RAMP_MIN_RSI, 62),
   DEFERRED_SLOW_RAMP_MIN_ADX: n(process.env.DEFERRED_SLOW_RAMP_MIN_ADX, 20),
@@ -921,7 +928,7 @@ function evaluateEntry(source, body) {
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
   // --------------------------------------------------------
-  // v2.5 fast tick launch
+  // fast tick launch
   // --------------------------------------------------------
   if (source === "tick_confirmed_fast_launch" && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
     const tl = S.fastTickLaunch;
@@ -986,7 +993,7 @@ function evaluateEntry(source, body) {
   }
 
   // --------------------------------------------------------
-  // Immediate or deferred trend-change launch
+  // immediate / deferred launch
   // --------------------------------------------------------
   if (
     (source === "immediate_trend_change_launch" ||
@@ -1108,7 +1115,7 @@ function evaluateEntry(source, body) {
   }
 
   // --------------------------------------------------------
-  // Re-entry path
+  // re-entry path
   // --------------------------------------------------------
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible) {
     const rr = [];
@@ -1133,34 +1140,51 @@ function evaluateEntry(source, body) {
 
     const anchor = Number.isFinite(S.reentry.anchorPrice) ? S.reentry.anchorPrice : ema8;
     const reentryChasePct = Number.isFinite(anchor) ? pctDiff(anchor, px) : 999;
-    const maxReentryChase = useFast ? CONFIG.FAST_REENTRY_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
+    const baseMaxReentryChase = useFast ? CONFIG.FAST_REENTRY_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
     const minRsi = useFast ? CONFIG.FAST_REENTRY_MIN_RSI : CONFIG.MIN_RSI_LONG;
     const minAdx = useFast ? CONFIG.FAST_REENTRY_MIN_ADX : CONFIG.MIN_ADX_CONTINUATION;
+
+    const strongReentryOverride =
+      CONFIG.STRONG_REENTRY_OVERRIDE_ENABLED &&
+      S.ray.bullContext &&
+      emaBullOk &&
+      reentryCloseAboveEma8Ok &&
+      Number.isFinite(rsi) &&
+      Number.isFinite(adx) &&
+      rsi >= CONFIG.STRONG_REENTRY_MIN_RSI &&
+      adx >= CONFIG.STRONG_REENTRY_MIN_ADX &&
+      reentryChasePct <= CONFIG.STRONG_REENTRY_MAX_CHASE_PCT;
+
+    const allowedReentryChase = strongReentryOverride
+      ? CONFIG.STRONG_REENTRY_MAX_CHASE_PCT
+      : baseMaxReentryChase;
 
     reasonPush(rr, !emaBullOk, "reentry_ema_invalid");
     reasonPush(rr, !reentryCloseAboveEma8Ok, "reentry_close_below_ema8");
     reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi, "reentry_rsi_too_low");
     reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "reentry_adx_too_low");
-    reasonPush(rr, reentryChasePct > maxReentryChase, "reentry_chase_too_high");
+    reasonPush(rr, reentryChasePct > allowedReentryChase, "reentry_chase_too_high");
 
     if (rr.length === 0) {
       return {
         allow: true,
         source,
-        mode:
-          source === "feature_reentry"
-            ? "feature_pullback_reclaim_reentry_long"
-            : "pullback_reclaim_reentry_long",
+        mode: strongReentryOverride
+          ? "feature_pullback_reclaim_reentry_long_strong"
+          : source === "feature_reentry"
+          ? "feature_pullback_reclaim_reentry_long"
+          : "pullback_reclaim_reentry_long",
         entryPrice: px,
         reentryChasePct,
         anchor: round4(anchor),
         bullRegimeId: S.ray.bullRegimeId,
+        strongReentryOverride,
       };
     }
   }
 
   // --------------------------------------------------------
-  // Continuation path
+  // continuation path
   // --------------------------------------------------------
   const contReasons = [];
   reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
@@ -1188,7 +1212,7 @@ function evaluateEntry(source, body) {
   }
 
   // --------------------------------------------------------
-  // Breakout memory fallback
+  // breakout memory fallback
   // --------------------------------------------------------
   const mem = S.breakoutMemory;
   const memReasons = [];
@@ -1247,7 +1271,11 @@ function doEnter(mode, price, decision = {}) {
   S.lastAction = "enter";
   S.cycleState = "long";
 
-  if (mode === "pullback_reclaim_reentry_long" || mode === "feature_pullback_reclaim_reentry_long") {
+  if (
+    mode === "pullback_reclaim_reentry_long" ||
+    mode === "feature_pullback_reclaim_reentry_long" ||
+    mode === "feature_pullback_reclaim_reentry_long_strong"
+  ) {
     S.ray.reentryCountInRegime += 1;
     clearReentry("consumed_on_reentry");
   }
