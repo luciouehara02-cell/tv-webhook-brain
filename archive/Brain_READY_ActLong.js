@@ -308,6 +308,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
 // START
 // ====================
 app.listen(PORT, () => {
+  console.log(`📍 RAW_TICK symbol=${tickSym} price=${tickPx} time=${payload?.time ?? new Date(lastTickMs).toISOString()}`);
   console.log(`✅ ${SCRIPT_VERSION} listening on port ${PORT}`);
   console.log(`Path: ${WEBHOOK_PATH}`);
   console.log(`Symbol filter: ${SYMBOL}`);
