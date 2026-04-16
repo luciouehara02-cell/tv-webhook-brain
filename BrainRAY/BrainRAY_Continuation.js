@@ -1,19 +1,16 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.5
+// BrainRAY_Continuation_v2.6
 //
-// New in v2.5
-// - keeps v2.4 immediate launch
-// - keeps v2.4 stricter deferred launch
-// - adds fast tick-confirmed launch after Ray BUY
+// New in v2.6
+// - keeps v2.5 fast tick launch
+// - keeps strict deferred launch filter
+// - adds deferred slow-ramp override
 //
-// New entry path:
-// - tick_confirmed_launch_long
-//
-// Design:
-// - feature = structure / quality anchor
-// - tick = timing / breakout confirmation
+// Purpose:
+// - still block weak deferred launches
+// - allow structured slow bullish ramp setups
 // ============================================================
 
 const app = express();
@@ -115,7 +112,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.5"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.6"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -221,7 +218,6 @@ const CONFIG = {
   STRONG_LAUNCH_MAX_CHASE_PCT: n(process.env.STRONG_LAUNCH_MAX_CHASE_PCT, 0.55),
   STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
 
-  // New in v2.5
   FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
   FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
   FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
@@ -232,6 +228,13 @@ const CONFIG = {
   FAST_TICK_LAUNCH_STRONG_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_RSI, 60),
   FAST_TICK_LAUNCH_STRONG_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_ADX, 22),
   FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT: n(process.env.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT, 0.45),
+
+  // New in v2.6
+  DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED: b(process.env.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED, true),
+  DEFERRED_SLOW_RAMP_MIN_RSI: n(process.env.DEFERRED_SLOW_RAMP_MIN_RSI, 62),
+  DEFERRED_SLOW_RAMP_MIN_ADX: n(process.env.DEFERRED_SLOW_RAMP_MIN_ADX, 20),
+  DEFERRED_SLOW_RAMP_MAX_CHASE_PCT: n(process.env.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT, 0.25),
+  DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT: n(process.env.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT, 0.60),
 
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
 };
@@ -886,7 +889,6 @@ function evaluateEntry(source, body) {
   reasonPush(reasons, !Number.isFinite(px), "bad_price");
   reasonPush(reasons, !feature, "no_feature");
 
-  // tick freshness only for tick-based launch
   if (source === "tick_confirmed_fast_launch") {
     reasonPush(reasons, !isTickFresh(), "stale_tick");
   }
@@ -919,7 +921,7 @@ function evaluateEntry(source, body) {
     ageSec(S.fvvo.lastSniperBuyAt) <= CONFIG.FVVO_SNIPER_LOOKBACK_BARS * n(CONFIG.ENTRY_TF, 5) * 60;
 
   // --------------------------------------------------------
-  // New in v2.5: tick-confirmed fast launch
+  // v2.5 fast tick launch
   // --------------------------------------------------------
   if (source === "tick_confirmed_fast_launch" && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
     const tl = S.fastTickLaunch;
@@ -1017,6 +1019,18 @@ function evaluateEntry(source, body) {
       extFromEma18 <= CONFIG.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT &&
       launchChasePct <= CONFIG.STRONG_LAUNCH_MAX_CHASE_PCT;
 
+    const slowRampOverride =
+      isDeferredLaunch &&
+      CONFIG.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED &&
+      Number.isFinite(rsi) &&
+      Number.isFinite(adx) &&
+      emaBullOk &&
+      closeAboveEma8Ok &&
+      rsi >= CONFIG.DEFERRED_SLOW_RAMP_MIN_RSI &&
+      adx >= CONFIG.DEFERRED_SLOW_RAMP_MIN_ADX &&
+      launchChasePct <= CONFIG.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT &&
+      extFromEma18 <= CONFIG.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT;
+
     const allowedLaunchChase = strongOverride
       ? CONFIG.STRONG_LAUNCH_MAX_CHASE_PCT
       : CONFIG.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT;
@@ -1029,8 +1043,12 @@ function evaluateEntry(source, body) {
     reasonPush(launchReasons, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
     reasonPush(launchReasons, !emaBullOk, "launch_ema8_below_ema18");
     reasonPush(launchReasons, !closeAboveEma8Ok, "launch_close_below_ema8");
-    reasonPush(launchReasons, Number.isFinite(rsi) && rsi < minLaunchRsi, "launch_rsi_too_low");
-    reasonPush(launchReasons, Number.isFinite(adx) && adx < minLaunchAdx, "launch_adx_too_low");
+
+    if (!slowRampOverride) {
+      reasonPush(launchReasons, Number.isFinite(rsi) && rsi < minLaunchRsi, "launch_rsi_too_low");
+      reasonPush(launchReasons, Number.isFinite(adx) && adx < minLaunchAdx, "launch_adx_too_low");
+    }
+
     reasonPush(launchReasons, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
     reasonPush(launchReasons, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
 
@@ -1040,6 +1058,8 @@ function evaluateEntry(source, body) {
         source,
         mode: strongOverride
           ? "bullish_trend_change_launch_long_strong"
+          : slowRampOverride
+          ? "bullish_trend_change_launch_long_slow_ramp"
           : "bullish_trend_change_launch_long",
         entryPrice: px,
         extFromEma8,
@@ -1048,6 +1068,7 @@ function evaluateEntry(source, body) {
         armedBar: S.trendChangeLaunch.armedBar,
         expiresBar: S.trendChangeLaunch.expiresBar,
         strongOverride,
+        slowRampOverride,
         isDeferredLaunch,
         minLaunchRsi,
         minLaunchAdx,
@@ -1069,6 +1090,17 @@ function evaluateEntry(source, body) {
         Number.isFinite(adx) &&
         rsi >= CONFIG.STRONG_LAUNCH_MIN_RSI &&
         adx >= CONFIG.STRONG_LAUNCH_MIN_ADX,
+      slowRampOverrideCandidate:
+        isDeferredLaunch &&
+        CONFIG.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED &&
+        Number.isFinite(rsi) &&
+        Number.isFinite(adx) &&
+        emaBullOk &&
+        closeAboveEma8Ok &&
+        rsi >= CONFIG.DEFERRED_SLOW_RAMP_MIN_RSI &&
+        adx >= CONFIG.DEFERRED_SLOW_RAMP_MIN_ADX &&
+        launchChasePct <= CONFIG.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT &&
+        extFromEma18 <= CONFIG.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT,
       isDeferredLaunch,
       minLaunchRsi,
       minLaunchAdx,
@@ -1223,6 +1255,7 @@ function doEnter(mode, price, decision = {}) {
   if (
     mode === "bullish_trend_change_launch_long" ||
     mode === "bullish_trend_change_launch_long_strong" ||
+    mode === "bullish_trend_change_launch_long_slow_ramp" ||
     mode === "tick_confirmed_launch_long" ||
     mode === "tick_confirmed_launch_long_strong"
   ) {
