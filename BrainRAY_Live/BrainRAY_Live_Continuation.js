@@ -1,18 +1,18 @@
 import express from "express";
 
 // ============================================================
-// BrainRAY_Continuation_v2.7
+// BrainRAY_Continuation_v2.8
 //
-// New in v2.7
-// - keeps v2.6 entry logic
-// - keeps v2.6 exit logic
-// - adds strong re-entry override
+// New in v2.8
+// - fixes re-entry fallback leak
+// - if source === feature_reentry, only dedicated re-entry logic
+//   is allowed to decide entry
+// - no fallthrough into continuation / breakout-memory paths
 //
 // Purpose:
 // - preserve stable entry side
 // - preserve improved exit side
-// - allow quality re-entries after cycle exits even when
-//   normal re-entry chase is slightly too strict
+// - make re-entry replay results trustworthy
 // ============================================================
 
 const app = express();
@@ -114,7 +114,7 @@ function round4(x) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.7"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v2.8"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -204,7 +204,6 @@ const CONFIG = {
   FAST_REENTRY_MIN_ADX: n(process.env.FAST_REENTRY_MIN_ADX, 14),
   FAST_REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.FAST_REENTRY_REQUIRE_BULL_CONTEXT, true),
 
-  // New in v2.7
   STRONG_REENTRY_OVERRIDE_ENABLED: b(process.env.STRONG_REENTRY_OVERRIDE_ENABLED, true),
   STRONG_REENTRY_MIN_RSI: n(process.env.STRONG_REENTRY_MIN_RSI, 60),
   STRONG_REENTRY_MIN_ADX: n(process.env.STRONG_REENTRY_MIN_ADX, 30),
@@ -1115,9 +1114,10 @@ function evaluateEntry(source, body) {
   }
 
   // --------------------------------------------------------
-  // re-entry path
+  // dedicated re-entry path
+  // v2.8 fix: feature_reentry does NOT fall through
   // --------------------------------------------------------
-  if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible) {
+  if (source === "feature_reentry" || (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible)) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
 
@@ -1171,9 +1171,7 @@ function evaluateEntry(source, body) {
         source,
         mode: strongReentryOverride
           ? "feature_pullback_reclaim_reentry_long_strong"
-          : source === "feature_reentry"
-          ? "feature_pullback_reclaim_reentry_long"
-          : "pullback_reclaim_reentry_long",
+          : "feature_pullback_reclaim_reentry_long",
         entryPrice: px,
         reentryChasePct,
         anchor: round4(anchor),
@@ -1181,6 +1179,25 @@ function evaluateEntry(source, body) {
         strongReentryOverride,
       };
     }
+
+    return {
+      allow: false,
+      source,
+      reasons: rr,
+      reentryChasePct,
+      anchor: round4(anchor),
+      bullRegimeId: S.ray.bullRegimeId,
+      strongReentryOverrideCandidate:
+        CONFIG.STRONG_REENTRY_OVERRIDE_ENABLED &&
+        S.ray.bullContext &&
+        emaBullOk &&
+        reentryCloseAboveEma8Ok &&
+        Number.isFinite(rsi) &&
+        Number.isFinite(adx) &&
+        rsi >= CONFIG.STRONG_REENTRY_MIN_RSI &&
+        adx >= CONFIG.STRONG_REENTRY_MIN_ADX &&
+        reentryChasePct <= CONFIG.STRONG_REENTRY_MAX_CHASE_PCT,
+    };
   }
 
   // --------------------------------------------------------
