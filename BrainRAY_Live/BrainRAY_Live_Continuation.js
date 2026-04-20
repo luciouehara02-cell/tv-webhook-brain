@@ -1,10 +1,12 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v3.0
+ * BrainRAY_Continuation_v3.1
  *
- * v3.0:
- * - real separate FVVO webhook support
+ * v3.1:
+ * - dedicated post-exit continuation re-entry path
+ * - separate good-exit vs weak-exit re-entry logic
+ * - negative FVVO blocks strong launch / strong fast launch / strong re-entry
  * - Ray remains primary directional layer
  * - FVVO acts as confidence / anti-chase / re-entry helper
  *
@@ -98,7 +100,7 @@ function barTimeKey(iso, tfMin = 5) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.0"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.1"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -197,12 +199,43 @@ const CONFIG = {
   STRONG_REENTRY_MIN_ADX: n(process.env.STRONG_REENTRY_MIN_ADX, 30),
   STRONG_REENTRY_MAX_CHASE_PCT: n(process.env.STRONG_REENTRY_MAX_CHASE_PCT, 0.38),
 
+  // NEW: post-exit continuation re-entry
+  POST_EXIT_CONT_REENTRY_ENABLED: b(process.env.POST_EXIT_CONT_REENTRY_ENABLED, true),
+  POST_EXIT_CONT_WINDOW_BARS: n(process.env.POST_EXIT_CONT_WINDOW_BARS, 8),
+
+  POST_EXIT_GOOD_MIN_RSI: n(process.env.POST_EXIT_GOOD_MIN_RSI, 50),
+  POST_EXIT_GOOD_MIN_ADX: n(process.env.POST_EXIT_GOOD_MIN_ADX, 18),
+  POST_EXIT_GOOD_MAX_CHASE_PCT: n(process.env.POST_EXIT_GOOD_MAX_CHASE_PCT, 0.30),
+  POST_EXIT_GOOD_REQUIRE_CLOSE_ABOVE_EMA8: b(
+    process.env.POST_EXIT_GOOD_REQUIRE_CLOSE_ABOVE_EMA8,
+    true
+  ),
+
+  POST_EXIT_WEAK_MIN_RSI: n(process.env.POST_EXIT_WEAK_MIN_RSI, 55),
+  POST_EXIT_WEAK_MIN_ADX: n(process.env.POST_EXIT_WEAK_MIN_ADX, 20),
+  POST_EXIT_WEAK_MAX_CHASE_PCT: n(process.env.POST_EXIT_WEAK_MAX_CHASE_PCT, 0.25),
+  POST_EXIT_WEAK_REQUIRE_CLOSE_ABOVE_EMA8: b(
+    process.env.POST_EXIT_WEAK_REQUIRE_CLOSE_ABOVE_EMA8,
+    true
+  ),
+  POST_EXIT_WEAK_REQUIRE_EMA8_ABOVE_EMA18: b(
+    process.env.POST_EXIT_WEAK_REQUIRE_EMA8_ABOVE_EMA18,
+    true
+  ),
+  POST_EXIT_WEAK_REQUIRE_BREAKOUT_MEMORY: b(
+    process.env.POST_EXIT_WEAK_REQUIRE_BREAKOUT_MEMORY,
+    true
+  ),
+
   // trend-change launch
   TREND_CHANGE_LAUNCH_ENABLED: b(process.env.TREND_CHANGE_LAUNCH_ENABLED, true),
   TREND_CHANGE_LAUNCH_MIN_RSI: n(process.env.TREND_CHANGE_LAUNCH_MIN_RSI, 60),
   TREND_CHANGE_LAUNCH_MIN_ADX: n(process.env.TREND_CHANGE_LAUNCH_MIN_ADX, 14),
   TREND_CHANGE_LAUNCH_MAX_CHASE_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT, 0.35),
-  TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.20),
+  TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(
+    process.env.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT,
+    1.20
+  ),
   TREND_CHANGE_LAUNCH_MEMORY_BARS: n(process.env.TREND_CHANGE_LAUNCH_MEMORY_BARS, 2),
 
   DEFERRED_LAUNCH_MIN_RSI: n(process.env.DEFERRED_LAUNCH_MIN_RSI, 68),
@@ -212,7 +245,10 @@ const CONFIG = {
   STRONG_LAUNCH_MIN_RSI: n(process.env.STRONG_LAUNCH_MIN_RSI, 72),
   STRONG_LAUNCH_MIN_ADX: n(process.env.STRONG_LAUNCH_MIN_ADX, 24),
   STRONG_LAUNCH_MAX_CHASE_PCT: n(process.env.STRONG_LAUNCH_MAX_CHASE_PCT, 0.55),
-  STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
+  STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(
+    process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT,
+    1.35
+  ),
 
   // fast tick launch
   FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
@@ -221,16 +257,31 @@ const CONFIG = {
   FAST_TICK_LAUNCH_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_MIN_ADX, 18),
   FAST_TICK_LAUNCH_CONFIRM_PCT: n(process.env.FAST_TICK_LAUNCH_CONFIRM_PCT, 0.05),
   FAST_TICK_LAUNCH_MAX_CHASE_PCT: n(process.env.FAST_TICK_LAUNCH_MAX_CHASE_PCT, 0.35),
-  FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM: n(process.env.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM, 2),
+  FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM: n(
+    process.env.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM,
+    2
+  ),
   FAST_TICK_LAUNCH_STRONG_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_RSI, 60),
   FAST_TICK_LAUNCH_STRONG_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_STRONG_MIN_ADX, 22),
-  FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT: n(process.env.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT, 0.45),
+  FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT: n(
+    process.env.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT,
+    0.45
+  ),
 
-  DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED: b(process.env.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED, true),
+  DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED: b(
+    process.env.DEFERRED_SLOW_RAMP_OVERRIDE_ENABLED,
+    true
+  ),
   DEFERRED_SLOW_RAMP_MIN_RSI: n(process.env.DEFERRED_SLOW_RAMP_MIN_RSI, 62),
   DEFERRED_SLOW_RAMP_MIN_ADX: n(process.env.DEFERRED_SLOW_RAMP_MIN_ADX, 20),
-  DEFERRED_SLOW_RAMP_MAX_CHASE_PCT: n(process.env.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT, 0.25),
-  DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT: n(process.env.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT, 0.60),
+  DEFERRED_SLOW_RAMP_MAX_CHASE_PCT: n(
+    process.env.DEFERRED_SLOW_RAMP_MAX_CHASE_PCT,
+    0.25
+  ),
+  DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT: n(
+    process.env.DEFERRED_SLOW_RAMP_MAX_EXT_FROM_EMA18_PCT,
+    0.60
+  ),
 
   // FVVO
   FVVO_ENABLED: b(process.env.FVVO_ENABLED, true),
@@ -248,8 +299,14 @@ const CONFIG = {
   FVVO_LAUNCH_RSI_RELAX: n(process.env.FVVO_LAUNCH_RSI_RELAX, 2),
   FVVO_LAUNCH_MAX_CHASE_BONUS_PCT: n(process.env.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT, 0.05),
 
-  FVVO_SNIPER_SELL_CHASE_PENALTY_PCT: n(process.env.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT, 0.08),
-  FVVO_BURST_BEARISH_CHASE_PENALTY_PCT: n(process.env.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT, 0.10),
+  FVVO_SNIPER_SELL_CHASE_PENALTY_PCT: n(
+    process.env.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT,
+    0.08
+  ),
+  FVVO_BURST_BEARISH_CHASE_PENALTY_PCT: n(
+    process.env.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT,
+    0.10
+  ),
 };
 
 const fetchFn = globalThis.fetch;
@@ -328,6 +385,32 @@ function buildInitialRuntimeState() {
       peakBeforeExit: null,
       anchorPrice: null,
       bullRegimeId: null,
+    },
+
+    // NEW
+    lastExit: {
+      ts: null,
+      barIndex: null,
+      reason: null,
+      exitClass: null,
+      price: null,
+      pnlPct: null,
+      bullRegimeId: null,
+      exitQuality: null, // good | weak
+    },
+
+    // NEW
+    postExitContReentry: {
+      active: false,
+      exitQuality: null, // good | weak
+      exitReason: null,
+      armedBar: null,
+      eligibleFromBar: null,
+      eligibleUntilBar: null,
+      exitPrice: null,
+      anchorPrice: null,
+      bullRegimeId: null,
+      peakBeforeExit: null,
     },
 
     trendChangeLaunch: {
@@ -423,6 +506,21 @@ function clearReentry(reason = "reset") {
     bullRegimeId: null,
   };
 }
+function clearPostExitContReentry(reason = "reset") {
+  if (S.postExitContReentry.active) log("🔁 POST_EXIT_CONT_REENTRY_CLEARED", { reason });
+  S.postExitContReentry = {
+    active: false,
+    exitQuality: null,
+    exitReason: null,
+    armedBar: null,
+    eligibleFromBar: null,
+    eligibleUntilBar: null,
+    exitPrice: null,
+    anchorPrice: null,
+    bullRegimeId: null,
+    peakBeforeExit: null,
+  };
+}
 function armTrendChangeLaunch(rayPrice, rayTime) {
   S.trendChangeLaunch = {
     pending: true,
@@ -468,7 +566,9 @@ function armFastTickLaunch(source, rayPrice) {
     ema18: f.ema18,
     rsi: f.rsi,
     adx: f.adx,
-    breakoutHigh: Number.isFinite(S.breakoutMemory.breakoutHigh) ? S.breakoutMemory.breakoutHigh : f.high,
+    breakoutHigh: Number.isFinite(S.breakoutMemory.breakoutHigh)
+      ? S.breakoutMemory.breakoutHigh
+      : f.high,
     ticksAboveConfirm: 0,
     lastConfirmedTickPrice: null,
   };
@@ -548,6 +648,13 @@ function getFvvoScore() {
   return { score, tags, snap };
 }
 
+function hasStrongBearishFvvo(fv) {
+  return !!(
+    fv &&
+    (fv.score < 0 || fv?.snap?.sniperSell || fv?.snap?.burstBearish)
+  );
+}
+
 // --------------------------------------------------
 // parse inbound family
 // --------------------------------------------------
@@ -574,6 +681,7 @@ function turnBullRegimeOn(ts, source) {
     S.ray.reentryCountInRegime = 0;
     S.cycleState = S.inPosition ? "long" : "flat";
     clearReentry("new_bull_regime");
+    clearPostExitContReentry("new_bull_regime");
     log("🟢 BULL_REGIME_ON", {
       source,
       bullRegimeId: S.ray.bullRegimeId,
@@ -588,6 +696,7 @@ function turnBullRegimeOff(ts, reason) {
     S.cycleState = S.inPosition ? "long" : "disabled_by_bear_regime";
     clearBreakoutMemory("bull_regime_off");
     clearReentry("bull_regime_off");
+    clearPostExitContReentry("bull_regime_off");
     clearTrendChangeLaunch("bull_regime_off");
     clearFastTickLaunch("bull_regime_off");
     log("🔴 BULL_REGIME_OFF", { reason, ts, bullRegimeId: S.ray.bullRegimeId });
@@ -622,6 +731,25 @@ function handleRayEvent(body) {
     S.ray.lastBullTrendContinuationAt = ts;
     if (!S.ray.bullContext) turnBullRegimeOn(ts, "ray_bullish_trend_continuation");
     log("🟩 RAY_BULLISH_TREND_CONTINUATION", { price, ts });
+
+    // NEW: prioritize dedicated post-exit continuation re-entry if active
+    if (
+      CONFIG.POST_EXIT_CONT_REENTRY_ENABLED &&
+      S.postExitContReentry.active &&
+      !S.inPosition
+    ) {
+      const decision = tryEntry("post_exit_continuation_reentry", {
+        ...body,
+        src: "ray",
+        event: "Bullish Trend Continuation",
+        symbol: CONFIG.SYMBOL,
+        tf: CONFIG.ENTRY_TF,
+        price: Number.isFinite(S.lastFeature?.close) ? S.lastFeature.close : price,
+        close: Number.isFinite(S.lastFeature?.close) ? S.lastFeature.close : price,
+        time: ts,
+      });
+      if (decision.allow) return;
+    }
 
     const decision = tryEntry("ray_bullish_trend_continuation", body);
     if (!decision.allow && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
@@ -701,6 +829,7 @@ function updateBarProgress(ts) {
     S.lastBarKey = key;
     invalidateBreakoutMemory();
     invalidateReentry();
+    invalidatePostExitContReentry();
     invalidateTrendChangeLaunch();
     invalidateFastTickLaunch();
   }
@@ -757,8 +886,9 @@ function handleFeature(body) {
     });
   }
 
-  if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible && !S.inPosition) {
-    tryEntry("feature_reentry", {
+  // NEW: post-exit continuation re-entry has higher priority
+  if (CONFIG.POST_EXIT_CONT_REENTRY_ENABLED && S.postExitContReentry.active && !S.inPosition) {
+    const d = tryEntry("post_exit_continuation_reentry", {
       src: "features",
       symbol: CONFIG.SYMBOL,
       tf: CONFIG.ENTRY_TF,
@@ -766,6 +896,19 @@ function handleFeature(body) {
       price: feature.close,
       time: feature.time,
     });
+    if (d.allow) return;
+  }
+
+  if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible && !S.inPosition) {
+    const d = tryEntry("feature_reentry", {
+      src: "features",
+      symbol: CONFIG.SYMBOL,
+      tf: CONFIG.ENTRY_TF,
+      close: feature.close,
+      price: feature.close,
+      time: feature.time,
+    });
+    if (d.allow) return;
   }
 
   if (S.inPosition) evaluateBarExit(feature);
@@ -842,6 +985,12 @@ function invalidateReentry() {
   if (!S.reentry.eligible) return;
   if (S.barIndex > n(S.reentry.eligibleUntilBar, -1)) clearReentry("expired");
 }
+function invalidatePostExitContReentry() {
+  if (!S.postExitContReentry.active) return;
+  if (S.barIndex > n(S.postExitContReentry.eligibleUntilBar, -1)) {
+    clearPostExitContReentry("expired");
+  }
+}
 function invalidateTrendChangeLaunch() {
   if (!S.trendChangeLaunch.pending) return;
   if (S.barIndex > n(S.trendChangeLaunch.expiresBar, -1)) clearTrendChangeLaunch("expired");
@@ -882,7 +1031,9 @@ function evaluateReentryEligibilityFromFeature(feature) {
 // entry logic
 // --------------------------------------------------
 function activeEnterDedupMs(source) {
-  return source === "feature_reentry" ? CONFIG.REENTRY_ENTER_DEDUP_MS : CONFIG.ENTER_DEDUP_MS;
+  return source === "feature_reentry" || source === "post_exit_continuation_reentry"
+    ? CONFIG.REENTRY_ENTER_DEDUP_MS
+    : CONFIG.ENTER_DEDUP_MS;
 }
 
 function tryEntry(source, body) {
@@ -917,8 +1068,13 @@ function evaluateEntry(source, body) {
   const px = n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()), NaN);
   const feature = S.lastFeature;
   const fv = getFvvoScore();
+  const bearishFvvo = hasStrongBearishFvvo(fv);
 
-  reasonPush(reasons, normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)) !== CONFIG.SYMBOL, "symbol_mismatch");
+  reasonPush(
+    reasons,
+    normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)) !== CONFIG.SYMBOL,
+    "symbol_mismatch"
+  );
   reasonPush(reasons, S.inPosition, "already_in_position");
   reasonPush(reasons, now < S.cooldownUntilMs, "cooldown_active");
   reasonPush(reasons, now - S.lastEnterAtMs < activeEnterDedupMs(source), "enter_dedup");
@@ -959,10 +1115,14 @@ function evaluateEntry(source, body) {
     reasonPush(rr, tl.bullRegimeId !== S.ray.bullRegimeId, "fast_tick_launch_regime_mismatch");
     reasonPush(rr, !emaBullOk, "fast_tick_launch_ema_invalid");
 
-    const minRsi = Math.max(0, CONFIG.FAST_TICK_LAUNCH_MIN_RSI - (bullishFvvo ? CONFIG.FVVO_LAUNCH_RSI_RELAX : 0));
+    const minRsi = Math.max(
+      0,
+      CONFIG.FAST_TICK_LAUNCH_MIN_RSI - (bullishFvvo ? CONFIG.FVVO_LAUNCH_RSI_RELAX : 0)
+    );
     const minAdx = CONFIG.FAST_TICK_LAUNCH_MIN_ADX;
 
     const strongFastLaunch =
+      !bearishFvvo &&
       Number.isFinite(rsi) &&
       Number.isFinite(adx) &&
       rsi >= CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_RSI &&
@@ -980,7 +1140,12 @@ function evaluateEntry(source, body) {
     reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "fast_tick_launch_adx_too_low");
     reasonPush(rr, extFromEma8 > allowedChase, "fast_tick_launch_chase_too_high");
     reasonPush(rr, px < n(tl.confirmPrice, Infinity), "fast_tick_launch_below_confirm");
-    reasonPush(rr, n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM, "fast_tick_launch_not_enough_confirm_ticks");
+    reasonPush(
+      rr,
+      n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM,
+      "fast_tick_launch_not_enough_confirm_ticks"
+    );
+    reasonPush(rr, bearishFvvo && strongFastLaunch, "strong_fast_launch_blocked_by_negative_fvvo");
 
     if (rr.length === 0) {
       return {
@@ -1034,6 +1199,7 @@ function evaluateEntry(source, body) {
       : CONFIG.TREND_CHANGE_LAUNCH_MIN_ADX;
 
     const strongOverride =
+      !bearishFvvo &&
       CONFIG.STRONG_LAUNCH_OVERRIDE_ENABLED &&
       Number.isFinite(rsi) &&
       Number.isFinite(adx) &&
@@ -1078,6 +1244,7 @@ function evaluateEntry(source, body) {
 
     reasonPush(rr, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
     reasonPush(rr, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
+    reasonPush(rr, bearishFvvo && strongOverride, "strong_launch_blocked_by_negative_fvvo");
 
     if (rr.length === 0) {
       return {
@@ -1121,6 +1288,167 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // NEW: dedicated post-exit continuation re-entry
+  if (
+    source === "post_exit_continuation_reentry" &&
+    CONFIG.POST_EXIT_CONT_REENTRY_ENABLED &&
+    S.postExitContReentry.active
+  ) {
+    const rr = [];
+    const pe = S.postExitContReentry;
+
+    const anchor = Number.isFinite(pe.anchorPrice) ? pe.anchorPrice : ema8;
+    const reentryChasePct = Number.isFinite(anchor) ? pctDiff(anchor, px) : 999;
+
+    const goodExit = pe.exitQuality === "good";
+    const weakExit = pe.exitQuality === "weak";
+
+    reasonPush(rr, !pe.active, "post_exit_reentry_not_active");
+    reasonPush(rr, pe.bullRegimeId !== S.ray.bullRegimeId, "post_exit_regime_mismatch");
+    reasonPush(rr, S.barIndex < n(pe.eligibleFromBar, 0), "post_exit_too_early");
+    reasonPush(rr, S.barIndex > n(pe.eligibleUntilBar, -1), "post_exit_window_expired");
+    reasonPush(rr, bearishFvvo, "post_exit_blocked_by_negative_fvvo");
+
+    if (goodExit) {
+      const requireCloseAboveEma8 = CONFIG.POST_EXIT_GOOD_REQUIRE_CLOSE_ABOVE_EMA8;
+      const closeOk =
+        !requireCloseAboveEma8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
+      const minRsi = Math.max(
+        0,
+        CONFIG.POST_EXIT_GOOD_MIN_RSI - (bullishFvvo ? CONFIG.FVVO_REENTRY_RSI_RELAX : 0)
+      );
+      const minAdx = CONFIG.POST_EXIT_GOOD_MIN_ADX;
+
+      let maxChase = CONFIG.POST_EXIT_GOOD_MAX_CHASE_PCT;
+      if (bullishFvvo) maxChase += CONFIG.FVVO_REENTRY_MAX_CHASE_BONUS_PCT;
+      if (fv.snap.sniperSell) maxChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+      if (fv.snap.burstBearish) maxChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+
+      reasonPush(rr, !closeOk, "post_exit_good_close_below_ema8");
+      reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi, "post_exit_good_rsi_too_low");
+      reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "post_exit_good_adx_too_low");
+      reasonPush(rr, reentryChasePct > maxChase, "post_exit_good_chase_too_high");
+
+      log("🔁 POST_EXIT_REENTRY_CHECK", {
+        exitType: "good",
+        barIndex: S.barIndex,
+        rsi,
+        adx,
+        reentryChasePct,
+        anchor: round4(anchor),
+        fvvo: fv,
+      });
+
+      if (rr.length === 0) {
+        return {
+          allow: true,
+          source,
+          mode: bullishFvvo
+            ? "post_exit_continuation_reentry_long_good_fvvo"
+            : "post_exit_continuation_reentry_long_good",
+          entryPrice: px,
+          exitQuality: "good",
+          reentryChasePct,
+          anchor: round4(anchor),
+          bullRegimeId: S.ray.bullRegimeId,
+          fvvo: fv,
+        };
+      }
+
+      return {
+        allow: false,
+        source,
+        reasons: rr,
+        exitQuality: "good",
+        reentryChasePct,
+        anchor: round4(anchor),
+        bullRegimeId: S.ray.bullRegimeId,
+        fvvo: fv,
+      };
+    }
+
+    if (weakExit) {
+      const requireCloseAboveEma8 = CONFIG.POST_EXIT_WEAK_REQUIRE_CLOSE_ABOVE_EMA8;
+      const requireEmaBull = CONFIG.POST_EXIT_WEAK_REQUIRE_EMA8_ABOVE_EMA18;
+      const requireBreakoutMemory = CONFIG.POST_EXIT_WEAK_REQUIRE_BREAKOUT_MEMORY;
+
+      const closeOk =
+        !requireCloseAboveEma8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+      const emaOk =
+        !requireEmaBull ||
+        (Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18);
+      const memOk =
+        !requireBreakoutMemory ||
+        (CONFIG.BREAKOUT_MEMORY_ENABLED &&
+          S.breakoutMemory.active &&
+          !S.breakoutMemory.used);
+
+      const minRsi = Math.max(
+        0,
+        CONFIG.POST_EXIT_WEAK_MIN_RSI - (bullishFvvo ? CONFIG.FVVO_REENTRY_RSI_RELAX : 0)
+      );
+      const minAdx = CONFIG.POST_EXIT_WEAK_MIN_ADX;
+
+      let maxChase = CONFIG.POST_EXIT_WEAK_MAX_CHASE_PCT;
+      if (bullishFvvo) maxChase += CONFIG.FVVO_REENTRY_MAX_CHASE_BONUS_PCT;
+      if (fv.snap.sniperSell) maxChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+      if (fv.snap.burstBearish) maxChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+
+      reasonPush(rr, !closeOk, "post_exit_weak_close_below_ema8");
+      reasonPush(rr, !emaOk, "post_exit_weak_ema_invalid");
+      reasonPush(rr, !memOk, "post_exit_weak_no_breakout_memory");
+      reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi, "post_exit_weak_rsi_too_low");
+      reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "post_exit_weak_adx_too_low");
+      reasonPush(rr, reentryChasePct > maxChase, "post_exit_weak_chase_too_high");
+
+      log("🔁 POST_EXIT_REENTRY_CHECK", {
+        exitType: "weak",
+        barIndex: S.barIndex,
+        rsi,
+        adx,
+        reentryChasePct,
+        anchor: round4(anchor),
+        breakoutMemoryActive: !!S.breakoutMemory.active,
+        fvvo: fv,
+      });
+
+      if (rr.length === 0) {
+        return {
+          allow: true,
+          source,
+          mode: bullishFvvo
+            ? "post_exit_continuation_reentry_long_weak_fvvo"
+            : "post_exit_continuation_reentry_long_weak",
+          entryPrice: px,
+          exitQuality: "weak",
+          reentryChasePct,
+          anchor: round4(anchor),
+          bullRegimeId: S.ray.bullRegimeId,
+          fvvo: fv,
+        };
+      }
+
+      return {
+        allow: false,
+        source,
+        reasons: rr,
+        exitQuality: "weak",
+        reentryChasePct,
+        anchor: round4(anchor),
+        bullRegimeId: S.ray.bullRegimeId,
+        fvvo: fv,
+      };
+    }
+
+    return {
+      allow: false,
+      source,
+      reasons: ["post_exit_quality_unknown"],
+      fvvo: fv,
+    };
+  }
+
   // re-entry
   if (source === "feature_reentry" || (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible)) {
     const rr = [];
@@ -1133,7 +1461,11 @@ function evaluateEntry(source, body) {
       "reentry_no_bull_context"
     );
     reasonPush(rr, S.reentry.bullRegimeId !== S.ray.bullRegimeId, "reentry_regime_mismatch");
-    reasonPush(rr, S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME, "max_reentry_reached");
+    reasonPush(
+      rr,
+      S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME,
+      "max_reentry_reached"
+    );
     reasonPush(rr, S.barIndex < n(S.reentry.eligibleFromBar, 0), "reentry_too_early");
 
     const reentryRequireCloseAboveEma8 = useFast
@@ -1141,7 +1473,8 @@ function evaluateEntry(source, body) {
       : CONFIG.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8;
 
     const reentryCloseAboveEma8Ok =
-      !reentryRequireCloseAboveEma8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+      !reentryRequireCloseAboveEma8 ||
+      (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
 
     const anchor = Number.isFinite(S.reentry.anchorPrice) ? S.reentry.anchorPrice : ema8;
     const reentryChasePct = Number.isFinite(anchor) ? pctDiff(anchor, px) : 999;
@@ -1155,6 +1488,7 @@ function evaluateEntry(source, body) {
     const minAdx = useFast ? CONFIG.FAST_REENTRY_MIN_ADX : CONFIG.MIN_ADX_CONTINUATION;
 
     const strongReentryOverride =
+      !bearishFvvo &&
       CONFIG.STRONG_REENTRY_OVERRIDE_ENABLED &&
       S.ray.bullContext &&
       emaBullOk &&
@@ -1178,6 +1512,7 @@ function evaluateEntry(source, body) {
     reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi, "reentry_rsi_too_low");
     reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "reentry_adx_too_low");
     reasonPush(rr, reentryChasePct > allowedReentryChase, "reentry_chase_too_high");
+    reasonPush(rr, bearishFvvo && strongReentryOverride, "strong_reentry_blocked_by_negative_fvvo");
 
     if (rr.length === 0) {
       return {
@@ -1310,10 +1645,29 @@ function doEnter(mode, price, decision = {}) {
 
   if (
     mode === "feature_pullback_reclaim_reentry_long" ||
-    mode === "feature_pullback_reclaim_reentry_long_strong"
+    mode === "feature_pullback_reclaim_reentry_long_strong" ||
+    mode === "post_exit_continuation_reentry_long_good" ||
+    mode === "post_exit_continuation_reentry_long_good_fvvo" ||
+    mode === "post_exit_continuation_reentry_long_weak" ||
+    mode === "post_exit_continuation_reentry_long_weak_fvvo"
   ) {
     S.ray.reentryCountInRegime += 1;
+  }
+
+  if (
+    mode === "feature_pullback_reclaim_reentry_long" ||
+    mode === "feature_pullback_reclaim_reentry_long_strong"
+  ) {
     clearReentry("consumed_on_reentry");
+  }
+
+  if (
+    mode === "post_exit_continuation_reentry_long_good" ||
+    mode === "post_exit_continuation_reentry_long_good_fvvo" ||
+    mode === "post_exit_continuation_reentry_long_weak" ||
+    mode === "post_exit_continuation_reentry_long_weak_fvvo"
+  ) {
+    clearPostExitContReentry("consumed_on_reentry");
   }
 
   if (
@@ -1401,7 +1755,12 @@ function updatePositionFromTick(price) {
     const pnlGiveback = peakPnl - pnlPct;
 
     if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
-      return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, isoNow(), "cycle_exit");
+      return doExit(
+        `dynamic_tp_tier${S.dynamicTpTier}_giveback`,
+        price,
+        isoNow(),
+        "cycle_exit"
+      );
     }
   } else {
     const drawFromPeakPct = Number.isFinite(S.peakPrice) ? -pctDiff(S.peakPrice, price) : 0;
@@ -1434,6 +1793,51 @@ function evaluateBarExit(feature) {
   if (CONFIG.EXIT_ON_5M_CLOSE_BELOW_EMA18 && Number.isFinite(feature.ema18) && price < feature.ema18) {
     return doExit("close_below_ema18_5m", price, feature.time, "regime_break");
   }
+}
+
+function classifyExitQuality(exitClass, pnlPct, reason) {
+  const r = String(reason || "").toLowerCase();
+
+  const isGood =
+    exitClass === "cycle_exit" ||
+    r.includes("tp") ||
+    r.includes("profit_lock") ||
+    r.includes("trail") ||
+    pnlPct > 0;
+
+  return isGood ? "good" : "weak";
+}
+
+function armPostExitContinuationReentry(reason, exitPrice, exitClass, pnlPct) {
+  if (!CONFIG.POST_EXIT_CONT_REENTRY_ENABLED) return;
+  if (!S.ray.bullContext) return;
+  if (S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME) return;
+
+  const exitQuality = classifyExitQuality(exitClass, pnlPct, reason);
+
+  S.postExitContReentry = {
+    active: true,
+    exitQuality,
+    exitReason: reason,
+    armedBar: S.barIndex,
+    eligibleFromBar: S.barIndex + CONFIG.REENTRY_MIN_BARS_AFTER_EXIT,
+    eligibleUntilBar: S.barIndex + CONFIG.POST_EXIT_CONT_WINDOW_BARS,
+    exitPrice,
+    anchorPrice: S.lastFeature?.ema8 ?? exitPrice,
+    bullRegimeId: S.ray.bullRegimeId,
+    peakBeforeExit: S.peakPrice,
+  };
+
+  log("🔁 POST_EXIT_CONT_REENTRY_ARMED", {
+    exitQuality,
+    reason,
+    bullRegimeId: S.ray.bullRegimeId,
+    eligibleFromBar: S.postExitContReentry.eligibleFromBar,
+    eligibleUntilBar: S.postExitContReentry.eligibleUntilBar,
+    anchorPrice: round4(S.postExitContReentry.anchorPrice),
+    peakBeforeExit: round4(S.postExitContReentry.peakBeforeExit),
+    pnlPct: round4(pnlPct),
+  });
 }
 
 function markReentryEligible(reason, exitPrice) {
@@ -1484,7 +1888,10 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
     entryPrice: round4(S.entryPrice),
     entryMode: S.entryMode,
     heldSec: S.entryAt
-      ? Math.max(0, Math.round((new Date(ts).getTime() - new Date(S.entryAt).getTime()) / 1000))
+      ? Math.max(
+          0,
+          Math.round((new Date(ts).getTime() - new Date(S.entryAt).getTime()) / 1000)
+        )
       : null,
   });
 
@@ -1495,6 +1902,24 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   }).catch((err) => {
     log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
   });
+
+  S.lastExit = {
+    ts,
+    barIndex: S.barIndex,
+    reason,
+    exitClass,
+    price: exitPrice,
+    pnlPct,
+    bullRegimeId: S.ray.bullRegimeId,
+    exitQuality: classifyExitQuality(exitClass, pnlPct, reason),
+  };
+
+  // NEW: always consider post-exit continuation re-entry while bull context still survives
+  if (exitClass !== "regime_break") {
+    armPostExitContinuationReentry(reason, exitPrice, exitClass, pnlPct);
+  } else {
+    clearPostExitContReentry("regime_break_exit");
+  }
 
   if (exitClass === "cycle_exit") {
     markReentryEligible(reason, exitPrice);
@@ -1680,6 +2105,8 @@ app.get("/status", (_req, res) => {
     reentryCountInRegime: S.ray.reentryCountInRegime,
     cycleState: S.cycleState,
     reentry: S.reentry,
+    postExitContReentry: S.postExitContReentry,
+    lastExit: S.lastExit,
     trendChangeLaunch: S.trendChangeLaunch,
     fastTickLaunch: S.fastTickLaunch,
     lastTickPrice: S.lastTickPrice,
@@ -1728,7 +2155,9 @@ app.post(CONFIG.WEBHOOK_PATH, (req, res) => {
   const symbol = normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL));
   if (symbol !== CONFIG.SYMBOL) {
     log("🚫 SYMBOL_REJECTED", { got: symbol, want: CONFIG.SYMBOL });
-    return res.status(400).json({ ok: false, error: "symbol_mismatch", got: symbol, want: CONFIG.SYMBOL });
+    return res
+      .status(400)
+      .json({ ok: false, error: "symbol_mismatch", got: symbol, want: CONFIG.SYMBOL });
   }
 
   const parsed = parseInboundType(body);
