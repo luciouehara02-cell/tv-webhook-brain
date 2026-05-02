@@ -1,12 +1,15 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v3.7
+ * BrainRAY_Continuation_v3.8
  *
- * v3.7
- * - hardens local TP exit in strong trend
- * - keeps v3.6 entry / re-entry / post-exit continuation logic
- * - blocks EMA8 TP exits during strong trend unless weakness is clearer
+ * v3.8
+ * - keeps v3.7 entry / re-entry / post-exit continuation logic
+ * - hardens local TP even more
+ * - in strong trend, blocks EMA8 TP unless:
+ *   1) close < EMA18
+ *   or
+ *   2) two weakening bars + RSI weakness
  */
 
 const app = express();
@@ -104,7 +107,7 @@ function maxFinite(...vals) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.7"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.8"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -223,7 +226,7 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // v3.7 TP hardening
+  // v3.8 TP hardening
   LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
   LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
   LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
@@ -262,7 +265,6 @@ const CONFIG = {
     true
   ),
 
-  // NEW v3.7 hard strong-trend hold
   LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED: b(
     process.env.LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED,
     true
@@ -302,6 +304,36 @@ const CONFIG = {
   STRONG_TREND_HOLD_BLOCK_IF_BEARISH_FVVO: b(
     process.env.STRONG_TREND_HOLD_BLOCK_IF_BEARISH_FVVO,
     false
+  ),
+
+  // NEW stricter v3.8 gate
+  LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED,
+    true
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_MIN_ADX: n(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_MIN_ADX,
+    35
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_EMA8_GT_EMA18: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_EMA8_GT_EMA18,
+    true
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_CLOSE_BELOW_EMA18: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_CLOSE_BELOW_EMA18,
+    false
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_ALLOW_TWO_WEAK_BARS_AND_RSI_WEAK: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_ALLOW_TWO_WEAK_BARS_AND_RSI_WEAK,
+    true
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_RSI_WEAK_MAX: n(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_RSI_WEAK_MAX,
+    52
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_TWO_WEAK_BARS: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_TWO_WEAK_BARS,
+    true
   ),
 
   DYNAMIC_TP_ENABLED: b(process.env.DYNAMIC_TP_ENABLED, true),
@@ -2497,7 +2529,6 @@ function evaluateBarExit(feature) {
       !belowEma18 &&
       !rsiWeakEnough;
 
-    // NEW v3.7 hard-hold layer
     const strongTrendHardHoldActive =
       CONFIG.LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED &&
       Number.isFinite(feature.adx) &&
@@ -2520,6 +2551,29 @@ function evaluateBarExit(feature) {
     const blockedByStrongTrendHardHold =
       strongTrendHardHoldActive && !strongTrendHardHoldCanExitByWeakness;
 
+    // NEW v3.8 strict strong trend gate
+    const strictStrongTrendGateActive =
+      CONFIG.LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED &&
+      Number.isFinite(feature.adx) &&
+      feature.adx >= CONFIG.LOCAL_TP_STRICT_STRONG_TREND_MIN_ADX &&
+      (!CONFIG.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_EMA8_GT_EMA18 ||
+        (Number.isFinite(feature.ema8) &&
+          Number.isFinite(feature.ema18) &&
+          feature.ema8 > feature.ema18));
+
+    const strictStrongTrendAllowsExit =
+      belowEma18 ||
+      (
+        CONFIG.LOCAL_TP_STRICT_STRONG_TREND_ALLOW_TWO_WEAK_BARS_AND_RSI_WEAK &&
+        (!CONFIG.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_TWO_WEAK_BARS || twoWeakBars) &&
+        Number.isFinite(feature.rsi) &&
+        feature.rsi <= CONFIG.LOCAL_TP_STRICT_STRONG_TREND_RSI_WEAK_MAX
+      ) ||
+      forceAllowByBearishFvvo;
+
+    const blockedByStrictStrongTrendGate =
+      strictStrongTrendGateActive && !strictStrongTrendAllowsExit;
+
     if (
       belowBufferedEma8 &&
       oneWeakBar &&
@@ -2529,7 +2583,8 @@ function evaluateBarExit(feature) {
       !strongTrendHold &&
       !hardBlockByStrongAdx &&
       !strongTrendNeedsTwoWeakBars &&
-      !blockedByStrongTrendHardHold
+      !blockedByStrongTrendHardHold &&
+      !blockedByStrictStrongTrendGate
     ) {
       return doExit("local_tp_close_below_ema8", price, feature.time, "cycle_exit");
     }
