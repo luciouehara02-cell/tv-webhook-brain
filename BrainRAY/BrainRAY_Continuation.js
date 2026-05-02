@@ -1,13 +1,13 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v3.5
+ * BrainRAY_Continuation_v3.6
  *
- * v3.5
- * - stronger anti-churn local TP logic
- * - post-exit continuation re-entry relaxed
- * - dedicated post-exit continuation still has priority
- * - improved peakBeforeExit snapshot for re-entry windows
+ * v3.6
+ * - stronger anti-churn TP exit in trend
+ * - local TP now requires clearer weakness confirmation
+ * - strong trend hard-hold improved
+ * - keeps v3.5 post-exit continuation logic
  * - keeps replay event-time clock fix
  */
 
@@ -99,10 +99,6 @@ function maxFinite(...vals) {
   const good = vals.filter((v) => Number.isFinite(v));
   return good.length ? Math.max(...good) : NaN;
 }
-function minFinite(...vals) {
-  const good = vals.filter((v) => Number.isFinite(v));
-  return good.length ? Math.min(...good) : NaN;
-}
 
 // --------------------------------------------------
 // config
@@ -110,7 +106,7 @@ function minFinite(...vals) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.5"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.6"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -229,7 +225,7 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // v3.5 stronger TP hold
+  // v3.6 stronger TP hold
   LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
   LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
   LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
@@ -238,10 +234,6 @@ const CONFIG = {
     35
   ),
   LOCAL_TP_BLOCK_IF_BULLISH_FVVO: b(process.env.LOCAL_TP_BLOCK_IF_BULLISH_FVVO, true),
-  LOCAL_TP_REQUIRE_WEAKENING_BAR: b(
-    process.env.LOCAL_TP_REQUIRE_WEAKENING_BAR,
-    true
-  ),
   LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18: b(
     process.env.LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18,
     true
@@ -252,6 +244,24 @@ const CONFIG = {
   ),
   LOCAL_TP_FORCE_ALLOW_ON_TWO_WEAKENING_BARS: b(
     process.env.LOCAL_TP_FORCE_ALLOW_ON_TWO_WEAKENING_BARS,
+    true
+  ),
+
+  // new v3.6 confirmation rules
+  LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND: b(
+    process.env.LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND,
+    true
+  ),
+  LOCAL_TP_RSI_WEAKNESS_THRESHOLD: n(
+    process.env.LOCAL_TP_RSI_WEAKNESS_THRESHOLD,
+    54
+  ),
+  LOCAL_TP_RSI_WEAKNESS_THRESHOLD_STRONG_TREND: n(
+    process.env.LOCAL_TP_RSI_WEAKNESS_THRESHOLD_STRONG_TREND,
+    52
+  ),
+  LOCAL_TP_REQUIRE_CLOSE_BELOW_EMA18_OR_2_WEAK_BARS: b(
+    process.env.LOCAL_TP_REQUIRE_CLOSE_BELOW_EMA18_OR_2_WEAK_BARS,
     true
   ),
 
@@ -1364,7 +1374,6 @@ function handleFeature(body) {
     });
   }
 
-  // priority 1: dedicated post-exit continuation
   if (CONFIG.POST_EXIT_CONTINUATION_ENABLED && S.postExitContinuation.active && !S.inPosition) {
     const pecDecision = tryEntry("post_exit_continuation_reentry", {
       src: "features",
@@ -1380,7 +1389,6 @@ function handleFeature(body) {
     }
   }
 
-  // priority 2: generic re-entry
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible && !S.inPosition) {
     tryEntry("feature_reentry", {
       src: "features",
@@ -1615,7 +1623,6 @@ function evaluateEntry(source, body) {
   const bullishFvvo = fv.score > 0;
   const strongNegativeFvvo = fv.snap.burstBearish || fv.score <= -2;
 
-  // fast tick launch
   if (source === "tick_confirmed_fast_launch" && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
     const tl = S.fastTickLaunch;
     const rr = [];
@@ -1694,7 +1701,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // trend change launch
   if (
     (source === "immediate_trend_change_launch" ||
       source === "deferred_trend_change_launch") &&
@@ -1820,7 +1826,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // post-exit continuation re-entry
   if (
     source === "post_exit_continuation_reentry" &&
     CONFIG.POST_EXIT_CONTINUATION_ENABLED
@@ -1954,7 +1959,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // generic re-entry
   if (source === "feature_reentry" || (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible)) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
@@ -2058,7 +2062,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // elevated continuation
   if (source === "ray_bullish_trend_continuation" && CONFIG.ELEVATED_CONTINUATION_ENABLED) {
     const rr = [];
     const emaSlope = ema8SlopePct();
@@ -2129,7 +2132,6 @@ function evaluateEntry(source, body) {
     }
   }
 
-  // continuation base
   const contReasons = [];
   const contMinRsi = Math.max(
     0,
@@ -2179,7 +2181,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // breakout memory fallback
   const mem = S.breakoutMemory;
   const memReasons = [];
   const memActive = CONFIG.BREAKOUT_MEMORY_ENABLED && mem.active && !mem.used;
@@ -2411,18 +2412,14 @@ function evaluateBarExit(feature) {
     Number.isFinite(feature.ema8) &&
     pnlPct >= CONFIG.LOCAL_TP_MIN_PROFIT_PCT
   ) {
-    const ema8Floor = feature.ema8 * (1 - CONFIG.LOCAL_TP_EMA8_BUFFER_PCT / 100);
-    const belowBufferedEma8 = price < ema8Floor;
+    const belowBufferedEma8 =
+      price < feature.ema8 * (1 - CONFIG.LOCAL_TP_EMA8_BUFFER_PCT / 100);
+
     const belowEma18 =
       Number.isFinite(feature.ema18) && price < feature.ema18;
 
-    const weakeningBar =
-      !CONFIG.LOCAL_TP_REQUIRE_WEAKENING_BAR ||
-      wasWeakeningBar(feature, prev);
-
-    const twoWeakBars =
-      CONFIG.LOCAL_TP_FORCE_ALLOW_ON_TWO_WEAKENING_BARS &&
-      twoConsecutiveWeakeningBars();
+    const oneWeakBar = wasWeakeningBar(feature, prev);
+    const twoWeakBars = twoConsecutiveWeakeningBars();
 
     const holdByStrength =
       Number.isFinite(feature.rsi) &&
@@ -2435,22 +2432,53 @@ function evaluateBarExit(feature) {
 
     const strongTrendHold = isStrongTrendHold(feature, fv);
 
-    const hardBlockByAdx =
+    const rsiWeakEnough =
+      Number.isFinite(feature.rsi) &&
+      feature.rsi <=
+        (Number.isFinite(feature.adx) && feature.adx >= CONFIG.LOCAL_TP_STRONG_ADX_HARD_BLOCK
+          ? CONFIG.LOCAL_TP_RSI_WEAKNESS_THRESHOLD_STRONG_TREND
+          : CONFIG.LOCAL_TP_RSI_WEAKNESS_THRESHOLD);
+
+    const forceAllowByEma18 =
+      CONFIG.LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18 && belowEma18;
+
+    const forceAllowByBearishFvvo =
+      CONFIG.LOCAL_TP_FORCE_ALLOW_IF_BEARISH_FVVO && fv.score < 0;
+
+    const forceAllowByWeakBars =
+      CONFIG.LOCAL_TP_FORCE_ALLOW_ON_TWO_WEAKENING_BARS && twoWeakBars;
+
+    const needsExtraConfirmation =
+      CONFIG.LOCAL_TP_REQUIRE_CLOSE_BELOW_EMA18_OR_2_WEAK_BARS;
+
+    const extraConfirmationOk =
+      !needsExtraConfirmation || belowEma18 || twoWeakBars || rsiWeakEnough;
+
+    const hardBlockByStrongAdx =
       Number.isFinite(feature.adx) &&
       feature.adx >= CONFIG.LOCAL_TP_STRONG_ADX_HARD_BLOCK &&
-      !(
-        (CONFIG.LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18 && belowEma18) ||
-        (CONFIG.LOCAL_TP_FORCE_ALLOW_IF_BEARISH_FVVO && fv.score < 0) ||
-        twoWeakBars
-      );
+      !forceAllowByEma18 &&
+      !forceAllowByBearishFvvo &&
+      !forceAllowByWeakBars &&
+      !rsiWeakEnough;
+
+    const strongTrendNeedsTwoWeakBars =
+      CONFIG.LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND &&
+      Number.isFinite(feature.adx) &&
+      feature.adx >= CONFIG.LOCAL_TP_STRONG_ADX_HARD_BLOCK &&
+      !twoWeakBars &&
+      !belowEma18 &&
+      !rsiWeakEnough;
 
     if (
       belowBufferedEma8 &&
-      weakeningBar &&
+      oneWeakBar &&
+      extraConfirmationOk &&
       !holdByStrength &&
       !holdByBullishFvvo &&
       !strongTrendHold &&
-      !hardBlockByAdx
+      !hardBlockByStrongAdx &&
+      !strongTrendNeedsTwoWeakBars
     ) {
       return doExit("local_tp_close_below_ema8", price, feature.time, "cycle_exit");
     }
