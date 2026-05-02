@@ -1,19 +1,12 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v3.3
+ * BrainRAY_Continuation_v3.4
  *
- * v3.3 goals:
- * - smarter local TP exit (less churn on strong trend)
- * - dedicated post-exit continuation re-entry path
- * - same-time bull/bear Ray conflict suppression
- * - replay event-time clock support for heldSec
- *
- * Supported webhook families:
- * - tick
- * - features
- * - ray
- * - fvvo
+ * v3.4:
+ * - stronger anti-churn TP exit in strong trend
+ * - post-exit continuation re-entry gets priority over generic re-entry
+ * - keeps v3.3 replay event-time clock fix
  */
 
 const app = express();
@@ -93,7 +86,8 @@ function reasonPush(arr, cond, text) {
 function barTimeKey(iso, tfMin = 5) {
   const t = new Date(iso || Date.now());
   if (!Number.isFinite(t.getTime())) return "na";
-  const bucketMs = Math.floor(t.getTime() / (tfMin * 60 * 1000)) * (tfMin * 60 * 1000);
+  const bucketMs =
+    Math.floor(t.getTime() / (tfMin * 60 * 1000)) * (tfMin * 60 * 1000);
   return new Date(bucketMs).toISOString();
 }
 function eventTimeOrNow(iso) {
@@ -106,7 +100,7 @@ function eventTimeOrNow(iso) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.3"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.4"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -127,9 +121,18 @@ const CONFIG = {
   EXIT_COOLDOWN_MIN: n(process.env.EXIT_COOLDOWN_MIN, 12),
   REENTRY_ENTER_DEDUP_MS: n(process.env.REENTRY_ENTER_DEDUP_MS, 8000),
 
-  C3_SIGNAL_URL: s(process.env.C3_SIGNAL_URL || process.env.THREECOMMAS_WEBHOOK_URL, ""),
-  C3_SIGNAL_SECRET: s(process.env.C3_SIGNAL_SECRET || process.env.THREECOMMAS_SECRET, ""),
-  C3_TIMEOUT_MS: n(process.env.C3_TIMEOUT_MS || process.env.THREECOMMAS_TIMEOUT_MS, 8000),
+  C3_SIGNAL_URL: s(
+    process.env.C3_SIGNAL_URL || process.env.THREECOMMAS_WEBHOOK_URL,
+    ""
+  ),
+  C3_SIGNAL_SECRET: s(
+    process.env.C3_SIGNAL_SECRET || process.env.THREECOMMAS_SECRET,
+    ""
+  ),
+  C3_TIMEOUT_MS: n(
+    process.env.C3_TIMEOUT_MS || process.env.THREECOMMAS_TIMEOUT_MS,
+    8000
+  ),
   MAX_LAG_SEC: n(process.env.MAX_LAG_SEC || process.env.THREECOMMAS_MAX_LAG, 300),
   SYMBOL_BOT_MAP: safeJsonParse(process.env.SYMBOL_BOT_MAP || "{}", {}),
 
@@ -137,15 +140,24 @@ const CONFIG = {
 
   // Ray toggles
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
-  RAY_USE_BULLISH_TREND_CONTINUATION: b(process.env.RAY_USE_BULLISH_TREND_CONTINUATION, true),
+  RAY_USE_BULLISH_TREND_CONTINUATION: b(
+    process.env.RAY_USE_BULLISH_TREND_CONTINUATION,
+    true
+  ),
   RAY_USE_BULLISH_BOS: b(process.env.RAY_USE_BULLISH_BOS, true),
   RAY_USE_BEARISH_TREND_CHANGE: b(process.env.RAY_USE_BEARISH_TREND_CHANGE, true),
-  RAY_USE_BEARISH_TREND_CONTINUATION: b(process.env.RAY_USE_BEARISH_TREND_CONTINUATION, true),
+  RAY_USE_BEARISH_TREND_CONTINUATION: b(
+    process.env.RAY_USE_BEARISH_TREND_CONTINUATION,
+    true
+  ),
 
   // Ray conflict guard
   RAY_CONFLICT_GUARD_ENABLED: b(process.env.RAY_CONFLICT_GUARD_ENABLED, true),
   RAY_CONFLICT_GUARD_SEC: n(process.env.RAY_CONFLICT_GUARD_SEC, 45),
-  RAY_CONFLICT_CONFIRM_FEATURE_BARS: n(process.env.RAY_CONFLICT_CONFIRM_FEATURE_BARS, 1),
+  RAY_CONFLICT_CONFIRM_FEATURE_BARS: n(
+    process.env.RAY_CONFLICT_CONFIRM_FEATURE_BARS,
+    1
+  ),
   RAY_CONFLICT_KEEP_CURRENT_REGIME_IF_UNCLEAR: b(
     process.env.RAY_CONFLICT_KEEP_CURRENT_REGIME_IF_UNCLEAR,
     true
@@ -168,12 +180,18 @@ const CONFIG = {
   // breakout memory
   BREAKOUT_MEMORY_ENABLED: b(process.env.BREAKOUT_MEMORY_ENABLED, true),
   BREAKOUT_MEMORY_BARS: n(process.env.BREAKOUT_MEMORY_BARS, 4),
-  BREAKOUT_MEMORY_MAX_CHASE_PCT: n(process.env.BREAKOUT_MEMORY_MAX_CHASE_PCT, 0.25),
+  BREAKOUT_MEMORY_MAX_CHASE_PCT: n(
+    process.env.BREAKOUT_MEMORY_MAX_CHASE_PCT,
+    0.25
+  ),
   BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM: b(
     process.env.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM,
     true
   ),
-  BREAKOUT_MEMORY_INVALIDATE_PCT: n(process.env.BREAKOUT_MEMORY_INVALIDATE_PCT, 0.1),
+  BREAKOUT_MEMORY_INVALIDATE_PCT: n(
+    process.env.BREAKOUT_MEMORY_INVALIDATE_PCT,
+    0.1
+  ),
 
   // risk / exits
   HARD_STOP_PCT: n(process.env.HARD_STOP_PCT, 0.8),
@@ -201,12 +219,27 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // smarter TP exit v3.3
-  LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.05),
-  LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 58),
-  LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 26),
+  // v3.4 stricter TP exit
+  LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
+  LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
+  LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
+  LOCAL_TP_STRONG_ADX_HARD_BLOCK: n(
+    process.env.LOCAL_TP_STRONG_ADX_HARD_BLOCK,
+    35
+  ),
   LOCAL_TP_BLOCK_IF_BULLISH_FVVO: b(process.env.LOCAL_TP_BLOCK_IF_BULLISH_FVVO, true),
-  LOCAL_TP_REQUIRE_WEAKENING_BAR: b(process.env.LOCAL_TP_REQUIRE_WEAKENING_BAR, true),
+  LOCAL_TP_REQUIRE_WEAKENING_BAR: b(
+    process.env.LOCAL_TP_REQUIRE_WEAKENING_BAR,
+    true
+  ),
+  LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18: b(
+    process.env.LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18,
+    true
+  ),
+  LOCAL_TP_FORCE_ALLOW_IF_BEARISH_FVVO: b(
+    process.env.LOCAL_TP_FORCE_ALLOW_IF_BEARISH_FVVO,
+    true
+  ),
 
   // strong hold
   STRONG_TREND_HOLD_ENABLED: b(process.env.STRONG_TREND_HOLD_ENABLED, true),
@@ -231,12 +264,21 @@ const CONFIG = {
 
   // re-entry
   PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
-  MAX_REENTRIES_PER_BULL_REGIME: n(process.env.MAX_REENTRIES_PER_BULL_REGIME, 2),
+  MAX_REENTRIES_PER_BULL_REGIME: n(
+    process.env.MAX_REENTRIES_PER_BULL_REGIME,
+    2
+  ),
   REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
   REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.REENTRY_REQUIRE_BULL_CONTEXT, true),
-  REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(
+    process.env.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8,
+    true
+  ),
   REENTRY_MAX_CHASE_PCT: n(process.env.REENTRY_MAX_CHASE_PCT, 0.2),
-  REENTRY_MIN_RESET_FROM_PEAK_PCT: n(process.env.REENTRY_MIN_RESET_FROM_PEAK_PCT, 0.15),
+  REENTRY_MIN_RESET_FROM_PEAK_PCT: n(
+    process.env.REENTRY_MIN_RESET_FROM_PEAK_PCT,
+    0.15
+  ),
 
   FAST_REENTRY_ENABLED: b(process.env.FAST_REENTRY_ENABLED, true),
   FAST_REENTRY_MIN_RESET_FROM_PEAK_PCT: n(
@@ -261,9 +303,12 @@ const CONFIG = {
   ),
   STRONG_REENTRY_MIN_RSI: n(process.env.STRONG_REENTRY_MIN_RSI, 60),
   STRONG_REENTRY_MIN_ADX: n(process.env.STRONG_REENTRY_MIN_ADX, 30),
-  STRONG_REENTRY_MAX_CHASE_PCT: n(process.env.STRONG_REENTRY_MAX_CHASE_PCT, 0.38),
+  STRONG_REENTRY_MAX_CHASE_PCT: n(
+    process.env.STRONG_REENTRY_MAX_CHASE_PCT,
+    0.38
+  ),
 
-  // dedicated post-exit continuation re-entry v3.3
+  // dedicated post-exit continuation re-entry
   POST_EXIT_CONTINUATION_ENABLED: b(
     process.env.POST_EXIT_CONTINUATION_ENABLED,
     true
@@ -369,7 +414,10 @@ const CONFIG = {
   FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
   FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
   FAST_TICK_LAUNCH_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_MIN_ADX, 18),
-  FAST_TICK_LAUNCH_CONFIRM_PCT: n(process.env.FAST_TICK_LAUNCH_CONFIRM_PCT, 0.05),
+  FAST_TICK_LAUNCH_CONFIRM_PCT: n(
+    process.env.FAST_TICK_LAUNCH_CONFIRM_PCT,
+    0.05
+  ),
   FAST_TICK_LAUNCH_MAX_CHASE_PCT: n(
     process.env.FAST_TICK_LAUNCH_MAX_CHASE_PCT,
     0.35
@@ -415,8 +463,14 @@ const CONFIG = {
     process.env.ELEVATED_CONTINUATION_WINDOW_BARS,
     6
   ),
-  ELEVATED_CONTINUATION_MIN_RSI: n(process.env.ELEVATED_CONTINUATION_MIN_RSI, 58),
-  ELEVATED_CONTINUATION_MIN_ADX: n(process.env.ELEVATED_CONTINUATION_MIN_ADX, 18),
+  ELEVATED_CONTINUATION_MIN_RSI: n(
+    process.env.ELEVATED_CONTINUATION_MIN_RSI,
+    58
+  ),
+  ELEVATED_CONTINUATION_MIN_ADX: n(
+    process.env.ELEVATED_CONTINUATION_MIN_ADX,
+    18
+  ),
   ELEVATED_CONTINUATION_MAX_CHASE_PCT: n(
     process.env.ELEVATED_CONTINUATION_MAX_CHASE_PCT,
     0.52
@@ -524,10 +578,9 @@ function buildInitialRuntimeState() {
       lastBearTrendContinuationAt: null,
     },
 
-    // pending ray conflict guard
     rayConflict: {
       pending: false,
-      side: null, // "bull_on" | "bull_off"
+      side: null,
       event: null,
       eventTime: null,
       source: null,
@@ -628,7 +681,9 @@ function resetRuntimeState(reason = "manual_reset") {
 }
 
 function currentPrice() {
-  return Number.isFinite(S.lastTickPrice) ? S.lastTickPrice : n(S.lastFeature?.close, NaN);
+  return Number.isFinite(S.lastTickPrice)
+    ? S.lastTickPrice
+    : n(S.lastFeature?.close, NaN);
 }
 function isTickFresh() {
   if (CONFIG.REPLAY_ALLOW_STALE_DATA) return true;
@@ -672,7 +727,9 @@ function clearReentry(reason = "reset") {
   };
 }
 function clearPostExitContinuation(reason = "reset") {
-  if (S.postExitContinuation.active) log("🔁 POST_EXIT_CONTINUATION_DISABLED", { reason });
+  if (S.postExitContinuation.active) {
+    log("🔁 POST_EXIT_CONTINUATION_DISABLED", { reason });
+  }
   S.postExitContinuation = {
     active: false,
     armedAtBar: null,
@@ -760,7 +817,9 @@ function armFastTickLaunch(source, rayPrice) {
     ema18: f.ema18,
     rsi: f.rsi,
     adx: f.adx,
-    breakoutHigh: Number.isFinite(S.breakoutMemory.breakoutHigh) ? S.breakoutMemory.breakoutHigh : f.high,
+    breakoutHigh: Number.isFinite(S.breakoutMemory.breakoutHigh)
+      ? S.breakoutMemory.breakoutHigh
+      : f.high,
     ticksAboveConfirm: 0,
     lastConfirmedTickPrice: null,
   };
@@ -966,12 +1025,24 @@ function resolveRayConflictOnFeature(feature) {
       (!Number.isFinite(adx) || adx >= CONFIG.MIN_ADX_CONTINUATION);
     if (confirm) {
       turnBullRegimeOn(feature.time, "ray_conflict_confirm_bull");
-      log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "bull_on_confirmed", fvvo: fv });
+      log("⚖️ RAY_CONFLICT_RESOLVED", {
+        side,
+        action: "bull_on_confirmed",
+        fvvo: fv,
+      });
     } else if (!CONFIG.RAY_CONFLICT_KEEP_CURRENT_REGIME_IF_UNCLEAR) {
       turnBullRegimeOff(feature.time, "ray_conflict_bull_failed");
-      log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "bull_on_failed_force_off", fvvo: fv });
+      log("⚖️ RAY_CONFLICT_RESOLVED", {
+        side,
+        action: "bull_on_failed_force_off",
+        fvvo: fv,
+      });
     } else {
-      log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "kept_current_regime", fvvo: fv });
+      log("⚖️ RAY_CONFLICT_RESOLVED", {
+        side,
+        action: "kept_current_regime",
+        fvvo: fv,
+      });
     }
   }
 
@@ -986,12 +1057,24 @@ function resolveRayConflictOnFeature(feature) {
         doExit("ray_conflict_bear_confirmed", currentPrice(), feature.time, "regime_break");
       }
       turnBullRegimeOff(feature.time, "ray_conflict_confirm_bear");
-      log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "bull_off_confirmed", fvvo: fv });
+      log("⚖️ RAY_CONFLICT_RESOLVED", {
+        side,
+        action: "bull_off_confirmed",
+        fvvo: fv,
+      });
     } else if (!CONFIG.RAY_CONFLICT_KEEP_CURRENT_REGIME_IF_UNCLEAR) {
       turnBullRegimeOff(feature.time, "ray_conflict_force_bear");
-      log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "forced_bull_off", fvvo: fv });
+      log("⚖️ RAY_CONFLICT_RESOLVED", {
+        side,
+        action: "forced_bull_off",
+        fvvo: fv,
+      });
     } else {
-      log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "kept_current_regime", fvvo: fv });
+      log("⚖️ RAY_CONFLICT_RESOLVED", {
+        side,
+        action: "kept_current_regime",
+        fvvo: fv,
+      });
     }
   }
 
@@ -1031,7 +1114,9 @@ function handleRayEvent(body) {
   if (/Bullish Trend Continuation/i.test(name) && CONFIG.RAY_USE_BULLISH_TREND_CONTINUATION) {
     S.ray.lastBullTrendContinuationAt = ts;
 
-    if (maybeHandleRayConflict("bull_on", name, ts, price, "ray_bullish_trend_continuation")) {
+    if (
+      maybeHandleRayConflict("bull_on", name, ts, price, "ray_bullish_trend_continuation")
+    ) {
       log("🟡 RAY_BULLISH_TREND_CONTINUATION_HELD_FOR_CONFLICT", { price, ts });
       return;
     }
@@ -1069,10 +1154,21 @@ function handleRayEvent(body) {
     return;
   }
 
-  if (/Bearish Trend Continuation/i.test(name) && CONFIG.RAY_USE_BEARISH_TREND_CONTINUATION) {
+  if (
+    /Bearish Trend Continuation/i.test(name) &&
+    CONFIG.RAY_USE_BEARISH_TREND_CONTINUATION
+  ) {
     S.ray.lastBearTrendContinuationAt = ts;
 
-    if (maybeHandleRayConflict("bull_off", name, ts, price, "ray_bearish_trend_continuation")) {
+    if (
+      maybeHandleRayConflict(
+        "bull_off",
+        name,
+        ts,
+        price,
+        "ray_bearish_trend_continuation"
+      )
+    ) {
       log("🟡 RAY_BEARISH_TREND_CONTINUATION_HELD_FOR_CONFLICT", { price, ts });
       return;
     }
@@ -1188,8 +1284,9 @@ function handleFeature(body) {
     });
   }
 
+  // v3.4 priority: post-exit continuation first
   if (CONFIG.POST_EXIT_CONTINUATION_ENABLED && S.postExitContinuation.active && !S.inPosition) {
-    tryEntry("post_exit_continuation_reentry", {
+    const pecDecision = tryEntry("post_exit_continuation_reentry", {
       src: "features",
       symbol: CONFIG.SYMBOL,
       tf: CONFIG.ENTRY_TF,
@@ -1197,6 +1294,10 @@ function handleFeature(body) {
       price: feature.close,
       time: feature.time,
     });
+
+    if (pecDecision?.allow) {
+      if (S.inPosition) return;
+    }
   }
 
   if (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible && !S.inPosition) {
@@ -1242,7 +1343,8 @@ function evaluateStructureAndArmMemory(f) {
 
   const bullishBosRecent = ageSec(S.ray.lastBullBosAt) < 1800;
 
-  const structureOk = bullEmaOk && closeAboveEma8Ok && rsiOk && adxOk && (bullRayContext || bullishBosRecent);
+  const structureOk =
+    bullEmaOk && closeAboveEma8Ok && rsiOk && adxOk && (bullRayContext || bullishBosRecent);
   if (!structureOk) return;
 
   S.breakoutMemory = {
@@ -1274,8 +1376,13 @@ function invalidateBreakoutMemory() {
   const px = currentPrice();
   if (!Number.isFinite(px)) return;
 
-  if (CONFIG.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM && Number.isFinite(S.breakoutMemory.reclaimPrice)) {
-    const floor = S.breakoutMemory.reclaimPrice * (1 - CONFIG.BREAKOUT_MEMORY_INVALIDATE_PCT / 100);
+  if (
+    CONFIG.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM &&
+    Number.isFinite(S.breakoutMemory.reclaimPrice)
+  ) {
+    const floor =
+      S.breakoutMemory.reclaimPrice *
+      (1 - CONFIG.BREAKOUT_MEMORY_INVALIDATE_PCT / 100);
     if (px < floor) return clearBreakoutMemory("lost_reclaim");
   }
 }
@@ -1286,16 +1393,24 @@ function invalidateReentry() {
 }
 function invalidatePostExitContinuation() {
   if (!S.postExitContinuation.active) return;
-  if (S.barIndex > n(S.postExitContinuation.expiresBar, -1)) clearPostExitContinuation("expired");
+  if (S.barIndex > n(S.postExitContinuation.expiresBar, -1)) {
+    clearPostExitContinuation("expired");
+  }
 }
 function invalidateTrendChangeLaunch() {
   if (!S.trendChangeLaunch.pending) return;
-  if (S.barIndex > n(S.trendChangeLaunch.expiresBar, -1)) clearTrendChangeLaunch("expired");
+  if (S.barIndex > n(S.trendChangeLaunch.expiresBar, -1)) {
+    clearTrendChangeLaunch("expired");
+  }
 }
 function invalidateFastTickLaunch() {
   if (!S.fastTickLaunch.active) return;
-  if (nowMs() > n(S.fastTickLaunch.expiresAtMs, 0)) return clearFastTickLaunch("expired");
-  if (S.fastTickLaunch.bullRegimeId !== S.ray.bullRegimeId) clearFastTickLaunch("regime_changed");
+  if (nowMs() > n(S.fastTickLaunch.expiresAtMs, 0)) {
+    return clearFastTickLaunch("expired");
+  }
+  if (S.fastTickLaunch.bullRegimeId !== S.ray.bullRegimeId) {
+    clearFastTickLaunch("regime_changed");
+  }
 }
 
 function evaluateReentryEligibilityFromFeature(feature) {
@@ -1328,7 +1443,10 @@ function evaluateReentryEligibilityFromFeature(feature) {
 // entry logic
 // --------------------------------------------------
 function activeEnterDedupMs(source) {
-  if (source === "feature_reentry" || source === "post_exit_continuation_reentry") {
+  if (
+    source === "feature_reentry" ||
+    source === "post_exit_continuation_reentry"
+  ) {
     return CONFIG.REENTRY_ENTER_DEDUP_MS;
   }
   return CONFIG.ENTER_DEDUP_MS;
@@ -1357,13 +1475,20 @@ function tryEntry(source, body) {
     return decision;
   }
 
-  const price = Number.isFinite(decision.entryPrice) ? decision.entryPrice : currentPrice();
+  const price = Number.isFinite(decision.entryPrice)
+    ? decision.entryPrice
+    : currentPrice();
   if (!Number.isFinite(price)) {
     log("🚫 ENTRY_BLOCKED", { reason: "no_entry_price" });
     return { allow: false, reason: "no_entry_price" };
   }
 
-  doEnter(decision.mode, price, decision, pickFirst(body, ["time", "timestamp"], isoNow()));
+  doEnter(
+    decision.mode,
+    price,
+    decision,
+    pickFirst(body, ["time", "timestamp"], isoNow())
+  );
   return decision;
 }
 
@@ -1374,15 +1499,25 @@ function evaluateEntry(source, body) {
   const feature = S.lastFeature;
   const fv = getFvvoScore();
 
-  reasonPush(reasons, normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)) !== CONFIG.SYMBOL, "symbol_mismatch");
+  reasonPush(
+    reasons,
+    normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)) !== CONFIG.SYMBOL,
+    "symbol_mismatch"
+  );
   reasonPush(reasons, S.inPosition, "already_in_position");
   reasonPush(reasons, now < S.cooldownUntilMs, "cooldown_active");
-  reasonPush(reasons, now - S.lastEnterAtMs < activeEnterDedupMs(source), "enter_dedup");
+  reasonPush(
+    reasons,
+    now - S.lastEnterAtMs < activeEnterDedupMs(source),
+    "enter_dedup"
+  );
   reasonPush(reasons, !isFeatureFresh(), "stale_feature");
   reasonPush(reasons, !S.ray.bullContext, "no_bull_context");
   reasonPush(reasons, !Number.isFinite(px), "bad_price");
   reasonPush(reasons, !feature, "no_feature");
-  if (source === "tick_confirmed_fast_launch") reasonPush(reasons, !isTickFresh(), "stale_tick");
+  if (source === "tick_confirmed_fast_launch") {
+    reasonPush(reasons, !isTickFresh(), "stale_tick");
+  }
 
   if (reasons.length) return { allow: false, source, reasons, fvvo: fv };
 
@@ -1413,10 +1548,18 @@ function evaluateEntry(source, body) {
 
     reasonPush(rr, !tl.active, "fast_tick_launch_not_active");
     reasonPush(rr, now > n(tl.expiresAtMs, 0), "fast_tick_launch_expired");
-    reasonPush(rr, tl.bullRegimeId !== S.ray.bullRegimeId, "fast_tick_launch_regime_mismatch");
+    reasonPush(
+      rr,
+      tl.bullRegimeId !== S.ray.bullRegimeId,
+      "fast_tick_launch_regime_mismatch"
+    );
     reasonPush(rr, !emaBullOk, "fast_tick_launch_ema_invalid");
 
-    const minRsi = Math.max(0, CONFIG.FAST_TICK_LAUNCH_MIN_RSI - (bullishFvvo ? CONFIG.FVVO_LAUNCH_RSI_RELAX : 0));
+    const minRsi = Math.max(
+      0,
+      CONFIG.FAST_TICK_LAUNCH_MIN_RSI -
+        (bullishFvvo ? CONFIG.FVVO_LAUNCH_RSI_RELAX : 0)
+    );
     const minAdx = CONFIG.FAST_TICK_LAUNCH_MIN_ADX;
 
     const strongFastLaunch =
@@ -1430,20 +1573,30 @@ function evaluateEntry(source, body) {
       : CONFIG.FAST_TICK_LAUNCH_MAX_CHASE_PCT;
 
     if (bullishFvvo) allowedChase += CONFIG.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT;
-    if (fv.snap.sniperSell) allowedChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
-    if (fv.snap.burstBearish) allowedChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+    if (fv.snap.sniperSell) {
+      allowedChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+    }
+    if (fv.snap.burstBearish) {
+      allowedChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+    }
 
     reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi, "fast_tick_launch_rsi_too_low");
     reasonPush(rr, Number.isFinite(adx) && adx < minAdx, "fast_tick_launch_adx_too_low");
     reasonPush(rr, extFromEma8 > allowedChase, "fast_tick_launch_chase_too_high");
     reasonPush(rr, px < n(tl.confirmPrice, Infinity), "fast_tick_launch_below_confirm");
-    reasonPush(rr, n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM, "fast_tick_launch_not_enough_confirm_ticks");
+    reasonPush(
+      rr,
+      n(tl.ticksAboveConfirm, 0) < CONFIG.FAST_TICK_LAUNCH_MIN_TICKS_ABOVE_CONFIRM,
+      "fast_tick_launch_not_enough_confirm_ticks"
+    );
 
     if (rr.length === 0) {
       return {
         allow: true,
         source,
-        mode: strongFastLaunch ? "tick_confirmed_launch_long_strong" : "tick_confirmed_launch_long",
+        mode: strongFastLaunch
+          ? "tick_confirmed_launch_long_strong"
+          : "tick_confirmed_launch_long",
         entryPrice: px,
         extFromEma8,
         extFromEma18,
@@ -1469,12 +1622,15 @@ function evaluateEntry(source, body) {
 
   // trend change launch
   if (
-    (source === "immediate_trend_change_launch" || source === "deferred_trend_change_launch") &&
+    (source === "immediate_trend_change_launch" ||
+      source === "deferred_trend_change_launch") &&
     CONFIG.TREND_CHANGE_LAUNCH_ENABLED
   ) {
     const rr = [];
     const launchAnchor = Number.isFinite(ema8) ? ema8 : close;
-    const launchChasePct = Number.isFinite(launchAnchor) ? pctDiff(launchAnchor, px) : 999;
+    const launchChasePct = Number.isFinite(launchAnchor)
+      ? pctDiff(launchAnchor, px)
+      : 999;
 
     const isDeferred = source === "deferred_trend_change_launch";
 
@@ -1516,15 +1672,23 @@ function evaluateEntry(source, body) {
       : CONFIG.TREND_CHANGE_LAUNCH_MAX_CHASE_PCT;
 
     if (bullishFvvo) allowedLaunchChase += CONFIG.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT;
-    if (fv.snap.sniperSell) allowedLaunchChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
-    if (fv.snap.burstBearish) allowedLaunchChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+    if (fv.snap.sniperSell) {
+      allowedLaunchChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+    }
+    if (fv.snap.burstBearish) {
+      allowedLaunchChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+    }
 
     const allowedLaunchExtEma18 = strongOverride
       ? CONFIG.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT
       : CONFIG.TREND_CHANGE_LAUNCH_MAX_EXT_FROM_EMA18_PCT;
 
     reasonPush(rr, !S.trendChangeLaunch.pending, "launch_not_pending");
-    reasonPush(rr, S.barIndex > n(S.trendChangeLaunch.expiresBar, -1), "launch_pending_expired");
+    reasonPush(
+      rr,
+      S.barIndex > n(S.trendChangeLaunch.expiresBar, -1),
+      "launch_pending_expired"
+    );
     reasonPush(rr, !emaBullOk, "launch_ema8_below_ema18");
     reasonPush(rr, !closeAboveEma8Ok, "launch_close_below_ema8");
 
@@ -1534,7 +1698,11 @@ function evaluateEntry(source, body) {
     }
 
     reasonPush(rr, launchChasePct > allowedLaunchChase, "launch_chase_too_high");
-    reasonPush(rr, extFromEma18 > allowedLaunchExtEma18, "launch_too_extended_from_ema18");
+    reasonPush(
+      rr,
+      extFromEma18 > allowedLaunchExtEma18,
+      "launch_too_extended_from_ema18"
+    );
 
     if (rr.length === 0) {
       return {
@@ -1578,21 +1746,35 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // dedicated post-exit continuation re-entry
-  if (source === "post_exit_continuation_reentry" && CONFIG.POST_EXIT_CONTINUATION_ENABLED) {
+  // post-exit continuation re-entry
+  if (
+    source === "post_exit_continuation_reentry" &&
+    CONFIG.POST_EXIT_CONTINUATION_ENABLED
+  ) {
     const rr = [];
     const pec = S.postExitContinuation;
 
     reasonPush(rr, !pec.active, "post_exit_cont_not_active");
-    reasonPush(rr, pec.bullRegimeId !== S.ray.bullRegimeId, "post_exit_cont_regime_mismatch");
+    reasonPush(
+      rr,
+      pec.bullRegimeId !== S.ray.bullRegimeId,
+      "post_exit_cont_regime_mismatch"
+    );
     reasonPush(rr, S.barIndex < n(pec.eligibleFromBar, 0), "post_exit_cont_too_early");
     reasonPush(rr, S.barIndex > n(pec.expiresBar, -1), "post_exit_cont_expired");
-    reasonPush(rr, S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME, "max_reentry_reached");
+    reasonPush(
+      rr,
+      S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME,
+      "max_reentry_reached"
+    );
 
     const rayRecent =
-      ageSec(S.ray.lastBullTrendChangeAt) <= CONFIG.POST_EXIT_CONTINUATION_REQUIRE_BULLISH_RAY_RECENCY_SEC ||
-      ageSec(S.ray.lastBullTrendContinuationAt) <= CONFIG.POST_EXIT_CONTINUATION_REQUIRE_BULLISH_RAY_RECENCY_SEC ||
-      ageSec(S.ray.lastBullBosAt) <= CONFIG.POST_EXIT_CONTINUATION_REQUIRE_BULLISH_RAY_RECENCY_SEC;
+      ageSec(S.ray.lastBullTrendChangeAt) <=
+        CONFIG.POST_EXIT_CONTINUATION_REQUIRE_BULLISH_RAY_RECENCY_SEC ||
+      ageSec(S.ray.lastBullTrendContinuationAt) <=
+        CONFIG.POST_EXIT_CONTINUATION_REQUIRE_BULLISH_RAY_RECENCY_SEC ||
+      ageSec(S.ray.lastBullBosAt) <=
+        CONFIG.POST_EXIT_CONTINUATION_REQUIRE_BULLISH_RAY_RECENCY_SEC;
 
     reasonPush(rr, !rayRecent, "post_exit_cont_ray_not_recent");
     reasonPush(
@@ -1617,7 +1799,8 @@ function evaluateEntry(source, body) {
       extFromEma18 <= CONFIG.POST_EXIT_CONTINUATION_MAX_EXT_FROM_EMA18_PCT &&
       chasePct <= CONFIG.POST_EXIT_CONTINUATION_STRONG_MAX_CHASE_PCT &&
       (!strongNegativeFvvo ||
-        (CONFIG.POST_EXIT_CONTINUATION_IGNORE_SNIPER_SELL_IF_STRONG && !fv.snap.burstBearish));
+        (CONFIG.POST_EXIT_CONTINUATION_IGNORE_SNIPER_SELL_IF_STRONG &&
+          !fv.snap.burstBearish));
 
     const minRsi = CONFIG.POST_EXIT_CONTINUATION_MIN_RSI;
     const minAdx = CONFIG.POST_EXIT_CONTINUATION_MIN_ADX;
@@ -1627,12 +1810,37 @@ function evaluateEntry(source, body) {
 
     if (bullishFvvo) maxChase += CONFIG.FVVO_REENTRY_MAX_CHASE_BONUS_PCT;
 
-    reasonPush(rr, Number.isFinite(rsi) && rsi < minRsi && !strongPEC, "post_exit_cont_rsi_too_low");
-    reasonPush(rr, Number.isFinite(adx) && adx < minAdx && !strongPEC, "post_exit_cont_adx_too_low");
-    reasonPush(rr, extFromEma18 > CONFIG.POST_EXIT_CONTINUATION_MAX_EXT_FROM_EMA18_PCT && !strongPEC, "post_exit_cont_too_extended_from_ema18");
+    reasonPush(
+      rr,
+      Number.isFinite(rsi) && rsi < minRsi && !strongPEC,
+      "post_exit_cont_rsi_too_low"
+    );
+    reasonPush(
+      rr,
+      Number.isFinite(adx) && adx < minAdx && !strongPEC,
+      "post_exit_cont_adx_too_low"
+    );
+    reasonPush(
+      rr,
+      extFromEma18 > CONFIG.POST_EXIT_CONTINUATION_MAX_EXT_FROM_EMA18_PCT &&
+        !strongPEC,
+      "post_exit_cont_too_extended_from_ema18"
+    );
     reasonPush(rr, chasePct > maxChase, "post_exit_cont_chase_too_high");
-    reasonPush(rr, !CONFIG.POST_EXIT_CONTINUATION_ALLOW_FVVO_NEUTRAL && fv.score === 0 && !strongPEC, "post_exit_cont_fvvo_not_positive");
-    reasonPush(rr, CONFIG.POST_EXIT_CONTINUATION_BLOCK_ON_BURST_BEARISH && fv.snap.burstBearish && !strongPEC, "post_exit_cont_burst_bearish");
+    reasonPush(
+      rr,
+      !CONFIG.POST_EXIT_CONTINUATION_ALLOW_FVVO_NEUTRAL &&
+        fv.score === 0 &&
+        !strongPEC,
+      "post_exit_cont_fvvo_not_positive"
+    );
+    reasonPush(
+      rr,
+      CONFIG.POST_EXIT_CONTINUATION_BLOCK_ON_BURST_BEARISH &&
+        fv.snap.burstBearish &&
+        !strongPEC,
+      "post_exit_cont_burst_bearish"
+    );
 
     if (rr.length === 0) {
       return {
@@ -1660,19 +1868,31 @@ function evaluateEntry(source, body) {
     };
   }
 
-  // re-entry
+  // generic re-entry
   if (source === "feature_reentry" || (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible)) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
 
+    // v3.4: if dedicated post-exit continuation is active, generic re-entry is deprioritized
     reasonPush(
       rr,
-      (useFast ? CONFIG.FAST_REENTRY_REQUIRE_BULL_CONTEXT : CONFIG.REENTRY_REQUIRE_BULL_CONTEXT) &&
-        !S.ray.bullContext,
+      CONFIG.POST_EXIT_CONTINUATION_ENABLED && S.postExitContinuation.active,
+      "post_exit_continuation_has_priority"
+    );
+
+    reasonPush(
+      rr,
+      (useFast
+        ? CONFIG.FAST_REENTRY_REQUIRE_BULL_CONTEXT
+        : CONFIG.REENTRY_REQUIRE_BULL_CONTEXT) && !S.ray.bullContext,
       "reentry_no_bull_context"
     );
     reasonPush(rr, S.reentry.bullRegimeId !== S.ray.bullRegimeId, "reentry_regime_mismatch");
-    reasonPush(rr, S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME, "max_reentry_reached");
+    reasonPush(
+      rr,
+      S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME,
+      "max_reentry_reached"
+    );
     reasonPush(rr, S.barIndex < n(S.reentry.eligibleFromBar, 0), "reentry_too_early");
 
     const reentryRequireCloseAboveEma8 = useFast
@@ -1680,12 +1900,15 @@ function evaluateEntry(source, body) {
       : CONFIG.REENTRY_REQUIRE_CLOSE_ABOVE_EMA8;
 
     const reentryCloseAboveEma8Ok =
-      !reentryRequireCloseAboveEma8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+      !reentryRequireCloseAboveEma8 ||
+      (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
 
     const anchor = Number.isFinite(S.reentry.anchorPrice) ? S.reentry.anchorPrice : ema8;
     const reentryChasePct = Number.isFinite(anchor) ? pctDiff(anchor, px) : 999;
 
-    const baseMaxReentryChase = useFast ? CONFIG.FAST_REENTRY_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
+    const baseMaxReentryChase = useFast
+      ? CONFIG.FAST_REENTRY_MAX_CHASE_PCT
+      : CONFIG.REENTRY_MAX_CHASE_PCT;
     const minRsiBase = useFast ? CONFIG.FAST_REENTRY_MIN_RSI : CONFIG.MIN_RSI_LONG;
     const minRsi = Math.max(
       0,
@@ -1709,8 +1932,12 @@ function evaluateEntry(source, body) {
       : baseMaxReentryChase;
 
     if (bullishFvvo) allowedReentryChase += CONFIG.FVVO_REENTRY_MAX_CHASE_BONUS_PCT;
-    if (fv.snap.sniperSell) allowedReentryChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
-    if (fv.snap.burstBearish) allowedReentryChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+    if (fv.snap.sniperSell) {
+      allowedReentryChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+    }
+    if (fv.snap.burstBearish) {
+      allowedReentryChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+    }
 
     reasonPush(rr, !emaBullOk, "reentry_ema_invalid");
     reasonPush(rr, !reentryCloseAboveEma8Ok, "reentry_close_below_ema8");
@@ -1771,12 +1998,35 @@ function evaluateEntry(source, body) {
       CONFIG.ELEVATED_CONTINUATION_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8Ok,
       "elevated_cont_close_below_ema8"
     );
-    reasonPush(rr, Number.isFinite(rsi) && rsi < CONFIG.ELEVATED_CONTINUATION_MIN_RSI, "elevated_cont_rsi_too_low");
-    reasonPush(rr, Number.isFinite(adx) && adx < CONFIG.ELEVATED_CONTINUATION_MIN_ADX, "elevated_cont_adx_too_low");
-    reasonPush(rr, Number.isFinite(emaSlope) && emaSlope < CONFIG.ELEVATED_CONTINUATION_MIN_EMA8_SLOPE_PCT, "elevated_cont_ema8_slope_too_low");
-    reasonPush(rr, extFromEma18 > CONFIG.ELEVATED_CONTINUATION_MAX_EXT_FROM_EMA18_PCT, "elevated_cont_too_extended_from_ema18");
+    reasonPush(
+      rr,
+      Number.isFinite(rsi) && rsi < CONFIG.ELEVATED_CONTINUATION_MIN_RSI,
+      "elevated_cont_rsi_too_low"
+    );
+    reasonPush(
+      rr,
+      Number.isFinite(adx) && adx < CONFIG.ELEVATED_CONTINUATION_MIN_ADX,
+      "elevated_cont_adx_too_low"
+    );
+    reasonPush(
+      rr,
+      Number.isFinite(emaSlope) &&
+        emaSlope < CONFIG.ELEVATED_CONTINUATION_MIN_EMA8_SLOPE_PCT,
+      "elevated_cont_ema8_slope_too_low"
+    );
+    reasonPush(
+      rr,
+      extFromEma18 > CONFIG.ELEVATED_CONTINUATION_MAX_EXT_FROM_EMA18_PCT,
+      "elevated_cont_too_extended_from_ema18"
+    );
     reasonPush(rr, contChasePct > allowedChase, "elevated_cont_chase_too_high");
-    reasonPush(rr, strongNegativeFvvo && !CONFIG.ELEVATED_CONTINUATION_ALLOW_NEGATIVE_FVVO_IF_STRONG && !strongElevated, "elevated_cont_negative_fvvo");
+    reasonPush(
+      rr,
+      strongNegativeFvvo &&
+        !CONFIG.ELEVATED_CONTINUATION_ALLOW_NEGATIVE_FVVO_IF_STRONG &&
+        !strongElevated,
+      "elevated_cont_negative_fvvo"
+    );
 
     if (rr.length === 0) {
       return {
@@ -1812,16 +2062,30 @@ function evaluateEntry(source, body) {
   reasonPush(contReasons, !emaBullOk, "ema8_below_ema18");
   reasonPush(contReasons, !closeAboveEma8Ok, "close_below_ema8");
   reasonPush(contReasons, Number.isFinite(rsi) && rsi < contMinRsi, "rsi_too_low");
-  reasonPush(contReasons, Number.isFinite(adx) && adx < CONFIG.MIN_ADX_CONTINUATION, "adx_too_low");
-  reasonPush(contReasons, extFromEma8 > CONFIG.MAX_EXT_FROM_EMA8_PCT, "too_extended_from_ema8");
-  reasonPush(contReasons, extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT, "too_extended_from_ema18");
+  reasonPush(
+    contReasons,
+    Number.isFinite(adx) && adx < CONFIG.MIN_ADX_CONTINUATION,
+    "adx_too_low"
+  );
+  reasonPush(
+    contReasons,
+    extFromEma8 > CONFIG.MAX_EXT_FROM_EMA8_PCT,
+    "too_extended_from_ema8"
+  );
+  reasonPush(
+    contReasons,
+    extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT,
+    "too_extended_from_ema18"
+  );
   reasonPush(contReasons, contChasePct > contMaxChase, "continuation_chase_too_high");
 
   if (contReasons.length === 0) {
     return {
       allow: true,
       source,
-      mode: bullishFvvo ? "breakout_continuation_long_fvvo" : "breakout_continuation_long",
+      mode: bullishFvvo
+        ? "breakout_continuation_long_fvvo"
+        : "breakout_continuation_long",
       entryPrice: px,
       extFromEma8,
       extFromEma18,
@@ -1840,25 +2104,39 @@ function evaluateEntry(source, body) {
   const memAnchor = Math.max(n(mem.reclaimPrice, NaN), n(mem.breakoutHigh, NaN));
   const memChasePct = Number.isFinite(memAnchor) ? pctDiff(memAnchor, px) : 999;
 
-  if (CONFIG.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM && Number.isFinite(mem.reclaimPrice)) {
-    const reclaimFloor = mem.reclaimPrice * (1 - CONFIG.BREAKOUT_MEMORY_INVALIDATE_PCT / 100);
+  if (
+    CONFIG.BREAKOUT_MEMORY_REQUIRE_ABOVE_RECLAIM &&
+    Number.isFinite(mem.reclaimPrice)
+  ) {
+    const reclaimFloor =
+      mem.reclaimPrice * (1 - CONFIG.BREAKOUT_MEMORY_INVALIDATE_PCT / 100);
     reasonPush(memReasons, px < reclaimFloor, "below_memory_reclaim_floor");
   }
 
   let allowedMemoryChase = CONFIG.BREAKOUT_MEMORY_MAX_CHASE_PCT;
   if (bullishFvvo) allowedMemoryChase += CONFIG.FVVO_CONT_MAX_CHASE_BONUS_PCT;
-  if (fv.snap.sniperSell) allowedMemoryChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
-  if (fv.snap.burstBearish) allowedMemoryChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+  if (fv.snap.sniperSell) {
+    allowedMemoryChase -= CONFIG.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT;
+  }
+  if (fv.snap.burstBearish) {
+    allowedMemoryChase -= CONFIG.FVVO_BURST_BEARISH_CHASE_PENALTY_PCT;
+  }
 
   reasonPush(memReasons, memChasePct > allowedMemoryChase, "memory_chase_too_high");
   reasonPush(memReasons, !emaBullOk, "ema_bull_invalid");
-  reasonPush(memReasons, extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT, "too_extended_from_ema18");
+  reasonPush(
+    memReasons,
+    extFromEma18 > CONFIG.MAX_EXT_FROM_EMA18_PCT,
+    "too_extended_from_ema18"
+  );
 
   if (memReasons.length === 0) {
     return {
       allow: true,
       source,
-      mode: bullishFvvo ? "delayed_breakout_memory_long_fvvo" : "delayed_breakout_memory_long",
+      mode: bullishFvvo
+        ? "delayed_breakout_memory_long_fvvo"
+        : "delayed_breakout_memory_long",
       entryPrice: px,
       memChasePct,
       memAnchor: round4(memAnchor),
@@ -1983,7 +2261,10 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     S.beArmed = true;
     const beStop = S.entryPrice * (1 + CONFIG.BREAKEVEN_OFFSET_PCT / 100);
     S.stopPrice = Math.max(S.stopPrice, beStop);
-    log("🛡️ BREAKEVEN_ARMED", { pnlPct: round4(pnlPct), stopPrice: round4(S.stopPrice) });
+    log("🛡️ BREAKEVEN_ARMED", {
+      pnlPct: round4(pnlPct),
+      stopPrice: round4(S.stopPrice),
+    });
   }
 
   if (price <= S.stopPrice) {
@@ -2000,13 +2281,21 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
       return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, eventIso, "cycle_exit");
     }
   } else {
-    const drawFromPeakPct = Number.isFinite(S.peakPrice) ? -pctDiff(S.peakPrice, price) : 0;
+    const drawFromPeakPct = Number.isFinite(S.peakPrice)
+      ? -pctDiff(S.peakPrice, price)
+      : 0;
 
-    if (pnlPct >= CONFIG.PROFIT_LOCK_ARM_PCT && drawFromPeakPct >= CONFIG.PROFIT_LOCK_GIVEBACK_PCT) {
+    if (
+      pnlPct >= CONFIG.PROFIT_LOCK_ARM_PCT &&
+      drawFromPeakPct >= CONFIG.PROFIT_LOCK_GIVEBACK_PCT
+    ) {
       return doExit("profit_lock_giveback", price, eventIso, "cycle_exit");
     }
 
-    if (pnlPct >= CONFIG.TRAIL_ARM_PCT && drawFromPeakPct >= CONFIG.TRAIL_GIVEBACK_PCT) {
+    if (
+      pnlPct >= CONFIG.TRAIL_ARM_PCT &&
+      drawFromPeakPct >= CONFIG.TRAIL_GIVEBACK_PCT
+    ) {
       return doExit("trail_giveback", price, eventIso, "cycle_exit");
     }
   }
@@ -2039,26 +2328,56 @@ function evaluateBarExit(feature) {
   ) {
     const ema8Floor = feature.ema8 * (1 - CONFIG.LOCAL_TP_EMA8_BUFFER_PCT / 100);
     const belowBufferedEma8 = price < ema8Floor;
+    const belowEma18 =
+      Number.isFinite(feature.ema18) && price < feature.ema18;
+
     const weakeningBar =
       !CONFIG.LOCAL_TP_REQUIRE_WEAKENING_BAR ||
       !prev ||
-      (Number.isFinite(prev.rsi) && Number.isFinite(feature.rsi) && feature.rsi <= prev.rsi) ||
-      (Number.isFinite(prev.adx) && Number.isFinite(feature.adx) && feature.adx <= prev.adx) ||
+      (Number.isFinite(prev.rsi) &&
+        Number.isFinite(feature.rsi) &&
+        feature.rsi <= prev.rsi) ||
+      (Number.isFinite(prev.adx) &&
+        Number.isFinite(feature.adx) &&
+        feature.adx <= prev.adx) ||
       price < n(prev.close, price);
 
     const holdByStrength =
-      (Number.isFinite(feature.rsi) && feature.rsi >= CONFIG.LOCAL_TP_MIN_RSI_TO_HOLD) &&
-      (Number.isFinite(feature.adx) && feature.adx >= CONFIG.LOCAL_TP_MIN_ADX_TO_HOLD);
+      Number.isFinite(feature.rsi) &&
+      feature.rsi >= CONFIG.LOCAL_TP_MIN_RSI_TO_HOLD &&
+      Number.isFinite(feature.adx) &&
+      feature.adx >= CONFIG.LOCAL_TP_MIN_ADX_TO_HOLD;
 
-    const holdByBullishFvvo = CONFIG.LOCAL_TP_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+    const holdByBullishFvvo =
+      CONFIG.LOCAL_TP_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+
     const strongTrendHold = isStrongTrendHold(feature, fv);
 
-    if (belowBufferedEma8 && weakeningBar && !holdByStrength && !holdByBullishFvvo && !strongTrendHold) {
+    const hardBlockByAdx =
+      Number.isFinite(feature.adx) &&
+      feature.adx >= CONFIG.LOCAL_TP_STRONG_ADX_HARD_BLOCK &&
+      !(
+        (CONFIG.LOCAL_TP_FORCE_ALLOW_IF_CLOSE_BELOW_EMA18 && belowEma18) ||
+        (CONFIG.LOCAL_TP_FORCE_ALLOW_IF_BEARISH_FVVO && fv.score < 0)
+      );
+
+    if (
+      belowBufferedEma8 &&
+      weakeningBar &&
+      !holdByStrength &&
+      !holdByBullishFvvo &&
+      !strongTrendHold &&
+      !hardBlockByAdx
+    ) {
       return doExit("local_tp_close_below_ema8", price, feature.time, "cycle_exit");
     }
   }
 
-  if (CONFIG.EXIT_ON_5M_CLOSE_BELOW_EMA18 && Number.isFinite(feature.ema18) && price < feature.ema18) {
+  if (
+    CONFIG.EXIT_ON_5M_CLOSE_BELOW_EMA18 &&
+    Number.isFinite(feature.ema18) &&
+    price < feature.ema18
+  ) {
     return doExit("close_below_ema18_5m", price, feature.time, "regime_break");
   }
 }
@@ -2317,7 +2636,9 @@ app.get("/status", (_req, res) => {
     peakPrice: S.peakPrice,
     peakPnlPct: S.peakPnlPct,
     dynamicTpTier: S.dynamicTpTier,
-    cooldownUntil: S.cooldownUntilMs ? new Date(S.cooldownUntilMs).toISOString() : null,
+    cooldownUntil: S.cooldownUntilMs
+      ? new Date(S.cooldownUntilMs).toISOString()
+      : null,
     bullContext: S.ray.bullContext,
     bullRegimeId: S.ray.bullRegimeId,
     reentryCountInRegime: S.ray.reentryCountInRegime,
@@ -2340,7 +2661,8 @@ app.get("/status", (_req, res) => {
     fvvoScore: getFvvoScore(),
     barIndex: S.barIndex,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
-    replayUseEventTimeForPositionClock: CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
+    replayUseEventTimeForPositionClock:
+      CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
     recentLogs: S.logs.slice(-80),
   });
 });
@@ -2376,7 +2698,12 @@ app.post(CONFIG.WEBHOOK_PATH, (req, res) => {
   const symbol = normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL));
   if (symbol !== CONFIG.SYMBOL) {
     log("🚫 SYMBOL_REJECTED", { got: symbol, want: CONFIG.SYMBOL });
-    return res.status(400).json({ ok: false, error: "symbol_mismatch", got: symbol, want: CONFIG.SYMBOL });
+    return res.status(400).json({
+      ok: false,
+      error: "symbol_mismatch",
+      got: symbol,
+      want: CONFIG.SYMBOL,
+    });
   }
 
   const parsed = parseInboundType(body);
