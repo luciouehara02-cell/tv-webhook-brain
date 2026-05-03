@@ -1,14 +1,12 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v3.9
+ * BrainRAY_Continuation_v4.0
  *
- * v3.9
- * - keeps v3.8 protections
- * - adds top-harvest TP path for mature bullish legs
- * - goal:
- *   exit nearer local top
- *   then wait for lower continuation re-entry
+ * v4.0
+ * - keeps v3.9 re-entry structure
+ * - fixes top-harvest TP to trigger earlier / more reliably
+ * - adds explicit top-harvest debug logging
  */
 
 const app = express();
@@ -110,7 +108,7 @@ function minFinite(...vals) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.9"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.0"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -229,7 +227,7 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // v3.8 TP hardening
+  // v3.8 / v3.9 TP protection
   LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
   LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
   LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
@@ -250,7 +248,6 @@ const CONFIG = {
     process.env.LOCAL_TP_FORCE_ALLOW_ON_TWO_WEAKENING_BARS,
     true
   ),
-
   LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND: b(
     process.env.LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND,
     true
@@ -267,7 +264,6 @@ const CONFIG = {
     process.env.LOCAL_TP_REQUIRE_CLOSE_BELOW_EMA18_OR_2_WEAK_BARS,
     true
   ),
-
   LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED: b(
     process.env.LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED,
     true
@@ -296,7 +292,6 @@ const CONFIG = {
     process.env.LOCAL_TP_STRONG_TREND_RSI_WEAK_MAX,
     52
   ),
-
   LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED: b(
     process.env.LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED,
     true
@@ -338,13 +333,13 @@ const CONFIG = {
     false
   ),
 
-  // NEW v3.9 top harvest TP
+  // v4.0 top harvest
   TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, true),
-  TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 1.00),
+  TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
   TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
-  TOP_HARVEST_MIN_RSI_RECENT_HIGH: n(process.env.TOP_HARVEST_MIN_RSI_RECENT_HIGH, 68),
-  TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, 0.45),
-  TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT, 0.65),
+  TOP_HARVEST_MIN_RSI_RECENT_HIGH: n(process.env.TOP_HARVEST_MIN_RSI_RECENT_HIGH, 64),
+  TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, 0.30),
+  TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT, 0.45),
   TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS: b(
     process.env.TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS,
     false
@@ -353,13 +348,17 @@ const CONFIG = {
     process.env.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_BEARISH_FVVO,
     true
   ),
+  TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_NEUTRAL_FVVO: b(
+    process.env.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_NEUTRAL_FVVO,
+    true
+  ),
   TOP_HARVEST_REQUIRE_RSI_ROLLDOWN: b(
     process.env.TOP_HARVEST_REQUIRE_RSI_ROLLDOWN,
     true
   ),
   TOP_HARVEST_REQUIRE_NO_NEW_PRICE_EXPANSION: b(
     process.env.TOP_HARVEST_REQUIRE_NO_NEW_PRICE_EXPANSION,
-    true
+    false
   ),
   TOP_HARVEST_NEAR_PEAK_LOOKBACK_BARS: n(
     process.env.TOP_HARVEST_NEAR_PEAK_LOOKBACK_BARS,
@@ -367,7 +366,7 @@ const CONFIG = {
   ),
   TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT: n(
     process.env.TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT,
-    0.35
+    0.45
   ),
   TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO: b(
     process.env.TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO,
@@ -377,6 +376,7 @@ const CONFIG = {
     process.env.TOP_HARVEST_REQUIRE_BULL_CONTEXT,
     true
   ),
+  TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
 
   DYNAMIC_TP_ENABLED: b(process.env.DYNAMIC_TP_ENABLED, true),
   DTP_TIER1_ARM_PCT: n(process.env.DTP_TIER1_ARM_PCT, 0.6),
@@ -801,7 +801,7 @@ function log(msg, data = null) {
   const line = data ? `${msg} | ${JSON.stringify(data)}` : msg;
   const out = `${isoNow()} ${line}`;
   S.logs.push(out);
-  if (S.logs.length > 1600) S.logs.shift();
+  if (S.logs.length > 2000) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
 }
 
@@ -879,11 +879,17 @@ function getExitPeakSnapshot(exitPrice) {
   );
 }
 function recentRsiHigh(lookback = 3) {
-  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(0, Math.max(1, Math.min(3, lookback)));
+  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(
+    0,
+    Math.max(1, Math.min(3, lookback))
+  );
   return maxFinite(...arr.map((x) => n(x?.rsi, NaN)));
 }
 function recentCloseHigh(lookback = 3) {
-  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(0, Math.max(1, Math.min(3, lookback)));
+  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(
+    0,
+    Math.max(1, Math.min(3, lookback))
+  );
   return maxFinite(...arr.map((x) => n(x?.close, NaN)));
 }
 
@@ -2509,7 +2515,7 @@ function isStrongTrendHold(feature, fv) {
 }
 
 function shouldTopHarvestExit(feature, pnlPct, fv) {
-  if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false };
+  if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
   if (CONFIG.TOP_HARVEST_REQUIRE_BULL_CONTEXT && !S.ray.bullContext) {
     return { allow: false, reason: "no_bull_context" };
   }
@@ -2520,7 +2526,6 @@ function shouldTopHarvestExit(feature, pnlPct, fv) {
   const adx = n(feature.adx, NaN);
   const rsi = n(feature.rsi, NaN);
   const prev = S.prevFeature;
-  const prevPrev = S.prevPrevFeature;
 
   if (!Number.isFinite(price) || !Number.isFinite(ema8) || !Number.isFinite(ema18)) {
     return { allow: false, reason: "bad_feature_values" };
@@ -2546,52 +2551,67 @@ function shouldTopHarvestExit(feature, pnlPct, fv) {
   const nearRecentPeakPullbackPct =
     Number.isFinite(recentHigh) ? -pctDiff(recentHigh, price) : NaN;
 
-  const noNewExpansion =
-    !Number.isFinite(prev?.close) ||
-    price <= prev.close ||
-    (Number.isFinite(prev?.rsi) && Number.isFinite(rsi) && rsi <= prev.rsi);
-
   const bearishFvvo = fv.score < 0 || fv.snap.burstBearish || fv.snap.sniperSell;
+  const neutralFvvo = fv.score === 0 && !fv.snap.burstBullish && !fv.snap.burstBearish;
   const strongBullishFvvo = fv.score >= 2 || fv.snap.burstBullish;
 
-  if (pnlPct < CONFIG.TOP_HARVEST_MIN_PROFIT_PCT) {
-    return { allow: false, reason: "profit_too_low" };
-  }
-  if (!Number.isFinite(adx) || adx < CONFIG.TOP_HARVEST_MIN_ADX) {
-    return { allow: false, reason: "adx_too_low" };
-  }
-  if (!hadRecentRsiHigh) {
-    return { allow: false, reason: "no_recent_rsi_high" };
-  }
-  if (extFromEma8 < CONFIG.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT) {
-    return { allow: false, reason: "ext_from_ema8_too_low" };
-  }
-  if (extFromEma18 < CONFIG.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT) {
-    return { allow: false, reason: "ext_from_ema18_too_low" };
-  }
-  if (
-    Number.isFinite(nearRecentPeakPullbackPct) &&
-    nearRecentPeakPullbackPct > CONFIG.TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT
-  ) {
-    return { allow: false, reason: "already_too_far_from_peak" };
-  }
-  if (CONFIG.TOP_HARVEST_REQUIRE_RSI_ROLLDOWN && !rsiRolldown) {
-    return { allow: false, reason: "rsi_not_rolling_down" };
-  }
-  if (CONFIG.TOP_HARVEST_REQUIRE_NO_NEW_PRICE_EXPANSION && !noNewExpansion) {
-    return { allow: false, reason: "still_expanding" };
-  }
-  if (CONFIG.TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO && strongBullishFvvo) {
-    return { allow: false, reason: "strong_bullish_fvvo" };
-  }
-
   const weaknessOk =
-    (CONFIG.TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS && twoWeakBars) ||
+    twoWeakBars ||
     (!CONFIG.TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS && oneWeakBar) ||
-    (CONFIG.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_BEARISH_FVVO && oneWeakBar && bearishFvvo);
+    (CONFIG.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_BEARISH_FVVO && oneWeakBar && bearishFvvo) ||
+    (CONFIG.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_NEUTRAL_FVVO && oneWeakBar && neutralFvvo);
 
-  if (!weaknessOk) {
-    return { allow: false, reason: "weakness_not_confirmed" };
+  const reasons = [];
+  reasonPush(reasons, pnlPct < CONFIG.TOP_HARVEST_MIN_PROFIT_PCT, "profit_too_low");
+  reasonPush(reasons, !Number.isFinite(adx) || adx < CONFIG.TOP_HARVEST_MIN_ADX, "adx_too_low");
+  reasonPush(reasons, !hadRecentRsiHigh, "no_recent_rsi_high");
+  reasonPush(reasons, extFromEma8 < CONFIG.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, "ext_from_ema8_too_low");
+  reasonPush(reasons, extFromEma18 < CONFIG.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT, "ext_from_ema18_too_low");
+  reasonPush(
+    reasons,
+    Number.isFinite(nearRecentPeakPullbackPct) &&
+      nearRecentPeakPullbackPct > CONFIG.TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT,
+    "already_too_far_from_peak"
+  );
+  reasonPush(reasons, CONFIG.TOP_HARVEST_REQUIRE_RSI_ROLLDOWN && !rsiRolldown, "rsi_not_rolling_down");
+  reasonPush(reasons, CONFIG.TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO && strongBullishFvvo, "strong_bullish_fvvo");
+  reasonPush(reasons, !weaknessOk, "weakness_not_confirmed");
+
+  if (CONFIG.TOP_HARVEST_LOG_DEBUG) {
+    log("🟣 TOP_HARVEST_CHECK", {
+      allow: reasons.length === 0,
+      reasons,
+      pnlPct: round4(pnlPct),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      extFromEma8: round4(extFromEma8),
+      extFromEma18: round4(extFromEma18),
+      recentRsiHigh: round4(rsiHighRecent),
+      oneWeakBar,
+      twoWeakBars,
+      rsiRolldown,
+      bearishFvvo,
+      neutralFvvo,
+      strongBullishFvvo,
+      nearRecentPeakPullbackPct: round4(nearRecentPeakPullbackPct),
+    });
+  }
+
+  if (reasons.length > 0) {
+    return {
+      allow: false,
+      reason: reasons[0],
+      reasons,
+      extFromEma8,
+      extFromEma18,
+      recentRsiHigh: rsiHighRecent,
+      rsiRolldown,
+      oneWeakBar,
+      twoWeakBars,
+      bearishFvvo,
+      neutralFvvo,
+      nearRecentPeakPullbackPct,
+    };
   }
 
   return {
@@ -2603,6 +2623,7 @@ function shouldTopHarvestExit(feature, pnlPct, fv) {
     oneWeakBar,
     twoWeakBars,
     bearishFvvo,
+    neutralFvvo,
     nearRecentPeakPullbackPct,
   };
 }
@@ -2614,7 +2635,7 @@ function evaluateBarExit(feature) {
   const fv = getFvvoScore();
   const prev = S.prevFeature;
 
-  // v3.9 new top-harvest first
+  // v4.0 top-harvest first
   const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
   if (topHarvest.allow) {
     return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
