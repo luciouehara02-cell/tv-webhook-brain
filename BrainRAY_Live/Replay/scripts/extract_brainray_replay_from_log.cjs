@@ -48,9 +48,9 @@ const allEvents = [];
 // ------------------------
 // thinning config
 // ------------------------
-const TICK_KEEP_BEFORE_MS = 2 * 60 * 1000;  // 3 min before event
-const TICK_KEEP_AFTER_MS = 4 * 60 * 1000;   // 6 min after event
-const TICK_MIN_GAP_MS = 45 * 1000;          // keep max 1 tick every 30 sec
+const TICK_KEEP_BEFORE_MS = 1 * 60 * 1000;  // 3 min before event
+const TICK_KEEP_AFTER_MS = 2 * 60 * 1000;   // 6 min after event
+const TICK_MIN_GAP_MS = 60 * 1000;          // keep max 1 tick every 30 sec
 
 function parseJsonAfterPipe(line) {
   const idx = line.indexOf("|");
