@@ -24,6 +24,10 @@ function toMs(v) {
   return Number.isFinite(t) ? t : null;
 }
 
+function toIso(ms) {
+  return new Date(ms).toISOString();
+}
+
 const startMs = toMs(startTimeRaw);
 const endMs = toMs(endTimeRaw);
 
@@ -38,7 +42,15 @@ if (endTimeRaw && endMs == null) {
 
 const raw = fs.readFileSync(input, "utf8");
 const lines = raw.split(/\r?\n/);
-const events = [];
+
+const allEvents = [];
+
+// ------------------------
+// thinning config
+// ------------------------
+const TICK_KEEP_BEFORE_MS = 3 * 60 * 1000;  // 3 min before event
+const TICK_KEEP_AFTER_MS = 6 * 60 * 1000;   // 6 min after event
+const TICK_MIN_GAP_MS = 30 * 1000;          // keep max 1 tick every 30 sec
 
 function parseJsonAfterPipe(line) {
   const idx = line.indexOf("|");
@@ -46,7 +58,7 @@ function parseJsonAfterPipe(line) {
   const jsonPart = line.slice(idx + 1).trim();
   try {
     return JSON.parse(jsonPart);
-  } catch (_e) {
+  } catch {
     return null;
   }
 }
@@ -76,7 +88,6 @@ function extractEventTime(line, payload) {
   const matches = extractIsoList(line);
   if (!matches.length) return null;
 
-  // prefer the last ISO in the line because many brain logs end with event ts
   const norm = normalizeIso(matches[matches.length - 1]);
   return norm || null;
 }
@@ -99,12 +110,10 @@ function pushEvent(evt) {
   evt.time = normalizeIso(evt.time);
   if (!evt.time) return;
   if (!withinWindow(evt.time)) return;
-  events.push(evt);
+  allEvents.push(evt);
 }
 
 function extractTickFromTextLine(line) {
-  // Example:
-  // 📍 TICK BINANCE:SOLUSDT price=86.77 time=2026-04-16T16:28:46Z
   const m = line.match(
     /📍\s*TICK\s+([A-Z0-9:_-]+)\s+price=([-+]?\d*\.?\d+)\s+time=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/
   );
@@ -139,18 +148,12 @@ for (const line of lines) {
   const payload = parseJsonAfterPipe(line);
   const time = extractEventTime(line, payload);
 
-  // --------------------------------------------------
-  // Tick text line
-  // --------------------------------------------------
   if (line.includes("📍 TICK ")) {
     const tickEvt = extractTickFromTextLine(line);
     if (tickEvt) pushEvent(tickEvt);
     continue;
   }
 
-  // --------------------------------------------------
-  // Feature
-  // --------------------------------------------------
   if (line.includes("FEATURE_5M") && payload) {
     pushEvent({
       secret,
@@ -172,9 +175,6 @@ for (const line of lines) {
     continue;
   }
 
-  // --------------------------------------------------
-  // Ray
-  // --------------------------------------------------
   if (line.includes("RAY_BULLISH_TREND_CHANGE") && payload) {
     pushEvent({
       secret,
@@ -240,9 +240,6 @@ for (const line of lines) {
     continue;
   }
 
-  // --------------------------------------------------
-  // FVVO
-  // --------------------------------------------------
   if (line.includes("FVVO_SNIPER_BUY")) {
     const evt = extractFvvoFromLine(line, payload, "Sniper Buy Alert");
     if (evt) pushEvent(evt);
@@ -268,48 +265,99 @@ for (const line of lines) {
   }
 }
 
-// --------------------------------------------------
-// Sort
-// --------------------------------------------------
-events.sort((a, b) => {
+// sort all
+allEvents.sort((a, b) => {
   const ta = toMs(a.time) || 0;
   const tb = toMs(b.time) || 0;
   if (ta !== tb) return ta - tb;
-
-  // tie-breaker so same-timestamp replay order is more stable
   const order = { tick: 1, features: 2, fvvo: 3, ray: 4 };
   return (order[a.src] || 99) - (order[b.src] || 99);
 });
 
-// --------------------------------------------------
-// Exact dedupe
-// --------------------------------------------------
+// exact dedupe
 const deduped = [];
 const seen = new Set();
 
-for (const evt of events) {
+for (const evt of allEvents) {
   const key = JSON.stringify(evt);
   if (seen.has(key)) continue;
   seen.add(key);
   deduped.push(evt);
 }
 
-// --------------------------------------------------
-// Opposite-ray conflict cleanup at same timestamp
-// Rule:
-// - if same exact time has both bearish and bullish ray events
-// - keep trend change over continuation
-// - if still conflicting, keep bearish trend change only
-// --------------------------------------------------
-const grouped = new Map();
+// split
+const nonTicks = deduped.filter((e) => e.src !== "tick");
+const ticks = deduped.filter((e) => e.src === "tick");
 
-for (const evt of deduped) {
+// build keep windows around non-ticks
+const windows = nonTicks.map((e) => {
+  const t = toMs(e.time);
+  return {
+    start: t - TICK_KEEP_BEFORE_MS,
+    end: t + TICK_KEEP_AFTER_MS,
+  };
+});
+
+// merge overlapping windows
+windows.sort((a, b) => a.start - b.start);
+const mergedWindows = [];
+for (const w of windows) {
+  if (!mergedWindows.length) {
+    mergedWindows.push({ ...w });
+    continue;
+  }
+  const last = mergedWindows[mergedWindows.length - 1];
+  if (w.start <= last.end) {
+    last.end = Math.max(last.end, w.end);
+  } else {
+    mergedWindows.push({ ...w });
+  }
+}
+
+function tickInAnyWindow(tickMs) {
+  for (const w of mergedWindows) {
+    if (tickMs >= w.start && tickMs <= w.end) return true;
+    if (tickMs < w.start) return false;
+  }
+  return false;
+}
+
+// thin ticks
+const keptTicks = [];
+let lastKeptTickMs = null;
+
+for (let i = 0; i < ticks.length; i++) {
+  const evt = ticks[i];
+  const t = toMs(evt.time);
+  if (t == null) continue;
+  if (!tickInAnyWindow(t)) continue;
+
+  const prev = ticks[i - 1];
+  const next = ticks[i + 1];
+  const prevIn = prev ? tickInAnyWindow(toMs(prev.time)) : false;
+  const nextIn = next ? tickInAnyWindow(toMs(next.time)) : false;
+
+  const isBoundary = !prevIn || !nextIn;
+
+  if (isBoundary) {
+    keptTicks.push(evt);
+    lastKeptTickMs = t;
+    continue;
+  }
+
+  if (lastKeptTickMs == null || t - lastKeptTickMs >= TICK_MIN_GAP_MS) {
+    keptTicks.push(evt);
+    lastKeptTickMs = t;
+  }
+}
+
+// ray conflict cleanup by same timestamp
+const grouped = new Map();
+for (const evt of [...keptTicks, ...nonTicks]) {
   const k = evt.time;
   if (!grouped.has(k)) grouped.set(k, []);
   grouped.get(k).push(evt);
 }
-
-const finalEvents = [];
 
 function rayPriority(evt) {
   if (evt.src !== "ray") return 0;
@@ -321,7 +369,9 @@ function rayPriority(evt) {
   return 1;
 }
 
-for (const [timeKey, arr] of grouped.entries()) {
+const finalEvents = [];
+
+for (const [, arr] of grouped.entries()) {
   const nonRay = arr.filter((x) => x.src !== "ray");
   const ray = arr.filter((x) => x.src === "ray");
 
@@ -343,17 +393,11 @@ for (const [timeKey, arr] of grouped.entries()) {
     const bearTc = ray.find((x) => x.event === "Bearish Trend Change");
     const bullTc = ray.find((x) => x.event === "Bullish Trend Change");
 
-    if (bearTc) {
-      keptRay = [bearTc];
-    } else if (bullTc) {
-      keptRay = [bullTc];
-    } else {
-      keptRay = [ray.slice().sort((a, b) => rayPriority(b) - rayPriority(a))[0]];
-    }
+    if (bearTc) keptRay = [bearTc];
+    else if (bullTc) keptRay = [bullTc];
+    else keptRay = [ray.slice().sort((a, b) => rayPriority(b) - rayPriority(a))[0]];
   } else {
-    // same-side duplicates: keep best priority
-    const best = ray.slice().sort((a, b) => rayPriority(b) - rayPriority(a))[0];
-    keptRay = [best];
+    keptRay = [ray.slice().sort((a, b) => rayPriority(b) - rayPriority(a))[0]];
   }
 
   finalEvents.push(...nonRay, ...keptRay);
@@ -378,6 +422,16 @@ console.log("Wrote " + finalEvents.length + " events to " + output);
 console.log("Window start: " + (startTimeRaw || "(none)"));
 console.log("Window end:   " + (endTimeRaw || "(none)"));
 console.log("Counts:       " + JSON.stringify(counts));
+console.log("Tick thinning: before=" + ticks.length + " after=" + keptTicks.length);
+console.log(
+  "Tick config:   keep_before_ms=" +
+    TICK_KEEP_BEFORE_MS +
+    " keep_after_ms=" +
+    TICK_KEEP_AFTER_MS +
+    " min_gap_ms=" +
+    TICK_MIN_GAP_MS
+);
+
 if (finalEvents.length > 0) {
   console.log(
     "First event:  " +
