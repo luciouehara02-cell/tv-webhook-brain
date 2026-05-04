@@ -1,11 +1,12 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.2
+ * BrainRAY_Continuation_v4.3
  *
- * v4.2
- * - keeps v4.1 launch-trade TP protection
- * - extends early tier1 dynamic TP protection to post-exit continuation re-entry legs
+ * v4.3
+ * - keeps v4.1 launch-trade protection
+ * - replaces v4.2 hard block on post-exit continuation tier1 TP
+ *   with conditional / early-strength protection only
  * - keeps v4.0 top-harvest
  * - keeps v4.1 re-entry / post-exit continuation logic
  */
@@ -120,7 +121,7 @@ function isProtectedContinuationMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.2"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.3"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -430,7 +431,7 @@ const CONFIG = {
     true
   ),
 
-  // v4.2 post-exit continuation protection
+  // v4.3 post-exit continuation protection
   POST_EXIT_CONT_TP_PROTECTION_ENABLED: b(
     process.env.POST_EXIT_CONT_TP_PROTECTION_ENABLED,
     true
@@ -439,9 +440,9 @@ const CONFIG = {
     process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1,
     true
   ),
-  POST_EXIT_CONT_TP_PROTECTION_MIN_PROFIT_PCT: n(
-    process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_PROFIT_PCT,
-    0.70
+  POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT,
+    0.30
   ),
   POST_EXIT_CONT_TP_PROTECTION_MIN_ADX: n(
     process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX,
@@ -1377,11 +1378,6 @@ function handleRayEvent(body) {
     }
 
     turnBullRegimeOn(ts, "ray_bullish_trend_change");
-    log("🟢 BULL_REGIME_ON", {
-      source: "ray_bullish_trend_change",
-      bullRegimeId: S.ray.bullRegimeId,
-      ts,
-    });
     log("🟢 RAY_BULLISH_TREND_CHANGE", { price, ts });
 
     if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
@@ -2577,9 +2573,10 @@ function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
   const close = n(feature?.close, NaN);
   const ema8 = n(feature?.ema8, NaN);
 
+  const stillEarlyProfit =
+    pnlPct < CONFIG.POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT;
   const adxOk = Number.isFinite(adx) && adx >= CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX;
   const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI;
-  const profitTooEarly = pnlPct < CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_PROFIT_PCT;
 
   const priceAboveEma8Ok =
     !CONFIG.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 ||
@@ -2588,7 +2585,14 @@ function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
   const bullishFvvoHold =
     CONFIG.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
 
-  const block = profitTooEarly || ((adxOk && rsiOk && priceAboveEma8Ok) || bullishFvvoHold);
+  const block =
+    stillEarlyProfit &&
+    adxOk &&
+    rsiOk &&
+    priceAboveEma8Ok &&
+    !fv.snap.burstBearish &&
+    !fv.snap.sniperSell &&
+    (bullishFvvoHold || true);
 
   if (CONFIG.POST_EXIT_CONT_TP_PROTECTION_LOG) {
     log("🟪 POST_EXIT_CONT_TP_PROTECTION_CHECK", {
@@ -2600,7 +2604,7 @@ function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
       rsi: round4(rsi),
       close: round4(close),
       ema8: round4(ema8),
-      profitTooEarly,
+      stillEarlyProfit,
       adxOk,
       rsiOk,
       priceAboveEma8Ok,
