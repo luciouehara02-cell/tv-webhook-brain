@@ -1,15 +1,13 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.1
+ * BrainRAY_Continuation_v4.2
  *
- * v4.1
+ * v4.2
+ * - keeps v4.1 launch-trade TP protection
+ * - extends early tier1 dynamic TP protection to post-exit continuation re-entry legs
  * - keeps v4.0 top-harvest
- * - keeps v4.0 re-entry / post-exit continuation
- * - fixes tick replay issue where dynamic_tp_tier1_giveback exits launch trades too early
- *
- * Main fix:
- * - protect launch trades from early tier1 dynamic TP in healthy trend conditions
+ * - keeps v4.1 re-entry / post-exit continuation logic
  */
 
 const app = express();
@@ -100,10 +98,6 @@ function maxFinite(...vals) {
   const good = vals.filter((v) => Number.isFinite(v));
   return good.length ? Math.max(...good) : NaN;
 }
-function minFinite(...vals) {
-  const good = vals.filter((v) => Number.isFinite(v));
-  return good.length ? Math.min(...good) : NaN;
-}
 function isLaunchMode(mode) {
   return [
     "bullish_trend_change_launch_long",
@@ -113,6 +107,12 @@ function isLaunchMode(mode) {
     "tick_confirmed_launch_long_strong",
   ].includes(String(mode || ""));
 }
+function isProtectedContinuationMode(mode) {
+  return [
+    "post_exit_continuation_reentry_long",
+    "post_exit_continuation_reentry_long_strong",
+  ].includes(String(mode || ""));
+}
 
 // --------------------------------------------------
 // config
@@ -120,7 +120,7 @@ function isLaunchMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.1"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.2"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -345,7 +345,7 @@ const CONFIG = {
     false
   ),
 
-  // v4.0 top harvest
+  // top harvest
   TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, true),
   TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
   TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
@@ -399,7 +399,7 @@ const CONFIG = {
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.8),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
 
-  // v4.1 launch TP protection
+  // launch protection
   LAUNCH_TP_PROTECTION_ENABLED: b(process.env.LAUNCH_TP_PROTECTION_ENABLED, true),
   LAUNCH_TP_PROTECTION_BLOCK_TIER1: b(
     process.env.LAUNCH_TP_PROTECTION_BLOCK_TIER1,
@@ -427,6 +427,40 @@ const CONFIG = {
   ),
   LAUNCH_TP_PROTECTION_LOG: b(
     process.env.LAUNCH_TP_PROTECTION_LOG,
+    true
+  ),
+
+  // v4.2 post-exit continuation protection
+  POST_EXIT_CONT_TP_PROTECTION_ENABLED: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_ENABLED,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_MIN_PROFIT_PCT: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_PROFIT_PCT,
+    0.70
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_MIN_ADX: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX,
+    28
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_MIN_RSI: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI,
+    58
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_LOG: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_LOG,
     true
   ),
 
@@ -1343,6 +1377,11 @@ function handleRayEvent(body) {
     }
 
     turnBullRegimeOn(ts, "ray_bullish_trend_change");
+    log("🟢 BULL_REGIME_ON", {
+      source: "ray_bullish_trend_change",
+      bullRegimeId: S.ray.bullRegimeId,
+      ts,
+    });
     log("🟢 RAY_BULLISH_TREND_CHANGE", { price, ts });
 
     if (CONFIG.TREND_CHANGE_LAUNCH_ENABLED) {
@@ -2528,6 +2567,50 @@ function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv) {
 
   return block;
 }
+function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
+  if (!CONFIG.POST_EXIT_CONT_TP_PROTECTION_ENABLED) return false;
+  if (!isProtectedContinuationMode(S.entryMode)) return false;
+  if (tier !== 1 || !CONFIG.POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1) return false;
+
+  const adx = n(feature?.adx, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+
+  const adxOk = Number.isFinite(adx) && adx >= CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX;
+  const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI;
+  const profitTooEarly = pnlPct < CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_PROFIT_PCT;
+
+  const priceAboveEma8Ok =
+    !CONFIG.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 ||
+    (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
+  const bullishFvvoHold =
+    CONFIG.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+
+  const block = profitTooEarly || ((adxOk && rsiOk && priceAboveEma8Ok) || bullishFvvoHold);
+
+  if (CONFIG.POST_EXIT_CONT_TP_PROTECTION_LOG) {
+    log("🟪 POST_EXIT_CONT_TP_PROTECTION_CHECK", {
+      block,
+      entryMode: S.entryMode,
+      tier,
+      pnlPct: round4(pnlPct),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      close: round4(close),
+      ema8: round4(ema8),
+      profitTooEarly,
+      adxOk,
+      rsiOk,
+      priceAboveEma8Ok,
+      bullishFvvoHold,
+      fvvo: fv,
+    });
+  }
+
+  return block;
+}
 
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
@@ -2571,6 +2654,17 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
       if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
         log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", {
+          tier: S.dynamicTpTier,
+          pnlPct: round4(pnlPct),
+          peakPnlPct: round4(peakPnl),
+          pnlGiveback: round4(pnlGiveback),
+          entryMode: S.entryMode,
+        });
+        return;
+      }
+
+      if (shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+        log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", {
           tier: S.dynamicTpTier,
           pnlPct: round4(pnlPct),
           peakPnlPct: round4(peakPnl),
@@ -2736,7 +2830,6 @@ function evaluateBarExit(feature) {
   const fv = getFvvoScore();
   const prev = S.prevFeature;
 
-  // top-harvest first
   const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
   if (topHarvest.allow) {
     return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
