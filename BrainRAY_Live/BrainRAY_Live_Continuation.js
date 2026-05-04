@@ -1,13 +1,13 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.4b
+ * BrainRAY_Continuation_v4.4c
  *
- * v4.4b
- * - keeps v4.4a hotfix base
- * - keeps TOP_HARVEST disabled for clean re-entry-only test
- * - loosens REENTRY_TOP_HARVEST with a second "soft harvest" path
- * - no change to launch logic / DTP / protections
+ * v4.4c
+ * - based on v4.4b
+ * - keeps re-entry-only harvest isolation
+ * - soft re-entry harvest no longer requires formal tier1 armed
+ * - uses pnl + peakPnl + ADX + extension instead
  */
 
 const app = express();
@@ -127,7 +127,7 @@ function isReentryHarvestMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4b"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4c"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -352,7 +352,7 @@ const CONFIG = {
     false
   ),
 
-  // disabled for clean re-entry-only test
+  // IMPORTANT: disabled for clean test
   TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, false),
   TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
   TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
@@ -397,7 +397,7 @@ const CONFIG = {
   ),
   TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
 
-  // re-entry top harvest
+  // v4.4c re-entry top harvest
   REENTRY_TOP_HARVEST_ENABLED: b(process.env.REENTRY_TOP_HARVEST_ENABLED, true),
   REENTRY_TOP_HARVEST_MIN_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
@@ -436,14 +436,18 @@ const CONFIG = {
     true
   ),
 
-  // new softer path
+  // v4.4c softer path
   REENTRY_TOP_HARVEST_SOFT_ENABLED: b(
     process.env.REENTRY_TOP_HARVEST_SOFT_ENABLED,
     true
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
-    0.52
+    0.50
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
+    0.58
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_ADX: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_ADX,
@@ -451,15 +455,11 @@ const CONFIG = {
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
-    0.28
+    0.30
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
-    0.42
-  ),
-  REENTRY_TOP_HARVEST_SOFT_REQUIRE_TIER1_ARMED: b(
-    process.env.REENTRY_TOP_HARVEST_SOFT_REQUIRE_TIER1_ARMED,
-    true
+    0.50
   ),
   REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE: b(
     process.env.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE,
@@ -1042,6 +1042,13 @@ function recentRsiHigh(lookback = 3) {
     Math.max(1, Math.min(3, lookback))
   );
   return maxFinite(...arr.map((x) => n(x?.rsi, NaN)));
+}
+function recentCloseHigh(lookback = 3) {
+  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(
+    0,
+    Math.max(1, Math.min(3, lookback))
+  );
+  return maxFinite(...arr.map((x) => n(x?.close, NaN)));
 }
 
 // --------------------------------------------------
@@ -1889,6 +1896,7 @@ function evaluateEntry(source, body) {
   const bullishFvvo = fv.score > 0;
   const strongNegativeFvvo = fv.snap.burstBearish || fv.score <= -2;
 
+  // fast tick launch
   if (source === "tick_confirmed_fast_launch" && CONFIG.FAST_TICK_LAUNCH_ENABLED) {
     const tl = S.fastTickLaunch;
     const rr = [];
@@ -1967,6 +1975,7 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // trend change launch
   if (
     (source === "immediate_trend_change_launch" ||
       source === "deferred_trend_change_launch") &&
@@ -2092,6 +2101,7 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // post-exit continuation re-entry
   if (
     source === "post_exit_continuation_reentry" &&
     CONFIG.POST_EXIT_CONTINUATION_ENABLED
@@ -2225,6 +2235,7 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // feature re-entry
   if (source === "feature_reentry" || (CONFIG.PHASE2_REENTRY_ENABLED && S.reentry.eligible)) {
     const rr = [];
     const useFast = CONFIG.FAST_REENTRY_ENABLED;
@@ -2328,6 +2339,7 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // continuation
   const contReasons = [];
   const contMinRsi = Math.max(
     0,
@@ -2377,6 +2389,7 @@ function evaluateEntry(source, body) {
     };
   }
 
+  // breakout memory fallback
   const mem = S.breakoutMemory;
   const memReasons = [];
   const memActive = CONFIG.BREAKOUT_MEMORY_ENABLED && mem.active && !mem.used;
@@ -2657,7 +2670,7 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
     (CONFIG.REENTRY_TOP_HARVEST_ALLOW_ONE_WEAK_BAR && oneWeakBar) ||
     bearishFvvoAccel;
 
-  // Path A = original classic trigger
+  // classic path
   const classicReasons = [];
   reasonPush(
     classicReasons,
@@ -2694,11 +2707,11 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
 
   const classicAllow = classicReasons.length === 0;
 
-  // Path B = softer trigger
-  const softTier1Armed = S.dynamicTpTier >= 1 || S.peakPnlPct >= CONFIG.DTP_TIER1_ARM_PCT;
+  // soft path v4.4c
+  const softStrongNegativeFvvo = fv.snap.burstBearish || fv.score <= -2;
   const softFvvoOk =
     !CONFIG.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE ||
-    !(fv.snap.burstBearish || fv.score <= -2);
+    !softStrongNegativeFvvo;
 
   const softReasons = [];
   if (CONFIG.REENTRY_TOP_HARVEST_SOFT_ENABLED) {
@@ -2706,6 +2719,11 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
       softReasons,
       pnlPct < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
       "soft_profit_too_low"
+    );
+    reasonPush(
+      softReasons,
+      (S.peakPnlPct || 0) < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
+      "soft_peak_profit_too_low"
     );
     reasonPush(
       softReasons,
@@ -2721,11 +2739,6 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
       softReasons,
       extFromEma18 < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
       "soft_ext_from_ema18_too_low"
-    );
-    reasonPush(
-      softReasons,
-      CONFIG.REENTRY_TOP_HARVEST_SOFT_REQUIRE_TIER1_ARMED && !softTier1Armed,
-      "soft_tier1_not_armed"
     );
     reasonPush(
       softReasons,
@@ -2757,7 +2770,6 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
       oneWeakBar,
       twoWeakBars,
       bearishFvvoAccel,
-      softTier1Armed,
       fvvo: fv,
     });
   }
@@ -2773,7 +2785,6 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
       oneWeakBar,
       twoWeakBars,
       bearishFvvoAccel,
-      softTier1Armed,
     };
   }
 
@@ -2789,7 +2800,6 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
     oneWeakBar,
     twoWeakBars,
     bearishFvvoAccel,
-    softTier1Armed,
   };
 }
 
@@ -2892,7 +2902,7 @@ function isStrongTrendHold(feature, fv) {
 
 function shouldTopHarvestExit(feature, pnlPct, fv) {
   if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
-  return { allow: false, reason: "disabled_for_v44b" };
+  return { allow: false, reason: "disabled_for_v44c" };
 }
 
 function evaluateBarExit(feature) {
