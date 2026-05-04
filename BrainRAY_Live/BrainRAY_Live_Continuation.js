@@ -1,13 +1,13 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.4
+ * BrainRAY_Continuation_v4.4a
  *
- * v4.4
- * - keeps v4.3 launch protection
- * - keeps main DTP unchanged
- * - adds re-entry-only top-harvest exit
- * - targets strong re-entry legs before rollback
+ * v4.4a
+ * - hotfix only
+ * - fixes doExit() runtime bug
+ * - isolates re-entry top-harvest test
+ * - keeps launch logic / DTP / protections unchanged
  */
 
 const app = express();
@@ -127,7 +127,7 @@ function isReentryHarvestMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4a"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -352,8 +352,8 @@ const CONFIG = {
     false
   ),
 
-  // top harvest general
-  TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, true),
+  // IMPORTANT: disabled for clean v4.4a test
+  TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, false),
   TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
   TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
   TOP_HARVEST_MIN_RSI_RECENT_HIGH: n(process.env.TOP_HARVEST_MIN_RSI_RECENT_HIGH, 64),
@@ -397,7 +397,7 @@ const CONFIG = {
   ),
   TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
 
-  // v4.4 re-entry top harvest
+  // v4.4a re-entry top harvest
   REENTRY_TOP_HARVEST_ENABLED: b(process.env.REENTRY_TOP_HARVEST_ENABLED, true),
   REENTRY_TOP_HARVEST_MIN_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
@@ -3228,7 +3228,8 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   });
 
   if (exitClass === "cycle_exit") {
-    markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit);
+    // hotfix: use pnlPct, not undefined exitPnlPct
+    markReentryEligible(reason, exitPrice, pnlPct, peakBeforeExit);
   } else {
     clearReentry("non_cycle_exit");
     clearPostExitContinuation("non_cycle_exit");
