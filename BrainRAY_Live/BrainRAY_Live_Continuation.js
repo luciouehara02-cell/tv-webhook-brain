@@ -1,12 +1,15 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.0
+ * BrainRAY_Continuation_v4.1
  *
- * v4.0
- * - keeps v3.9 re-entry structure
- * - fixes top-harvest TP to trigger earlier / more reliably
- * - adds explicit top-harvest debug logging
+ * v4.1
+ * - keeps v4.0 top-harvest
+ * - keeps v4.0 re-entry / post-exit continuation
+ * - fixes tick replay issue where dynamic_tp_tier1_giveback exits launch trades too early
+ *
+ * Main fix:
+ * - protect launch trades from early tier1 dynamic TP in healthy trend conditions
  */
 
 const app = express();
@@ -101,6 +104,15 @@ function minFinite(...vals) {
   const good = vals.filter((v) => Number.isFinite(v));
   return good.length ? Math.min(...good) : NaN;
 }
+function isLaunchMode(mode) {
+  return [
+    "bullish_trend_change_launch_long",
+    "bullish_trend_change_launch_long_strong",
+    "bullish_trend_change_launch_long_slow_ramp",
+    "tick_confirmed_launch_long",
+    "tick_confirmed_launch_long_strong",
+  ].includes(String(mode || ""));
+}
 
 // --------------------------------------------------
 // config
@@ -108,7 +120,7 @@ function minFinite(...vals) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.0"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.1"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -227,7 +239,7 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // v3.8 / v3.9 TP protection
+  // local TP protection
   LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
   LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
   LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
@@ -378,6 +390,7 @@ const CONFIG = {
   ),
   TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
 
+  // dynamic TP
   DYNAMIC_TP_ENABLED: b(process.env.DYNAMIC_TP_ENABLED, true),
   DTP_TIER1_ARM_PCT: n(process.env.DTP_TIER1_ARM_PCT, 0.6),
   DTP_TIER1_GIVEBACK_PCT: n(process.env.DTP_TIER1_GIVEBACK_PCT, 0.35),
@@ -385,6 +398,37 @@ const CONFIG = {
   DTP_TIER2_GIVEBACK_PCT: n(process.env.DTP_TIER2_GIVEBACK_PCT, 0.22),
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.8),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
+
+  // v4.1 launch TP protection
+  LAUNCH_TP_PROTECTION_ENABLED: b(process.env.LAUNCH_TP_PROTECTION_ENABLED, true),
+  LAUNCH_TP_PROTECTION_BLOCK_TIER1: b(
+    process.env.LAUNCH_TP_PROTECTION_BLOCK_TIER1,
+    true
+  ),
+  LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT: n(
+    process.env.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT,
+    0.90
+  ),
+  LAUNCH_TP_PROTECTION_MIN_ADX: n(
+    process.env.LAUNCH_TP_PROTECTION_MIN_ADX,
+    35
+  ),
+  LAUNCH_TP_PROTECTION_MIN_RSI: n(
+    process.env.LAUNCH_TP_PROTECTION_MIN_RSI,
+    60
+  ),
+  LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8: b(
+    process.env.LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8,
+    true
+  ),
+  LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO: b(
+    process.env.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO,
+    true
+  ),
+  LAUNCH_TP_PROTECTION_LOG: b(
+    process.env.LAUNCH_TP_PROTECTION_LOG,
+    true
+  ),
 
   // re-entry
   PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
@@ -2440,6 +2484,50 @@ function dynamicTpGivebackForTier(tier) {
   if (tier === 1) return CONFIG.DTP_TIER1_GIVEBACK_PCT;
   return null;
 }
+function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv) {
+  if (!CONFIG.LAUNCH_TP_PROTECTION_ENABLED) return false;
+  if (!isLaunchMode(S.entryMode)) return false;
+  if (tier !== 1 || !CONFIG.LAUNCH_TP_PROTECTION_BLOCK_TIER1) return false;
+
+  const adx = n(feature?.adx, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+
+  const adxOk = Number.isFinite(adx) && adx >= CONFIG.LAUNCH_TP_PROTECTION_MIN_ADX;
+  const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.LAUNCH_TP_PROTECTION_MIN_RSI;
+  const profitTooEarly = pnlPct < CONFIG.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT;
+
+  const priceAboveEma8Ok =
+    !CONFIG.LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 ||
+    (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
+  const bullishFvvoHold =
+    CONFIG.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+
+  const block = profitTooEarly || ((adxOk && rsiOk && priceAboveEma8Ok) || bullishFvvoHold);
+
+  if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+    log("🟦 LAUNCH_TP_PROTECTION_CHECK", {
+      block,
+      entryMode: S.entryMode,
+      tier,
+      pnlPct: round4(pnlPct),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      close: round4(close),
+      ema8: round4(ema8),
+      profitTooEarly,
+      adxOk,
+      rsiOk,
+      priceAboveEma8Ok,
+      bullishFvvoHold,
+      fvvo: fv,
+    });
+  }
+
+  return block;
+}
 
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
@@ -2477,8 +2565,21 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
     const peakPnl = S.peakPnlPct || 0;
     const pnlGiveback = peakPnl - pnlPct;
+    const fv = getFvvoScore();
+    const feature = S.lastFeature;
 
     if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
+      if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+        log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", {
+          tier: S.dynamicTpTier,
+          pnlPct: round4(pnlPct),
+          peakPnlPct: round4(peakPnl),
+          pnlGiveback: round4(pnlGiveback),
+          entryMode: S.entryMode,
+        });
+        return;
+      }
+
       return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, eventIso, "cycle_exit");
     }
   } else {
@@ -2635,7 +2736,7 @@ function evaluateBarExit(feature) {
   const fv = getFvvoScore();
   const prev = S.prevFeature;
 
-  // v4.0 top-harvest first
+  // top-harvest first
   const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
   if (topHarvest.allow) {
     return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
