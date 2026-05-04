@@ -1,13 +1,13 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.4a
+ * BrainRAY_Continuation_v4.4b
  *
- * v4.4a
- * - hotfix only
- * - fixes doExit() runtime bug
- * - isolates re-entry top-harvest test
- * - keeps launch logic / DTP / protections unchanged
+ * v4.4b
+ * - keeps v4.4a hotfix base
+ * - keeps TOP_HARVEST disabled for clean re-entry-only test
+ * - loosens REENTRY_TOP_HARVEST with a second "soft harvest" path
+ * - no change to launch logic / DTP / protections
  */
 
 const app = express();
@@ -127,7 +127,7 @@ function isReentryHarvestMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4a"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4b"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -352,7 +352,7 @@ const CONFIG = {
     false
   ),
 
-  // IMPORTANT: disabled for clean v4.4a test
+  // disabled for clean re-entry-only test
   TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, false),
   TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
   TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
@@ -397,7 +397,7 @@ const CONFIG = {
   ),
   TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
 
-  // v4.4a re-entry top harvest
+  // re-entry top harvest
   REENTRY_TOP_HARVEST_ENABLED: b(process.env.REENTRY_TOP_HARVEST_ENABLED, true),
   REENTRY_TOP_HARVEST_MIN_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
@@ -433,6 +433,36 @@ const CONFIG = {
   ),
   REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR: b(
     process.env.REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR,
+    true
+  ),
+
+  // new softer path
+  REENTRY_TOP_HARVEST_SOFT_ENABLED: b(
+    process.env.REENTRY_TOP_HARVEST_SOFT_ENABLED,
+    true
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
+    0.52
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_ADX: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_ADX,
+    30
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
+    0.28
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
+    0.42
+  ),
+  REENTRY_TOP_HARVEST_SOFT_REQUIRE_TIER1_ARMED: b(
+    process.env.REENTRY_TOP_HARVEST_SOFT_REQUIRE_TIER1_ARMED,
+    true
+  ),
+  REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE: b(
+    process.env.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE,
     true
   ),
   REENTRY_TOP_HARVEST_LOG_DEBUG: b(
@@ -1012,13 +1042,6 @@ function recentRsiHigh(lookback = 3) {
     Math.max(1, Math.min(3, lookback))
   );
   return maxFinite(...arr.map((x) => n(x?.rsi, NaN)));
-}
-function recentCloseHigh(lookback = 3) {
-  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(
-    0,
-    Math.max(1, Math.min(3, lookback))
-  );
-  return maxFinite(...arr.map((x) => n(x?.close, NaN)));
 }
 
 // --------------------------------------------------
@@ -2305,76 +2328,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  if (source === "ray_bullish_trend_continuation" && CONFIG.ELEVATED_CONTINUATION_ENABLED) {
-    const rr = [];
-    const emaSlope = ema8SlopePct();
-
-    const strongElevated =
-      Number.isFinite(rsi) &&
-      Number.isFinite(adx) &&
-      rsi >= CONFIG.ELEVATED_CONTINUATION_MIN_RSI + 6 &&
-      adx >= CONFIG.ELEVATED_CONTINUATION_MIN_ADX + 6 &&
-      Number.isFinite(emaSlope) &&
-      emaSlope >= CONFIG.ELEVATED_CONTINUATION_MIN_EMA8_SLOPE_PCT;
-
-    let allowedChase = CONFIG.ELEVATED_CONTINUATION_MAX_CHASE_PCT;
-    if (bullishFvvo) allowedChase += CONFIG.FVVO_CONT_MAX_CHASE_BONUS_PCT;
-
-    const contAnchor = Number.isFinite(ema8) ? ema8 : close;
-    const contChasePct = Number.isFinite(contAnchor) ? pctDiff(contAnchor, px) : 999;
-
-    reasonPush(rr, !emaBullOk, "elevated_cont_ema_invalid");
-    reasonPush(
-      rr,
-      CONFIG.ELEVATED_CONTINUATION_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8Ok,
-      "elevated_cont_close_below_ema8"
-    );
-    reasonPush(
-      rr,
-      Number.isFinite(rsi) && rsi < CONFIG.ELEVATED_CONTINUATION_MIN_RSI,
-      "elevated_cont_rsi_too_low"
-    );
-    reasonPush(
-      rr,
-      Number.isFinite(adx) && adx < CONFIG.ELEVATED_CONTINUATION_MIN_ADX,
-      "elevated_cont_adx_too_low"
-    );
-    reasonPush(
-      rr,
-      Number.isFinite(emaSlope) &&
-        emaSlope < CONFIG.ELEVATED_CONTINUATION_MIN_EMA8_SLOPE_PCT,
-      "elevated_cont_ema8_slope_too_low"
-    );
-    reasonPush(
-      rr,
-      extFromEma18 > CONFIG.ELEVATED_CONTINUATION_MAX_EXT_FROM_EMA18_PCT,
-      "elevated_cont_too_extended_from_ema18"
-    );
-    reasonPush(rr, contChasePct > allowedChase, "elevated_cont_chase_too_high");
-    reasonPush(
-      rr,
-      strongNegativeFvvo &&
-        !CONFIG.ELEVATED_CONTINUATION_ALLOW_NEGATIVE_FVVO_IF_STRONG &&
-        !strongElevated,
-      "elevated_cont_negative_fvvo"
-    );
-
-    if (rr.length === 0) {
-      return {
-        allow: true,
-        source,
-        mode: strongElevated
-          ? "elevated_bullish_trend_continuation_long_strong"
-          : "elevated_bullish_trend_continuation_long",
-        entryPrice: px,
-        contChasePct,
-        ema8SlopePct: emaSlope,
-        strongElevated,
-        fvvo: fv,
-      };
-    }
-  }
-
   const contReasons = [];
   const contMinRsi = Math.max(
     0,
@@ -2699,51 +2652,102 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
     CONFIG.REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR &&
     (fv.score < 0 || fv.snap.sniperSell || fv.snap.burstBearish);
 
-  const weaknessOk =
+  const classicWeaknessOk =
     (CONFIG.REENTRY_TOP_HARVEST_ALLOW_TWO_WEAK_BARS && twoWeakBars) ||
     (CONFIG.REENTRY_TOP_HARVEST_ALLOW_ONE_WEAK_BAR && oneWeakBar) ||
     bearishFvvoAccel;
 
-  const reasons = [];
+  // Path A = original classic trigger
+  const classicReasons = [];
   reasonPush(
-    reasons,
+    classicReasons,
     pnlPct < CONFIG.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
     "profit_too_low"
   );
   reasonPush(
-    reasons,
+    classicReasons,
     !Number.isFinite(adx) || adx < CONFIG.REENTRY_TOP_HARVEST_MIN_ADX,
     "adx_too_low"
   );
   reasonPush(
-    reasons,
+    classicReasons,
     !Number.isFinite(rsiHighRecent) ||
       rsiHighRecent < CONFIG.REENTRY_TOP_HARVEST_MIN_RSI_RECENT_HIGH,
     "no_recent_rsi_high"
   );
   reasonPush(
-    reasons,
+    classicReasons,
     extFromEma8 < CONFIG.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT,
     "ext_from_ema8_too_low"
   );
   reasonPush(
-    reasons,
+    classicReasons,
     extFromEma18 < CONFIG.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT,
     "ext_from_ema18_too_low"
   );
   reasonPush(
-    reasons,
+    classicReasons,
     CONFIG.REENTRY_TOP_HARVEST_REQUIRE_RSI_ROLLDOWN && !rsiRolldown,
     "rsi_not_rolling_down"
   );
-  reasonPush(reasons, !weaknessOk, "weakness_not_confirmed");
+  reasonPush(classicReasons, !classicWeaknessOk, "weakness_not_confirmed");
+
+  const classicAllow = classicReasons.length === 0;
+
+  // Path B = softer trigger
+  const softTier1Armed = S.dynamicTpTier >= 1 || S.peakPnlPct >= CONFIG.DTP_TIER1_ARM_PCT;
+  const softFvvoOk =
+    !CONFIG.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE ||
+    !(fv.snap.burstBearish || fv.score <= -2);
+
+  const softReasons = [];
+  if (CONFIG.REENTRY_TOP_HARVEST_SOFT_ENABLED) {
+    reasonPush(
+      softReasons,
+      pnlPct < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
+      "soft_profit_too_low"
+    );
+    reasonPush(
+      softReasons,
+      !Number.isFinite(adx) || adx < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_ADX,
+      "soft_adx_too_low"
+    );
+    reasonPush(
+      softReasons,
+      extFromEma8 < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
+      "soft_ext_from_ema8_too_low"
+    );
+    reasonPush(
+      softReasons,
+      extFromEma18 < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
+      "soft_ext_from_ema18_too_low"
+    );
+    reasonPush(
+      softReasons,
+      CONFIG.REENTRY_TOP_HARVEST_SOFT_REQUIRE_TIER1_ARMED && !softTier1Armed,
+      "soft_tier1_not_armed"
+    );
+    reasonPush(
+      softReasons,
+      !softFvvoOk,
+      "soft_strong_negative_fvvo"
+    );
+  } else {
+    softReasons.push("soft_disabled");
+  }
+
+  const softAllow = softReasons.length === 0;
 
   if (CONFIG.REENTRY_TOP_HARVEST_LOG_DEBUG) {
     log("🟠 REENTRY_TOP_HARVEST_CHECK", {
-      allow: reasons.length === 0,
+      allow: classicAllow || softAllow,
+      path: classicAllow ? "classic" : softAllow ? "soft" : "none",
       entryMode: S.entryMode,
-      reasons,
+      classicReasons,
+      softReasons,
       pnlPct: round4(pnlPct),
+      peakPnlPct: round4(S.peakPnlPct),
+      dynamicTpTier: S.dynamicTpTier,
       adx: round4(adx),
       rsi: round4(feature.rsi),
       recentRsiHigh: round4(rsiHighRecent),
@@ -2753,15 +2757,15 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
       oneWeakBar,
       twoWeakBars,
       bearishFvvoAccel,
+      softTier1Armed,
       fvvo: fv,
     });
   }
 
-  if (reasons.length > 0) {
+  if (classicAllow || softAllow) {
     return {
-      allow: false,
-      reason: reasons[0],
-      reasons,
+      allow: true,
+      path: classicAllow ? "classic" : "soft",
       extFromEma8,
       extFromEma18,
       recentRsiHigh: rsiHighRecent,
@@ -2769,11 +2773,15 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
       oneWeakBar,
       twoWeakBars,
       bearishFvvoAccel,
+      softTier1Armed,
     };
   }
 
   return {
-    allow: true,
+    allow: false,
+    reason: classicReasons[0] || softReasons[0] || "blocked",
+    classicReasons,
+    softReasons,
     extFromEma8,
     extFromEma18,
     recentRsiHigh: rsiHighRecent,
@@ -2781,6 +2789,7 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
     oneWeakBar,
     twoWeakBars,
     bearishFvvoAccel,
+    softTier1Armed,
   };
 }
 
@@ -2883,116 +2892,7 @@ function isStrongTrendHold(feature, fv) {
 
 function shouldTopHarvestExit(feature, pnlPct, fv) {
   if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
-  if (CONFIG.TOP_HARVEST_REQUIRE_BULL_CONTEXT && !S.ray.bullContext) {
-    return { allow: false, reason: "no_bull_context" };
-  }
-
-  const price = n(feature.close, NaN);
-  const ema8 = n(feature.ema8, NaN);
-  const ema18 = n(feature.ema18, NaN);
-  const adx = n(feature.adx, NaN);
-  const rsi = n(feature.rsi, NaN);
-  const prev = S.prevFeature;
-
-  if (!Number.isFinite(price) || !Number.isFinite(ema8) || !Number.isFinite(ema18)) {
-    return { allow: false, reason: "bad_feature_values" };
-  }
-
-  const extFromEma8 = pctDiff(ema8, price);
-  const extFromEma18 = pctDiff(ema18, price);
-
-  const rsiHighRecent = recentRsiHigh(3);
-  const hadRecentRsiHigh =
-    Number.isFinite(rsiHighRecent) &&
-    rsiHighRecent >= CONFIG.TOP_HARVEST_MIN_RSI_RECENT_HIGH;
-
-  const rsiRolldown =
-    Number.isFinite(prev?.rsi) &&
-    Number.isFinite(rsi) &&
-    rsi <= prev.rsi;
-
-  const oneWeakBar = wasWeakeningBar(feature, prev);
-  const twoWeakBars = twoConsecutiveWeakeningBars();
-
-  const recentHigh = recentCloseHigh(CONFIG.TOP_HARVEST_NEAR_PEAK_LOOKBACK_BARS);
-  const nearRecentPeakPullbackPct =
-    Number.isFinite(recentHigh) ? -pctDiff(recentHigh, price) : NaN;
-
-  const bearishFvvo = fv.score < 0 || fv.snap.burstBearish || fv.snap.sniperSell;
-  const neutralFvvo = fv.score === 0 && !fv.snap.burstBullish && !fv.snap.burstBearish;
-  const strongBullishFvvo = fv.score >= 2 || fv.snap.burstBullish;
-
-  const weaknessOk =
-    twoWeakBars ||
-    (!CONFIG.TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS && oneWeakBar) ||
-    (CONFIG.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_BEARISH_FVVO && oneWeakBar && bearishFvvo) ||
-    (CONFIG.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_NEUTRAL_FVVO && oneWeakBar && neutralFvvo);
-
-  const reasons = [];
-  reasonPush(reasons, pnlPct < CONFIG.TOP_HARVEST_MIN_PROFIT_PCT, "profit_too_low");
-  reasonPush(reasons, !Number.isFinite(adx) || adx < CONFIG.TOP_HARVEST_MIN_ADX, "adx_too_low");
-  reasonPush(reasons, !hadRecentRsiHigh, "no_recent_rsi_high");
-  reasonPush(reasons, extFromEma8 < CONFIG.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, "ext_from_ema8_too_low");
-  reasonPush(reasons, extFromEma18 < CONFIG.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT, "ext_from_ema18_too_low");
-  reasonPush(
-    reasons,
-    Number.isFinite(nearRecentPeakPullbackPct) &&
-      nearRecentPeakPullbackPct > CONFIG.TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT,
-    "already_too_far_from_peak"
-  );
-  reasonPush(reasons, CONFIG.TOP_HARVEST_REQUIRE_RSI_ROLLDOWN && !rsiRolldown, "rsi_not_rolling_down");
-  reasonPush(reasons, CONFIG.TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO && strongBullishFvvo, "strong_bullish_fvvo");
-  reasonPush(reasons, !weaknessOk, "weakness_not_confirmed");
-
-  if (CONFIG.TOP_HARVEST_LOG_DEBUG) {
-    log("🟣 TOP_HARVEST_CHECK", {
-      allow: reasons.length === 0,
-      reasons,
-      pnlPct: round4(pnlPct),
-      adx: round4(adx),
-      rsi: round4(rsi),
-      extFromEma8: round4(extFromEma8),
-      extFromEma18: round4(extFromEma18),
-      recentRsiHigh: round4(rsiHighRecent),
-      oneWeakBar,
-      twoWeakBars,
-      rsiRolldown,
-      bearishFvvo,
-      neutralFvvo,
-      strongBullishFvvo,
-      nearRecentPeakPullbackPct: round4(nearRecentPeakPullbackPct),
-    });
-  }
-
-  if (reasons.length > 0) {
-    return {
-      allow: false,
-      reason: reasons[0],
-      reasons,
-      extFromEma8,
-      extFromEma18,
-      recentRsiHigh: rsiHighRecent,
-      rsiRolldown,
-      oneWeakBar,
-      twoWeakBars,
-      bearishFvvo,
-      neutralFvvo,
-      nearRecentPeakPullbackPct,
-    };
-  }
-
-  return {
-    allow: true,
-    extFromEma8,
-    extFromEma18,
-    recentRsiHigh: rsiHighRecent,
-    rsiRolldown,
-    oneWeakBar,
-    twoWeakBars,
-    bearishFvvo,
-    neutralFvvo,
-    nearRecentPeakPullbackPct,
-  };
+  return { allow: false, reason: "disabled_for_v44b" };
 }
 
 function evaluateBarExit(feature) {
@@ -3228,7 +3128,6 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   });
 
   if (exitClass === "cycle_exit") {
-    // hotfix: use pnlPct, not undefined exitPnlPct
     markReentryEligible(reason, exitPrice, pnlPct, peakBeforeExit);
   } else {
     clearReentry("non_cycle_exit");
