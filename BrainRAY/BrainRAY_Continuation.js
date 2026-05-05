@@ -1,14 +1,14 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v3.6
+ * BrainRAY_Continuation_v4.4d
  *
- * v3.6
- * - stronger anti-churn TP exit in trend
- * - local TP now requires clearer weakness confirmation
- * - strong trend hard-hold improved
- * - keeps v3.5 post-exit continuation logic
- * - keeps replay event-time clock fix
+ * v4.4d
+ * - based on v4.4c
+ * - keeps re-entry-only harvest isolation
+ * - softer re-entry harvest remains enabled
+ * - lowers soft peak-profit threshold so first re-entry can harvest earlier
+ * - intended for replay test with higher re-entry allowance
  */
 
 const app = express();
@@ -99,6 +99,28 @@ function maxFinite(...vals) {
   const good = vals.filter((v) => Number.isFinite(v));
   return good.length ? Math.max(...good) : NaN;
 }
+function isLaunchMode(mode) {
+  return [
+    "bullish_trend_change_launch_long",
+    "bullish_trend_change_launch_long_strong",
+    "bullish_trend_change_launch_long_slow_ramp",
+    "tick_confirmed_launch_long",
+    "tick_confirmed_launch_long_strong",
+  ].includes(String(mode || ""));
+}
+function isProtectedContinuationMode(mode) {
+  return [
+    "post_exit_continuation_reentry_long",
+    "post_exit_continuation_reentry_long_strong",
+  ].includes(String(mode || ""));
+}
+function isReentryHarvestMode(mode) {
+  return [
+    "post_exit_continuation_reentry_long",
+    "post_exit_continuation_reentry_long_strong",
+    "feature_pullback_reclaim_reentry_long_strong",
+  ].includes(String(mode || ""));
+}
 
 // --------------------------------------------------
 // config
@@ -106,7 +128,7 @@ function maxFinite(...vals) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v3.6"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4d"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -225,7 +247,7 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // v3.6 stronger TP hold
+  // local TP protection
   LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
   LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
   LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
@@ -246,8 +268,6 @@ const CONFIG = {
     process.env.LOCAL_TP_FORCE_ALLOW_ON_TWO_WEAKENING_BARS,
     true
   ),
-
-  // new v3.6 confirmation rules
   LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND: b(
     process.env.LOCAL_TP_REQUIRE_TWO_WEAKENING_BARS_IN_STRONG_TREND,
     true
@@ -264,6 +284,62 @@ const CONFIG = {
     process.env.LOCAL_TP_REQUIRE_CLOSE_BELOW_EMA18_OR_2_WEAK_BARS,
     true
   ),
+  LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED: b(
+    process.env.LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED,
+    true
+  ),
+  LOCAL_TP_STRONG_TREND_HARD_HOLD_MIN_ADX: n(
+    process.env.LOCAL_TP_STRONG_TREND_HARD_HOLD_MIN_ADX,
+    35
+  ),
+  LOCAL_TP_STRONG_TREND_HARD_HOLD_REQUIRE_EMA8_ABOVE_EMA18: b(
+    process.env.LOCAL_TP_STRONG_TREND_HARD_HOLD_REQUIRE_EMA8_ABOVE_EMA18,
+    true
+  ),
+  LOCAL_TP_STRONG_TREND_HARD_HOLD_REQUIRE_RSI_ABOVE: n(
+    process.env.LOCAL_TP_STRONG_TREND_HARD_HOLD_REQUIRE_RSI_ABOVE,
+    55
+  ),
+  LOCAL_TP_STRONG_TREND_ALLOW_ONLY_IF_CLOSE_BELOW_EMA18: b(
+    process.env.LOCAL_TP_STRONG_TREND_ALLOW_ONLY_IF_CLOSE_BELOW_EMA18,
+    true
+  ),
+  LOCAL_TP_STRONG_TREND_ALLOW_IF_TWO_WEAK_BARS_AND_RSI_WEAK: b(
+    process.env.LOCAL_TP_STRONG_TREND_ALLOW_IF_TWO_WEAK_BARS_AND_RSI_WEAK,
+    true
+  ),
+  LOCAL_TP_STRONG_TREND_RSI_WEAK_MAX: n(
+    process.env.LOCAL_TP_STRONG_TREND_RSI_WEAK_MAX,
+    52
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED,
+    true
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_MIN_ADX: n(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_MIN_ADX,
+    35
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_EMA8_GT_EMA18: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_EMA8_GT_EMA18,
+    true
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_CLOSE_BELOW_EMA18: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_CLOSE_BELOW_EMA18,
+    false
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_ALLOW_TWO_WEAK_BARS_AND_RSI_WEAK: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_ALLOW_TWO_WEAK_BARS_AND_RSI_WEAK,
+    true
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_RSI_WEAK_MAX: n(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_RSI_WEAK_MAX,
+    52
+  ),
+  LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_TWO_WEAK_BARS: b(
+    process.env.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_TWO_WEAK_BARS,
+    true
+  ),
 
   STRONG_TREND_HOLD_ENABLED: b(process.env.STRONG_TREND_HOLD_ENABLED, true),
   STRONG_TREND_HOLD_MIN_RSI: n(process.env.STRONG_TREND_HOLD_MIN_RSI, 64),
@@ -277,6 +353,124 @@ const CONFIG = {
     false
   ),
 
+  TOP_HARVEST_ENABLED: b(process.env.TOP_HARVEST_ENABLED, false),
+  TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
+  TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
+  TOP_HARVEST_MIN_RSI_RECENT_HIGH: n(process.env.TOP_HARVEST_MIN_RSI_RECENT_HIGH, 64),
+  TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, 0.30),
+  TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT, 0.45),
+  TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS: b(
+    process.env.TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS,
+    false
+  ),
+  TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_BEARISH_FVVO: b(
+    process.env.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_BEARISH_FVVO,
+    true
+  ),
+  TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_NEUTRAL_FVVO: b(
+    process.env.TOP_HARVEST_ALLOW_ONE_WEAKENING_BAR_IF_NEUTRAL_FVVO,
+    true
+  ),
+  TOP_HARVEST_REQUIRE_RSI_ROLLDOWN: b(
+    process.env.TOP_HARVEST_REQUIRE_RSI_ROLLDOWN,
+    true
+  ),
+  TOP_HARVEST_REQUIRE_NO_NEW_PRICE_EXPANSION: b(
+    process.env.TOP_HARVEST_REQUIRE_NO_NEW_PRICE_EXPANSION,
+    false
+  ),
+  TOP_HARVEST_NEAR_PEAK_LOOKBACK_BARS: n(
+    process.env.TOP_HARVEST_NEAR_PEAK_LOOKBACK_BARS,
+    3
+  ),
+  TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT: n(
+    process.env.TOP_HARVEST_MAX_PULLBACK_FROM_PEAK_PCT,
+    0.45
+  ),
+  TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO: b(
+    process.env.TOP_HARVEST_BLOCK_IF_STRONG_BULLISH_FVVO,
+    false
+  ),
+  TOP_HARVEST_REQUIRE_BULL_CONTEXT: b(
+    process.env.TOP_HARVEST_REQUIRE_BULL_CONTEXT,
+    true
+  ),
+  TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
+
+  // v4.4d re-entry top harvest
+  REENTRY_TOP_HARVEST_ENABLED: b(process.env.REENTRY_TOP_HARVEST_ENABLED, true),
+  REENTRY_TOP_HARVEST_MIN_PROFIT_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
+    0.55
+  ),
+  REENTRY_TOP_HARVEST_MIN_ADX: n(
+    process.env.REENTRY_TOP_HARVEST_MIN_ADX,
+    28
+  ),
+  REENTRY_TOP_HARVEST_MIN_RSI_RECENT_HIGH: n(
+    process.env.REENTRY_TOP_HARVEST_MIN_RSI_RECENT_HIGH,
+    64
+  ),
+  REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT,
+    0.25
+  ),
+  REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT,
+    0.40
+  ),
+  REENTRY_TOP_HARVEST_REQUIRE_RSI_ROLLDOWN: b(
+    process.env.REENTRY_TOP_HARVEST_REQUIRE_RSI_ROLLDOWN,
+    true
+  ),
+  REENTRY_TOP_HARVEST_ALLOW_ONE_WEAK_BAR: b(
+    process.env.REENTRY_TOP_HARVEST_ALLOW_ONE_WEAK_BAR,
+    true
+  ),
+  REENTRY_TOP_HARVEST_ALLOW_TWO_WEAK_BARS: b(
+    process.env.REENTRY_TOP_HARVEST_ALLOW_TWO_WEAK_BARS,
+    true
+  ),
+  REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR: b(
+    process.env.REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR,
+    true
+  ),
+
+  // v4.4d softer path
+  REENTRY_TOP_HARVEST_SOFT_ENABLED: b(
+    process.env.REENTRY_TOP_HARVEST_SOFT_ENABLED,
+    true
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
+    0.50
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
+    0.48
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_ADX: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_ADX,
+    30
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
+    0.30
+  ),
+  REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT: n(
+    process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
+    0.50
+  ),
+  REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE: b(
+    process.env.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE,
+    true
+  ),
+  REENTRY_TOP_HARVEST_LOG_DEBUG: b(
+    process.env.REENTRY_TOP_HARVEST_LOG_DEBUG,
+    true
+  ),
+
+  // dynamic TP
   DYNAMIC_TP_ENABLED: b(process.env.DYNAMIC_TP_ENABLED, true),
   DTP_TIER1_ARM_PCT: n(process.env.DTP_TIER1_ARM_PCT, 0.6),
   DTP_TIER1_GIVEBACK_PCT: n(process.env.DTP_TIER1_GIVEBACK_PCT, 0.35),
@@ -285,11 +479,76 @@ const CONFIG = {
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.8),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
 
+  // launch protection
+  LAUNCH_TP_PROTECTION_ENABLED: b(process.env.LAUNCH_TP_PROTECTION_ENABLED, true),
+  LAUNCH_TP_PROTECTION_BLOCK_TIER1: b(
+    process.env.LAUNCH_TP_PROTECTION_BLOCK_TIER1,
+    true
+  ),
+  LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT: n(
+    process.env.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT,
+    0.90
+  ),
+  LAUNCH_TP_PROTECTION_MIN_ADX: n(
+    process.env.LAUNCH_TP_PROTECTION_MIN_ADX,
+    35
+  ),
+  LAUNCH_TP_PROTECTION_MIN_RSI: n(
+    process.env.LAUNCH_TP_PROTECTION_MIN_RSI,
+    60
+  ),
+  LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8: b(
+    process.env.LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8,
+    true
+  ),
+  LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO: b(
+    process.env.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO,
+    true
+  ),
+  LAUNCH_TP_PROTECTION_LOG: b(
+    process.env.LAUNCH_TP_PROTECTION_LOG,
+    true
+  ),
+
+  // post-exit continuation protection
+  POST_EXIT_CONT_TP_PROTECTION_ENABLED: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_ENABLED,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT,
+    0.30
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_MIN_ADX: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX,
+    28
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_MIN_RSI: n(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI,
+    58
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO,
+    true
+  ),
+  POST_EXIT_CONT_TP_PROTECTION_LOG: b(
+    process.env.POST_EXIT_CONT_TP_PROTECTION_LOG,
+    true
+  ),
+
   // re-entry
   PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
   MAX_REENTRIES_PER_BULL_REGIME: n(
     process.env.MAX_REENTRIES_PER_BULL_REGIME,
-    2
+    5
   ),
   REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
   REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.REENTRY_REQUIRE_BULL_CONTEXT, true),
@@ -700,7 +959,7 @@ function log(msg, data = null) {
   const line = data ? `${msg} | ${JSON.stringify(data)}` : msg;
   const out = `${isoNow()} ${line}`;
   S.logs.push(out);
-  if (S.logs.length > 1400) S.logs.shift();
+  if (S.logs.length > 2000) S.logs.shift();
   if (CONFIG.DEBUG) console.log(out);
 }
 
@@ -727,12 +986,6 @@ function isFeatureFresh() {
 }
 function getBotUuid(symbol) {
   return CONFIG.SYMBOL_BOT_MAP[symbol] || "";
-}
-function ema8SlopePct() {
-  const a = n(S.prevFeature?.ema8, NaN);
-  const b2 = n(S.lastFeature?.ema8, NaN);
-  if (!Number.isFinite(a) || !Number.isFinite(b2) || a === 0) return NaN;
-  return pctDiff(a, b2);
 }
 function wasWeakeningBar(cur, prev) {
   if (!cur || !prev) return false;
@@ -776,6 +1029,13 @@ function getExitPeakSnapshot(exitPrice) {
     S.prevFeature?.close,
     S.entryPrice
   );
+}
+function recentRsiHigh(lookback = 3) {
+  const arr = [S.lastFeature, S.prevFeature, S.prevPrevFeature].slice(
+    0,
+    Math.max(1, Math.min(3, lookback))
+  );
+  return maxFinite(...arr.map((x) => n(x?.rsi, NaN)));
 }
 
 // --------------------------------------------------
@@ -2062,76 +2322,6 @@ function evaluateEntry(source, body) {
     };
   }
 
-  if (source === "ray_bullish_trend_continuation" && CONFIG.ELEVATED_CONTINUATION_ENABLED) {
-    const rr = [];
-    const emaSlope = ema8SlopePct();
-
-    const strongElevated =
-      Number.isFinite(rsi) &&
-      Number.isFinite(adx) &&
-      rsi >= CONFIG.ELEVATED_CONTINUATION_MIN_RSI + 6 &&
-      adx >= CONFIG.ELEVATED_CONTINUATION_MIN_ADX + 6 &&
-      Number.isFinite(emaSlope) &&
-      emaSlope >= CONFIG.ELEVATED_CONTINUATION_MIN_EMA8_SLOPE_PCT;
-
-    let allowedChase = CONFIG.ELEVATED_CONTINUATION_MAX_CHASE_PCT;
-    if (bullishFvvo) allowedChase += CONFIG.FVVO_CONT_MAX_CHASE_BONUS_PCT;
-
-    const contAnchor = Number.isFinite(ema8) ? ema8 : close;
-    const contChasePct = Number.isFinite(contAnchor) ? pctDiff(contAnchor, px) : 999;
-
-    reasonPush(rr, !emaBullOk, "elevated_cont_ema_invalid");
-    reasonPush(
-      rr,
-      CONFIG.ELEVATED_CONTINUATION_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8Ok,
-      "elevated_cont_close_below_ema8"
-    );
-    reasonPush(
-      rr,
-      Number.isFinite(rsi) && rsi < CONFIG.ELEVATED_CONTINUATION_MIN_RSI,
-      "elevated_cont_rsi_too_low"
-    );
-    reasonPush(
-      rr,
-      Number.isFinite(adx) && adx < CONFIG.ELEVATED_CONTINUATION_MIN_ADX,
-      "elevated_cont_adx_too_low"
-    );
-    reasonPush(
-      rr,
-      Number.isFinite(emaSlope) &&
-        emaSlope < CONFIG.ELEVATED_CONTINUATION_MIN_EMA8_SLOPE_PCT,
-      "elevated_cont_ema8_slope_too_low"
-    );
-    reasonPush(
-      rr,
-      extFromEma18 > CONFIG.ELEVATED_CONTINUATION_MAX_EXT_FROM_EMA18_PCT,
-      "elevated_cont_too_extended_from_ema18"
-    );
-    reasonPush(rr, contChasePct > allowedChase, "elevated_cont_chase_too_high");
-    reasonPush(
-      rr,
-      strongNegativeFvvo &&
-        !CONFIG.ELEVATED_CONTINUATION_ALLOW_NEGATIVE_FVVO_IF_STRONG &&
-        !strongElevated,
-      "elevated_cont_negative_fvvo"
-    );
-
-    if (rr.length === 0) {
-      return {
-        allow: true,
-        source,
-        mode: strongElevated
-          ? "elevated_bullish_trend_continuation_long_strong"
-          : "elevated_bullish_trend_continuation_long",
-        entryPrice: px,
-        contChasePct,
-        ema8SlopePct: emaSlope,
-        strongElevated,
-        fvvo: fv,
-      };
-    }
-  }
-
   const contReasons = [];
   const contMinRsi = Math.max(
     0,
@@ -2325,6 +2515,272 @@ function dynamicTpGivebackForTier(tier) {
   if (tier === 1) return CONFIG.DTP_TIER1_GIVEBACK_PCT;
   return null;
 }
+function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv) {
+  if (!CONFIG.LAUNCH_TP_PROTECTION_ENABLED) return false;
+  if (!isLaunchMode(S.entryMode)) return false;
+  if (tier !== 1 || !CONFIG.LAUNCH_TP_PROTECTION_BLOCK_TIER1) return false;
+
+  const adx = n(feature?.adx, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+
+  const adxOk = Number.isFinite(adx) && adx >= CONFIG.LAUNCH_TP_PROTECTION_MIN_ADX;
+  const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.LAUNCH_TP_PROTECTION_MIN_RSI;
+  const profitTooEarly = pnlPct < CONFIG.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT;
+
+  const priceAboveEma8Ok =
+    !CONFIG.LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 ||
+    (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
+  const bullishFvvoHold =
+    CONFIG.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+
+  const block = profitTooEarly || ((adxOk && rsiOk && priceAboveEma8Ok) || bullishFvvoHold);
+
+  if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+    log("🟦 LAUNCH_TP_PROTECTION_CHECK", {
+      block,
+      entryMode: S.entryMode,
+      tier,
+      pnlPct: round4(pnlPct),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      close: round4(close),
+      ema8: round4(ema8),
+      profitTooEarly,
+      adxOk,
+      rsiOk,
+      priceAboveEma8Ok,
+      bullishFvvoHold,
+      fvvo: fv,
+    });
+  }
+
+  return block;
+}
+function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
+  if (!CONFIG.POST_EXIT_CONT_TP_PROTECTION_ENABLED) return false;
+  if (!isProtectedContinuationMode(S.entryMode)) return false;
+  if (tier !== 1 || !CONFIG.POST_EXIT_CONT_TP_PROTECTION_BLOCK_TIER1) return false;
+
+  const adx = n(feature?.adx, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+
+  const stillEarlyProfit =
+    pnlPct < CONFIG.POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT;
+  const adxOk = Number.isFinite(adx) && adx >= CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX;
+  const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI;
+
+  const priceAboveEma8Ok =
+    !CONFIG.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 ||
+    (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+
+  const bullishFvvoHold =
+    CONFIG.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+
+  const block =
+    stillEarlyProfit &&
+    adxOk &&
+    rsiOk &&
+    priceAboveEma8Ok &&
+    !fv.snap.burstBearish &&
+    !fv.snap.sniperSell &&
+    (bullishFvvoHold || true);
+
+  if (CONFIG.POST_EXIT_CONT_TP_PROTECTION_LOG) {
+    log("🟪 POST_EXIT_CONT_TP_PROTECTION_CHECK", {
+      block,
+      entryMode: S.entryMode,
+      tier,
+      pnlPct: round4(pnlPct),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      close: round4(close),
+      ema8: round4(ema8),
+      stillEarlyProfit,
+      adxOk,
+      rsiOk,
+      priceAboveEma8Ok,
+      bullishFvvoHold,
+      fvvo: fv,
+    });
+  }
+
+  return block;
+}
+
+function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
+  if (!CONFIG.REENTRY_TOP_HARVEST_ENABLED) {
+    return { allow: false, reason: "disabled" };
+  }
+  if (!isReentryHarvestMode(S.entryMode)) {
+    return { allow: false, reason: "not_target_mode" };
+  }
+
+  const price = n(feature.close, NaN);
+  const ema8 = n(feature.ema8, NaN);
+  const ema18 = n(feature.ema18, NaN);
+  const adx = n(feature.adx, NaN);
+  const prev = S.prevFeature;
+
+  if (!Number.isFinite(price) || !Number.isFinite(ema8) || !Number.isFinite(ema18)) {
+    return { allow: false, reason: "bad_feature_values" };
+  }
+
+  const extFromEma8 = pctDiff(ema8, price);
+  const extFromEma18 = pctDiff(ema18, price);
+  const rsiHighRecent = recentRsiHigh(3);
+
+  const rsiRolldown =
+    Number.isFinite(prev?.rsi) &&
+    Number.isFinite(feature.rsi) &&
+    feature.rsi < prev.rsi;
+
+  const oneWeakBar = wasWeakeningBar(feature, prev);
+  const twoWeakBars = twoConsecutiveWeakeningBars();
+
+  const bearishFvvoAccel =
+    CONFIG.REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR &&
+    (fv.score < 0 || fv.snap.sniperSell || fv.snap.burstBearish);
+
+  const classicWeaknessOk =
+    (CONFIG.REENTRY_TOP_HARVEST_ALLOW_TWO_WEAK_BARS && twoWeakBars) ||
+    (CONFIG.REENTRY_TOP_HARVEST_ALLOW_ONE_WEAK_BAR && oneWeakBar) ||
+    bearishFvvoAccel;
+
+  const classicReasons = [];
+  reasonPush(
+    classicReasons,
+    pnlPct < CONFIG.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
+    "profit_too_low"
+  );
+  reasonPush(
+    classicReasons,
+    !Number.isFinite(adx) || adx < CONFIG.REENTRY_TOP_HARVEST_MIN_ADX,
+    "adx_too_low"
+  );
+  reasonPush(
+    classicReasons,
+    !Number.isFinite(rsiHighRecent) ||
+      rsiHighRecent < CONFIG.REENTRY_TOP_HARVEST_MIN_RSI_RECENT_HIGH,
+    "no_recent_rsi_high"
+  );
+  reasonPush(
+    classicReasons,
+    extFromEma8 < CONFIG.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT,
+    "ext_from_ema8_too_low"
+  );
+  reasonPush(
+    classicReasons,
+    extFromEma18 < CONFIG.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT,
+    "ext_from_ema18_too_low"
+  );
+  reasonPush(
+    classicReasons,
+    CONFIG.REENTRY_TOP_HARVEST_REQUIRE_RSI_ROLLDOWN && !rsiRolldown,
+    "rsi_not_rolling_down"
+  );
+  reasonPush(classicReasons, !classicWeaknessOk, "weakness_not_confirmed");
+
+  const classicAllow = classicReasons.length === 0;
+
+  const softStrongNegativeFvvo = fv.snap.burstBearish || fv.score <= -2;
+  const softFvvoOk =
+    !CONFIG.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE ||
+    !softStrongNegativeFvvo;
+
+  const softReasons = [];
+  if (CONFIG.REENTRY_TOP_HARVEST_SOFT_ENABLED) {
+    reasonPush(
+      softReasons,
+      pnlPct < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
+      "soft_profit_too_low"
+    );
+    reasonPush(
+      softReasons,
+      (S.peakPnlPct || 0) < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
+      "soft_peak_profit_too_low"
+    );
+    reasonPush(
+      softReasons,
+      !Number.isFinite(adx) || adx < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_ADX,
+      "soft_adx_too_low"
+    );
+    reasonPush(
+      softReasons,
+      extFromEma8 < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
+      "soft_ext_from_ema8_too_low"
+    );
+    reasonPush(
+      softReasons,
+      extFromEma18 < CONFIG.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
+      "soft_ext_from_ema18_too_low"
+    );
+    reasonPush(
+      softReasons,
+      !softFvvoOk,
+      "soft_strong_negative_fvvo"
+    );
+  } else {
+    softReasons.push("soft_disabled");
+  }
+
+  const softAllow = softReasons.length === 0;
+
+  if (CONFIG.REENTRY_TOP_HARVEST_LOG_DEBUG) {
+    log("🟠 REENTRY_TOP_HARVEST_CHECK", {
+      allow: classicAllow || softAllow,
+      path: classicAllow ? "classic" : softAllow ? "soft" : "none",
+      entryMode: S.entryMode,
+      classicReasons,
+      softReasons,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(S.peakPnlPct),
+      dynamicTpTier: S.dynamicTpTier,
+      adx: round4(adx),
+      rsi: round4(feature.rsi),
+      recentRsiHigh: round4(rsiHighRecent),
+      extFromEma8: round4(extFromEma8),
+      extFromEma18: round4(extFromEma18),
+      rsiRolldown,
+      oneWeakBar,
+      twoWeakBars,
+      bearishFvvoAccel,
+      fvvo: fv,
+    });
+  }
+
+  if (classicAllow || softAllow) {
+    return {
+      allow: true,
+      path: classicAllow ? "classic" : "soft",
+      extFromEma8,
+      extFromEma18,
+      recentRsiHigh: rsiHighRecent,
+      rsiRolldown,
+      oneWeakBar,
+      twoWeakBars,
+      bearishFvvoAccel,
+    };
+  }
+
+  return {
+    allow: false,
+    reason: classicReasons[0] || softReasons[0] || "blocked",
+    classicReasons,
+    softReasons,
+    extFromEma8,
+    extFromEma18,
+    recentRsiHigh: rsiHighRecent,
+    rsiRolldown,
+    oneWeakBar,
+    twoWeakBars,
+    bearishFvvoAccel,
+  };
+}
 
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
@@ -2362,8 +2818,32 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
     const peakPnl = S.peakPnlPct || 0;
     const pnlGiveback = peakPnl - pnlPct;
+    const fv = getFvvoScore();
+    const feature = S.lastFeature;
 
     if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
+      if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+        log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", {
+          tier: S.dynamicTpTier,
+          pnlPct: round4(pnlPct),
+          peakPnlPct: round4(peakPnl),
+          pnlGiveback: round4(pnlGiveback),
+          entryMode: S.entryMode,
+        });
+        return;
+      }
+
+      if (shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+        log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", {
+          tier: S.dynamicTpTier,
+          pnlPct: round4(pnlPct),
+          peakPnlPct: round4(peakPnl),
+          pnlGiveback: round4(pnlGiveback),
+          entryMode: S.entryMode,
+        });
+        return;
+      }
+
       return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, eventIso, "cycle_exit");
     }
   } else {
@@ -2399,12 +2879,27 @@ function isStrongTrendHold(feature, fv) {
   return true;
 }
 
+function shouldTopHarvestExit() {
+  if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
+  return { allow: false, reason: "disabled_for_v44d" };
+}
+
 function evaluateBarExit(feature) {
   if (!S.inPosition) return;
   const price = n(feature.close, currentPrice());
   const pnlPct = pctDiff(S.entryPrice, price);
   const fv = getFvvoScore();
   const prev = S.prevFeature;
+
+  const reentryHarvest = shouldReentryTopHarvestExit(feature, pnlPct, fv);
+  if (reentryHarvest.allow) {
+    return doExit("reentry_top_harvest_exit", price, feature.time, "cycle_exit");
+  }
+
+  const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
+  if (topHarvest.allow) {
+    return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
+  }
 
   if (
     CONFIG.LOCAL_TP_EXIT_ENABLED &&
@@ -2470,6 +2965,50 @@ function evaluateBarExit(feature) {
       !belowEma18 &&
       !rsiWeakEnough;
 
+    const strongTrendHardHoldActive =
+      CONFIG.LOCAL_TP_STRONG_TREND_HARD_HOLD_ENABLED &&
+      Number.isFinite(feature.adx) &&
+      feature.adx >= CONFIG.LOCAL_TP_STRONG_TREND_HARD_HOLD_MIN_ADX &&
+      (!CONFIG.LOCAL_TP_STRONG_TREND_HARD_HOLD_REQUIRE_EMA8_ABOVE_EMA18 ||
+        (Number.isFinite(feature.ema8) &&
+          Number.isFinite(feature.ema18) &&
+          feature.ema8 > feature.ema18)) &&
+      (!Number.isFinite(feature.rsi) ||
+        feature.rsi >= CONFIG.LOCAL_TP_STRONG_TREND_HARD_HOLD_REQUIRE_RSI_ABOVE);
+
+    const strongTrendHardHoldCanExitByWeakness =
+      (CONFIG.LOCAL_TP_STRONG_TREND_ALLOW_ONLY_IF_CLOSE_BELOW_EMA18 && belowEma18) ||
+      (CONFIG.LOCAL_TP_STRONG_TREND_ALLOW_IF_TWO_WEAK_BARS_AND_RSI_WEAK &&
+        twoWeakBars &&
+        Number.isFinite(feature.rsi) &&
+        feature.rsi <= CONFIG.LOCAL_TP_STRONG_TREND_RSI_WEAK_MAX) ||
+      forceAllowByBearishFvvo;
+
+    const blockedByStrongTrendHardHold =
+      strongTrendHardHoldActive && !strongTrendHardHoldCanExitByWeakness;
+
+    const strictStrongTrendGateActive =
+      CONFIG.LOCAL_TP_STRICT_STRONG_TREND_GATE_ENABLED &&
+      Number.isFinite(feature.adx) &&
+      feature.adx >= CONFIG.LOCAL_TP_STRICT_STRONG_TREND_MIN_ADX &&
+      (!CONFIG.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_EMA8_GT_EMA18 ||
+        (Number.isFinite(feature.ema8) &&
+          Number.isFinite(feature.ema18) &&
+          feature.ema8 > feature.ema18));
+
+    const strictStrongTrendAllowsExit =
+      belowEma18 ||
+      (
+        CONFIG.LOCAL_TP_STRICT_STRONG_TREND_ALLOW_TWO_WEAK_BARS_AND_RSI_WEAK &&
+        (!CONFIG.LOCAL_TP_STRICT_STRONG_TREND_REQUIRE_TWO_WEAK_BARS || twoWeakBars) &&
+        Number.isFinite(feature.rsi) &&
+        feature.rsi <= CONFIG.LOCAL_TP_STRICT_STRONG_TREND_RSI_WEAK_MAX
+      ) ||
+      forceAllowByBearishFvvo;
+
+    const blockedByStrictStrongTrendGate =
+      strictStrongTrendGateActive && !strictStrongTrendAllowsExit;
+
     if (
       belowBufferedEma8 &&
       oneWeakBar &&
@@ -2478,7 +3017,9 @@ function evaluateBarExit(feature) {
       !holdByBullishFvvo &&
       !strongTrendHold &&
       !hardBlockByStrongAdx &&
-      !strongTrendNeedsTwoWeakBars
+      !strongTrendNeedsTwoWeakBars &&
+      !blockedByStrongTrendHardHold &&
+      !blockedByStrictStrongTrendGate
     ) {
       return doExit("local_tp_close_below_ema8", price, feature.time, "cycle_exit");
     }
