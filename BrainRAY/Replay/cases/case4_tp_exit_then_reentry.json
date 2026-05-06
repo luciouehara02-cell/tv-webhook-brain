@@ -4,7 +4,7 @@
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 83.60,
-    "time": "2026-04-10T12:30:00Z"
+    "time": "2026-05-06T12:30:00Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
@@ -13,14 +13,14 @@
     "tf": "5",
     "event": "Bullish Trend Change",
     "price": 83.60,
-    "time": "2026-04-10T12:30:05Z"
+    "time": "2026-05-06T12:30:05Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "src": "features",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
-    "time": "2026-04-10T12:30:10Z",
+    "time": "2026-05-06T12:30:10Z",
     "open": 83.52,
     "high": 83.66,
     "low": 83.50,
@@ -47,35 +47,35 @@
     "tf": "5",
     "event": "Bullish Trend Continuation",
     "price": 83.64,
-    "time": "2026-04-10T12:30:20Z"
+    "time": "2026-05-06T12:30:20Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 84.05,
-    "time": "2026-04-10T12:31:00Z"
+    "time": "2026-05-06T12:31:00Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 84.22,
-    "time": "2026-04-10T12:31:20Z"
+    "time": "2026-05-06T12:31:20Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 84.30,
-    "time": "2026-04-10T12:31:40Z"
+    "time": "2026-05-06T12:31:40Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "src": "features",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
-    "time": "2026-04-10T12:35:10Z",
+    "time": "2026-05-06T12:35:10Z",
     "open": 84.28,
     "high": 84.34,
     "low": 84.12,
@@ -100,14 +100,14 @@
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "price": 84.08,
-    "time": "2026-04-10T12:39:50Z"
+    "time": "2026-05-06T12:39:50Z"
   },
   {
     "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "src": "features",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
-    "time": "2026-04-10T12:40:10Z",
+    "time": "2026-05-06T12:40:10Z",
     "open": 84.00,
     "high": 84.12,
     "low": 83.98,
@@ -134,6 +134,6 @@
     "tf": "5",
     "event": "Bullish Trend Continuation",
     "price": 84.09,
-    "time": "2026-04-10T12:40:20Z"
+    "time": "2026-05-06T12:40:20Z"
   }
 ]
