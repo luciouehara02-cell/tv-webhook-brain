@@ -1,14 +1,16 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v4.4d
+ * BrainRAY_Continuation_v4.4f
  *
- * v4.4d
- * - based on v4.4c
- * - keeps re-entry-only harvest isolation
- * - softer re-entry harvest remains enabled
- * - lowers soft peak-profit threshold so first re-entry can harvest earlier
- * - intended for replay test with higher re-entry allowance
+ * v4.4f
+ * - based on v4.4e
+ * - preserves the dedicated post-exit soft harvest path
+ * - fixes replay-time dedup so valid harvest exits are not blocked by wall-clock timing
+ *
+ * Main fix:
+ * - entry/exit dedup uses event time when REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK=true
+ * - live still uses wall clock
  */
 
 const app = express();
@@ -128,7 +130,7 @@ function isReentryHarvestMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4d"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v4.4f"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -166,7 +168,6 @@ const CONFIG = {
 
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
 
-  // Ray toggles
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
   RAY_USE_BULLISH_TREND_CONTINUATION: b(
     process.env.RAY_USE_BULLISH_TREND_CONTINUATION,
@@ -179,7 +180,6 @@ const CONFIG = {
     true
   ),
 
-  // Ray conflict guard
   RAY_CONFLICT_GUARD_ENABLED: b(process.env.RAY_CONFLICT_GUARD_ENABLED, true),
   RAY_CONFLICT_GUARD_SEC: n(process.env.RAY_CONFLICT_GUARD_SEC, 45),
   RAY_CONFLICT_CONFIRM_FEATURE_BARS: n(
@@ -195,7 +195,6 @@ const CONFIG = {
     true
   ),
 
-  // core filters
   REQUIRE_EMA8_ABOVE_EMA18: b(process.env.REQUIRE_EMA8_ABOVE_EMA18, true),
   REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.REQUIRE_CLOSE_ABOVE_EMA8, true),
   MIN_RSI_LONG: n(process.env.MIN_RSI_LONG, 48),
@@ -205,7 +204,6 @@ const CONFIG = {
   MAX_EXT_FROM_EMA8_PCT: n(process.env.MAX_EXT_FROM_EMA8_PCT, 0.75),
   MAX_EXT_FROM_EMA18_PCT: n(process.env.MAX_EXT_FROM_EMA18_PCT, 1.2),
 
-  // breakout memory
   BREAKOUT_MEMORY_ENABLED: b(process.env.BREAKOUT_MEMORY_ENABLED, true),
   BREAKOUT_MEMORY_BARS: n(process.env.BREAKOUT_MEMORY_BARS, 4),
   BREAKOUT_MEMORY_MAX_CHASE_PCT: n(
@@ -221,7 +219,6 @@ const CONFIG = {
     0.1
   ),
 
-  // risk / exits
   HARD_STOP_PCT: n(process.env.HARD_STOP_PCT, 0.8),
   BREAKEVEN_ARM_PCT: n(process.env.BREAKEVEN_ARM_PCT, 0.4),
   BREAKEVEN_OFFSET_PCT: n(process.env.BREAKEVEN_OFFSET_PCT, 0.05),
@@ -247,8 +244,7 @@ const CONFIG = {
   ),
   KEEP_BULL_CONTEXT_ON_TP_EXIT: b(process.env.KEEP_BULL_CONTEXT_ON_TP_EXIT, true),
 
-  // local TP protection
-  LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.10),
+  LOCAL_TP_EMA8_BUFFER_PCT: n(process.env.LOCAL_TP_EMA8_BUFFER_PCT, 0.1),
   LOCAL_TP_MIN_RSI_TO_HOLD: n(process.env.LOCAL_TP_MIN_RSI_TO_HOLD, 60),
   LOCAL_TP_MIN_ADX_TO_HOLD: n(process.env.LOCAL_TP_MIN_ADX_TO_HOLD, 35),
   LOCAL_TP_STRONG_ADX_HARD_BLOCK: n(
@@ -357,7 +353,7 @@ const CONFIG = {
   TOP_HARVEST_MIN_PROFIT_PCT: n(process.env.TOP_HARVEST_MIN_PROFIT_PCT, 0.85),
   TOP_HARVEST_MIN_ADX: n(process.env.TOP_HARVEST_MIN_ADX, 28),
   TOP_HARVEST_MIN_RSI_RECENT_HIGH: n(process.env.TOP_HARVEST_MIN_RSI_RECENT_HIGH, 64),
-  TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, 0.30),
+  TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA8_PCT, 0.3),
   TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT: n(process.env.TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT, 0.45),
   TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS: b(
     process.env.TOP_HARVEST_REQUIRE_TWO_WEAKENING_BARS,
@@ -397,7 +393,6 @@ const CONFIG = {
   ),
   TOP_HARVEST_LOG_DEBUG: b(process.env.TOP_HARVEST_LOG_DEBUG, true),
 
-  // v4.4d re-entry top harvest
   REENTRY_TOP_HARVEST_ENABLED: b(process.env.REENTRY_TOP_HARVEST_ENABLED, true),
   REENTRY_TOP_HARVEST_MIN_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_MIN_PROFIT_PCT,
@@ -417,7 +412,7 @@ const CONFIG = {
   ),
   REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT: n(
     process.env.REENTRY_TOP_HARVEST_MIN_EXT_FROM_EMA18_PCT,
-    0.40
+    0.4
   ),
   REENTRY_TOP_HARVEST_REQUIRE_RSI_ROLLDOWN: b(
     process.env.REENTRY_TOP_HARVEST_REQUIRE_RSI_ROLLDOWN,
@@ -435,19 +430,17 @@ const CONFIG = {
     process.env.REENTRY_TOP_HARVEST_ALLOW_BEARISH_FVVO_ACCELERATOR,
     true
   ),
-
-  // v4.4d softer path
   REENTRY_TOP_HARVEST_SOFT_ENABLED: b(
     process.env.REENTRY_TOP_HARVEST_SOFT_ENABLED,
     true
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PROFIT_PCT,
-    0.50
+    0.5
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
-    0.48
+    0.58
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_ADX: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_ADX,
@@ -455,22 +448,51 @@ const CONFIG = {
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
-    0.30
+    0.3
   ),
   REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT: n(
     process.env.REENTRY_TOP_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
-    0.50
+    0.5
   ),
   REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE: b(
     process.env.REENTRY_TOP_HARVEST_SOFT_REQUIRE_BULLISH_FVVO_NOT_STRONG_NEGATIVE,
     true
   ),
+
+  POST_EXIT_CONT_HARVEST_SOFT_ENABLED: b(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_ENABLED,
+    true
+  ),
+  POST_EXIT_CONT_HARVEST_SOFT_MIN_PROFIT_PCT: n(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_MIN_PROFIT_PCT,
+    0.5
+  ),
+  POST_EXIT_CONT_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT: n(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
+    0.45
+  ),
+  POST_EXIT_CONT_HARVEST_SOFT_MIN_ADX: n(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_MIN_ADX,
+    28
+  ),
+  POST_EXIT_CONT_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT: n(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
+    0.26
+  ),
+  POST_EXIT_CONT_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT: n(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
+    0.42
+  ),
+  POST_EXIT_CONT_HARVEST_SOFT_REQUIRE_NOT_STRONG_NEGATIVE_FVVO: b(
+    process.env.POST_EXIT_CONT_HARVEST_SOFT_REQUIRE_NOT_STRONG_NEGATIVE_FVVO,
+    true
+  ),
+
   REENTRY_TOP_HARVEST_LOG_DEBUG: b(
     process.env.REENTRY_TOP_HARVEST_LOG_DEBUG,
     true
   ),
 
-  // dynamic TP
   DYNAMIC_TP_ENABLED: b(process.env.DYNAMIC_TP_ENABLED, true),
   DTP_TIER1_ARM_PCT: n(process.env.DTP_TIER1_ARM_PCT, 0.6),
   DTP_TIER1_GIVEBACK_PCT: n(process.env.DTP_TIER1_GIVEBACK_PCT, 0.35),
@@ -479,7 +501,6 @@ const CONFIG = {
   DTP_TIER3_ARM_PCT: n(process.env.DTP_TIER3_ARM_PCT, 1.8),
   DTP_TIER3_GIVEBACK_PCT: n(process.env.DTP_TIER3_GIVEBACK_PCT, 0.12),
 
-  // launch protection
   LAUNCH_TP_PROTECTION_ENABLED: b(process.env.LAUNCH_TP_PROTECTION_ENABLED, true),
   LAUNCH_TP_PROTECTION_BLOCK_TIER1: b(
     process.env.LAUNCH_TP_PROTECTION_BLOCK_TIER1,
@@ -487,7 +508,7 @@ const CONFIG = {
   ),
   LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT: n(
     process.env.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT,
-    0.90
+    0.9
   ),
   LAUNCH_TP_PROTECTION_MIN_ADX: n(
     process.env.LAUNCH_TP_PROTECTION_MIN_ADX,
@@ -510,7 +531,6 @@ const CONFIG = {
     true
   ),
 
-  // post-exit continuation protection
   POST_EXIT_CONT_TP_PROTECTION_ENABLED: b(
     process.env.POST_EXIT_CONT_TP_PROTECTION_ENABLED,
     true
@@ -521,7 +541,7 @@ const CONFIG = {
   ),
   POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT: n(
     process.env.POST_EXIT_CONT_TP_PROTECTION_MAX_PROTECT_PROFIT_PCT,
-    0.30
+    0.3
   ),
   POST_EXIT_CONT_TP_PROTECTION_MIN_ADX: n(
     process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_ADX,
@@ -544,11 +564,10 @@ const CONFIG = {
     true
   ),
 
-  // re-entry
   PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
   MAX_REENTRIES_PER_BULL_REGIME: n(
     process.env.MAX_REENTRIES_PER_BULL_REGIME,
-    5
+    2
   ),
   REENTRY_MIN_BARS_AFTER_EXIT: n(process.env.REENTRY_MIN_BARS_AFTER_EXIT, 1),
   REENTRY_REQUIRE_BULL_CONTEXT: b(process.env.REENTRY_REQUIRE_BULL_CONTEXT, true),
@@ -590,7 +609,6 @@ const CONFIG = {
     0.38
   ),
 
-  // dedicated post-exit continuation re-entry
   POST_EXIT_CONTINUATION_ENABLED: b(
     process.env.POST_EXIT_CONTINUATION_ENABLED,
     true
@@ -625,7 +643,7 @@ const CONFIG = {
   ),
   POST_EXIT_CONTINUATION_STRONG_MAX_CHASE_PCT: n(
     process.env.POST_EXIT_CONTINUATION_STRONG_MAX_CHASE_PCT,
-    0.60
+    0.6
   ),
   POST_EXIT_CONTINUATION_MAX_EXT_FROM_EMA18_PCT: n(
     process.env.POST_EXIT_CONTINUATION_MAX_EXT_FROM_EMA18_PCT,
@@ -664,7 +682,6 @@ const CONFIG = {
     true
   ),
 
-  // trend-change launch
   TREND_CHANGE_LAUNCH_ENABLED: b(process.env.TREND_CHANGE_LAUNCH_ENABLED, true),
   TREND_CHANGE_LAUNCH_MIN_RSI: n(process.env.TREND_CHANGE_LAUNCH_MIN_RSI, 60),
   TREND_CHANGE_LAUNCH_MIN_ADX: n(process.env.TREND_CHANGE_LAUNCH_MIN_ADX, 14),
@@ -699,7 +716,6 @@ const CONFIG = {
     1.35
   ),
 
-  // fast tick launch
   FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
   FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
   FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
@@ -744,7 +760,6 @@ const CONFIG = {
     0.6
   ),
 
-  // elevated continuation
   ELEVATED_CONTINUATION_ENABLED: b(
     process.env.ELEVATED_CONTINUATION_ENABLED,
     true
@@ -782,15 +797,12 @@ const CONFIG = {
     true
   ),
 
-  // FVVO
   FVVO_ENABLED: b(process.env.FVVO_ENABLED, true),
   FVVO_MEMORY_SEC: n(process.env.FVVO_MEMORY_SEC, 1800),
-
   FVVO_SNIPER_BUY_BOOST: n(process.env.FVVO_SNIPER_BUY_BOOST, 1),
   FVVO_BURST_BULLISH_BOOST: n(process.env.FVVO_BURST_BULLISH_BOOST, 2),
   FVVO_SNIPER_SELL_PENALTY: n(process.env.FVVO_SNIPER_SELL_PENALTY, 1),
   FVVO_BURST_BEARISH_PENALTY: n(process.env.FVVO_BURST_BEARISH_PENALTY, 2),
-
   FVVO_REENTRY_RSI_RELAX: n(process.env.FVVO_REENTRY_RSI_RELAX, 3),
   FVVO_REENTRY_MAX_CHASE_BONUS_PCT: n(
     process.env.FVVO_REENTRY_MAX_CHASE_BONUS_PCT,
@@ -806,7 +818,6 @@ const CONFIG = {
     process.env.FVVO_LAUNCH_MAX_CHASE_BONUS_PCT,
     0.05
   ),
-
   FVVO_SNIPER_SELL_CHASE_PENALTY_PCT: n(
     process.env.FVVO_SNIPER_SELL_CHASE_PENALTY_PCT,
     0.08
@@ -1037,6 +1048,30 @@ function recentRsiHigh(lookback = 3) {
   );
   return maxFinite(...arr.map((x) => n(x?.rsi, NaN)));
 }
+function actionClockMs(eventIso = null) {
+  if (CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK && eventIso) {
+    const t = parseTsMs(eventIso);
+    if (Number.isFinite(t)) return t;
+  }
+  return nowMs();
+}
+function activeEnterDedupMs(source) {
+  if (
+    source === "feature_reentry" ||
+    source === "post_exit_continuation_reentry"
+  ) {
+    return CONFIG.REENTRY_ENTER_DEDUP_MS;
+  }
+  return CONFIG.ENTER_DEDUP_MS;
+}
+function canEnterByDedup(source, eventIso = null) {
+  const clockMs = actionClockMs(eventIso);
+  return clockMs - S.lastEnterAtMs >= activeEnterDedupMs(source);
+}
+function canExitByDedup(eventIso = null) {
+  const clockMs = actionClockMs(eventIso);
+  return clockMs - S.lastExitAtMs >= CONFIG.EXIT_DEDUP_MS;
+}
 
 // --------------------------------------------------
 // clear / arm helpers
@@ -1245,7 +1280,6 @@ function armRayConflict(side, event, eventTime, source, price) {
 function fvvoRecent(iso, maxSec = CONFIG.FVVO_MEMORY_SEC) {
   return ageSec(iso) <= maxSec;
 }
-
 function getFvvoSnapshot() {
   return {
     sniperBuy: fvvoRecent(S.fvvo.lastSniperBuyAt),
@@ -1254,7 +1288,6 @@ function getFvvoSnapshot() {
     burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt),
   };
 }
-
 function getFvvoScore() {
   if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot() };
   const snap = getFvvoSnapshot();
@@ -1305,7 +1338,6 @@ function rayEventsConflict(tsA, tsB) {
   if (!Number.isFinite(a) || !Number.isFinite(b2)) return false;
   return Math.abs(a - b2) <= CONFIG.RAY_CONFLICT_GUARD_SEC * 1000;
 }
-
 function turnBullRegimeOn(ts, source) {
   if (!S.ray.bullContext) {
     S.ray.bullContext = true;
@@ -1322,7 +1354,6 @@ function turnBullRegimeOn(ts, source) {
     });
   }
 }
-
 function turnBullRegimeOff(ts, reason) {
   if (S.ray.bullContext) {
     S.ray.bullContext = false;
@@ -1335,7 +1366,6 @@ function turnBullRegimeOff(ts, reason) {
     log("🔴 BULL_REGIME_OFF", { reason, ts, bullRegimeId: S.ray.bullRegimeId });
   }
 }
-
 function maybeHandleRayConflict(side, event, ts, price, source) {
   if (!CONFIG.RAY_CONFLICT_GUARD_ENABLED) return false;
 
@@ -1350,7 +1380,6 @@ function maybeHandleRayConflict(side, event, ts, price, source) {
   }
   return false;
 }
-
 function resolveRayConflictOnFeature(feature) {
   if (!S.rayConflict.pending) return;
   if (S.barIndex < n(S.rayConflict.expiresBar, Infinity)) return;
@@ -1429,7 +1458,6 @@ function resolveRayConflictOnFeature(feature) {
 
   clearRayConflict("resolved_on_feature");
 }
-
 function handleRayEvent(body) {
   const name = String(body.event || "").trim();
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
@@ -1530,7 +1558,6 @@ function handleRayEvent(body) {
     }
   }
 }
-
 function handleFvvoEvent(body) {
   const name = String(body.event || "").trim();
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
@@ -1579,7 +1606,6 @@ function updateBarProgress(ts) {
     invalidateFastTickLaunch();
   }
 }
-
 function handleFeature(body) {
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
   updateBarProgress(ts);
@@ -1662,7 +1688,6 @@ function handleFeature(body) {
 
   if (S.inPosition) evaluateBarExit(feature);
 }
-
 function evaluateStructureAndArmMemory(f) {
   if (!CONFIG.BREAKOUT_MEMORY_ENABLED) return;
   if (normalizeSymbol(f.symbol) !== CONFIG.SYMBOL) return;
@@ -1716,7 +1741,6 @@ function evaluateStructureAndArmMemory(f) {
     breakoutHigh: S.breakoutMemory.breakoutHigh,
   });
 }
-
 function invalidateBreakoutMemory() {
   if (!S.breakoutMemory.active) return;
   if (S.breakoutMemory.used) return clearBreakoutMemory("used");
@@ -1735,7 +1759,6 @@ function invalidateBreakoutMemory() {
     if (px < floor) return clearBreakoutMemory("lost_reclaim");
   }
 }
-
 function invalidateReentry() {
   if (!S.reentry.eligible) return;
   if (S.barIndex > n(S.reentry.eligibleUntilBar, -1)) clearReentry("expired");
@@ -1761,7 +1784,6 @@ function invalidateFastTickLaunch() {
     clearFastTickLaunch("regime_changed");
   }
 }
-
 function evaluateReentryEligibilityFromFeature(feature) {
   if (!CONFIG.PHASE2_REENTRY_ENABLED) return;
   if (!S.ray.bullContext) return;
@@ -1791,18 +1813,9 @@ function evaluateReentryEligibilityFromFeature(feature) {
 // --------------------------------------------------
 // entry logic
 // --------------------------------------------------
-function activeEnterDedupMs(source) {
-  if (
-    source === "feature_reentry" ||
-    source === "post_exit_continuation_reentry"
-  ) {
-    return CONFIG.REENTRY_ENTER_DEDUP_MS;
-  }
-  return CONFIG.ENTER_DEDUP_MS;
-}
-
 function tryEntry(source, body) {
-  const decision = evaluateEntry(source, body);
+  const eventIso = pickFirst(body, ["time", "timestamp"], isoNow());
+  const decision = evaluateEntry(source, body, eventIso);
 
   if (!decision.allow) {
     if (
@@ -1825,18 +1838,11 @@ function tryEntry(source, body) {
     return { allow: false, reason: "no_entry_price" };
   }
 
-  doEnter(
-    decision.mode,
-    price,
-    decision,
-    pickFirst(body, ["time", "timestamp"], isoNow())
-  );
+  doEnter(decision.mode, price, decision, eventIso);
   return decision;
 }
-
-function evaluateEntry(source, body) {
+function evaluateEntry(source, body, eventIso = null) {
   const reasons = [];
-  const now = nowMs();
   const px = n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()), NaN);
   const feature = S.lastFeature;
   const fv = getFvvoScore();
@@ -1847,12 +1853,8 @@ function evaluateEntry(source, body) {
     "symbol_mismatch"
   );
   reasonPush(reasons, S.inPosition, "already_in_position");
-  reasonPush(reasons, now < S.cooldownUntilMs, "cooldown_active");
-  reasonPush(
-    reasons,
-    now - S.lastEnterAtMs < activeEnterDedupMs(source),
-    "enter_dedup"
-  );
+  reasonPush(reasons, actionClockMs(eventIso) < S.cooldownUntilMs, "cooldown_active");
+  reasonPush(reasons, !canEnterByDedup(source, eventIso), "enter_dedup");
   reasonPush(reasons, !isFeatureFresh(), "stale_feature");
   reasonPush(reasons, !S.ray.bullContext, "no_bull_context");
   reasonPush(reasons, !Number.isFinite(px), "bad_price");
@@ -1888,7 +1890,7 @@ function evaluateEntry(source, body) {
     const rr = [];
 
     reasonPush(rr, !tl.active, "fast_tick_launch_not_active");
-    reasonPush(rr, now > n(tl.expiresAtMs, 0), "fast_tick_launch_expired");
+    reasonPush(rr, nowMs() > n(tl.expiresAtMs, 0), "fast_tick_launch_expired");
     reasonPush(
       rr,
       tl.bullRegimeId !== S.ray.bullRegimeId,
@@ -2432,7 +2434,6 @@ function evaluateEntry(source, body) {
     fvvo: fv,
   };
 }
-
 function doEnter(mode, price, decision = {}, eventIso = isoNow()) {
   const stop = price * (1 - CONFIG.HARD_STOP_PCT / 100);
 
@@ -2446,7 +2447,7 @@ function doEnter(mode, price, decision = {}, eventIso = isoNow()) {
   S.peakPrice = price;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
-  S.lastEnterAtMs = nowMs();
+  S.lastEnterAtMs = actionClockMs(eventIso);
   S.lastAction = "enter";
   S.cycleState = "long";
 
@@ -2611,7 +2612,6 @@ function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
 
   return block;
 }
-
 function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
   if (!CONFIG.REENTRY_TOP_HARVEST_ENABLED) {
     return { allow: false, reason: "disabled" };
@@ -2730,13 +2730,69 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
 
   const softAllow = softReasons.length === 0;
 
+  const postExitSoftReasons = [];
+  let postExitSoftAllow = false;
+  if (isProtectedContinuationMode(S.entryMode) && CONFIG.POST_EXIT_CONT_HARVEST_SOFT_ENABLED) {
+    const postExitFvvoOk =
+      !CONFIG.POST_EXIT_CONT_HARVEST_SOFT_REQUIRE_NOT_STRONG_NEGATIVE_FVVO ||
+      !softStrongNegativeFvvo;
+
+    reasonPush(
+      postExitSoftReasons,
+      pnlPct < CONFIG.POST_EXIT_CONT_HARVEST_SOFT_MIN_PROFIT_PCT,
+      "post_exit_soft_profit_too_low"
+    );
+    reasonPush(
+      postExitSoftReasons,
+      (S.peakPnlPct || 0) < CONFIG.POST_EXIT_CONT_HARVEST_SOFT_MIN_PEAK_PROFIT_PCT,
+      "post_exit_soft_peak_profit_too_low"
+    );
+    reasonPush(
+      postExitSoftReasons,
+      !Number.isFinite(adx) || adx < CONFIG.POST_EXIT_CONT_HARVEST_SOFT_MIN_ADX,
+      "post_exit_soft_adx_too_low"
+    );
+    reasonPush(
+      postExitSoftReasons,
+      extFromEma8 < CONFIG.POST_EXIT_CONT_HARVEST_SOFT_MIN_EXT_FROM_EMA8_PCT,
+      "post_exit_soft_ext_from_ema8_too_low"
+    );
+    reasonPush(
+      postExitSoftReasons,
+      extFromEma18 < CONFIG.POST_EXIT_CONT_HARVEST_SOFT_MIN_EXT_FROM_EMA18_PCT,
+      "post_exit_soft_ext_from_ema18_too_low"
+    );
+    reasonPush(
+      postExitSoftReasons,
+      !postExitFvvoOk,
+      "post_exit_soft_strong_negative_fvvo"
+    );
+
+    postExitSoftAllow = postExitSoftReasons.length === 0;
+  }
+
+  let chosenPath = "none";
+  let allow = false;
+
+  if (classicAllow) {
+    allow = true;
+    chosenPath = "classic";
+  } else if (postExitSoftAllow) {
+    allow = true;
+    chosenPath = "post_exit_soft";
+  } else if (softAllow) {
+    allow = true;
+    chosenPath = "soft";
+  }
+
   if (CONFIG.REENTRY_TOP_HARVEST_LOG_DEBUG) {
     log("🟠 REENTRY_TOP_HARVEST_CHECK", {
-      allow: classicAllow || softAllow,
-      path: classicAllow ? "classic" : softAllow ? "soft" : "none",
+      allow,
+      path: chosenPath,
       entryMode: S.entryMode,
       classicReasons,
       softReasons,
+      postExitSoftReasons,
       pnlPct: round4(pnlPct),
       peakPnlPct: round4(S.peakPnlPct),
       dynamicTpTier: S.dynamicTpTier,
@@ -2753,10 +2809,10 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
     });
   }
 
-  if (classicAllow || softAllow) {
+  if (allow) {
     return {
       allow: true,
-      path: classicAllow ? "classic" : "soft",
+      path: chosenPath,
       extFromEma8,
       extFromEma18,
       recentRsiHigh: rsiHighRecent,
@@ -2769,9 +2825,14 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
 
   return {
     allow: false,
-    reason: classicReasons[0] || softReasons[0] || "blocked",
+    reason:
+      classicReasons[0] ||
+      postExitSoftReasons[0] ||
+      softReasons[0] ||
+      "blocked",
     classicReasons,
     softReasons,
+    postExitSoftReasons,
     extFromEma8,
     extFromEma18,
     recentRsiHigh: rsiHighRecent,
@@ -2781,7 +2842,6 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
     bearishFvvoAccel,
   };
 }
-
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
 
@@ -2866,7 +2926,6 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     }
   }
 }
-
 function isStrongTrendHold(feature, fv) {
   const rsi = n(feature.rsi, NaN);
   const adx = n(feature.adx, NaN);
@@ -2878,12 +2937,10 @@ function isStrongTrendHold(feature, fv) {
   if (CONFIG.STRONG_TREND_HOLD_BLOCK_IF_BEARISH_FVVO && fv.score < 0) return false;
   return true;
 }
-
 function shouldTopHarvestExit() {
   if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
-  return { allow: false, reason: "disabled_for_v44d" };
+  return { allow: false, reason: "disabled_for_v44f" };
 }
-
 function evaluateBarExit(feature) {
   if (!S.inPosition) return;
   const price = n(feature.close, currentPrice());
@@ -3033,7 +3090,6 @@ function evaluateBarExit(feature) {
     return doExit("close_below_ema18_5m", price, feature.time, "regime_break");
   }
 }
-
 function markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit) {
   if (!CONFIG.PHASE2_REENTRY_ENABLED) return;
   if (!CONFIG.KEEP_BULL_CONTEXT_ON_TP_EXIT) return;
@@ -3070,11 +3126,19 @@ function markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit) {
 
   armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit);
 }
-
 function doExit(reason, price, ts, exitClass = "stop_exit") {
-  const now = nowMs();
   if (!S.inPosition) return;
-  if (now - S.lastExitAtMs < CONFIG.EXIT_DEDUP_MS) return;
+  if (!canExitByDedup(ts)) {
+    log("⏸️ EXIT_DEDUP_BLOCKED", {
+      reason,
+      ts,
+      entryMode: S.entryMode,
+      lastExitAtMs: S.lastExitAtMs,
+      attemptClockMs: actionClockMs(ts),
+      exitDedupMs: CONFIG.EXIT_DEDUP_MS,
+    });
+    return;
+  }
 
   const exitPrice = Number.isFinite(price) ? price : currentPrice();
   const pnlPct =
@@ -3084,9 +3148,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
 
   const peakBeforeExit = getExitPeakSnapshot(exitPrice);
 
-  const exitMs = CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK
-    ? eventTimeOrNow(ts)
-    : nowMs();
+  const exitMs = actionClockMs(ts);
   const entryMs = parseTsMs(S.entryAt);
 
   log("📤 EXIT", {
@@ -3134,7 +3196,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   S.peakPrice = null;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
-  S.lastExitAtMs = now;
+  S.lastExitAtMs = actionClockMs(ts);
   S.lastAction = "exit";
   S.lastExitClass = exitClass;
   S.lastExitReason = reason;
@@ -3142,7 +3204,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   if (exitClass === "cycle_exit") {
     S.cooldownUntilMs = 0;
   } else {
-    S.cooldownUntilMs = now + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
+    S.cooldownUntilMs = actionClockMs(ts) + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
     S.cycleState = "cooldown_hard";
   }
 }
