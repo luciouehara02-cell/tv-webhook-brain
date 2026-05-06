@@ -11,7 +11,7 @@
  *   -> optional enter_long only if BASIC_ALLOW_TREND_CHANGE_ENTRY=true
  *
  * - Bullish BOS:
- *   -> save bos_bias
+ *   -> save bos_biass
  *   -> enter_long
  *
  * - Bullish Trend Continuation:
