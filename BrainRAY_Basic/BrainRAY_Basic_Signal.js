@@ -1,25 +1,29 @@
 /**
- * BrainRAY_Basic_Signal_v1.0
+ * BrainRAY_Basic_Signal_v1.1
  *
  * Goal:
  * - Basic RayAlgo TradingView signal bridge
  * - TradingView -> Railway /webhook -> 3Commas Signal Bot
  *
- * Signal logic:
+ * v1.1 changes:
+ * - Add simple inLong position state
+ * - Add LOCK_AFTER_ENTER to block duplicate long entries
+ * - Add exit_long forwarding
+ * - Bearish Trend Change -> exit_long if enabled
+ * - Bearish BOS -> exit_long if enabled
+ * - Bearish Trend Continuation -> optional exit_long if enabled
+ *
+ * Entry logic:
  * - Bullish Trend Change:
  *   -> save bullish_bias
  *   -> optional enter_long only if BASIC_ALLOW_TREND_CHANGE_ENTRY=true
  *
  * - Bullish BOS:
- *   -> save bos_biass
+ *   -> save bos_bias
  *   -> enter_long
  *
  * - Bullish Trend Continuation:
  *   -> enter_long only if recent bullish_bias or recent Bullish BOS exists
- *
- * Bearish signals:
- * - cancel bullish bias
- * - no short trading in v1.0
  */
 
 import express from "express";
@@ -124,7 +128,7 @@ function responseFail(res, status, payload = {}) {
 // Config
 // --------------------------------------------------
 const CONFIG = {
-  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.0"),
+  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.1"),
   PORT: numEnv("PORT", 8080),
   DEBUG: boolEnv("DEBUG", true),
   WEBHOOK_PATH: strEnv("WEBHOOK_PATH", "/webhook"),
@@ -149,6 +153,18 @@ const CONFIG = {
   ENTER_DEDUP_SEC: numEnv("ENTER_DEDUP_SEC", 25),
   ENTRY_COOLDOWN_SEC: numEnv("ENTRY_COOLDOWN_SEC", 180),
 
+  LOCK_AFTER_ENTER: boolEnv("LOCK_AFTER_ENTER", true),
+
+  EXIT_ON_BEARISH_TREND_CHANGE: boolEnv("EXIT_ON_BEARISH_TREND_CHANGE", true),
+  EXIT_ON_BEARISH_BOS: boolEnv("EXIT_ON_BEARISH_BOS", true),
+  EXIT_ON_BEARISH_TREND_CONTINUATION: boolEnv(
+    "EXIT_ON_BEARISH_TREND_CONTINUATION",
+    false
+  ),
+
+  EXIT_DEDUP_SEC: numEnv("EXIT_DEDUP_SEC", 20),
+  EXIT_COOLDOWN_SEC: numEnv("EXIT_COOLDOWN_SEC", 60),
+
   REQUIRE_KNOWN_SIGNAL: boolEnv("REQUIRE_KNOWN_SIGNAL", true),
 };
 
@@ -161,6 +177,18 @@ const state = {
   startedAt: isoNow(),
 
   lastPayload: null,
+
+  position: {
+    inLong: false,
+    entryPrice: null,
+    entrySignal: null,
+    entryTime: null,
+    entryTsMs: null,
+    exitPrice: null,
+    exitSignal: null,
+    exitTime: null,
+    exitTsMs: null,
+  },
 
   bullishBias: {
     active: false,
@@ -185,6 +213,13 @@ const state = {
     reason: null,
   },
 
+  lastExitLong: {
+    tsMs: null,
+    price: null,
+    signal: null,
+    reason: null,
+  },
+
   counters: {
     received: 0,
     unauthorized: 0,
@@ -194,6 +229,8 @@ const state = {
     biasCancelled: 0,
     enterAllowed: 0,
     enterBlocked: 0,
+    exitAllowed: 0,
+    exitBlocked: 0,
     forwardedOk: 0,
     forwardedFail: 0,
   },
@@ -315,8 +352,55 @@ function getBiasStatus() {
   };
 }
 
+function getPositionStatus() {
+  return {
+    inLong: state.position.inLong,
+    entryPrice: state.position.entryPrice,
+    entrySignal: state.position.entrySignal,
+    entryTime: state.position.entryTime,
+    entryAgeSec: ageSec(state.position.entryTsMs),
+    exitPrice: state.position.exitPrice,
+    exitSignal: state.position.exitSignal,
+    exitTime: state.position.exitTime,
+    exitAgeSec: ageSec(state.position.exitTsMs),
+  };
+}
+
 // --------------------------------------------------
-// Entry protection
+// Position state
+// --------------------------------------------------
+function markEnterLong({ signal, price, time, reason }) {
+  state.lastEnterLong = {
+    tsMs: nowMs(),
+    price,
+    signal,
+    reason,
+  };
+
+  state.position.inLong = true;
+  state.position.entryPrice = price;
+  state.position.entrySignal = signal;
+  state.position.entryTime = time || isoNow();
+  state.position.entryTsMs = nowMs();
+}
+
+function markExitLong({ signal, price, time, reason }) {
+  state.lastExitLong = {
+    tsMs: nowMs(),
+    price,
+    signal,
+    reason,
+  };
+
+  state.position.inLong = false;
+  state.position.exitPrice = price;
+  state.position.exitSignal = signal;
+  state.position.exitTime = time || isoNow();
+  state.position.exitTsMs = nowMs();
+}
+
+// --------------------------------------------------
+// Entry / exit protection
 // --------------------------------------------------
 function isEnterDedupBlocked(signal) {
   if (!state.lastEnterLong.tsMs) return false;
@@ -334,13 +418,20 @@ function isEntryCooldownBlocked() {
   return diffSec < CONFIG.ENTRY_COOLDOWN_SEC;
 }
 
-function markEnterLong({ signal, price, reason }) {
-  state.lastEnterLong = {
-    tsMs: nowMs(),
-    price,
-    signal,
-    reason,
-  };
+function isExitDedupBlocked(signal) {
+  if (!state.lastExitLong.tsMs) return false;
+  const diffSec = (nowMs() - state.lastExitLong.tsMs) / 1000;
+
+  return (
+    diffSec < CONFIG.EXIT_DEDUP_SEC &&
+    state.lastExitLong.signal === signal
+  );
+}
+
+function isExitCooldownBlocked() {
+  if (!state.lastExitLong.tsMs) return false;
+  const diffSec = (nowMs() - state.lastExitLong.tsMs) / 1000;
+  return diffSec < CONFIG.EXIT_COOLDOWN_SEC;
 }
 
 // --------------------------------------------------
@@ -348,6 +439,7 @@ function markEnterLong({ signal, price, reason }) {
 // --------------------------------------------------
 function decideRayAlgoSignal({ signal, price, time }) {
   const biasStatus = getBiasStatus();
+  const positionStatus = getPositionStatus();
 
   if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
     return {
@@ -355,19 +447,56 @@ function decideRayAlgoSignal({ signal, price, time }) {
       allowed: false,
       reason: "unknown_signal",
       biasStatus,
+      positionStatus,
     };
   }
 
-  // Bearish signal cancels bullish context.
-  // v1.0 does not trade short.
+  // Bearish signals cancel bullish context and may trigger exit_long.
   if (isBearishSignal(signal)) {
     cancelBullishBias("bearish_signal_received", { signal, price, time });
+
+    if (
+      signal === SIGNALS.BEARISH_TREND_CHANGE &&
+      CONFIG.EXIT_ON_BEARISH_TREND_CHANGE
+    ) {
+      return {
+        action: "exit_long",
+        allowed: true,
+        reason: "bearish_trend_change_exit",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (signal === SIGNALS.BEARISH_BOS && CONFIG.EXIT_ON_BEARISH_BOS) {
+      return {
+        action: "exit_long",
+        allowed: true,
+        reason: "bearish_bos_exit",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (
+      signal === SIGNALS.BEARISH_TREND_CONTINUATION &&
+      CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION
+    ) {
+      return {
+        action: "exit_long",
+        allowed: true,
+        reason: "bearish_trend_continuation_exit",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
 
     return {
       action: "ignore",
       allowed: false,
-      reason: "bearish_signal_cancelled_bullish_bias",
+      reason: "bearish_signal_exit_disabled",
       biasStatus: getBiasStatus(),
+      positionStatus: getPositionStatus(),
     };
   }
 
@@ -381,6 +510,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
         allowed: false,
         reason: "bullish_trend_change_saved_bias_only",
         biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
       };
     }
 
@@ -389,6 +519,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
       allowed: true,
       reason: "bullish_trend_change_entry_enabled",
       biasStatus: getBiasStatus(),
+      positionStatus: getPositionStatus(),
     };
   }
 
@@ -401,6 +532,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
       allowed: true,
       reason: "bullish_bos_direct_entry",
       biasStatus: getBiasStatus(),
+      positionStatus: getPositionStatus(),
     };
   }
 
@@ -412,6 +544,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
         allowed: false,
         reason: "trend_continuation_entry_disabled",
         biasStatus,
+        positionStatus,
       };
     }
 
@@ -424,6 +557,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
         allowed: false,
         reason: "trend_continuation_without_recent_bullish_context",
         biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
       };
     }
 
@@ -434,6 +568,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
         ? "trend_continuation_after_recent_bos"
         : "trend_continuation_after_recent_bullish_bias",
       biasStatus: getBiasStatus(),
+      positionStatus: getPositionStatus(),
     };
   }
 
@@ -442,45 +577,124 @@ function decideRayAlgoSignal({ signal, price, time }) {
     allowed: false,
     reason: "no_matching_rule",
     biasStatus,
+    positionStatus,
   };
 }
 
-function applyEntryProtection({ decision, signal, price }) {
-  if (!decision.allowed || decision.action !== "enter_long") {
+function applyTradeProtection({ decision, signal, price, time }) {
+  if (!decision.allowed) {
     return decision;
   }
 
-  if (isEnterDedupBlocked(signal)) {
-    state.counters.enterBlocked += 1;
+  if (decision.action === "enter_long") {
+    if (CONFIG.LOCK_AFTER_ENTER && state.position.inLong) {
+      state.counters.enterBlocked += 1;
+
+      return {
+        ...decision,
+        allowed: false,
+        action: "blocked",
+        reason: "already_in_long_lock_after_enter",
+        lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (isEnterDedupBlocked(signal)) {
+      state.counters.enterBlocked += 1;
+
+      return {
+        ...decision,
+        allowed: false,
+        action: "blocked",
+        reason: "enter_dedup_blocked",
+        lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (isEntryCooldownBlocked()) {
+      state.counters.enterBlocked += 1;
+
+      return {
+        ...decision,
+        allowed: false,
+        action: "blocked",
+        reason: "entry_cooldown_blocked",
+        lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    markEnterLong({
+      signal,
+      price,
+      time,
+      reason: decision.reason,
+    });
+
+    state.counters.enterAllowed += 1;
 
     return {
       ...decision,
-      allowed: false,
-      action: "blocked",
-      reason: "enter_dedup_blocked",
-      lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+      positionStatus: getPositionStatus(),
     };
   }
 
-  if (isEntryCooldownBlocked()) {
-    state.counters.enterBlocked += 1;
+  if (decision.action === "exit_long") {
+    if (CONFIG.LOCK_AFTER_ENTER && !state.position.inLong) {
+      state.counters.exitBlocked += 1;
+
+      return {
+        ...decision,
+        allowed: false,
+        action: "blocked",
+        reason: "not_in_long_exit_blocked",
+        lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (isExitDedupBlocked(signal)) {
+      state.counters.exitBlocked += 1;
+
+      return {
+        ...decision,
+        allowed: false,
+        action: "blocked",
+        reason: "exit_dedup_blocked",
+        lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (isExitCooldownBlocked()) {
+      state.counters.exitBlocked += 1;
+
+      return {
+        ...decision,
+        allowed: false,
+        action: "blocked",
+        reason: "exit_cooldown_blocked",
+        lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    markExitLong({
+      signal,
+      price,
+      time,
+      reason: decision.reason,
+    });
+
+    state.counters.exitAllowed += 1;
 
     return {
       ...decision,
-      allowed: false,
-      action: "blocked",
-      reason: "entry_cooldown_blocked",
-      lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+      positionStatus: getPositionStatus(),
     };
   }
-
-  markEnterLong({
-    signal,
-    price,
-    reason: decision.reason,
-  });
-
-  state.counters.enterAllowed += 1;
 
   return decision;
 }
@@ -493,7 +707,6 @@ function resolveBotUuid(symbol) {
 
   if (botUuid) return String(botUuid);
 
-  // Fallback if user only trades one symbol and bot UUID was mapped with configured symbol.
   const fallback = CONFIG.SYMBOL_BOT_MAP[CONFIG.SYMBOL];
   if (fallback) return String(fallback);
 
@@ -672,8 +885,15 @@ app.get("/", (req, res) => {
       bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
       enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
       entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
+      lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
+      exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
+      exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
+      exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
+      exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
+      exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
       requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
     },
+    position: getPositionStatus(),
     bias: getBiasStatus(),
     counters: state.counters,
   });
@@ -684,6 +904,7 @@ app.get("/health", (req, res) => {
     status: "healthy",
     startedAt: state.startedAt,
     symbol: CONFIG.SYMBOL,
+    position: getPositionStatus(),
     bias: getBiasStatus(),
     counters: state.counters,
   });
@@ -783,10 +1004,11 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
     time,
   });
 
-  decision = applyEntryProtection({
+  decision = applyTradeProtection({
     decision,
     signal,
     price: cleanPrice,
+    time,
   });
 
   log("🧠 decision", {
@@ -797,10 +1019,15 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
     allowed: decision.allowed,
     reason: decision.reason,
     biasStatus: decision.biasStatus,
+    positionStatus: decision.positionStatus,
     lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+    lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
   });
 
-  if (!decision.allowed || decision.action !== "enter_long") {
+  if (
+    !decision.allowed ||
+    !["enter_long", "exit_long"].includes(decision.action)
+  ) {
     return responseOk(res, {
       accepted: true,
       forwarded: false,
@@ -809,13 +1036,14 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
       signal,
       price: cleanPrice,
       decision,
+      position: getPositionStatus(),
       counters: state.counters,
     });
   }
 
   const forwardResult = await forwardTo3Commas({
     symbol,
-    action: "enter_long",
+    action: decision.action,
     price: cleanPrice,
     time,
     signal,
@@ -829,9 +1057,10 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
     symbol,
     signal,
     price: cleanPrice,
-    action: "enter_long",
+    action: decision.action,
     decision,
     forwardResult,
+    position: getPositionStatus(),
     counters: state.counters,
   });
 });
@@ -851,6 +1080,12 @@ app.get("/state", (req, res) => {
       bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
       enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
       entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
+      lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
+      exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
+      exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
+      exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
+      exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
+      exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
     },
   });
 });
@@ -866,8 +1101,28 @@ app.post("/reset", (req, res) => {
     reason: null,
   };
 
+  state.lastExitLong = {
+    tsMs: null,
+    price: null,
+    signal: null,
+    reason: null,
+  };
+
+  state.position = {
+    inLong: false,
+    entryPrice: null,
+    entrySignal: null,
+    entryTime: null,
+    entryTsMs: null,
+    exitPrice: null,
+    exitSignal: null,
+    exitTime: null,
+    exitTsMs: null,
+  };
+
   return responseOk(res, {
     message: "state reset",
+    position: getPositionStatus(),
     bias: getBiasStatus(),
   });
 });
@@ -892,6 +1147,12 @@ app.listen(CONFIG.PORT, () => {
     bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
     enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
     entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
+    lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
+    exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
+    exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
+    exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
+    exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
+    exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
     requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
   });
 });
