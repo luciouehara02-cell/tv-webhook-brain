@@ -20,3 +20,11 @@ curl -X POST "https://brainraycontinuation-production.up.railway.app/reset" \
     "secret":"BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
     "reason":"before_replay"
   }'
+
+
+REPLAY_TIMESTAMP_MODE=preserve \
+REPLAY_MIN_GAP_MS=200 \
+REPLAY_MAX_GAP_MS=1500 \
+node /workspaces/tv-webhook-brain/BrainRAY/Replay/scripts/replay_brainray_case.cjs \
+  /workspaces/tv-webhook-brain/BrainRAY/Replay/cases/MergedReplayTick.json \
+  https://brainraylivecontinuationjs-production.up.railway.app/webhook
