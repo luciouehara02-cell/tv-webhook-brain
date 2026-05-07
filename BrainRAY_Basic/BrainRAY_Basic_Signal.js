@@ -1,29 +1,28 @@
 /**
- * BrainRAY_Basic_Signal_v1.1
+ * BrainRAY_Basic_Signal_v1.1h
  *
  * Goal:
  * - Basic RayAlgo TradingView signal bridge
  * - TradingView -> Railway /webhook -> 3Commas Signal Bot
  *
- * v1.1 changes:
- * - Add simple inLong position state
- * - Add LOCK_AFTER_ENTER to block duplicate long entries
- * - Add exit_long forwarding
- * - Bearish Trend Change -> exit_long if enabled
- * - Bearish BOS -> exit_long if enabled
+ * Entry:
+ * - Bullish Trend Change       -> save bullish_bias only by default
+ * - Bullish BOS                -> enter_long
+ * - Bullish Trend Continuation -> enter_long only after recent bullish context
+ *
+ * Exit:
+ * - Bearish Trend Change       -> exit_long if enabled
+ * - Bearish BOS                -> exit_long if enabled
  * - Bearish Trend Continuation -> optional exit_long if enabled
  *
- * Entry logic:
- * - Bullish Trend Change:
- *   -> save bullish_bias
- *   -> optional enter_long only if BASIC_ALLOW_TREND_CHANGE_ENTRY=true
+ * Protection:
+ * - LOCK_AFTER_ENTER blocks duplicate enter_long while already inLong
+ * - exit_long blocked if not inLong
+ * - enter/exit dedupe and cooldown
  *
- * - Bullish BOS:
- *   -> save bos_bias
- *   -> enter_long
- *
- * - Bullish Trend Continuation:
- *   -> enter_long only if recent bullish_bias or recent Bullish BOS exists
+ * v1.1h:
+ * - Same logic as v1.1
+ * - Horizontal one-line logs similar to BrainRAY_Continuation
  */
 
 import express from "express";
@@ -89,20 +88,54 @@ function withinTtl(tsMs, ttlMin) {
   return nowMs() - tsMs <= ttlMs;
 }
 
+function compactObject(value) {
+  if (Array.isArray(value)) {
+    return value.map(compactObject);
+  }
+
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v !== undefined) out[k] = compactObject(v);
+    }
+    return out;
+  }
+
+  return value;
+}
+
+function oneLine(payload = {}) {
+  try {
+    return JSON.stringify(compactObject(payload));
+  } catch (e) {
+    return JSON.stringify({ logError: String(e?.message || e) });
+  }
+}
+
+function logEvent(tag, payload = {}) {
+  if (!CONFIG.DEBUG) return;
+  console.log(`${isoNow()} ${tag} | ${oneLine(payload)}`);
+}
+
+function warnEvent(tag, payload = {}) {
+  console.warn(`${isoNow()} ${tag} | ${oneLine(payload)}`);
+}
+
+function errorEvent(tag, payload = {}) {
+  console.error(`${isoNow()} ${tag} | ${oneLine(payload)}`);
+}
+
 function parseSymbolBotMap(raw) {
   try {
     const parsed = JSON.parse(raw || "{}");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return parsed;
   } catch (e) {
-    console.error("❌ Invalid SYMBOL_BOT_MAP JSON:", e?.message || e);
+    errorEvent("INVALID_SYMBOL_BOT_MAP", {
+      error: String(e?.message || e),
+      rawPresent: Boolean(raw),
+    });
     return {};
-  }
-}
-
-function log(...args) {
-  if (CONFIG.DEBUG) {
-    console.log(...args);
   }
 }
 
@@ -128,7 +161,7 @@ function responseFail(res, status, payload = {}) {
 // Config
 // --------------------------------------------------
 const CONFIG = {
-  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.1"),
+  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.1h"),
   PORT: numEnv("PORT", 8080),
   DEBUG: boolEnv("DEBUG", true),
   WEBHOOK_PATH: strEnv("WEBHOOK_PATH", "/webhook"),
@@ -170,8 +203,7 @@ const CONFIG = {
 
 // --------------------------------------------------
 // State
-// Railway is stateless on redeploy/restart.
-// This memory is runtime-only.
+// Railway state is runtime-only and resets on redeploy/restart.
 // --------------------------------------------------
 const state = {
   startedAt: isoNow(),
@@ -225,19 +257,22 @@ const state = {
     unauthorized: 0,
     wrongSymbol: 0,
     unknownSignal: 0,
+
     biasSaved: 0,
     biasCancelled: 0,
+
     enterAllowed: 0,
     enterBlocked: 0,
     exitAllowed: 0,
     exitBlocked: 0,
+
     forwardedOk: 0,
     forwardedFail: 0,
   },
 };
 
 // --------------------------------------------------
-// Signal definitions
+// Signals
 // --------------------------------------------------
 const SIGNALS = {
   BULLISH_TREND_CHANGE: "Bullish Trend Change",
@@ -259,85 +294,9 @@ function isBearishSignal(signal) {
   );
 }
 
-function saveBullishBias({ signal, price, time }) {
-  state.bullishBias = {
-    active: true,
-    signal,
-    price,
-    time,
-    tsMs: nowMs(),
-  };
-
-  state.counters.biasSaved += 1;
-
-  log("🟢 bullish_bias saved", {
-    signal,
-    price,
-    time,
-    ttlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
-  });
-}
-
-function saveBosBias({ signal, price, time }) {
-  state.bosBias = {
-    active: true,
-    signal,
-    price,
-    time,
-    tsMs: nowMs(),
-  };
-
-  log("🟢 bos_bias saved", {
-    signal,
-    price,
-    time,
-    ttlMin: CONFIG.BOS_BIAS_TTL_MIN,
-  });
-}
-
-function cancelBullishBias(reason, payload = {}) {
-  const hadBias = state.bullishBias.active || state.bosBias.active;
-
-  state.bullishBias = {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  };
-
-  state.bosBias = {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  };
-
-  if (hadBias) {
-    state.counters.biasCancelled += 1;
-  }
-
-  log("🔴 bullish bias cancelled", {
-    reason,
-    ...payload,
-  });
-}
-
-function hasRecentBullishBias() {
-  return (
-    state.bullishBias.active &&
-    withinTtl(state.bullishBias.tsMs, CONFIG.BULLISH_BIAS_TTL_MIN)
-  );
-}
-
-function hasRecentBosBias() {
-  return (
-    state.bosBias.active &&
-    withinTtl(state.bosBias.tsMs, CONFIG.BOS_BIAS_TTL_MIN)
-  );
-}
-
+// --------------------------------------------------
+// Status helpers
+// --------------------------------------------------
 function getBiasStatus() {
   return {
     bullishBiasActive: hasRecentBullishBias(),
@@ -364,6 +323,117 @@ function getPositionStatus() {
     exitTime: state.position.exitTime,
     exitAgeSec: ageSec(state.position.exitTsMs),
   };
+}
+
+function getCompactPosition() {
+  return {
+    inLong: state.position.inLong,
+    entryPrice: state.position.entryPrice,
+    entrySignal: state.position.entrySignal,
+    entryAgeSec: ageSec(state.position.entryTsMs),
+    exitPrice: state.position.exitPrice,
+    exitSignal: state.position.exitSignal,
+    exitAgeSec: ageSec(state.position.exitTsMs),
+  };
+}
+
+function getCompactBias() {
+  return {
+    bullishBiasActive: hasRecentBullishBias(),
+    bullishBiasSignal: state.bullishBias.signal,
+    bullishBiasPrice: state.bullishBias.price,
+    bullishBiasAgeSec: ageSec(state.bullishBias.tsMs),
+    bosBiasActive: hasRecentBosBias(),
+    bosBiasSignal: state.bosBias.signal,
+    bosBiasPrice: state.bosBias.price,
+    bosBiasAgeSec: ageSec(state.bosBias.tsMs),
+  };
+}
+
+// --------------------------------------------------
+// Bias state
+// --------------------------------------------------
+function saveBullishBias({ signal, price, time }) {
+  state.bullishBias = {
+    active: true,
+    signal,
+    price,
+    time,
+    tsMs: nowMs(),
+  };
+
+  state.counters.biasSaved += 1;
+
+  logEvent("BIAS_SAVED", {
+    signal,
+    price,
+    time,
+    ttlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
+    bias: getCompactBias(),
+  });
+}
+
+function saveBosBias({ signal, price, time }) {
+  state.bosBias = {
+    active: true,
+    signal,
+    price,
+    time,
+    tsMs: nowMs(),
+  };
+
+  logEvent("BOS_BIAS_SAVED", {
+    signal,
+    price,
+    time,
+    ttlMin: CONFIG.BOS_BIAS_TTL_MIN,
+    bias: getCompactBias(),
+  });
+}
+
+function cancelBullishBias(reason, payload = {}) {
+  const hadBias = state.bullishBias.active || state.bosBias.active;
+
+  state.bullishBias = {
+    active: false,
+    signal: null,
+    price: null,
+    time: null,
+    tsMs: null,
+  };
+
+  state.bosBias = {
+    active: false,
+    signal: null,
+    price: null,
+    time: null,
+    tsMs: null,
+  };
+
+  if (hadBias) {
+    state.counters.biasCancelled += 1;
+  }
+
+  logEvent("BIAS_CANCELLED", {
+    reason,
+    hadBias,
+    ...payload,
+    bias: getCompactBias(),
+  });
+}
+
+function hasRecentBullishBias() {
+  return (
+    state.bullishBias.active &&
+    withinTtl(state.bullishBias.tsMs, CONFIG.BULLISH_BIAS_TTL_MIN)
+  );
+}
+
+function hasRecentBosBias() {
+  return (
+    state.bosBias.active &&
+    withinTtl(state.bosBias.tsMs, CONFIG.BOS_BIAS_TTL_MIN)
+  );
 }
 
 // --------------------------------------------------
@@ -405,11 +475,7 @@ function markExitLong({ signal, price, time, reason }) {
 function isEnterDedupBlocked(signal) {
   if (!state.lastEnterLong.tsMs) return false;
   const diffSec = (nowMs() - state.lastEnterLong.tsMs) / 1000;
-
-  return (
-    diffSec < CONFIG.ENTER_DEDUP_SEC &&
-    state.lastEnterLong.signal === signal
-  );
+  return diffSec < CONFIG.ENTER_DEDUP_SEC && state.lastEnterLong.signal === signal;
 }
 
 function isEntryCooldownBlocked() {
@@ -421,11 +487,7 @@ function isEntryCooldownBlocked() {
 function isExitDedupBlocked(signal) {
   if (!state.lastExitLong.tsMs) return false;
   const diffSec = (nowMs() - state.lastExitLong.tsMs) / 1000;
-
-  return (
-    diffSec < CONFIG.EXIT_DEDUP_SEC &&
-    state.lastExitLong.signal === signal
-  );
+  return diffSec < CONFIG.EXIT_DEDUP_SEC && state.lastExitLong.signal === signal;
 }
 
 function isExitCooldownBlocked() {
@@ -700,11 +762,74 @@ function applyTradeProtection({ decision, signal, price, time }) {
 }
 
 // --------------------------------------------------
+// Horizontal decision logs
+// --------------------------------------------------
+function logFinalDecision({ signal, symbol, price, decision }) {
+  const base = {
+    signal,
+    symbol,
+    price,
+    action: decision.action,
+    allowed: decision.allowed,
+    reason: decision.reason,
+    inLong: state.position.inLong,
+    entrySignal: state.position.entrySignal,
+    entryPrice: state.position.entryPrice,
+    exitSignal: state.position.exitSignal,
+    exitPrice: state.position.exitPrice,
+    lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
+    lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
+    bullishBiasActive: hasRecentBullishBias(),
+    bosBiasActive: hasRecentBosBias(),
+  };
+
+  if (decision.action === "enter_long" && decision.allowed) {
+    logEvent("ENTRY_ALLOWED", base);
+    return;
+  }
+
+  if (
+    decision.action === "blocked" &&
+    String(decision.reason || "").includes("enter")
+  ) {
+    logEvent("ENTRY_BLOCKED", base);
+    return;
+  }
+
+  if (
+    decision.action === "blocked" &&
+    (
+      String(decision.reason || "").includes("exit") ||
+      String(decision.reason || "").includes("not_in_long")
+    )
+  ) {
+    logEvent("EXIT_BLOCKED", base);
+    return;
+  }
+
+  if (decision.action === "exit_long" && decision.allowed) {
+    logEvent("EXIT_ALLOWED", base);
+    return;
+  }
+
+  if (decision.action === "bias_only") {
+    logEvent("ENTRY_BLOCKED", base);
+    return;
+  }
+
+  if (isBearishSignal(signal) && !decision.allowed) {
+    logEvent("EXIT_BLOCKED", base);
+    return;
+  }
+
+  logEvent("SIGNAL_IGNORED", base);
+}
+
+// --------------------------------------------------
 // 3Commas forwarding
 // --------------------------------------------------
 function resolveBotUuid(symbol) {
   const botUuid = CONFIG.SYMBOL_BOT_MAP[symbol];
-
   if (botUuid) return String(botUuid);
 
   const fallback = CONFIG.SYMBOL_BOT_MAP[CONFIG.SYMBOL];
@@ -775,12 +900,12 @@ async function postJsonWithTimeout(url, body, timeoutMs) {
 
 async function forwardTo3Commas({ symbol, action, price, time, signal, reason }) {
   if (!CONFIG.ENABLE_HTTP_FORWARD) {
-    log("🧪 forward skipped because ENABLE_HTTP_FORWARD=false", {
+    logEvent("FORWARD_SKIP", {
+      reason: "http_forward_disabled",
       symbol,
       action,
       price,
       signal,
-      reason,
     });
 
     return {
@@ -791,6 +916,13 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
   }
 
   if (!CONFIG.C3_SIGNAL_SECRET) {
+    errorEvent("FORWARD_FAIL", {
+      reason: "missing_c3_signal_secret",
+      symbol,
+      action,
+      signal,
+    });
+
     return {
       ok: false,
       skipped: false,
@@ -799,7 +931,15 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
   }
 
   const botUuid = resolveBotUuid(symbol);
+
   if (!botUuid) {
+    errorEvent("FORWARD_FAIL", {
+      reason: "missing_bot_uuid_for_symbol",
+      symbol,
+      action,
+      signal,
+    });
+
     return {
       ok: false,
       skipped: false,
@@ -814,8 +954,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
     time,
   });
 
-  log("📤 forwarding to 3Commas", {
-    url: CONFIG.C3_SIGNAL_URL,
+  logEvent("FORWARD_3COMMAS", {
     symbol,
     action,
     signal,
@@ -838,14 +977,18 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
     if (result.ok) {
       state.counters.forwardedOk += 1;
 
-      log("✅ 3Commas forward OK", {
+      logEvent("FORWARD_OK", {
+        action,
+        signal,
         status: result.status,
         body: result.bodyText,
       });
     } else {
       state.counters.forwardedFail += 1;
 
-      console.error("❌ 3Commas forward FAILED", {
+      errorEvent("FORWARD_FAIL", {
+        action,
+        signal,
         status: result.status,
         statusText: result.statusText,
         body: result.bodyText,
@@ -856,7 +999,12 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
   } catch (e) {
     state.counters.forwardedFail += 1;
 
-    console.error("❌ 3Commas forward ERROR", e?.message || e);
+    errorEvent("FORWARD_FAIL", {
+      action,
+      signal,
+      reason: "forward_exception",
+      error: String(e?.message || e),
+    });
 
     return {
       ok: false,
@@ -910,6 +1058,31 @@ app.get("/health", (req, res) => {
   });
 });
 
+app.get("/state", (req, res) => {
+  return responseOk(res, {
+    state,
+    config: {
+      brainName: CONFIG.BRAIN_NAME,
+      symbol: CONFIG.SYMBOL,
+      webhookPath: CONFIG.WEBHOOK_PATH,
+      enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
+      basicAllowTrendChangeEntry: CONFIG.BASIC_ALLOW_TREND_CHANGE_ENTRY,
+      allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
+      bullishBiasTtlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
+      bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
+      enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
+      entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
+      lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
+      exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
+      exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
+      exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
+      exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
+      exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
+      requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
+    },
+  });
+});
+
 app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   state.counters.received += 1;
 
@@ -919,7 +1092,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   const receivedSecret = String(body.secret || body.tv_secret || "").trim();
 
   if (!CONFIG.WEBHOOK_SECRET) {
-    console.error("❌ WEBHOOK_SECRET is not configured");
+    errorEvent("WEBHOOK_SECRET_MISSING", {});
     return responseFail(res, 500, {
       reason: "server_missing_webhook_secret",
     });
@@ -928,7 +1101,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (receivedSecret !== CONFIG.WEBHOOK_SECRET) {
     state.counters.unauthorized += 1;
 
-    console.warn("🚫 unauthorized webhook", {
+    warnEvent("UNAUTHORIZED", {
       receivedSecretPresent: Boolean(receivedSecret),
     });
 
@@ -946,7 +1119,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (symbol !== CONFIG.SYMBOL) {
     state.counters.wrongSymbol += 1;
 
-    console.warn("⚠️ wrong symbol ignored", {
+    warnEvent("WRONG_SYMBOL", {
       received: symbol,
       expected: CONFIG.SYMBOL,
       signal,
@@ -964,6 +1137,13 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (!signal) {
     state.counters.unknownSignal += 1;
 
+    warnEvent("UNKNOWN_SIGNAL", {
+      reason: "missing_signal",
+      src,
+      symbol,
+      price,
+    });
+
     return responseOk(res, {
       accepted: false,
       reason: "missing_signal",
@@ -973,11 +1153,12 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
     state.counters.unknownSignal += 1;
 
-    console.warn("⚠️ unknown signal ignored", {
+    warnEvent("UNKNOWN_SIGNAL", {
       signal,
       src,
       symbol,
       price,
+      knownSignals: Array.from(KNOWN_SIGNALS),
     });
 
     return responseOk(res, {
@@ -990,7 +1171,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
 
   const cleanPrice = price ?? 0;
 
-  log("📩 webhook received", {
+  logEvent("WEBHOOK_RX", {
     src,
     symbol,
     signal,
@@ -1011,23 +1192,14 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
     time,
   });
 
-  log("🧠 decision", {
+  logFinalDecision({
     signal,
     symbol,
     price: cleanPrice,
-    action: decision.action,
-    allowed: decision.allowed,
-    reason: decision.reason,
-    biasStatus: decision.biasStatus,
-    positionStatus: decision.positionStatus,
-    lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
-    lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
+    decision,
   });
 
-  if (
-    !decision.allowed ||
-    !["enter_long", "exit_long"].includes(decision.action)
-  ) {
+  if (!decision.allowed || !["enter_long", "exit_long"].includes(decision.action)) {
     return responseOk(res, {
       accepted: true,
       forwarded: false,
@@ -1065,32 +1237,6 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   });
 });
 
-// Optional debug route to inspect state
-app.get("/state", (req, res) => {
-  return responseOk(res, {
-    state,
-    config: {
-      brainName: CONFIG.BRAIN_NAME,
-      symbol: CONFIG.SYMBOL,
-      webhookPath: CONFIG.WEBHOOK_PATH,
-      enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
-      basicAllowTrendChangeEntry: CONFIG.BASIC_ALLOW_TREND_CHANGE_ENTRY,
-      allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
-      bullishBiasTtlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
-      bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
-      enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
-      entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
-      lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
-      exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
-      exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
-      exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
-      exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
-      exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
-    },
-  });
-});
-
-// Optional manual reset route
 app.post("/reset", (req, res) => {
   cancelBullishBias("manual_reset");
 
@@ -1120,6 +1266,11 @@ app.post("/reset", (req, res) => {
     exitTsMs: null,
   };
 
+  logEvent("STATE_RESET", {
+    position: getCompactPosition(),
+    bias: getCompactBias(),
+  });
+
   return responseOk(res, {
     message: "state reset",
     position: getPositionStatus(),
@@ -1131,28 +1282,38 @@ app.post("/reset", (req, res) => {
 // Start
 // --------------------------------------------------
 app.listen(CONFIG.PORT, () => {
-  console.log(`✅ ${CONFIG.BRAIN_NAME} listening on port ${CONFIG.PORT}`);
-  console.log("Config snapshot:", {
-    webhookPath: CONFIG.WEBHOOK_PATH,
-    symbol: CONFIG.SYMBOL,
-    debug: CONFIG.DEBUG,
-    enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
-    c3Url: CONFIG.C3_SIGNAL_URL,
-    hasWebhookSecret: Boolean(CONFIG.WEBHOOK_SECRET),
-    hasC3SignalSecret: Boolean(CONFIG.C3_SIGNAL_SECRET),
-    symbolBotMapKeys: Object.keys(CONFIG.SYMBOL_BOT_MAP),
-    basicAllowTrendChangeEntry: CONFIG.BASIC_ALLOW_TREND_CHANGE_ENTRY,
-    allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
-    bullishBiasTtlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
-    bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
-    enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
-    entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
-    lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
-    exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
-    exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
-    exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
-    exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
-    exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
-    requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
-  });
+  console.log(
+    `${isoNow()} START_OK | ${oneLine({
+      brain: CONFIG.BRAIN_NAME,
+      port: CONFIG.PORT,
+      symbol: CONFIG.SYMBOL,
+      webhookPath: CONFIG.WEBHOOK_PATH,
+    })}`
+  );
+
+  console.log(
+    `${isoNow()} CONFIG_SNAPSHOT | ${oneLine({
+      webhookPath: CONFIG.WEBHOOK_PATH,
+      symbol: CONFIG.SYMBOL,
+      debug: CONFIG.DEBUG,
+      enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
+      c3Url: CONFIG.C3_SIGNAL_URL,
+      hasWebhookSecret: Boolean(CONFIG.WEBHOOK_SECRET),
+      hasC3SignalSecret: Boolean(CONFIG.C3_SIGNAL_SECRET),
+      symbolBotMapKeys: Object.keys(CONFIG.SYMBOL_BOT_MAP),
+      basicAllowTrendChangeEntry: CONFIG.BASIC_ALLOW_TREND_CHANGE_ENTRY,
+      allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
+      bullishBiasTtlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
+      bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
+      enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
+      entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
+      lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
+      exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
+      exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
+      exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
+      exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
+      exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
+      requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
+    })}`
+  );
 });
