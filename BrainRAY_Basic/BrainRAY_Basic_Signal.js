@@ -1,9 +1,8 @@
 /**
- * BrainRAY_Basic_Signal_v1.1h
+ * BrainRAY_Basic_Signal_v1.1c
  *
- * Goal:
- * - Basic RayAlgo TradingView signal bridge
- * - TradingView -> Railway /webhook -> 3Commas Signal Bot
+ * Basic RayAlgo TradingView signal bridge:
+ * TradingView -> Railway /webhook -> 3Commas Signal Bot
  *
  * Entry:
  * - Bullish Trend Change       -> save bullish_bias only by default
@@ -15,14 +14,9 @@
  * - Bearish BOS                -> exit_long if enabled
  * - Bearish Trend Continuation -> optional exit_long if enabled
  *
- * Protection:
- * - LOCK_AFTER_ENTER blocks duplicate enter_long while already inLong
- * - exit_long blocked if not inLong
- * - enter/exit dedupe and cooldown
- *
- * v1.1h:
- * - Same logic as v1.1
- * - Horizontal one-line logs similar to BrainRAY_Continuation
+ * v1.1c:
+ * - Same trading logic as v1.1h
+ * - Color-coded horizontal logs like BrainRAY_Continuation
  */
 
 import express from "express";
@@ -112,11 +106,6 @@ function oneLine(payload = {}) {
   }
 }
 
-function logEvent(tag, payload = {}) {
-  if (!CONFIG.DEBUG) return;
-  console.log(`${isoNow()} ${tag} | ${oneLine(payload)}`);
-}
-
 function warnEvent(tag, payload = {}) {
   console.warn(`${isoNow()} ${tag} | ${oneLine(payload)}`);
 }
@@ -131,7 +120,7 @@ function parseSymbolBotMap(raw) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return parsed;
   } catch (e) {
-    errorEvent("INVALID_SYMBOL_BOT_MAP", {
+    errorEvent("❌ INVALID_SYMBOL_BOT_MAP", {
       error: String(e?.message || e),
       rawPresent: Boolean(raw),
     });
@@ -161,7 +150,7 @@ function responseFail(res, status, payload = {}) {
 // Config
 // --------------------------------------------------
 const CONFIG = {
-  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.1h"),
+  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.1c"),
   PORT: numEnv("PORT", 8080),
   DEBUG: boolEnv("DEBUG", true),
   WEBHOOK_PATH: strEnv("WEBHOOK_PATH", "/webhook"),
@@ -200,6 +189,11 @@ const CONFIG = {
 
   REQUIRE_KNOWN_SIGNAL: boolEnv("REQUIRE_KNOWN_SIGNAL", true),
 };
+
+function logEvent(tag, payload = {}) {
+  if (!CONFIG.DEBUG) return;
+  console.log(`${isoNow()} ${tag} | ${oneLine(payload)}`);
+}
 
 // --------------------------------------------------
 // State
@@ -294,9 +288,35 @@ function isBearishSignal(signal) {
   );
 }
 
+function raySignalTag(signal) {
+  if (signal === SIGNALS.BULLISH_TREND_CHANGE) return "🟩 RAY_BULLISH_TREND_CHANGE";
+  if (signal === SIGNALS.BULLISH_BOS) return "🟩 RAY_BULLISH_BOS";
+  if (signal === SIGNALS.BULLISH_TREND_CONTINUATION) return "🟩 RAY_BULLISH_TREND_CONTINUATION";
+
+  if (signal === SIGNALS.BEARISH_TREND_CHANGE) return "🟥 RAY_BEARISH_TREND_CHANGE";
+  if (signal === SIGNALS.BEARISH_BOS) return "🟥 RAY_BEARISH_BOS";
+  if (signal === SIGNALS.BEARISH_TREND_CONTINUATION) return "🟥 RAY_BEARISH_TREND_CONTINUATION";
+
+  return "⚪ RAY_UNKNOWN_SIGNAL";
+}
+
 // --------------------------------------------------
 // Status helpers
 // --------------------------------------------------
+function hasRecentBullishBias() {
+  return (
+    state.bullishBias.active &&
+    withinTtl(state.bullishBias.tsMs, CONFIG.BULLISH_BIAS_TTL_MIN)
+  );
+}
+
+function hasRecentBosBias() {
+  return (
+    state.bosBias.active &&
+    withinTtl(state.bosBias.tsMs, CONFIG.BOS_BIAS_TTL_MIN)
+  );
+}
+
 function getBiasStatus() {
   return {
     bullishBiasActive: hasRecentBullishBias(),
@@ -364,10 +384,10 @@ function saveBullishBias({ signal, price, time }) {
 
   state.counters.biasSaved += 1;
 
-  logEvent("BIAS_SAVED", {
+  logEvent("🟢 BIAS_SAVED", {
     signal,
     price,
-    time,
+    ts: time,
     ttlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
     bias: getCompactBias(),
   });
@@ -382,10 +402,10 @@ function saveBosBias({ signal, price, time }) {
     tsMs: nowMs(),
   };
 
-  logEvent("BOS_BIAS_SAVED", {
+  logEvent("🟢 BOS_BIAS_SAVED", {
     signal,
     price,
-    time,
+    ts: time,
     ttlMin: CONFIG.BOS_BIAS_TTL_MIN,
     bias: getCompactBias(),
   });
@@ -414,26 +434,12 @@ function cancelBullishBias(reason, payload = {}) {
     state.counters.biasCancelled += 1;
   }
 
-  logEvent("BIAS_CANCELLED", {
+  logEvent("🔴 BIAS_CANCELLED", {
     reason,
     hadBias,
     ...payload,
     bias: getCompactBias(),
   });
-}
-
-function hasRecentBullishBias() {
-  return (
-    state.bullishBias.active &&
-    withinTtl(state.bullishBias.tsMs, CONFIG.BULLISH_BIAS_TTL_MIN)
-  );
-}
-
-function hasRecentBosBias() {
-  return (
-    state.bosBias.active &&
-    withinTtl(state.bosBias.tsMs, CONFIG.BOS_BIAS_TTL_MIN)
-  );
 }
 
 // --------------------------------------------------
@@ -515,7 +521,7 @@ function decideRayAlgoSignal({ signal, price, time }) {
 
   // Bearish signals cancel bullish context and may trigger exit_long.
   if (isBearishSignal(signal)) {
-    cancelBullishBias("bearish_signal_received", { signal, price, time });
+    cancelBullishBias("bearish_signal_received", { signal, price, ts: time });
 
     if (
       signal === SIGNALS.BEARISH_TREND_CHANGE &&
@@ -762,7 +768,7 @@ function applyTradeProtection({ decision, signal, price, time }) {
 }
 
 // --------------------------------------------------
-// Horizontal decision logs
+// Color-coded horizontal decision logs
 // --------------------------------------------------
 function logFinalDecision({ signal, symbol, price, decision }) {
   const base = {
@@ -772,27 +778,50 @@ function logFinalDecision({ signal, symbol, price, decision }) {
     action: decision.action,
     allowed: decision.allowed,
     reason: decision.reason,
+
     inLong: state.position.inLong,
     entrySignal: state.position.entrySignal,
     entryPrice: state.position.entryPrice,
+    entryAgeSec: ageSec(state.position.entryTsMs),
     exitSignal: state.position.exitSignal,
     exitPrice: state.position.exitPrice,
+    exitAgeSec: ageSec(state.position.exitTsMs),
+
     lastEnterLongAgeSec: ageSec(state.lastEnterLong.tsMs),
     lastExitLongAgeSec: ageSec(state.lastExitLong.tsMs),
+
     bullishBiasActive: hasRecentBullishBias(),
+    bullishBiasSignal: state.bullishBias.signal,
+    bullishBiasPrice: state.bullishBias.price,
     bosBiasActive: hasRecentBosBias(),
+    bosBiasSignal: state.bosBias.signal,
+    bosBiasPrice: state.bosBias.price,
   };
 
   if (decision.action === "enter_long" && decision.allowed) {
-    logEvent("ENTRY_ALLOWED", base);
+    logEvent("🟢 ENTRY_ALLOWED", base);
+    return;
+  }
+
+  if (decision.action === "exit_long" && decision.allowed) {
+    logEvent("🔴 EXIT_ALLOWED", base);
+    return;
+  }
+
+  if (decision.action === "bias_only") {
+    logEvent("🧠 BIAS_ONLY", base);
     return;
   }
 
   if (
     decision.action === "blocked" &&
-    String(decision.reason || "").includes("enter")
+    (
+      String(decision.reason || "").includes("enter") ||
+      String(decision.reason || "").includes("in_long") ||
+      String(decision.reason || "").includes("cooldown")
+    )
   ) {
-    logEvent("ENTRY_BLOCKED", base);
+    logEvent("⛔ ENTRY_BLOCKED", base);
     return;
   }
 
@@ -803,26 +832,16 @@ function logFinalDecision({ signal, symbol, price, decision }) {
       String(decision.reason || "").includes("not_in_long")
     )
   ) {
-    logEvent("EXIT_BLOCKED", base);
-    return;
-  }
-
-  if (decision.action === "exit_long" && decision.allowed) {
-    logEvent("EXIT_ALLOWED", base);
-    return;
-  }
-
-  if (decision.action === "bias_only") {
-    logEvent("ENTRY_BLOCKED", base);
+    logEvent("🟠 EXIT_BLOCKED", base);
     return;
   }
 
   if (isBearishSignal(signal) && !decision.allowed) {
-    logEvent("EXIT_BLOCKED", base);
+    logEvent("🟠 EXIT_BLOCKED", base);
     return;
   }
 
-  logEvent("SIGNAL_IGNORED", base);
+  logEvent("⚪ SIGNAL_IGNORED", base);
 }
 
 // --------------------------------------------------
@@ -900,7 +919,7 @@ async function postJsonWithTimeout(url, body, timeoutMs) {
 
 async function forwardTo3Commas({ symbol, action, price, time, signal, reason }) {
   if (!CONFIG.ENABLE_HTTP_FORWARD) {
-    logEvent("FORWARD_SKIP", {
+    logEvent("⚪ FORWARD_SKIP", {
       reason: "http_forward_disabled",
       symbol,
       action,
@@ -916,7 +935,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
   }
 
   if (!CONFIG.C3_SIGNAL_SECRET) {
-    errorEvent("FORWARD_FAIL", {
+    errorEvent("❌ FORWARD_FAIL", {
       reason: "missing_c3_signal_secret",
       symbol,
       action,
@@ -933,7 +952,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
   const botUuid = resolveBotUuid(symbol);
 
   if (!botUuid) {
-    errorEvent("FORWARD_FAIL", {
+    errorEvent("❌ FORWARD_FAIL", {
       reason: "missing_bot_uuid_for_symbol",
       symbol,
       action,
@@ -954,7 +973,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
     time,
   });
 
-  logEvent("FORWARD_3COMMAS", {
+  logEvent("📤 FORWARD_3COMMAS", {
     symbol,
     action,
     signal,
@@ -977,7 +996,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
     if (result.ok) {
       state.counters.forwardedOk += 1;
 
-      logEvent("FORWARD_OK", {
+      logEvent("✅ FORWARD_OK", {
         action,
         signal,
         status: result.status,
@@ -986,7 +1005,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
     } else {
       state.counters.forwardedFail += 1;
 
-      errorEvent("FORWARD_FAIL", {
+      errorEvent("❌ FORWARD_FAIL", {
         action,
         signal,
         status: result.status,
@@ -999,7 +1018,7 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
   } catch (e) {
     state.counters.forwardedFail += 1;
 
-    errorEvent("FORWARD_FAIL", {
+    errorEvent("❌ FORWARD_FAIL", {
       action,
       signal,
       reason: "forward_exception",
@@ -1092,7 +1111,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   const receivedSecret = String(body.secret || body.tv_secret || "").trim();
 
   if (!CONFIG.WEBHOOK_SECRET) {
-    errorEvent("WEBHOOK_SECRET_MISSING", {});
+    errorEvent("❌ WEBHOOK_SECRET_MISSING", {});
     return responseFail(res, 500, {
       reason: "server_missing_webhook_secret",
     });
@@ -1101,7 +1120,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (receivedSecret !== CONFIG.WEBHOOK_SECRET) {
     state.counters.unauthorized += 1;
 
-    warnEvent("UNAUTHORIZED", {
+    warnEvent("🚫 UNAUTHORIZED", {
       receivedSecretPresent: Boolean(receivedSecret),
     });
 
@@ -1119,7 +1138,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (symbol !== CONFIG.SYMBOL) {
     state.counters.wrongSymbol += 1;
 
-    warnEvent("WRONG_SYMBOL", {
+    warnEvent("⚠️ WRONG_SYMBOL", {
       received: symbol,
       expected: CONFIG.SYMBOL,
       signal,
@@ -1137,7 +1156,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (!signal) {
     state.counters.unknownSignal += 1;
 
-    warnEvent("UNKNOWN_SIGNAL", {
+    warnEvent("⚠️ UNKNOWN_SIGNAL", {
       reason: "missing_signal",
       src,
       symbol,
@@ -1153,7 +1172,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
     state.counters.unknownSignal += 1;
 
-    warnEvent("UNKNOWN_SIGNAL", {
+    warnEvent("⚠️ UNKNOWN_SIGNAL", {
       signal,
       src,
       symbol,
@@ -1171,12 +1190,11 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
 
   const cleanPrice = price ?? 0;
 
-  logEvent("WEBHOOK_RX", {
+  logEvent(raySignalTag(signal), {
+    price: cleanPrice,
+    ts: time,
     src,
     symbol,
-    signal,
-    price: cleanPrice,
-    time,
   });
 
   let decision = decideRayAlgoSignal({
@@ -1266,7 +1284,7 @@ app.post("/reset", (req, res) => {
     exitTsMs: null,
   };
 
-  logEvent("STATE_RESET", {
+  logEvent("♻️ STATE_RESET", {
     position: getCompactPosition(),
     bias: getCompactBias(),
   });
@@ -1283,7 +1301,7 @@ app.post("/reset", (req, res) => {
 // --------------------------------------------------
 app.listen(CONFIG.PORT, () => {
   console.log(
-    `${isoNow()} START_OK | ${oneLine({
+    `${isoNow()} ✅ START_OK | ${oneLine({
       brain: CONFIG.BRAIN_NAME,
       port: CONFIG.PORT,
       symbol: CONFIG.SYMBOL,
@@ -1292,7 +1310,7 @@ app.listen(CONFIG.PORT, () => {
   );
 
   console.log(
-    `${isoNow()} CONFIG_SNAPSHOT | ${oneLine({
+    `${isoNow()} 🧠 CONFIG_SNAPSHOT | ${oneLine({
       webhookPath: CONFIG.WEBHOOK_PATH,
       symbol: CONFIG.SYMBOL,
       debug: CONFIG.DEBUG,
