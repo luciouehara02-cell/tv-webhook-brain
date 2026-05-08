@@ -1,0 +1,34 @@
+===========start the brain in the background.===========
+
+cd /workspaces/tv-webhook-brain
+
+pkill -f BrainRAY_Basic_Signal.js || true
+
+export PORT=8080
+export BRAIN_NAME="BrainRAY_Basic_Signal_v1.4_REPLAY"
+export WEBHOOK_SECRET="CHANGE_ME_TO_RANDOM_40+CHARS_9f8d7c6b5a4e3d2c1b0a"
+export SYMBOL="BINANCE:SOLUSDT"
+export ENABLE_HTTP_FORWARD="false"
+export C3_SIGNAL_SECRET="dummy"
+export SYMBOL_BOT_MAP='{"BINANCE:SOLUSDT":"dummy-bot-uuid"}'
+
+nohup node ./BrainRAY_Basic/BrainRAY_Basic_Signal.js > BrainRAY_Basic/Replay/brain_local.log 2>&1 &
+
+
+
+==============check if it is listening=============
+sleep 2
+ss -ltnp | grep 8080 || echo "nothing listening on 8080"
+
+==============check the logs=============
+tail -40 BrainRAY_Basic/Replay/brain_local.log
+
+==============health check=============
+curl -s http://127.0.0.1:8080/health | jq
+
+============== REPLY LOGS ===============
+node ./BrainRAY_Basic/Replay/scripts/replay_basic_log.js ./BrainRAY_Basic/Replay/data/BasicMay08.log http://127.0.0.1:8080/webhook
+
+============== check the important results ===========
+grep -E "ENTRY_ALLOWED|ENTRY_BLOCKED|MOMENTUM_MEMORY_SAVED|PENDING_TREND|FORWARD_SKIP|FORWARD_3COMMAS|FORWARD_OK" BrainRAY_Basic/Replay/brain_local.log
+curl -s http://127.0.0.1:8080/health | jq '.position, .counters, .feature.momentumFilter, .feature.dcaFilter'
