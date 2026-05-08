@@ -1,59 +1,46 @@
 /**
- * BrainRAY_Basic_Signal_v1.2
+ * BrainRAY_Basic_Signal_v1.3
  *
- * Goal:
- * - RayAlgo Bullish Trend Change becomes the main early entry trigger.
- * - Entry is filtered by DCA-style 5m indicator conditions:
- *   MACD 5m 16/33/9 cross up below 0
- *   EMA11 < EMA33
- *   RSI12 > 46
- *   ADX14 > 25
- *   MFI12 > 36
+ * Main idea:
+ * - Bullish Trend Change is the main early entry signal.
+ * - DCA-style 5m filter confirms quality.
  *
- * Required payloads:
- * 1) RayAlgo signal payload:
- *    { src:"rayalgo", signal:"Bullish Trend Change", price, time }
+ * v1.3 improvement:
+ * 1) Bullish Trend Change first:
+ *    - If DCA filter passes now -> enter_long
+ *    - If DCA filter fails -> arm pending trend-change entry
+ *    - If DCA filter passes within pending TTL -> enter_long from feature update
  *
- * 2) Feature payload from Pine / publisher:
- *    {
- *      src:"features",
- *      tf:"5",
- *      symbol:"BINANCE:SOLUSDT",
- *      close,
- *      macdLine,
- *      macdSignal,
- *      ema11,
- *      ema33,
- *      rsi12,
- *      adx14,
- *      mfi12,
- *      time
- *    }
+ * 2) DCA filter first:
+ *    - If DCA filter passed recently
+ *    - and Bullish Trend Change arrives within DCA memory TTL
+ *    - allow enter_long even if current bar is not perfect
  *
- * Entry logic:
- * - Bullish Trend Change:
- *   -> save bullish_bias
- *   -> enter_long only if feature filter passes
+ * Entry:
+ * - Bullish Trend Change       -> enter_long if current/recent DCA filter passes; otherwise pending
+ * - Bullish BOS                -> confirmation only by default
+ * - Bullish Trend Continuation -> ignored by default
  *
- * - Bullish BOS:
- *   -> confirmation only by default
- *   -> can be direct fallback if ALLOW_BOS_DIRECT_ENTRY=true
- *
- * - Bullish Trend Continuation:
- *   -> ignored by default
- *   -> can be fallback if ALLOW_TREND_CONTINUATION_ENTRY=true and recent bullish context exists
- *
- * Exit logic:
- * - Bearish Trend Change -> exit_long if enabled
- * - Bearish BOS -> exit_long if enabled
+ * Exit:
+ * - Bearish Trend Change       -> exit_long if enabled
+ * - Bearish BOS                -> exit_long if enabled
  * - Bearish Trend Continuation -> ignored by default
  *
- * v1.2 improvements:
- * - Feature filter memory
- * - MACD cross-up-below-zero detection
- * - BOS confirmation-only default
- * - Bearish Trend Continuation no longer cancels bullish bias unless enabled
- * - Color-coded horizontal logs
+ * Feature payload required:
+ * {
+ *   src:"features",
+ *   symbol:"BINANCE:SOLUSDT",
+ *   tf:"5",
+ *   close,
+ *   macdLine,
+ *   macdSignal,
+ *   ema11,
+ *   ema33,
+ *   rsi12,
+ *   adx14,
+ *   mfi12,
+ *   time
+ * }
  */
 
 import express from "express";
@@ -123,10 +110,13 @@ function ageSec(tsMs) {
   return Math.max(0, Math.round((nowMs() - tsMs) / 1000));
 }
 
-function withinTtl(tsMs, ttlMin) {
+function withinMs(tsMs, ttlMs) {
   if (!tsMs) return false;
-  const ttlMs = ttlMin * 60 * 1000;
   return nowMs() - tsMs <= ttlMs;
+}
+
+function withinTtlMin(tsMs, ttlMin) {
+  return withinMs(tsMs, ttlMin * 60 * 1000);
 }
 
 function compactObject(value) {
@@ -167,10 +157,12 @@ function parseSymbolBotMap(raw) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return parsed;
   } catch (e) {
-    console.error(`${isoNow()} ❌ INVALID_SYMBOL_BOT_MAP | ${oneLine({
-      error: String(e?.message || e),
-      rawPresent: Boolean(raw),
-    })}`);
+    console.error(
+      `${isoNow()} ❌ INVALID_SYMBOL_BOT_MAP | ${oneLine({
+        error: String(e?.message || e),
+        rawPresent: Boolean(raw),
+      })}`
+    );
     return {};
   }
 }
@@ -197,7 +189,7 @@ function responseFail(res, status, payload = {}) {
 // Config
 // --------------------------------------------------
 const CONFIG = {
-  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.2"),
+  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v1.3"),
   PORT: numEnv("PORT", 8080),
   DEBUG: boolEnv("DEBUG", true),
   WEBHOOK_PATH: strEnv("WEBHOOK_PATH", "/webhook"),
@@ -213,7 +205,7 @@ const CONFIG = {
   C3_TIMEOUT_MS: numEnv("C3_TIMEOUT_MS", 8000),
   MAX_LAG_SEC: numEnv("MAX_LAG_SEC", 300),
 
-  ENTRY_MODE: strEnv("ENTRY_MODE", "TREND_CHANGE_FILTERED"),
+  ENTRY_MODE: strEnv("ENTRY_MODE", "TREND_CHANGE_FILTERED_WITH_MEMORY"),
 
   BASIC_ALLOW_TREND_CHANGE_ENTRY: boolEnv("BASIC_ALLOW_TREND_CHANGE_ENTRY", true),
   REQUIRE_FEATURE_FILTER_FOR_TREND_CHANGE: boolEnv(
@@ -229,6 +221,12 @@ const CONFIG = {
     "REQUIRE_FEATURE_FILTER_FOR_TREND_CONTINUATION",
     true
   ),
+
+  PENDING_TREND_CHANGE_ENTRY: boolEnv("PENDING_TREND_CHANGE_ENTRY", true),
+  PENDING_TREND_CHANGE_TTL_MIN: numEnv("PENDING_TREND_CHANGE_TTL_MIN", 15),
+
+  DCA_FILTER_MEMORY_ENABLED: boolEnv("DCA_FILTER_MEMORY_ENABLED", true),
+  DCA_FILTER_MEMORY_TTL_MIN: numEnv("DCA_FILTER_MEMORY_TTL_MIN", 10),
 
   BULLISH_BIAS_TTL_MIN: numEnv("BULLISH_BIAS_TTL_MIN", 15),
   BOS_BIAS_TTL_MIN: numEnv("BOS_BIAS_TTL_MIN", 15),
@@ -313,6 +311,24 @@ const state = {
     tsMs: null,
   },
 
+  pendingTrendChange: {
+    active: false,
+    signal: null,
+    price: null,
+    time: null,
+    tsMs: null,
+    originalFilter: null,
+  },
+
+  dcaMemory: {
+    active: false,
+    pass: false,
+    time: null,
+    tsMs: null,
+    price: null,
+    filter: null,
+  },
+
   lastEnterLong: {
     tsMs: null,
     price: null,
@@ -343,6 +359,13 @@ const state = {
     biasSaved: 0,
     biasCancelled: 0,
 
+    pendingTrendArmed: 0,
+    pendingTrendExpired: 0,
+    pendingTrendTriggered: 0,
+    pendingTrendCancelled: 0,
+
+    dcaMemorySaved: 0,
+
     enterAllowed: 0,
     enterBlocked: 0,
     exitAllowed: 0,
@@ -368,18 +391,14 @@ const SIGNALS = {
   BEARISH_TREND_CONTINUATION: "Bearish Trend Continuation",
 };
 
-const KNOWN_SIGNALS = new Set(Object.values(SIGNS_TO_ARRAY()));
-
-function SIGNS_TO_ARRAY() {
-  return [
-    SIGNALS.BULLISH_TREND_CHANGE,
-    SIGNALS.BULLISH_BOS,
-    SIGNALS.BULLISH_TREND_CONTINUATION,
-    SIGNALS.BEARISH_TREND_CHANGE,
-    SIGNALS.BEARISH_BOS,
-    SIGNALS.BEARISH_TREND_CONTINUATION,
-  ];
-}
+const KNOWN_SIGNALS = new Set([
+  SIGNALS.BULLISH_TREND_CHANGE,
+  SIGNALS.BULLISH_BOS,
+  SIGNALS.BULLISH_TREND_CONTINUATION,
+  SIGNALS.BEARISH_TREND_CHANGE,
+  SIGNALS.BEARISH_BOS,
+  SIGNALS.BEARISH_TREND_CONTINUATION,
+]);
 
 function isBearishSignal(signal) {
   return (
@@ -439,6 +458,8 @@ function extractFeature(body) {
     rsi12: safeNumber(body.rsi12 ?? body.rsi_12, null),
     adx14: safeNumber(body.adx14 ?? body.adx ?? body.adx_14, null),
     mfi12: safeNumber(body.mfi12 ?? body.mfi ?? body.mfi_12, null),
+
+    dcaFilterPass: safeBool(body.dcaFilterPass, false),
   };
 }
 
@@ -449,49 +470,6 @@ function featureAgeSec() {
 function hasFreshFeature() {
   const age = featureAgeSec();
   return age !== null && age <= CONFIG.FEATURE_MAX_AGE_SEC;
-}
-
-function updateFeature(body) {
-  const f = extractFeature(body);
-
-  if (f.symbol !== CONFIG.SYMBOL) {
-    state.counters.wrongSymbol += 1;
-    warnEvent("⚠️ FEATURE_WRONG_SYMBOL", {
-      received: f.symbol,
-      expected: CONFIG.SYMBOL,
-      tf: f.tf,
-    });
-    return {
-      ok: false,
-      reason: "wrong_symbol",
-      feature: f,
-    };
-  }
-
-  state.features.previous = state.features.current;
-  state.features.current = f;
-  state.features.updatedAtMs = nowMs();
-  state.counters.featureReceived += 1;
-
-  logEvent("📊 FEATURE_5M", {
-    symbol: f.symbol,
-    tf: f.tf,
-    close: f.close,
-    macdLine: f.macdLine,
-    macdSignal: f.macdSignal,
-    ema11: f.ema11,
-    ema33: f.ema33,
-    rsi12: f.rsi12,
-    adx14: f.adx14,
-    mfi12: f.mfi12,
-    macdCrossUpBelowZero: computeMacdCrossUpBelowZero(),
-  });
-
-  return {
-    ok: true,
-    reason: "feature_updated",
-    feature: f,
-  };
 }
 
 function computeMacdCrossUpBelowZero() {
@@ -589,21 +567,139 @@ function evaluateFeatureFilter() {
   };
 }
 
+function updateDcaMemory(filter) {
+  if (!CONFIG.DCA_FILTER_MEMORY_ENABLED) return;
+
+  if (!filter?.pass) return;
+
+  const f = state.features.current;
+
+  state.dcaMemory = {
+    active: true,
+    pass: true,
+    time: f?.time || isoNow(),
+    tsMs: nowMs(),
+    price: f?.close ?? null,
+    filter,
+  };
+
+  state.counters.dcaMemorySaved += 1;
+
+  logEvent("🧠 DCA_MEMORY_SAVED", {
+    ttlMin: CONFIG.DCA_FILTER_MEMORY_TTL_MIN,
+    price: state.dcaMemory.price,
+    ts: state.dcaMemory.time,
+    filterValues: filter.values,
+  });
+}
+
+function hasRecentDcaMemory() {
+  if (!CONFIG.DCA_FILTER_MEMORY_ENABLED) return false;
+  if (!state.dcaMemory.active || !state.dcaMemory.pass || !state.dcaMemory.tsMs) return false;
+  return withinTtlMin(state.dcaMemory.tsMs, CONFIG.DCA_FILTER_MEMORY_TTL_MIN);
+}
+
+function getDcaMemoryStatus() {
+  return {
+    active: hasRecentDcaMemory(),
+    rawActive: state.dcaMemory.active,
+    price: state.dcaMemory.price,
+    time: state.dcaMemory.time,
+    ageSec: ageSec(state.dcaMemory.tsMs),
+    ttlMin: CONFIG.DCA_FILTER_MEMORY_TTL_MIN,
+  };
+}
+
+async function updateFeature(body) {
+  const f = extractFeature(body);
+
+  if (f.symbol !== CONFIG.SYMBOL) {
+    state.counters.wrongSymbol += 1;
+    warnEvent("⚠️ FEATURE_WRONG_SYMBOL", {
+      received: f.symbol,
+      expected: CONFIG.SYMBOL,
+      tf: f.tf,
+    });
+    return {
+      ok: false,
+      reason: "wrong_symbol",
+      feature: f,
+    };
+  }
+
+  state.features.previous = state.features.current;
+  state.features.current = f;
+  state.features.updatedAtMs = nowMs();
+  state.counters.featureReceived += 1;
+
+  const filter = evaluateFeatureFilter();
+  updateDcaMemory(filter);
+
+  logEvent("📊 FEATURE_5M", {
+    symbol: f.symbol,
+    tf: f.tf,
+    close: f.close,
+    macdLine: f.macdLine,
+    macdSignal: f.macdSignal,
+    ema11: f.ema11,
+    ema33: f.ema33,
+    rsi12: f.rsi12,
+    adx14: f.adx14,
+    mfi12: f.mfi12,
+    macdCrossUpBelowZero: computeMacdCrossUpBelowZero(),
+    filterPass: filter.pass,
+    filterReasons: filter.reasons,
+    dcaMemory: getDcaMemoryStatus(),
+    pendingTrend: getPendingTrendStatus(),
+  });
+
+  const pendingResult = await maybeTriggerPendingTrendChangeFromFeature(filter);
+
+  return {
+    ok: true,
+    reason: "feature_updated",
+    feature: f,
+    filter,
+    pendingResult,
+  };
+}
+
 // --------------------------------------------------
 // Status helpers
 // --------------------------------------------------
 function hasRecentBullishBias() {
   return (
     state.bullishBias.active &&
-    withinTtl(state.bullishBias.tsMs, CONFIG.BULLISH_BIAS_TTL_MIN)
+    withinTtlMin(state.bullishBias.tsMs, CONFIG.BULLISH_BIAS_TTL_MIN)
   );
 }
 
 function hasRecentBosBias() {
   return (
     state.bosBias.active &&
-    withinTtl(state.bosBias.tsMs, CONFIG.BOS_BIAS_TTL_MIN)
+    withinTtlMin(state.bosBias.tsMs, CONFIG.BOS_BIAS_TTL_MIN)
   );
+}
+
+function hasRecentPendingTrendChange() {
+  if (!CONFIG.PENDING_TREND_CHANGE_ENTRY) return false;
+  if (!state.pendingTrendChange.active || !state.pendingTrendChange.tsMs) return false;
+  return withinTtlMin(
+    state.pendingTrendChange.tsMs,
+    CONFIG.PENDING_TREND_CHANGE_TTL_MIN
+  );
+}
+
+function getPendingTrendStatus() {
+  return {
+    active: hasRecentPendingTrendChange(),
+    rawActive: state.pendingTrendChange.active,
+    signal: state.pendingTrendChange.signal,
+    price: state.pendingTrendChange.price,
+    time: state.pendingTrendChange.time,
+    ageSec: ageSec(state.pendingTrendChange.tsMs),
+    ttlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
+  };
 }
 
 function getBiasStatus() {
@@ -648,7 +744,7 @@ function getCompactBias() {
 }
 
 // --------------------------------------------------
-// Bias state
+// Bias and pending state
 // --------------------------------------------------
 function saveBullishBias({ signal, price, time }) {
   state.bullishBias = {
@@ -686,6 +782,69 @@ function saveBosBias({ signal, price, time }) {
     ttlMin: CONFIG.BOS_BIAS_TTL_MIN,
     bias: getCompactBias(),
   });
+}
+
+function armPendingTrendChange({ signal, price, time, filter }) {
+  if (!CONFIG.PENDING_TREND_CHANGE_ENTRY) return;
+
+  state.pendingTrendChange = {
+    active: true,
+    signal,
+    price,
+    time,
+    tsMs: nowMs(),
+    originalFilter: filter,
+  };
+
+  state.counters.pendingTrendArmed += 1;
+
+  logEvent("🟡 PENDING_TREND_ARMED", {
+    signal,
+    price,
+    ts: time,
+    ttlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
+    filterPass: filter?.pass,
+    filterReasons: filter?.reasons,
+    filterValues: filter?.values,
+  });
+}
+
+function clearPendingTrendChange(reason, payload = {}) {
+  const hadPending = state.pendingTrendChange.active;
+
+  state.pendingTrendChange = {
+    active: false,
+    signal: null,
+    price: null,
+    time: null,
+    tsMs: null,
+    originalFilter: null,
+  };
+
+  if (hadPending) {
+    state.counters.pendingTrendCancelled += 1;
+
+    logEvent("⚪ PENDING_TREND_CLEARED", {
+      reason,
+      ...payload,
+    });
+  }
+}
+
+function expirePendingTrendIfNeeded() {
+  if (!state.pendingTrendChange.active) return false;
+
+  if (hasRecentPendingTrendChange()) return false;
+
+  const old = { ...state.pendingTrendChange };
+  clearPendingTrendChange("pending_trend_expired", {
+    oldSignal: old.signal,
+    oldPrice: old.price,
+    oldAgeSec: ageSec(old.tsMs),
+  });
+
+  state.counters.pendingTrendExpired += 1;
+  return true;
 }
 
 function cancelBullishBias(reason, payload = {}) {
@@ -751,6 +910,11 @@ function markEnterLong({ signal, price, time, reason }) {
   state.position.entrySignal = signal;
   state.position.entryTime = time || isoNow();
   state.position.entryTsMs = nowMs();
+
+  clearPendingTrendChange("entry_filled", {
+    entrySignal: signal,
+    entryPrice: price,
+  });
 }
 
 function markExitLong({ signal, price, time, reason }) {
@@ -766,6 +930,11 @@ function markExitLong({ signal, price, time, reason }) {
   state.position.exitSignal = signal;
   state.position.exitTime = time || isoNow();
   state.position.exitTsMs = nowMs();
+
+  clearPendingTrendChange("exit_signal_received", {
+    exitSignal: signal,
+    exitPrice: price,
+  });
 }
 
 // --------------------------------------------------
@@ -795,7 +964,7 @@ function isExitCooldownBlocked() {
   return diffSec < CONFIG.EXIT_COOLDOWN_SEC;
 }
 
-function withFeatureFilter(actionDecision, requireFilter, filterName) {
+function withFeatureFilterOrMemory(actionDecision, requireFilter, filterName) {
   if (!requireFilter) {
     return {
       ...actionDecision,
@@ -804,206 +973,40 @@ function withFeatureFilter(actionDecision, requireFilter, filterName) {
         reasons: [],
         mode: "not_required",
       },
+      dcaMemory: getDcaMemoryStatus(),
     };
   }
 
   const filter = evaluateFeatureFilter();
 
-  if (!filter.pass) {
+  if (filter.pass) {
     return {
-      action: "blocked",
-      allowed: false,
-      reason: `${filterName}_feature_filter_blocked`,
+      ...actionDecision,
       filter,
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
+      filterSource: "current_feature",
+      dcaMemory: getDcaMemoryStatus(),
+    };
+  }
+
+  if (hasRecentDcaMemory()) {
+    return {
+      ...actionDecision,
+      reason: `${actionDecision.reason}_recent_dca_memory`,
+      filter,
+      filterSource: "recent_dca_memory",
+      dcaMemory: getDcaMemoryStatus(),
     };
   }
 
   return {
-    ...actionDecision,
-    filter,
-  };
-}
-
-// --------------------------------------------------
-// Decision engine
-// --------------------------------------------------
-function decideRayAlgoSignal({ signal, price, time }) {
-  const biasStatus = getBiasStatus();
-  const positionStatus = getPositionStatus();
-
-  if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
-    return {
-      action: "ignore",
-      allowed: false,
-      reason: "unknown_signal",
-      biasStatus,
-      positionStatus,
-    };
-  }
-
-  // Bearish signals
-  if (isBearishSignal(signal)) {
-    if (shouldCancelBiasForBearish(signal)) {
-      cancelBullishBias("bearish_signal_received", { signal, price, ts: time });
-    } else {
-      logEvent("🟠 BEARISH_SIGNAL_NO_BIAS_CANCEL", {
-        signal,
-        price,
-        ts: time,
-        reason: "bias_cancel_disabled_for_this_signal",
-        bias: getCompactBias(),
-      });
-    }
-
-    if (
-      signal === SIGNALS.BEARISH_TREND_CHANGE &&
-      CONFIG.EXIT_ON_BEARISH_TREND_CHANGE
-    ) {
-      return {
-        action: "exit_long",
-        allowed: true,
-        reason: "bearish_trend_change_exit",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (signal === SIGNALS.BEARISH_BOS && CONFIG.EXIT_ON_BEARISH_BOS) {
-      return {
-        action: "exit_long",
-        allowed: true,
-        reason: "bearish_bos_exit",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (
-      signal === SIGNALS.BEARISH_TREND_CONTINUATION &&
-      CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION
-    ) {
-      return {
-        action: "exit_long",
-        allowed: true,
-        reason: "bearish_trend_continuation_exit",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return {
-      action: "ignore",
-      allowed: false,
-      reason: "bearish_signal_exit_disabled",
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
-    };
-  }
-
-  // Bullish Trend Change = main v1.2 entry trigger
-  if (signal === SIGNALS.BULLISH_TREND_CHANGE) {
-    saveBullishBias({ signal, price, time });
-
-    if (!CONFIG.BASIC_ALLOW_TREND_CHANGE_ENTRY) {
-      return {
-        action: "bias_only",
-        allowed: false,
-        reason: "bullish_trend_change_saved_bias_only",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return withFeatureFilter(
-      {
-        action: "enter_long",
-        allowed: true,
-        reason: "bullish_trend_change_filtered_entry",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      },
-      CONFIG.REQUIRE_FEATURE_FILTER_FOR_TREND_CHANGE,
-      "bullish_trend_change"
-    );
-  }
-
-  // Bullish BOS = confirmation only by default
-  if (signal === SIGNALS.BULLISH_BOS) {
-    saveBosBias({ signal, price, time });
-
-    if (!CONFIG.ALLOW_BOS_DIRECT_ENTRY) {
-      state.counters.confirmationOnly += 1;
-
-      return {
-        action: "confirmation_only",
-        allowed: false,
-        reason: "bullish_bos_confirmation_only",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return withFeatureFilter(
-      {
-        action: "enter_long",
-        allowed: true,
-        reason: "bullish_bos_fallback_entry",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      },
-      CONFIG.REQUIRE_FEATURE_FILTER_FOR_BOS,
-      "bullish_bos"
-    );
-  }
-
-  // Bullish Trend Continuation = ignored by default
-  if (signal === SIGNALS.BULLISH_TREND_CONTINUATION) {
-    if (!CONFIG.ALLOW_TREND_CONTINUATION_ENTRY) {
-      return {
-        action: "ignore",
-        allowed: false,
-        reason: "trend_continuation_entry_disabled",
-        biasStatus,
-        positionStatus,
-      };
-    }
-
-    const recentBullish = hasRecentBullishBias();
-    const recentBos = hasRecentBosBias();
-
-    if (!recentBullish && !recentBos) {
-      return {
-        action: "ignore",
-        allowed: false,
-        reason: "trend_continuation_without_recent_bullish_context",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return withFeatureFilter(
-      {
-        action: "enter_long",
-        allowed: true,
-        reason: recentBos
-          ? "trend_continuation_after_recent_bos"
-          : "trend_continuation_after_recent_bullish_bias",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      },
-      CONFIG.REQUIRE_FEATURE_FILTER_FOR_TREND_CONTINUATION,
-      "trend_continuation"
-    );
-  }
-
-  return {
-    action: "ignore",
+    action: "blocked",
     allowed: false,
-    reason: "no_matching_rule",
-    biasStatus,
-    positionStatus,
+    reason: `${filterName}_feature_filter_blocked`,
+    filter,
+    filterSource: "current_feature_failed_no_recent_memory",
+    dcaMemory: getDcaMemoryStatus(),
+    biasStatus: getBiasStatus(),
+    positionStatus: getPositionStatus(),
   };
 }
 
@@ -1131,6 +1134,289 @@ function applyTradeProtection({ decision, signal, price, time }) {
 }
 
 // --------------------------------------------------
+// Decision engine
+// --------------------------------------------------
+function decideRayAlgoSignal({ signal, price, time }) {
+  expirePendingTrendIfNeeded();
+
+  const biasStatus = getBiasStatus();
+  const positionStatus = getPositionStatus();
+
+  if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
+    return {
+      action: "ignore",
+      allowed: false,
+      reason: "unknown_signal",
+      biasStatus,
+      positionStatus,
+    };
+  }
+
+  // Bearish signals
+  if (isBearishSignal(signal)) {
+    if (shouldCancelBiasForBearish(signal)) {
+      cancelBullishBias("bearish_signal_received", { signal, price, ts: time });
+      clearPendingTrendChange("bearish_signal_received", { signal, price, ts: time });
+    } else {
+      logEvent("🟠 BEARISH_SIGNAL_NO_BIAS_CANCEL", {
+        signal,
+        price,
+        ts: time,
+        reason: "bias_cancel_disabled_for_this_signal",
+        bias: getCompactBias(),
+        pendingTrend: getPendingTrendStatus(),
+      });
+    }
+
+    if (
+      signal === SIGNALS.BEARISH_TREND_CHANGE &&
+      CONFIG.EXIT_ON_BEARISH_TREND_CHANGE
+    ) {
+      return {
+        action: "exit_long",
+        allowed: true,
+        reason: "bearish_trend_change_exit",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (signal === SIGNALS.BEARISH_BOS && CONFIG.EXIT_ON_BEARISH_BOS) {
+      return {
+        action: "exit_long",
+        allowed: true,
+        reason: "bearish_bos_exit",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    if (
+      signal === SIGNALS.BEARISH_TREND_CONTINUATION &&
+      CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION
+    ) {
+      return {
+        action: "exit_long",
+        allowed: true,
+        reason: "bearish_trend_continuation_exit",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    return {
+      action: "ignore",
+      allowed: false,
+      reason: "bearish_signal_exit_disabled",
+      biasStatus: getBiasStatus(),
+      positionStatus: getPositionStatus(),
+    };
+  }
+
+  // Bullish Trend Change = main v1.3 entry trigger
+  if (signal === SIGNALS.BULLISH_TREND_CHANGE) {
+    saveBullishBias({ signal, price, time });
+
+    if (!CONFIG.BASIC_ALLOW_TREND_CHANGE_ENTRY) {
+      return {
+        action: "bias_only",
+        allowed: false,
+        reason: "bullish_trend_change_saved_bias_only",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    const decision = withFeatureFilterOrMemory(
+      {
+        action: "enter_long",
+        allowed: true,
+        reason: "bullish_trend_change_filtered_entry",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      },
+      CONFIG.REQUIRE_FEATURE_FILTER_FOR_TREND_CHANGE,
+      "bullish_trend_change"
+    );
+
+    if (!decision.allowed && decision.action === "blocked") {
+      armPendingTrendChange({
+        signal,
+        price,
+        time,
+        filter: decision.filter,
+      });
+    }
+
+    return decision;
+  }
+
+  // Bullish BOS = confirmation only by default
+  if (signal === SIGNALS.BULLISH_BOS) {
+    saveBosBias({ signal, price, time });
+
+    if (!CONFIG.ALLOW_BOS_DIRECT_ENTRY) {
+      state.counters.confirmationOnly += 1;
+
+      return {
+        action: "confirmation_only",
+        allowed: false,
+        reason: "bullish_bos_confirmation_only",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+        pendingTrend: getPendingTrendStatus(),
+        dcaMemory: getDcaMemoryStatus(),
+      };
+    }
+
+    return withFeatureFilterOrMemory(
+      {
+        action: "enter_long",
+        allowed: true,
+        reason: "bullish_bos_fallback_entry",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      },
+      CONFIG.REQUIRE_FEATURE_FILTER_FOR_BOS,
+      "bullish_bos"
+    );
+  }
+
+  // Bullish Trend Continuation = ignored by default
+  if (signal === SIGNALS.BULLISH_TREND_CONTINUATION) {
+    if (!CONFIG.ALLOW_TREND_CONTINUATION_ENTRY) {
+      return {
+        action: "ignore",
+        allowed: false,
+        reason: "trend_continuation_entry_disabled",
+        biasStatus,
+        positionStatus,
+        pendingTrend: getPendingTrendStatus(),
+        dcaMemory: getDcaMemoryStatus(),
+      };
+    }
+
+    const recentBullish = hasRecentBullishBias();
+    const recentBos = hasRecentBosBias();
+
+    if (!recentBullish && !recentBos) {
+      return {
+        action: "ignore",
+        allowed: false,
+        reason: "trend_continuation_without_recent_bullish_context",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      };
+    }
+
+    return withFeatureFilterOrMemory(
+      {
+        action: "enter_long",
+        allowed: true,
+        reason: recentBos
+          ? "trend_continuation_after_recent_bos"
+          : "trend_continuation_after_recent_bullish_bias",
+        biasStatus: getBiasStatus(),
+        positionStatus: getPositionStatus(),
+      },
+      CONFIG.REQUIRE_FEATURE_FILTER_FOR_TREND_CONTINUATION,
+      "trend_continuation"
+    );
+  }
+
+  return {
+    action: "ignore",
+    allowed: false,
+    reason: "no_matching_rule",
+    biasStatus,
+    positionStatus,
+  };
+}
+
+// --------------------------------------------------
+// Pending trend feature-trigger entry
+// --------------------------------------------------
+async function maybeTriggerPendingTrendChangeFromFeature(filter) {
+  expirePendingTrendIfNeeded();
+
+  if (!CONFIG.PENDING_TREND_CHANGE_ENTRY) {
+    return { triggered: false, reason: "pending_disabled" };
+  }
+
+  if (!hasRecentPendingTrendChange()) {
+    return { triggered: false, reason: "no_recent_pending_trend" };
+  }
+
+  if (state.position.inLong && CONFIG.LOCK_AFTER_ENTER) {
+    return { triggered: false, reason: "already_in_long" };
+  }
+
+  if (!filter?.pass) {
+    return {
+      triggered: false,
+      reason: "feature_filter_not_passed",
+      filterReasons: filter?.reasons || [],
+    };
+  }
+
+  const pending = { ...state.pendingTrendChange };
+  const feature = state.features.current;
+
+  let decision = {
+    action: "enter_long",
+    allowed: true,
+    reason: "pending_bullish_trend_change_feature_confirmed",
+    signalSource: "feature_trigger_after_pending_trend_change",
+    filter,
+    filterSource: "current_feature_after_pending_trend",
+    pendingTrend: getPendingTrendStatus(),
+    dcaMemory: getDcaMemoryStatus(),
+    biasStatus: getBiasStatus(),
+    positionStatus: getPositionStatus(),
+  };
+
+  decision = applyTradeProtection({
+    decision,
+    signal: pending.signal || SIGNALS.BULLISH_TREND_CHANGE,
+    price: feature?.close ?? pending.price ?? 0,
+    time: feature?.time || isoNow(),
+  });
+
+  logFinalDecision({
+    signal: pending.signal || SIGNALS.BULLISH_TREND_CHANGE,
+    symbol: CONFIG.SYMBOL,
+    price: feature?.close ?? pending.price ?? 0,
+    decision,
+  });
+
+  if (!decision.allowed || decision.action !== "enter_long") {
+    return {
+      triggered: false,
+      reason: decision.reason,
+      decision,
+    };
+  }
+
+  state.counters.pendingTrendTriggered += 1;
+
+  const forwardResult = await forwardTo3Commas({
+    symbol: CONFIG.SYMBOL,
+    action: "enter_long",
+    price: feature?.close ?? pending.price ?? 0,
+    time: feature?.time || isoNow(),
+    signal: pending.signal || SIGNALS.BULLISH_TREND_CHANGE,
+    reason: decision.reason,
+  });
+
+  return {
+    triggered: Boolean(forwardResult.ok && !forwardResult.skipped),
+    reason: decision.reason,
+    decision,
+    forwardResult,
+  };
+}
+
+// --------------------------------------------------
 // Color-coded horizontal decision logs
 // --------------------------------------------------
 function logFinalDecision({ signal, symbol, price, decision }) {
@@ -1144,9 +1430,13 @@ function logFinalDecision({ signal, symbol, price, decision }) {
     allowed: decision.allowed,
     reason: decision.reason,
 
+    filterSource: decision.filterSource,
     filterPass: filter ? filter.pass : undefined,
     filterReasons: filter ? filter.reasons : undefined,
     filterValues: filter ? filter.values : undefined,
+
+    dcaMemory: decision.dcaMemory || getDcaMemoryStatus(),
+    pendingTrend: decision.pendingTrend || getPendingTrendStatus(),
 
     inLong: state.position.inLong,
     entrySignal: state.position.entrySignal,
@@ -1401,48 +1691,6 @@ async function forwardTo3Commas({ symbol, action, price, time, signal, reason })
 // --------------------------------------------------
 // Routes
 // --------------------------------------------------
-app.get("/", (req, res) => {
-  return responseOk(res, {
-    message: "Brain is running",
-    startedAt: state.startedAt,
-    webhookPath: CONFIG.WEBHOOK_PATH,
-    symbol: CONFIG.SYMBOL,
-    config: publicConfig(),
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: {
-      current: state.features.current,
-      previous: state.features.previous,
-      ageSec: featureAgeSec(),
-      filter: evaluateFeatureFilter(),
-    },
-    counters: state.counters,
-  });
-});
-
-app.get("/health", (req, res) => {
-  return responseOk(res, {
-    status: "healthy",
-    startedAt: state.startedAt,
-    symbol: CONFIG.SYMBOL,
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: {
-      current: state.features.current,
-      ageSec: featureAgeSec(),
-      filter: evaluateFeatureFilter(),
-    },
-    counters: state.counters,
-  });
-});
-
-app.get("/state", (req, res) => {
-  return responseOk(res, {
-    state,
-    config: publicConfig(),
-  });
-});
-
 function publicConfig() {
   return {
     brainName: CONFIG.BRAIN_NAME,
@@ -1462,6 +1710,12 @@ function publicConfig() {
     allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
     requireFeatureFilterForTrendContinuation:
       CONFIG.REQUIRE_FEATURE_FILTER_FOR_TREND_CONTINUATION,
+
+    pendingTrendChangeEntry: CONFIG.PENDING_TREND_CHANGE_ENTRY,
+    pendingTrendChangeTtlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
+
+    dcaFilterMemoryEnabled: CONFIG.DCA_FILTER_MEMORY_ENABLED,
+    dcaFilterMemoryTtlMin: CONFIG.DCA_FILTER_MEMORY_TTL_MIN,
 
     bullishBiasTtlMin: CONFIG.BULLISH_BIAS_TTL_MIN,
     bosBiasTtlMin: CONFIG.BOS_BIAS_TTL_MIN,
@@ -1496,6 +1750,51 @@ function publicConfig() {
   };
 }
 
+function featureStatus() {
+  return {
+    current: state.features.current,
+    previous: state.features.previous,
+    ageSec: featureAgeSec(),
+    filter: evaluateFeatureFilter(),
+    dcaMemory: getDcaMemoryStatus(),
+    pendingTrend: getPendingTrendStatus(),
+  };
+}
+
+app.get("/", (req, res) => {
+  return responseOk(res, {
+    message: "Brain is running",
+    startedAt: state.startedAt,
+    webhookPath: CONFIG.WEBHOOK_PATH,
+    symbol: CONFIG.SYMBOL,
+    config: publicConfig(),
+    position: getPositionStatus(),
+    bias: getBiasStatus(),
+    feature: featureStatus(),
+    counters: state.counters,
+  });
+});
+
+app.get("/health", (req, res) => {
+  return responseOk(res, {
+    status: "healthy",
+    startedAt: state.startedAt,
+    symbol: CONFIG.SYMBOL,
+    position: getPositionStatus(),
+    bias: getBiasStatus(),
+    feature: featureStatus(),
+    counters: state.counters,
+  });
+});
+
+app.get("/state", (req, res) => {
+  return responseOk(res, {
+    state,
+    config: publicConfig(),
+    feature: featureStatus(),
+  });
+});
+
 app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   state.counters.received += 1;
 
@@ -1524,14 +1823,17 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
   }
 
   if (isFeaturePayload(body)) {
-    const result = updateFeature(body);
+    const result = await updateFeature(body);
 
     return responseOk(res, {
       accepted: result.ok,
       type: "features",
       reason: result.reason,
       feature: result.feature,
-      filter: evaluateFeatureFilter(),
+      filter: result.filter,
+      dcaMemory: getDcaMemoryStatus(),
+      pendingTrend: getPendingTrendStatus(),
+      pendingResult: result.pendingResult,
       counters: state.counters,
     });
   }
@@ -1603,6 +1905,8 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
     src,
     symbol,
     featureAgeSec: featureAgeSec(),
+    dcaMemory: getDcaMemoryStatus(),
+    pendingTrend: getPendingTrendStatus(),
   });
 
   let decision = decideRayAlgoSignal({
@@ -1635,11 +1939,7 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
       price: cleanPrice,
       decision,
       position: getPositionStatus(),
-      feature: {
-        current: state.features.current,
-        ageSec: featureAgeSec(),
-        filter: evaluateFeatureFilter(),
-      },
+      feature: featureStatus(),
       counters: state.counters,
     });
   }
@@ -1664,17 +1964,14 @@ app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
     decision,
     forwardResult,
     position: getPositionStatus(),
-    feature: {
-      current: state.features.current,
-      ageSec: featureAgeSec(),
-      filter: evaluateFeatureFilter(),
-    },
+    feature: featureStatus(),
     counters: state.counters,
   });
 });
 
 app.post("/reset", (req, res) => {
   cancelBullishBias("manual_reset");
+  clearPendingTrendChange("manual_reset");
 
   state.lastEnterLong = {
     tsMs: null,
@@ -1705,17 +2002,15 @@ app.post("/reset", (req, res) => {
   logEvent("♻️ STATE_RESET", {
     position: getPositionStatus(),
     bias: getCompactBias(),
+    dcaMemory: getDcaMemoryStatus(),
+    pendingTrend: getPendingTrendStatus(),
   });
 
   return responseOk(res, {
     message: "state reset",
     position: getPositionStatus(),
     bias: getBiasStatus(),
-    feature: {
-      current: state.features.current,
-      ageSec: featureAgeSec(),
-      filter: evaluateFeatureFilter(),
-    },
+    feature: featureStatus(),
   });
 });
 
@@ -1724,7 +2019,17 @@ app.post("/reset-all", (req, res) => {
   state.features.previous = null;
   state.features.updatedAtMs = null;
 
+  state.dcaMemory = {
+    active: false,
+    pass: false,
+    time: null,
+    tsMs: null,
+    price: null,
+    filter: null,
+  };
+
   cancelBullishBias("manual_reset_all");
+  clearPendingTrendChange("manual_reset_all");
 
   state.lastEnterLong = {
     tsMs: null,
@@ -1756,13 +2061,15 @@ app.post("/reset-all", (req, res) => {
     position: getPositionStatus(),
     bias: getCompactBias(),
     feature: null,
+    dcaMemory: getDcaMemoryStatus(),
+    pendingTrend: getPendingTrendStatus(),
   });
 
   return responseOk(res, {
     message: "state and features reset",
     position: getPositionStatus(),
     bias: getBiasStatus(),
-    feature: null,
+    feature: featureStatus(),
   });
 });
 
@@ -1797,6 +2104,12 @@ app.listen(CONFIG.PORT, () => {
 
       allowBosDirectEntry: CONFIG.ALLOW_BOS_DIRECT_ENTRY,
       allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
+
+      pendingTrendChangeEntry: CONFIG.PENDING_TREND_CHANGE_ENTRY,
+      pendingTrendChangeTtlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
+
+      dcaFilterMemoryEnabled: CONFIG.DCA_FILTER_MEMORY_ENABLED,
+      dcaFilterMemoryTtlMin: CONFIG.DCA_FILTER_MEMORY_TTL_MIN,
 
       featureMaxAgeSec: CONFIG.FEATURE_MAX_AGE_SEC,
 
