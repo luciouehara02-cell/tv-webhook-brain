@@ -1,15 +1,12 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v5.0
+ * BrainRAY_Continuation_v5.1
  *
  * Base: BrainRAY_Continuation_v4.4f
- * Main v5.0 change:
- * - Rebuilt first Bullish Trend Change entry engine.
- * - First entry is now classified as:
- *   1) immediate entry
- *   2) tick-confirmed entry
- *   3) weak-entry block
+ * Main v5.1 change:
+ * - Keeps the v5.0/v5.0A rebuilt first Bullish Trend Change entry engine.
+ * - Adds post-exit continuation profit guard so a continuation reentry that reaches useful profit does not fall back to breakeven/loss.
  *
  * Preserved from v4.4f:
  * - dynamic TP
@@ -144,7 +141,7 @@ function isFirstEntryMode(mode) {
 const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v5.0"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v5.1"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -375,7 +372,15 @@ const CONFIG = {
   POST_EXIT_CONT_TP_PROTECTION_MIN_RSI: n(process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI, 58),
   POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8: b(process.env.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8, true),
   POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO: b(process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO, true),
-  POST_EXIT_CONT_TP_PROTECTION_LOG: b(process.env.POST_EXIT_CONT_TP_PROTECTION_LOG, true),
+  $1
+
+  // v5.1 post-exit continuation profit guard
+  POST_EXIT_CONT_PROFIT_GUARD_ENABLED: b(process.env.POST_EXIT_CONT_PROFIT_GUARD_ENABLED, true),
+  POST_EXIT_CONT_PROFIT_GUARD_ARM_PEAK_PCT: n(process.env.POST_EXIT_CONT_PROFIT_GUARD_ARM_PEAK_PCT, 0.55),
+  POST_EXIT_CONT_PROFIT_GUARD_LOCK_PCT: n(process.env.POST_EXIT_CONT_PROFIT_GUARD_LOCK_PCT, 0.25),
+  POST_EXIT_CONT_PROFIT_GUARD_GIVEBACK_PCT: n(process.env.POST_EXIT_CONT_PROFIT_GUARD_GIVEBACK_PCT, 0.30),
+  POST_EXIT_CONT_PROFIT_GUARD_MIN_CURRENT_PCT: n(process.env.POST_EXIT_CONT_PROFIT_GUARD_MIN_CURRENT_PCT, 0.05),
+  POST_EXIT_CONT_PROFIT_GUARD_LOG: b(process.env.POST_EXIT_CONT_PROFIT_GUARD_LOG, true),
 
   PHASE2_REENTRY_ENABLED: b(process.env.PHASE2_REENTRY_ENABLED, true),
   MAX_REENTRIES_PER_BULL_REGIME: n(process.env.MAX_REENTRIES_PER_BULL_REGIME, 3),
@@ -1855,7 +1860,69 @@ function shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, tier, fv) {
   }
   return block;
 }
-function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
+function shouldPostExitContinuationProfitGuardExit(price, eventIso = isoNow()) {
+  if (!CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ENABLED) {
+    return { allow: false, reason: "disabled" };
+  }
+  if (!isProtectedContinuationMode(S.entryMode)) {
+    return { allow: false, reason: "not_post_exit_continuation_mode" };
+  }
+  if (!Number.isFinite(price) || !Number.isFinite(S.entryPrice)) {
+    return { allow: false, reason: "bad_price" };
+  }
+
+  const pnlPct = pctDiff(S.entryPrice, price);
+  const peakPnlPct = Number.isFinite(S.peakPnlPct) ? S.peakPnlPct : pnlPct;
+  const givebackPct = peakPnlPct - pnlPct;
+  const armed = peakPnlPct >= CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ARM_PEAK_PCT;
+
+  const lockHit = armed && pnlPct <= CONFIG.POST_EXIT_CONT_PROFIT_GUARD_LOCK_PCT;
+  const givebackHit = armed && givebackPct >= CONFIG.POST_EXIT_CONT_PROFIT_GUARD_GIVEBACK_PCT;
+  const emergencyHit = armed && pnlPct <= CONFIG.POST_EXIT_CONT_PROFIT_GUARD_MIN_CURRENT_PCT;
+  const allow = lockHit || givebackHit || emergencyHit;
+
+  if (CONFIG.POST_EXIT_CONT_PROFIT_GUARD_LOG) {
+    log("🟪 POST_EXIT_CONT_PROFIT_GUARD_CHECK", {
+      allow,
+      entryMode: S.entryMode,
+      price: round4(price),
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      givebackPct: round4(givebackPct),
+      armed,
+      lockHit,
+      givebackHit,
+      emergencyHit,
+      eventIso,
+    });
+  }
+
+  if (!allow) {
+    return {
+      allow: false,
+      reason: armed ? "guard_not_hit" : "guard_not_armed",
+      pnlPct,
+      peakPnlPct,
+      givebackPct,
+    };
+  }
+
+  return {
+    allow: true,
+    reason: emergencyHit
+      ? "post_exit_cont_profit_guard_emergency"
+      : givebackHit
+      ? "post_exit_cont_profit_guard_giveback"
+      : "post_exit_cont_profit_guard_lock",
+    pnlPct,
+    peakPnlPct,
+    givebackPct,
+    lockHit,
+    givebackHit,
+    emergencyHit,
+  };
+}
+$1
   if (!CONFIG.REENTRY_TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
   if (!isReentryHarvestMode(S.entryMode)) return { allow: false, reason: "not_target_mode" };
   const price = n(feature.close, NaN);
@@ -1965,10 +2032,12 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     S.stopPrice = Math.max(S.stopPrice, beStop);
     log("🛡️ BREAKEVEN_ARMED", { pnlPct: round4(pnlPct), stopPrice: round4(S.stopPrice) });
   }
-  if (price <= S.stopPrice) {
-    const exitClass = S.beArmed ? "cycle_exit" : "stop_exit";
-    return doExit("hard_or_breakeven_stop", price, eventIso, exitClass);
+  const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, eventIso);
+  if (postExitProfitGuard.allow) {
+    return doExit(postExitProfitGuard.reason, price, eventIso, "cycle_exit");
   }
+
+$1
   if (CONFIG.DYNAMIC_TP_ENABLED && S.dynamicTpTier > 0) {
     const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
     const peakPnl = S.peakPnlPct || 0;
@@ -2017,8 +2086,12 @@ function evaluateBarExit(feature) {
   const reentryHarvest = shouldReentryTopHarvestExit(feature, pnlPct, fv);
   if (reentryHarvest.allow) return doExit("reentry_top_harvest_exit", price, feature.time, "cycle_exit");
 
-  const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
-  if (topHarvest.allow) return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
+$1
+
+  const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, feature.time);
+  if (postExitProfitGuard.allow) {
+    return doExit(postExitProfitGuard.reason, price, feature.time, "cycle_exit");
+  }
 
   if (
     CONFIG.LOCAL_TP_EXIT_ENABLED &&
@@ -2345,6 +2418,13 @@ app.get("/status", (_req, res) => {
     barIndex: S.barIndex,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
     replayUseEventTimeForPositionClock: CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
+    postExitContProfitGuardConfig: {
+      enabled: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ENABLED,
+      armPeakPct: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ARM_PEAK_PCT,
+      lockPct: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_LOCK_PCT,
+      givebackPct: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_GIVEBACK_PCT,
+      minCurrentPct: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_MIN_CURRENT_PCT,
+    },
     recentLogs: S.logs.slice(-100),
   });
 });
