@@ -128,7 +128,8 @@ function isProtectedContinuationMode(mode) {
     "post_exit_continuation_reentry_long",
     "post_exit_continuation_reentry_long_strong",
   ].includes(String(mode || ""));
-}\nfunction isReentryHarvestMode(mode) {
+}
+function isReentryHarvestMode(mode) {
   return [
     "post_exit_continuation_reentry_long",
     "post_exit_continuation_reentry_long_strong",
