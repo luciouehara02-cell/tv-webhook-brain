@@ -1,7 +1,7 @@
 import express from "express";
 
 /**
- * BrainRAY_Continuation_v5.1a
+ * BrainRAY_Continuation_v5.1
  *
  * Base: BrainRAY_Continuation_v4.4f
  * Main v5.1 change:
@@ -372,7 +372,7 @@ const CONFIG = {
   POST_EXIT_CONT_TP_PROTECTION_MIN_RSI: n(process.env.POST_EXIT_CONT_TP_PROTECTION_MIN_RSI, 58),
   POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8: b(process.env.POST_EXIT_CONT_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8, true),
   POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO: b(process.env.POST_EXIT_CONT_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO, true),
-  $1
+  POST_EXIT_CONT_TP_PROTECTION_LOG: b(process.env.POST_EXIT_CONT_TP_PROTECTION_LOG, true),
 
   // v5.1 post-exit continuation profit guard
   POST_EXIT_CONT_PROFIT_GUARD_ENABLED: b(process.env.POST_EXIT_CONT_PROFIT_GUARD_ENABLED, true),
@@ -1922,7 +1922,7 @@ function shouldPostExitContinuationProfitGuardExit(price, eventIso = isoNow()) {
     emergencyHit,
   };
 }
-$1
+function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
   if (!CONFIG.REENTRY_TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
   if (!isReentryHarvestMode(S.entryMode)) return { allow: false, reason: "not_target_mode" };
   const price = n(feature.close, NaN);
@@ -2037,7 +2037,11 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     return doExit(postExitProfitGuard.reason, price, eventIso, "cycle_exit");
   }
 
-$1
+  if (price <= S.stopPrice) {
+    const exitClass = S.beArmed ? "cycle_exit" : "stop_exit";
+    return doExit("hard_or_breakeven_stop", price, eventIso, exitClass);
+  }
+
   if (CONFIG.DYNAMIC_TP_ENABLED && S.dynamicTpTier > 0) {
     const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
     const peakPnl = S.peakPnlPct || 0;
@@ -2086,7 +2090,8 @@ function evaluateBarExit(feature) {
   const reentryHarvest = shouldReentryTopHarvestExit(feature, pnlPct, fv);
   if (reentryHarvest.allow) return doExit("reentry_top_harvest_exit", price, feature.time, "cycle_exit");
 
-$1
+  const topHarvest = shouldTopHarvestExit();
+  if (topHarvest.allow) return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
 
   const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, feature.time);
   if (postExitProfitGuard.allow) {
