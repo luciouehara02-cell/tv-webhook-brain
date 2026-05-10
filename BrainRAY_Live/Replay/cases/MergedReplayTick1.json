@@ -1,0 +1,6224 @@
+[
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.32,
+    "time": "2026-05-11T00:02:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:03:02.245000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.31,
+    "ema8": 85.2407,
+    "ema18": 85.2352,
+    "ema50": null,
+    "rsi": 50.513,
+    "adx": 14.575,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.35,
+    "time": "2026-05-11T00:03:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.41,
+    "time": "2026-05-11T00:04:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.58,
+    "time": "2026-05-11T00:07:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:08:02.771000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.59,
+    "ema8": 85.3183,
+    "ema18": 85.2725,
+    "ema50": null,
+    "rsi": 57.758,
+    "adx": 14.243,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.57,
+    "time": "2026-05-11T00:08:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.64,
+    "time": "2026-05-11T00:09:15Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.51,
+    "time": "2026-05-11T00:12:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:13:04.827000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.51,
+    "ema8": 85.3609,
+    "ema18": 85.2975,
+    "ema50": null,
+    "rsi": 55.268,
+    "adx": 14.2,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.49,
+    "time": "2026-05-11T00:13:16Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.47,
+    "time": "2026-05-11T00:14:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.31,
+    "time": "2026-05-11T00:16:59Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T00:17:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.23,
+    "time": "2026-05-11T00:17:59Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:18:02.275000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.23,
+    "ema8": 85.3318,
+    "ema18": 85.2904,
+    "ema50": null,
+    "rsi": 47.544,
+    "adx": 13.435,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.13,
+    "time": "2026-05-11T00:19:00Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 84.96,
+    "time": "2026-05-11T00:19:59Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 84.74,
+    "time": "2026-05-11T00:22:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:23:04.299000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 84.78,
+    "ema8": 85.2092,
+    "ema18": 85.2367,
+    "ema50": null,
+    "rsi": 38.284,
+    "adx": 14.481,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 84.75,
+    "time": "2026-05-11T00:23:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 84.72,
+    "time": "2026-05-11T00:24:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.45,
+    "time": "2026-05-11T00:28:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:29:32.016000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.43,
+    "ema8": 85.049,
+    "ema18": 85.0458,
+    "ema50": null,
+    "rsi": 57.187,
+    "adx": 17.858,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.49,
+    "time": "2026-05-11T00:29:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.53,
+    "time": "2026-05-11T00:30:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.51,
+    "time": "2026-05-11T00:33:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:34:31.003000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.52,
+    "ema8": 85.1537,
+    "ema18": 85.0957,
+    "ema50": null,
+    "rsi": 58.819,
+    "adx": 17.635,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.56,
+    "time": "2026-05-11T00:34:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.53,
+    "time": "2026-05-11T00:35:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.5,
+    "time": "2026-05-11T00:38:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:39:33.717000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.46,
+    "ema8": 85.2218,
+    "ema18": 85.1341,
+    "ema50": null,
+    "rsi": 57.253,
+    "adx": 17.792,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.51,
+    "time": "2026-05-11T00:39:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.61,
+    "time": "2026-05-11T00:40:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.65,
+    "time": "2026-05-11T00:43:46Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:44:33.761000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.7,
+    "ema8": 85.328,
+    "ema18": 85.1937,
+    "ema50": null,
+    "rsi": 61.653,
+    "adx": 18.076,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.73,
+    "time": "2026-05-11T00:44:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.73,
+    "time": "2026-05-11T00:45:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.63,
+    "time": "2026-05-11T00:48:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:49:31.519000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.66,
+    "ema8": 85.4018,
+    "ema18": 85.2427,
+    "ema50": null,
+    "rsi": 60.534,
+    "adx": 18.341,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.62,
+    "time": "2026-05-11T00:49:48Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.59,
+    "time": "2026-05-11T00:50:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.54,
+    "time": "2026-05-11T00:53:45Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:54:33.182000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.54,
+    "ema8": 85.4325,
+    "ema18": 85.274,
+    "ema50": null,
+    "rsi": 57.183,
+    "adx": 18.08,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.52,
+    "time": "2026-05-11T00:54:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.42,
+    "time": "2026-05-11T00:55:45Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.49,
+    "time": "2026-05-11T00:58:45Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T00:59:30.655000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.51,
+    "ema8": 85.4497,
+    "ema18": 85.2989,
+    "ema50": null,
+    "rsi": 56.343,
+    "adx": 17.356,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.54,
+    "time": "2026-05-11T00:59:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.52,
+    "time": "2026-05-11T01:00:45Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.51,
+    "time": "2026-05-11T01:03:30Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T01:04:28Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.54,
+    "time": "2026-05-11T01:04:34Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:04:34.966000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.54,
+    "ema8": 85.4698,
+    "ema18": 85.3243,
+    "ema50": null,
+    "rsi": 57.023,
+    "adx": 16.721,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.52,
+    "time": "2026-05-11T01:05:29Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.52,
+    "time": "2026-05-11T01:06:29Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.46,
+    "time": "2026-05-11T01:13:33Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.48,
+    "time": "2026-05-11T01:14:31Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:14:31.851000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.48,
+    "ema8": 85.4635,
+    "ema18": 85.3497,
+    "ema50": null,
+    "rsi": 54.963,
+    "adx": 16.454,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.48,
+    "time": "2026-05-11T01:15:30Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.44,
+    "time": "2026-05-11T01:16:29Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.41,
+    "time": "2026-05-11T01:18:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:19:30.013000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.36,
+    "ema8": 85.4405,
+    "ema18": 85.3508,
+    "ema50": null,
+    "rsi": 51.343,
+    "adx": 15.919,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.35,
+    "time": "2026-05-11T01:19:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.19,
+    "time": "2026-05-11T01:20:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.2,
+    "time": "2026-05-11T01:24:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Buy Alert",
+    "price": null,
+    "time": "2026-05-11T01:25:24Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.16,
+    "time": "2026-05-11T01:25:28Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:25:28.692000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.16,
+    "ema8": 85.1861,
+    "ema18": 85.2393,
+    "ema50": null,
+    "rsi": 46.777,
+    "adx": 11.354,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.18,
+    "time": "2026-05-11T01:26:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.16,
+    "time": "2026-05-11T01:27:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.65,
+    "time": "2026-05-11T01:30:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:31:42.774000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.71,
+    "ema8": 85.4638,
+    "ema18": 85.3428,
+    "ema50": null,
+    "rsi": 64.889,
+    "adx": 15.076,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.72,
+    "time": "2026-05-11T01:31:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.76,
+    "time": "2026-05-11T01:32:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.8,
+    "time": "2026-05-11T01:35:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:36:42.344000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.67,
+    "ema8": 85.5096,
+    "ema18": 85.3772,
+    "ema50": null,
+    "rsi": 63.026,
+    "adx": 17.142,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.68,
+    "time": "2026-05-11T01:36:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.68,
+    "time": "2026-05-11T01:37:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.59,
+    "time": "2026-05-11T01:40:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:41:41.256000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.58,
+    "ema8": 85.5253,
+    "ema18": 85.3986,
+    "ema50": null,
+    "rsi": 58.925,
+    "adx": 17.876,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.55,
+    "time": "2026-05-11T01:41:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.55,
+    "time": "2026-05-11T01:42:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.51,
+    "time": "2026-05-11T01:45:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T01:46:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.54,
+    "time": "2026-05-11T01:46:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:46:43.599000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.54,
+    "ema8": 85.5285,
+    "ema18": 85.4135,
+    "ema50": null,
+    "rsi": 57.146,
+    "adx": 18.321,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.55,
+    "time": "2026-05-11T01:47:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.54,
+    "time": "2026-05-11T01:48:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.63,
+    "time": "2026-05-11T01:50:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:51:44.689000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.62,
+    "ema8": 85.5489,
+    "ema18": 85.4352,
+    "ema50": null,
+    "rsi": 59.763,
+    "adx": 19.022,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.65,
+    "time": "2026-05-11T01:51:59Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.65,
+    "time": "2026-05-11T01:52:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.65,
+    "time": "2026-05-11T01:55:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish Trend Change",
+    "price": 85.83,
+    "time": "2026-05-11T01:56:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.72,
+    "time": "2026-05-11T01:56:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T01:56:41.693000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.72,
+    "ema8": 85.5869,
+    "ema18": 85.4652,
+    "ema50": null,
+    "rsi": 62.82,
+    "adx": 20.076,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.71,
+    "time": "2026-05-11T01:57:41Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.68,
+    "time": "2026-05-11T01:58:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.82,
+    "time": "2026-05-11T02:00:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:01:43.030000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.83,
+    "ema8": 85.6409,
+    "ema18": 85.5036,
+    "ema50": null,
+    "rsi": 65.889,
+    "adx": 21.498,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.9,
+    "time": "2026-05-11T02:01:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.05,
+    "time": "2026-05-11T02:02:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.96,
+    "time": "2026-05-11T02:05:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:06:42.050000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 85.96,
+    "ema8": 85.7118,
+    "ema18": 85.5516,
+    "ema50": null,
+    "rsi": 69.133,
+    "adx": 23.72,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.97,
+    "time": "2026-05-11T02:06:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.01,
+    "time": "2026-05-11T02:07:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.98,
+    "time": "2026-05-11T02:10:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:11:41.134000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86,
+    "ema8": 85.7759,
+    "ema18": 85.5988,
+    "ema50": null,
+    "rsi": 70.076,
+    "adx": 25.783,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 85.99,
+    "time": "2026-05-11T02:11:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.03,
+    "time": "2026-05-11T02:12:59Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.04,
+    "time": "2026-05-11T02:15:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:16:53.371000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.03,
+    "ema8": 85.8323,
+    "ema18": 85.6442,
+    "ema50": null,
+    "rsi": 70.796,
+    "adx": 27.699,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.11,
+    "time": "2026-05-11T02:16:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.03,
+    "time": "2026-05-11T02:17:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.1,
+    "time": "2026-05-11T02:20:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:21:42.591000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.02,
+    "ema8": 85.874,
+    "ema18": 85.6838,
+    "ema50": null,
+    "rsi": 70.189,
+    "adx": 29.707,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.03,
+    "time": "2026-05-11T02:21:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.07,
+    "time": "2026-05-11T02:22:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.18,
+    "time": "2026-05-11T02:25:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:26:42.759000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.18,
+    "ema8": 85.942,
+    "ema18": 85.736,
+    "ema50": null,
+    "rsi": 74.025,
+    "adx": 31.76,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.13,
+    "time": "2026-05-11T02:26:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.12,
+    "time": "2026-05-11T02:27:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.16,
+    "time": "2026-05-11T02:30:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:31:43.653000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.16,
+    "ema8": 85.9905,
+    "ema18": 85.7806,
+    "ema50": null,
+    "rsi": 72.765,
+    "adx": 33.667,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.12,
+    "time": "2026-05-11T02:31:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.1,
+    "time": "2026-05-11T02:32:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.37,
+    "time": "2026-05-11T02:35:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:36:43.558000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.39,
+    "ema8": 86.0793,
+    "ema18": 85.8448,
+    "ema50": null,
+    "rsi": 77.507,
+    "adx": 35.969,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.4,
+    "time": "2026-05-11T02:36:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.41,
+    "time": "2026-05-11T02:37:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.26,
+    "time": "2026-05-11T02:40:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bullish Alert",
+    "price": null,
+    "time": "2026-05-11T02:41:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.15,
+    "time": "2026-05-11T02:41:40Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:41:41.450000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.15,
+    "ema8": 86.095,
+    "ema18": 85.8769,
+    "ema50": null,
+    "rsi": 64.823,
+    "adx": 38.228,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.1,
+    "time": "2026-05-11T02:42:41Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.16,
+    "time": "2026-05-11T02:43:41Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.14,
+    "time": "2026-05-11T02:45:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:46:46.054000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.3,
+    "ema8": 86.1405,
+    "ema18": 85.9214,
+    "ema50": null,
+    "rsi": 68.313,
+    "adx": 39.812,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.33,
+    "time": "2026-05-11T02:46:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.36,
+    "time": "2026-05-11T02:47:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.33,
+    "time": "2026-05-11T02:50:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:51:42.142000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.27,
+    "ema8": 86.1693,
+    "ema18": 85.9581,
+    "ema50": null,
+    "rsi": 66.884,
+    "adx": 41.5,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.23,
+    "time": "2026-05-11T02:51:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.16,
+    "time": "2026-05-11T02:52:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.24,
+    "time": "2026-05-11T02:55:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T02:56:42.877000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.24,
+    "ema8": 86.185,
+    "ema18": 85.9878,
+    "ema50": null,
+    "rsi": 65.41,
+    "adx": 41.49,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.29,
+    "time": "2026-05-11T02:56:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.17,
+    "time": "2026-05-11T02:57:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.24,
+    "time": "2026-05-11T03:00:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:01:44.531000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.24,
+    "ema8": 86.1972,
+    "ema18": 86.0143,
+    "ema50": null,
+    "rsi": 65.41,
+    "adx": 41.62,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.28,
+    "time": "2026-05-11T03:01:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.26,
+    "time": "2026-05-11T03:02:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.39,
+    "time": "2026-05-11T03:05:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:06:42.296000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.37,
+    "ema8": 86.2356,
+    "ema18": 86.0518,
+    "ema50": null,
+    "rsi": 68.859,
+    "adx": 42.217,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.41,
+    "time": "2026-05-11T03:06:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.4,
+    "time": "2026-05-11T03:07:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.48,
+    "time": "2026-05-11T03:10:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:11:42.037000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.43,
+    "ema8": 86.2788,
+    "ema18": 86.0916,
+    "ema50": null,
+    "rsi": 70.329,
+    "adx": 42.917,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.41,
+    "time": "2026-05-11T03:11:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.37,
+    "time": "2026-05-11T03:12:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.41,
+    "time": "2026-05-11T03:15:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:16:49.141000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.48,
+    "ema8": 86.3235,
+    "ema18": 86.1325,
+    "ema50": null,
+    "rsi": 71.535,
+    "adx": 43.568,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.49,
+    "time": "2026-05-11T03:16:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.46,
+    "time": "2026-05-11T03:17:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.36,
+    "time": "2026-05-11T03:20:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:21:41.898000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.35,
+    "ema8": 86.3294,
+    "ema18": 86.1554,
+    "ema50": null,
+    "rsi": 64.225,
+    "adx": 44.235,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.35,
+    "time": "2026-05-11T03:21:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.4,
+    "time": "2026-05-11T03:23:00Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.48,
+    "time": "2026-05-11T03:30:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:31:42.344000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.4,
+    "ema8": 86.3435,
+    "ema18": 86.1966,
+    "ema50": null,
+    "rsi": 65.115,
+    "adx": 44.854,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.38,
+    "time": "2026-05-11T03:31:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.31,
+    "time": "2026-05-11T03:32:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.15,
+    "time": "2026-05-11T03:35:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:36:42.396000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.13,
+    "ema8": 86.296,
+    "ema18": 86.1896,
+    "ema50": null,
+    "rsi": 52.455,
+    "adx": 43.867,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.13,
+    "time": "2026-05-11T03:36:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.18,
+    "time": "2026-05-11T03:37:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.3,
+    "time": "2026-05-11T03:42:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:42:59.034000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.35,
+    "ema8": 86.2747,
+    "ema18": 86.2141,
+    "ema50": null,
+    "rsi": 58.952,
+    "adx": 41.078,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.36,
+    "time": "2026-05-11T03:43:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.33,
+    "time": "2026-05-11T03:44:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.23,
+    "time": "2026-05-11T03:51:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Buy Alert",
+    "price": null,
+    "time": "2026-05-11T03:52:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.29,
+    "time": "2026-05-11T03:52:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T03:52:57.577000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.29,
+    "ema8": 86.2738,
+    "ema18": 86.2255,
+    "ema50": null,
+    "rsi": 56.112,
+    "adx": 39.718,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.35,
+    "time": "2026-05-11T03:53:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.29,
+    "time": "2026-05-11T03:54:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.29,
+    "time": "2026-05-11T04:02:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:03:01.126000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.27,
+    "ema8": 86.2637,
+    "ema18": 86.2297,
+    "ema50": null,
+    "rsi": 54.975,
+    "adx": 39.006,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.28,
+    "time": "2026-05-11T04:03:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.32,
+    "time": "2026-05-11T04:04:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.25,
+    "time": "2026-05-11T04:06:59Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.3,
+    "time": "2026-05-11T04:07:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:07:56.436000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.3,
+    "ema8": 86.2718,
+    "ema18": 86.2371,
+    "ema50": null,
+    "rsi": 56.085,
+    "adx": 38.796,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.29,
+    "time": "2026-05-11T04:08:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.29,
+    "time": "2026-05-11T04:09:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.32,
+    "time": "2026-05-11T04:11:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish BOS",
+    "price": 86.67,
+    "time": "2026-05-11T04:12:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.34,
+    "time": "2026-05-11T04:12:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:12:56.997000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.34,
+    "ema8": 86.2869,
+    "ema18": 86.2479,
+    "ema50": null,
+    "rsi": 57.586,
+    "adx": 38.6,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.64,
+    "time": "2026-05-11T04:13:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.82,
+    "time": "2026-05-11T04:14:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.64,
+    "time": "2026-05-11T04:17:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:17:59.186000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.67,
+    "ema8": 86.372,
+    "ema18": 86.2923,
+    "ema50": null,
+    "rsi": 67.467,
+    "adx": 40.29,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.78,
+    "time": "2026-05-11T04:18:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 86.76,
+    "time": "2026-05-11T04:19:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.08,
+    "time": "2026-05-11T04:22:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:22:57.316000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 86.94,
+    "ema8": 86.4983,
+    "ema18": 86.3605,
+    "ema50": null,
+    "rsi": 73.007,
+    "adx": 42.463,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.05,
+    "time": "2026-05-11T04:23:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.01,
+    "time": "2026-05-11T04:24:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.01,
+    "time": "2026-05-11T04:27:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:27:57.800000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.01,
+    "ema8": 86.612,
+    "ema18": 86.4289,
+    "ema50": null,
+    "rsi": 74.233,
+    "adx": 44.481,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.14,
+    "time": "2026-05-11T04:28:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.11,
+    "time": "2026-05-11T04:29:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.24,
+    "time": "2026-05-11T04:32:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:33:02.439000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.24,
+    "ema8": 86.7515,
+    "ema18": 86.5143,
+    "ema50": null,
+    "rsi": 77.799,
+    "adx": 46.655,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.43,
+    "time": "2026-05-11T04:33:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.3,
+    "time": "2026-05-11T04:34:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.08,
+    "time": "2026-05-11T04:37:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:37:56.134000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.17,
+    "ema8": 86.8445,
+    "ema18": 86.5833,
+    "ema50": null,
+    "rsi": 74.423,
+    "adx": 48.792,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.21,
+    "time": "2026-05-11T04:38:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.21,
+    "time": "2026-05-11T04:39:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.21,
+    "time": "2026-05-11T04:42:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:42:58.443000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.12,
+    "ema8": 86.9057,
+    "ema18": 86.6398,
+    "ema50": null,
+    "rsi": 72.019,
+    "adx": 50.776,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.13,
+    "time": "2026-05-11T04:43:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.24,
+    "time": "2026-05-11T04:44:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.47,
+    "time": "2026-05-11T04:46:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T04:47:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.5,
+    "time": "2026-05-11T04:47:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:47:58.410000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.5,
+    "ema8": 87.0378,
+    "ema18": 86.7303,
+    "ema50": null,
+    "rsi": 77.869,
+    "adx": 52.905,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.52,
+    "time": "2026-05-11T04:48:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.55,
+    "time": "2026-05-11T04:49:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.32,
+    "time": "2026-05-11T04:52:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:52:56.732000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.3,
+    "ema8": 87.0961,
+    "ema18": 86.7903,
+    "ema50": null,
+    "rsi": 69.619,
+    "adx": 54.89,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.33,
+    "time": "2026-05-11T04:53:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.35,
+    "time": "2026-05-11T04:54:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.39,
+    "time": "2026-05-11T04:57:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T04:57:56.812000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.46,
+    "ema8": 87.1769,
+    "ema18": 86.8608,
+    "ema50": null,
+    "rsi": 72.16,
+    "adx": 56.734,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.44,
+    "time": "2026-05-11T04:58:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.4,
+    "time": "2026-05-11T04:59:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.38,
+    "time": "2026-05-11T05:02:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:03:02.895000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.42,
+    "ema8": 87.231,
+    "ema18": 86.9197,
+    "ema50": null,
+    "rsi": 70.571,
+    "adx": 58.457,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.43,
+    "time": "2026-05-11T05:03:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.36,
+    "time": "2026-05-11T05:04:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.41,
+    "time": "2026-05-11T05:07:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:07:57.289000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.43,
+    "ema8": 87.2752,
+    "ema18": 86.9734,
+    "ema50": null,
+    "rsi": 70.744,
+    "adx": 59.638,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.52,
+    "time": "2026-05-11T05:08:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.44,
+    "time": "2026-05-11T05:09:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.57,
+    "time": "2026-05-11T05:12:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:12:56.589000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.65,
+    "ema8": 87.3585,
+    "ema18": 87.0446,
+    "ema50": null,
+    "rsi": 74.33,
+    "adx": 60.941,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.7,
+    "time": "2026-05-11T05:13:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.76,
+    "time": "2026-05-11T05:14:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.63,
+    "time": "2026-05-11T05:17:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:17:58.813000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.59,
+    "ema8": 87.4099,
+    "ema18": 87.102,
+    "ema50": null,
+    "rsi": 71.747,
+    "adx": 62.396,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.56,
+    "time": "2026-05-11T05:18:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.54,
+    "time": "2026-05-11T05:19:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.46,
+    "time": "2026-05-11T05:22:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:22:57.049000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.47,
+    "ema8": 87.4233,
+    "ema18": 87.1407,
+    "ema50": null,
+    "rsi": 66.752,
+    "adx": 62.425,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.5,
+    "time": "2026-05-11T05:23:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.48,
+    "time": "2026-05-11T05:24:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.46,
+    "time": "2026-05-11T05:27:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:27:56.579000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.45,
+    "ema8": 87.4292,
+    "ema18": 87.1733,
+    "ema50": null,
+    "rsi": 65.929,
+    "adx": 62.453,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.46,
+    "time": "2026-05-11T05:28:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.51,
+    "time": "2026-05-11T05:29:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.14,
+    "time": "2026-05-11T05:37:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:37:56.806000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.13,
+    "ema8": 87.3559,
+    "ema18": 87.1891,
+    "ema50": null,
+    "rsi": 53.778,
+    "adx": 59.607,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.12,
+    "time": "2026-05-11T05:38:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.16,
+    "time": "2026-05-11T05:39:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.3,
+    "time": "2026-05-11T05:43:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:44:11.577000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.32,
+    "ema8": 87.2843,
+    "ema18": 87.2223,
+    "ema50": null,
+    "rsi": 58.846,
+    "adx": 51.997,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.29,
+    "time": "2026-05-11T05:44:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.3,
+    "time": "2026-05-11T05:45:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.16,
+    "time": "2026-05-11T05:53:26Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T05:54:13.102000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.13,
+    "ema8": 87.2458,
+    "ema18": 87.2161,
+    "ema50": null,
+    "rsi": 50.757,
+    "adx": 49.022,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.13,
+    "time": "2026-05-11T05:54:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.11,
+    "time": "2026-05-11T05:55:25Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.17,
+    "time": "2026-05-11T05:59:09Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bearish Alert",
+    "price": null,
+    "time": "2026-05-11T06:00:08Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.27,
+    "time": "2026-05-11T06:00:09Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:00:10.703000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.27,
+    "ema8": 87.1844,
+    "ema18": 87.1873,
+    "ema50": null,
+    "rsi": 57.01,
+    "adx": 39.469,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.31,
+    "time": "2026-05-11T06:01:09Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.25,
+    "time": "2026-05-11T06:02:09Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.65,
+    "time": "2026-05-11T06:05:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish BOS",
+    "price": 87.9,
+    "time": "2026-05-11T06:06:38Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.75,
+    "time": "2026-05-11T06:06:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:06:42.964000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.75,
+    "ema8": 87.2824,
+    "ema18": 87.2165,
+    "ema50": null,
+    "rsi": 70.172,
+    "adx": 31.528,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.77,
+    "time": "2026-05-11T06:07:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.78,
+    "time": "2026-05-11T06:08:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.89,
+    "time": "2026-05-11T06:10:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:11:41.413000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.9,
+    "ema8": 87.4196,
+    "ema18": 87.2885,
+    "ema50": null,
+    "rsi": 72.975,
+    "adx": 33.744,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.08,
+    "time": "2026-05-11T06:11:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.08,
+    "time": "2026-05-11T06:12:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.02,
+    "time": "2026-05-11T06:15:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:16:47.064000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.05,
+    "ema8": 87.5597,
+    "ema18": 87.3686,
+    "ema50": null,
+    "rsi": 75.459,
+    "adx": 35.941,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T06:16:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.17,
+    "time": "2026-05-11T06:17:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T06:20:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:21:40.981000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.13,
+    "ema8": 87.6865,
+    "ema18": 87.4488,
+    "ema50": null,
+    "rsi": 76.689,
+    "adx": 38.099,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.14,
+    "time": "2026-05-11T06:21:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.25,
+    "time": "2026-05-11T06:22:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.98,
+    "time": "2026-05-11T06:25:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:26:42.987000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.91,
+    "ema8": 87.7361,
+    "ema18": 87.4973,
+    "ema50": null,
+    "rsi": 66.775,
+    "adx": 39.088,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.98,
+    "time": "2026-05-11T06:26:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.16,
+    "time": "2026-05-11T06:27:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.11,
+    "time": "2026-05-11T06:30:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T06:31:38Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.01,
+    "time": "2026-05-11T06:31:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:31:42.731000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.01,
+    "ema8": 87.797,
+    "ema18": 87.5513,
+    "ema50": null,
+    "rsi": 68.752,
+    "adx": 39.78,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.07,
+    "time": "2026-05-11T06:32:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.09,
+    "time": "2026-05-11T06:33:39Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.13,
+    "time": "2026-05-11T06:35:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:36:41.764000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.13,
+    "ema8": 87.871,
+    "ema18": 87.6122,
+    "ema50": null,
+    "rsi": 70.984,
+    "adx": 40.422,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.14,
+    "time": "2026-05-11T06:36:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.14,
+    "time": "2026-05-11T06:37:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.01,
+    "time": "2026-05-11T06:40:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:41:40.817000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.15,
+    "ema8": 87.933,
+    "ema18": 87.6688,
+    "ema50": null,
+    "rsi": 71.351,
+    "adx": 41.436,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.17,
+    "time": "2026-05-11T06:41:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.11,
+    "time": "2026-05-11T06:42:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.05,
+    "time": "2026-05-11T06:45:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:46:47.544000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.02,
+    "ema8": 87.9523,
+    "ema18": 87.7058,
+    "ema50": null,
+    "rsi": 65.544,
+    "adx": 42.294,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.96,
+    "time": "2026-05-11T06:46:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.02,
+    "time": "2026-05-11T06:47:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.05,
+    "time": "2026-05-11T06:50:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:51:41.508000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.07,
+    "ema8": 87.9785,
+    "ema18": 87.7441,
+    "ema50": null,
+    "rsi": 66.668,
+    "adx": 42.495,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.06,
+    "time": "2026-05-11T06:51:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.06,
+    "time": "2026-05-11T06:52:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.01,
+    "time": "2026-05-11T06:55:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T06:56:43.117000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.02,
+    "ema8": 87.9877,
+    "ema18": 87.7732,
+    "ema50": null,
+    "rsi": 64.406,
+    "adx": 42.745,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.04,
+    "time": "2026-05-11T06:56:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.07,
+    "time": "2026-05-11T06:57:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.08,
+    "time": "2026-05-11T07:00:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:01:42.873000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.99,
+    "ema8": 87.9882,
+    "ema18": 87.796,
+    "ema50": null,
+    "rsi": 63.024,
+    "adx": 42.622,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.95,
+    "time": "2026-05-11T07:01:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.06,
+    "time": "2026-05-11T07:02:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88,
+    "time": "2026-05-11T07:05:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:06:41.256000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.99,
+    "ema8": 87.9886,
+    "ema18": 87.8164,
+    "ema50": null,
+    "rsi": 63.024,
+    "adx": 42.236,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.99,
+    "time": "2026-05-11T07:06:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.03,
+    "time": "2026-05-11T07:07:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.97,
+    "time": "2026-05-11T07:10:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:11:41.264000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.03,
+    "ema8": 87.9978,
+    "ema18": 87.8389,
+    "ema50": null,
+    "rsi": 64.211,
+    "adx": 41.962,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.05,
+    "time": "2026-05-11T07:11:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.05,
+    "time": "2026-05-11T07:12:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.06,
+    "time": "2026-05-11T07:15:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:16:44.946000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.13,
+    "ema8": 88.0272,
+    "ema18": 87.8695,
+    "ema50": null,
+    "rsi": 67.059,
+    "adx": 41.962,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.17,
+    "time": "2026-05-11T07:16:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.13,
+    "time": "2026-05-11T07:17:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.87,
+    "time": "2026-05-11T07:25:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:26:42.809000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.91,
+    "ema8": 87.9913,
+    "ema18": 87.8833,
+    "ema50": null,
+    "rsi": 56.235,
+    "adx": 40.945,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.94,
+    "time": "2026-05-11T07:26:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.94,
+    "time": "2026-05-11T07:27:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.83,
+    "time": "2026-05-11T07:31:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:32:46.064000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.96,
+    "ema8": 87.9315,
+    "ema18": 87.8872,
+    "ema50": null,
+    "rsi": 57.268,
+    "adx": 37.453,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.95,
+    "time": "2026-05-11T07:32:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.89,
+    "time": "2026-05-11T07:33:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.75,
+    "time": "2026-05-11T07:36:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:37:41.510000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.72,
+    "ema8": 87.8845,
+    "ema18": 87.8696,
+    "ema50": null,
+    "rsi": 47.297,
+    "adx": 35.958,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.75,
+    "time": "2026-05-11T07:37:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.9,
+    "time": "2026-05-11T07:38:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.92,
+    "time": "2026-05-11T07:41:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:42:41.525000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.91,
+    "ema8": 87.8902,
+    "ema18": 87.8738,
+    "ema50": null,
+    "rsi": 54.109,
+    "adx": 34.569,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.91,
+    "time": "2026-05-11T07:42:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.87,
+    "time": "2026-05-11T07:43:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.93,
+    "time": "2026-05-11T07:46:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:47:43.362000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.99,
+    "ema8": 87.9124,
+    "ema18": 87.886,
+    "ema50": null,
+    "rsi": 56.65,
+    "adx": 33.618,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.98,
+    "time": "2026-05-11T07:47:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.9,
+    "time": "2026-05-11T07:48:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.92,
+    "time": "2026-05-11T07:51:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:52:42.732000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.97,
+    "ema8": 87.9252,
+    "ema18": 87.8949,
+    "ema50": null,
+    "rsi": 55.818,
+    "adx": 32.734,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.95,
+    "time": "2026-05-11T07:52:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.86,
+    "time": "2026-05-11T07:53:54Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.9,
+    "time": "2026-05-11T07:58:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T07:58:56.772000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.91,
+    "ema8": 87.9062,
+    "ema18": 87.8929,
+    "ema50": null,
+    "rsi": 53.285,
+    "adx": 28.581,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.94,
+    "time": "2026-05-11T07:59:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.99,
+    "time": "2026-05-11T08:00:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.12,
+    "time": "2026-05-11T08:08:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:08:58.973000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.12,
+    "ema8": 87.9509,
+    "ema18": 87.9165,
+    "ema50": null,
+    "rsi": 60.8,
+    "adx": 28.539,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.13,
+    "time": "2026-05-11T08:09:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.09,
+    "time": "2026-05-11T08:10:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.17,
+    "time": "2026-05-11T08:13:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:13:57.527000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.1,
+    "ema8": 87.984,
+    "ema18": 87.9358,
+    "ema50": null,
+    "rsi": 59.807,
+    "adx": 29.355,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.14,
+    "time": "2026-05-11T08:14:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.18,
+    "time": "2026-05-11T08:15:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.08,
+    "time": "2026-05-11T08:23:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:24:06.696000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.05,
+    "ema8": 87.9963,
+    "ema18": 87.9511,
+    "ema50": null,
+    "rsi": 56.623,
+    "adx": 27.737,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.08,
+    "time": "2026-05-11T08:24:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.08,
+    "time": "2026-05-11T08:25:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.07,
+    "time": "2026-05-11T08:28:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:28:57.195000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.03,
+    "ema8": 88.0038,
+    "ema18": 87.9594,
+    "ema50": null,
+    "rsi": 55.669,
+    "adx": 27.718,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.07,
+    "time": "2026-05-11T08:29:10Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.03,
+    "time": "2026-05-11T08:30:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.92,
+    "time": "2026-05-11T08:34:26Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:35:13.056000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.91,
+    "ema8": 87.9722,
+    "ema18": 87.956,
+    "ema50": null,
+    "rsi": 49.817,
+    "adx": 25.287,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.91,
+    "time": "2026-05-11T08:35:26Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.88,
+    "time": "2026-05-11T08:36:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.99,
+    "time": "2026-05-11T08:37:41Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bearish Trend Change",
+    "price": 87.62,
+    "time": "2026-05-11T08:38:41Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.64,
+    "time": "2026-05-11T08:42:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:43:45.529000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.62,
+    "ema8": 87.8183,
+    "ema18": 87.88,
+    "ema50": null,
+    "rsi": 37.983,
+    "adx": 22.988,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.79,
+    "time": "2026-05-11T08:43:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.78,
+    "time": "2026-05-11T08:44:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.73,
+    "time": "2026-05-11T08:48:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Buy Alert",
+    "price": null,
+    "time": "2026-05-11T08:49:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.78,
+    "time": "2026-05-11T08:49:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:49:57.796000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.78,
+    "ema8": 87.7677,
+    "ema18": 87.8339,
+    "ema50": null,
+    "rsi": 46.985,
+    "adx": 19.919,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.84,
+    "time": "2026-05-11T08:50:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.83,
+    "time": "2026-05-11T08:51:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.88,
+    "time": "2026-05-11T08:52:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish Trend Change",
+    "price": 88.73,
+    "time": "2026-05-11T08:53:26Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.42,
+    "time": "2026-05-11T08:57:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T08:58:30.051000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.73,
+    "ema8": 88.0612,
+    "ema18": 87.9609,
+    "ema50": null,
+    "rsi": 73.564,
+    "adx": 24.059,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.73,
+    "time": "2026-05-11T08:58:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.72,
+    "time": "2026-05-11T08:59:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.44,
+    "time": "2026-05-11T09:02:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:03:30.747000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.41,
+    "ema8": 88.1387,
+    "ema18": 88.0081,
+    "ema50": null,
+    "rsi": 61.955,
+    "adx": 26.619,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.43,
+    "time": "2026-05-11T09:03:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.5,
+    "time": "2026-05-11T09:04:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.42,
+    "time": "2026-05-11T09:07:32Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.43,
+    "time": "2026-05-11T09:08:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:08:29.982000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.43,
+    "ema8": 88.2035,
+    "ema18": 88.0525,
+    "ema50": null,
+    "rsi": 62.354,
+    "adx": 28.797,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.43,
+    "time": "2026-05-11T09:09:29Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.46,
+    "time": "2026-05-11T09:10:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.43,
+    "time": "2026-05-11T09:12:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:13:29.226000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.48,
+    "ema8": 88.2649,
+    "ema18": 88.0975,
+    "ema50": null,
+    "rsi": 63.39,
+    "adx": 30.82,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.48,
+    "time": "2026-05-11T09:13:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.54,
+    "time": "2026-05-11T09:14:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.52,
+    "time": "2026-05-11T09:17:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:18:31.624000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.53,
+    "ema8": 88.3238,
+    "ema18": 88.1431,
+    "ema50": null,
+    "rsi": 64.444,
+    "adx": 32.873,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.51,
+    "time": "2026-05-11T09:18:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.49,
+    "time": "2026-05-11T09:19:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.51,
+    "time": "2026-05-11T09:22:46Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:23:30.094000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.49,
+    "ema8": 88.3607,
+    "ema18": 88.1796,
+    "ema50": null,
+    "rsi": 62.885,
+    "adx": 34.702,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.51,
+    "time": "2026-05-11T09:23:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.47,
+    "time": "2026-05-11T09:24:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.46,
+    "time": "2026-05-11T09:27:31Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.5,
+    "time": "2026-05-11T09:28:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:28:28.912000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.5,
+    "ema8": 88.3917,
+    "ema18": 88.2133,
+    "ema50": null,
+    "rsi": 63.125,
+    "adx": 35.924,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.52,
+    "time": "2026-05-11T09:29:28Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.47,
+    "time": "2026-05-11T09:30:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.47,
+    "time": "2026-05-11T09:32:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:33:30.209000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.47,
+    "ema8": 88.4091,
+    "ema18": 88.2403,
+    "ema50": null,
+    "rsi": 61.832,
+    "adx": 37.208,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.47,
+    "time": "2026-05-11T09:33:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.44,
+    "time": "2026-05-11T09:34:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.29,
+    "time": "2026-05-11T09:42:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:43:30.354000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.27,
+    "ema8": 88.3766,
+    "ema18": 88.2585,
+    "ema50": null,
+    "rsi": 53.562,
+    "adx": 38.065,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.28,
+    "time": "2026-05-11T09:43:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.23,
+    "time": "2026-05-11T09:44:42Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.3,
+    "time": "2026-05-11T09:49:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:49:57.780000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.35,
+    "ema8": 88.2663,
+    "ema18": 88.2484,
+    "ema50": null,
+    "rsi": 56.81,
+    "adx": 35.637,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.36,
+    "time": "2026-05-11T09:50:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.35,
+    "time": "2026-05-11T09:51:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.32,
+    "time": "2026-05-11T09:54:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:54:58.368000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.32,
+    "ema8": 88.2782,
+    "ema18": 88.2559,
+    "ema50": null,
+    "rsi": 55.272,
+    "adx": 35.844,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.32,
+    "time": "2026-05-11T09:55:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.33,
+    "time": "2026-05-11T09:56:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.36,
+    "time": "2026-05-11T09:59:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T09:59:58.943000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.36,
+    "ema8": 88.2964,
+    "ema18": 88.2669,
+    "ema50": null,
+    "rsi": 56.946,
+    "adx": 36.036,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.37,
+    "time": "2026-05-11T10:00:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.37,
+    "time": "2026-05-11T10:01:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.35,
+    "time": "2026-05-11T10:04:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:04:58.091000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.36,
+    "ema8": 88.3105,
+    "ema18": 88.2767,
+    "ema50": null,
+    "rsi": 56.946,
+    "adx": 36.369,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.35,
+    "time": "2026-05-11T10:05:14Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.34,
+    "time": "2026-05-11T10:06:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.33,
+    "time": "2026-05-11T10:09:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:09:56.969000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.32,
+    "ema8": 88.3126,
+    "ema18": 88.2813,
+    "ema50": null,
+    "rsi": 54.577,
+    "adx": 36.431,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.29,
+    "time": "2026-05-11T10:10:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.29,
+    "time": "2026-05-11T10:11:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.34,
+    "time": "2026-05-11T10:14:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:15:03.852000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.33,
+    "ema8": 88.3165,
+    "ema18": 88.2864,
+    "ema50": null,
+    "rsi": 55.08,
+    "adx": 35.878,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.35,
+    "time": "2026-05-11T10:15:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.35,
+    "time": "2026-05-11T10:16:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.23,
+    "time": "2026-05-11T10:24:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:24:58.376000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.2,
+    "ema8": 88.2895,
+    "ema18": 88.2795,
+    "ema50": null,
+    "rsi": 47.272,
+    "adx": 34.53,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.23,
+    "time": "2026-05-11T10:25:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.28,
+    "time": "2026-05-11T10:26:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.36,
+    "time": "2026-05-11T10:34:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:34:58.843000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.3,
+    "ema8": 88.2885,
+    "ema18": 88.2808,
+    "ema50": null,
+    "rsi": 52.983,
+    "adx": 33.375,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.3,
+    "time": "2026-05-11T10:35:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.29,
+    "time": "2026-05-11T10:36:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.26,
+    "time": "2026-05-11T10:39:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:39:58.285000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.29,
+    "ema8": 88.2888,
+    "ema18": 88.2817,
+    "ema50": null,
+    "rsi": 52.341,
+    "adx": 33.138,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.27,
+    "time": "2026-05-11T10:40:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.28,
+    "time": "2026-05-11T10:41:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.27,
+    "time": "2026-05-11T10:49:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:49:59.809000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.3,
+    "ema8": 88.288,
+    "ema18": 88.2826,
+    "ema50": null,
+    "rsi": 52.943,
+    "adx": 32.894,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.31,
+    "time": "2026-05-11T10:50:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.24,
+    "time": "2026-05-11T10:51:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.3,
+    "time": "2026-05-11T10:54:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.32,
+    "time": "2026-05-11T10:55:47Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bearish Alert",
+    "price": null,
+    "time": "2026-05-11T10:55:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T10:56:03.454000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.31,
+    "ema8": 88.2802,
+    "ema18": 88.2768,
+    "ema50": null,
+    "rsi": 53.795,
+    "adx": 35.464,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.28,
+    "time": "2026-05-11T10:56:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.24,
+    "time": "2026-05-11T10:57:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.32,
+    "time": "2026-05-11T11:05:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:05:59.192000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.33,
+    "ema8": 88.2895,
+    "ema18": 88.2817,
+    "ema50": null,
+    "rsi": 54.907,
+    "adx": 37.035,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.36,
+    "time": "2026-05-11T11:06:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.39,
+    "time": "2026-05-11T11:07:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.42,
+    "time": "2026-05-11T11:10:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:11:00.609000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.4,
+    "ema8": 88.3141,
+    "ema18": 88.2942,
+    "ema50": null,
+    "rsi": 59.312,
+    "adx": 38.387,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.37,
+    "time": "2026-05-11T11:11:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.41,
+    "time": "2026-05-11T11:12:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.41,
+    "time": "2026-05-11T11:15:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:15:59.705000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.4,
+    "ema8": 88.3332,
+    "ema18": 88.3053,
+    "ema50": null,
+    "rsi": 59.312,
+    "adx": 39.686,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.4,
+    "time": "2026-05-11T11:16:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.42,
+    "time": "2026-05-11T11:17:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.36,
+    "time": "2026-05-11T11:20:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:20:57.584000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.36,
+    "ema8": 88.3391,
+    "ema18": 88.3111,
+    "ema50": null,
+    "rsi": 55.706,
+    "adx": 40.893,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.38,
+    "time": "2026-05-11T11:21:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.39,
+    "time": "2026-05-11T11:22:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.4,
+    "time": "2026-05-11T11:29:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T11:30:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.42,
+    "time": "2026-05-11T11:30:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:30:58.038000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.42,
+    "ema8": 88.3538,
+    "ema18": 88.3234,
+    "ema50": null,
+    "rsi": 59.057,
+    "adx": 40.957,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.38,
+    "time": "2026-05-11T11:31:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.35,
+    "time": "2026-05-11T11:32:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.34,
+    "time": "2026-05-11T11:35:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:35:59.506000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.38,
+    "ema8": 88.3596,
+    "ema18": 88.3293,
+    "ema50": null,
+    "rsi": 55.653,
+    "adx": 40.756,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.39,
+    "time": "2026-05-11T11:36:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.41,
+    "time": "2026-05-11T11:37:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.43,
+    "time": "2026-05-11T11:39:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bullish BOS",
+    "price": 88.55,
+    "time": "2026-05-11T11:40:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.43,
+    "time": "2026-05-11T11:40:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:41:00.020000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.43,
+    "ema8": 88.3753,
+    "ema18": 88.3399,
+    "ema50": null,
+    "rsi": 58.846,
+    "adx": 41.181,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.53,
+    "time": "2026-05-11T11:41:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.63,
+    "time": "2026-05-11T11:42:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.54,
+    "time": "2026-05-11T11:45:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:45:58.435000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.55,
+    "ema8": 88.4141,
+    "ema18": 88.362,
+    "ema50": null,
+    "rsi": 65.303,
+    "adx": 42.251,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.6,
+    "time": "2026-05-11T11:46:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.64,
+    "time": "2026-05-11T11:47:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.6,
+    "time": "2026-05-11T11:50:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:50:58.401000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.62,
+    "ema8": 88.4598,
+    "ema18": 88.3892,
+    "ema50": null,
+    "rsi": 68.416,
+    "adx": 43.334,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.62,
+    "time": "2026-05-11T11:51:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.59,
+    "time": "2026-05-11T11:52:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.57,
+    "time": "2026-05-11T11:54:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T11:55:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.58,
+    "time": "2026-05-11T11:55:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T11:56:04.650000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.58,
+    "ema8": 88.4865,
+    "ema18": 88.4093,
+    "ema50": null,
+    "rsi": 64.836,
+    "adx": 44.339,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.58,
+    "time": "2026-05-11T11:56:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.57,
+    "time": "2026-05-11T11:57:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.63,
+    "time": "2026-05-11T11:59:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T12:00:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.61,
+    "time": "2026-05-11T12:00:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:00:58.976000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.61,
+    "ema8": 88.514,
+    "ema18": 88.4304,
+    "ema50": null,
+    "rsi": 66.262,
+    "adx": 43.676,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.66,
+    "time": "2026-05-11T12:01:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.59,
+    "time": "2026-05-11T12:02:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.62,
+    "time": "2026-05-11T12:05:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:05:59.561000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.61,
+    "ema8": 88.5353,
+    "ema18": 88.4493,
+    "ema50": null,
+    "rsi": 66.262,
+    "adx": 44.343,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.68,
+    "time": "2026-05-11T12:06:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.7,
+    "time": "2026-05-11T12:07:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.76,
+    "time": "2026-05-11T12:10:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:10:59.812000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.73,
+    "ema8": 88.5786,
+    "ema18": 88.4789,
+    "ema50": null,
+    "rsi": 71.603,
+    "adx": 44.963,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.79,
+    "time": "2026-05-11T12:11:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.77,
+    "time": "2026-05-11T12:12:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.74,
+    "time": "2026-05-11T12:15:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:15:59.612000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.75,
+    "ema8": 88.6167,
+    "ema18": 88.5074,
+    "ema50": null,
+    "rsi": 72.388,
+    "adx": 45.663,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.73,
+    "time": "2026-05-11T12:16:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.72,
+    "time": "2026-05-11T12:17:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.78,
+    "time": "2026-05-11T12:20:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:20:58.436000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.78,
+    "ema8": 88.653,
+    "ema18": 88.5361,
+    "ema50": null,
+    "rsi": 73.568,
+    "adx": 46.355,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.74,
+    "time": "2026-05-11T12:21:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.73,
+    "time": "2026-05-11T12:22:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.75,
+    "time": "2026-05-11T12:24:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bullish Alert",
+    "price": null,
+    "time": "2026-05-11T12:25:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.73,
+    "time": "2026-05-11T12:25:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:26:16.321000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.73,
+    "ema8": 88.6701,
+    "ema18": 88.5565,
+    "ema50": null,
+    "rsi": 68.328,
+    "adx": 46.998,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.77,
+    "time": "2026-05-11T12:26:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.86,
+    "time": "2026-05-11T12:27:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.77,
+    "time": "2026-05-11T12:30:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:31:00.529000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.68,
+    "ema8": 88.6723,
+    "ema18": 88.5695,
+    "ema50": null,
+    "rsi": 63.46,
+    "adx": 48.22,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.64,
+    "time": "2026-05-11T12:31:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.47,
+    "time": "2026-05-11T12:32:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.93,
+    "time": "2026-05-11T12:40:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:41:03.572000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.97,
+    "ema8": 88.7363,
+    "ema18": 88.6202,
+    "ema50": null,
+    "rsi": 74.329,
+    "adx": 47.668,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.97,
+    "time": "2026-05-11T12:41:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.03,
+    "time": "2026-05-11T12:42:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.02,
+    "time": "2026-05-11T12:45:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:45:59.554000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.03,
+    "ema8": 88.8016,
+    "ema18": 88.6633,
+    "ema50": null,
+    "rsi": 75.991,
+    "adx": 48.489,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.07,
+    "time": "2026-05-11T12:46:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.98,
+    "time": "2026-05-11T12:47:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.13,
+    "time": "2026-05-11T12:49:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bullish Alert",
+    "price": null,
+    "time": "2026-05-11T12:50:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.04,
+    "time": "2026-05-11T12:50:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:50:59.248000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.04,
+    "ema8": 88.8546,
+    "ema18": 88.703,
+    "ema50": null,
+    "rsi": 76.266,
+    "adx": 48.965,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.04,
+    "time": "2026-05-11T12:51:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.06,
+    "time": "2026-05-11T12:52:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.06,
+    "time": "2026-05-11T12:55:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T12:56:12.218000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.1,
+    "ema8": 88.9091,
+    "ema18": 88.7448,
+    "ema50": null,
+    "rsi": 77.906,
+    "adx": 49.407,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.14,
+    "time": "2026-05-11T12:56:26Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.14,
+    "time": "2026-05-11T12:57:26Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.13,
+    "time": "2026-05-11T13:00:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:00:59.014000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.13,
+    "ema8": 88.9582,
+    "ema18": 88.7853,
+    "ema50": null,
+    "rsi": 78.698,
+    "adx": 50.317,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.08,
+    "time": "2026-05-11T13:01:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.03,
+    "time": "2026-05-11T13:02:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.07,
+    "time": "2026-05-11T13:05:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:06:00.445000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.07,
+    "ema8": 88.983,
+    "ema18": 88.8153,
+    "ema50": null,
+    "rsi": 73.055,
+    "adx": 48.733,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.09,
+    "time": "2026-05-11T13:06:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.22,
+    "time": "2026-05-11T13:07:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.25,
+    "time": "2026-05-11T13:10:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:11:02.701000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.3,
+    "ema8": 89.0535,
+    "ema18": 88.8663,
+    "ema50": null,
+    "rsi": 79.209,
+    "adx": 47.751,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.3,
+    "time": "2026-05-11T13:11:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.21,
+    "time": "2026-05-11T13:12:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.94,
+    "time": "2026-05-11T13:14:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bullish Alert",
+    "price": null,
+    "time": "2026-05-11T13:15:55Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.9,
+    "time": "2026-05-11T13:15:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:15:59.333000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.9,
+    "ema8": 89.0194,
+    "ema18": 88.8699,
+    "ema50": null,
+    "rsi": 55.478,
+    "adx": 45.715,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.96,
+    "time": "2026-05-11T13:16:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.08,
+    "time": "2026-05-11T13:17:56Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.09,
+    "time": "2026-05-11T13:20:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:20:59.276000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.11,
+    "ema8": 89.0395,
+    "ema18": 88.8951,
+    "ema50": null,
+    "rsi": 61.927,
+    "adx": 43.765,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.16,
+    "time": "2026-05-11T13:21:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.17,
+    "time": "2026-05-11T13:22:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.14,
+    "time": "2026-05-11T13:25:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:26:08.521000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 89.04,
+    "ema8": 89.0396,
+    "ema18": 88.9104,
+    "ema50": null,
+    "rsi": 58.866,
+    "adx": 41.998,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 89.03,
+    "time": "2026-05-11T13:26:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.78,
+    "time": "2026-05-11T13:27:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.81,
+    "time": "2026-05-11T13:30:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:30:59.752000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.77,
+    "ema8": 88.9797,
+    "ema18": 88.8956,
+    "ema50": null,
+    "rsi": 48.839,
+    "adx": 40.297,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.77,
+    "time": "2026-05-11T13:31:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.77,
+    "time": "2026-05-11T13:32:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.78,
+    "time": "2026-05-11T13:33:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "ray",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Bearish Trend Change",
+    "price": 88.13,
+    "time": "2026-05-11T13:34:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T13:38:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:39:19.501000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.13,
+    "ema8": 88.4305,
+    "ema18": 88.5969,
+    "ema50": null,
+    "rsi": 31.708,
+    "adx": 33.183,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.26,
+    "time": "2026-05-11T13:39:28Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.4,
+    "time": "2026-05-11T13:40:27Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.27,
+    "time": "2026-05-11T13:43:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Buy Alert",
+    "price": null,
+    "time": "2026-05-11T13:44:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.26,
+    "time": "2026-05-11T13:44:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:44:16.105000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.26,
+    "ema8": 88.3926,
+    "ema18": 88.5615,
+    "ema50": null,
+    "rsi": 37.617,
+    "adx": 33.199,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.2,
+    "time": "2026-05-11T13:45:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.34,
+    "time": "2026-05-11T13:46:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.36,
+    "time": "2026-05-11T13:48:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Burst Bearish Alert",
+    "price": null,
+    "time": "2026-05-11T13:49:11Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.47,
+    "time": "2026-05-11T13:49:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:49:14.569000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.47,
+    "ema8": 88.4098,
+    "ema18": 88.5518,
+    "ema50": null,
+    "rsi": 45.779,
+    "adx": 32.898,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.42,
+    "time": "2026-05-11T13:50:12Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.91,
+    "time": "2026-05-11T13:51:13Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.87,
+    "time": "2026-05-11T13:52:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "fvvo",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "event": "Sniper Sell Alert",
+    "price": null,
+    "time": "2026-05-11T13:53:57Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.83,
+    "time": "2026-05-11T13:53:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T13:54:06.131000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 87.83,
+    "ema8": 87.8826,
+    "ema18": 87.9215,
+    "ema50": null,
+    "rsi": 42.922,
+    "adx": 33.854,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.87,
+    "time": "2026-05-11T13:55:00Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 87.9,
+    "time": "2026-05-11T13:55:58Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.1,
+    "time": "2026-05-11T13:59:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T14:00:32.941000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.13,
+    "ema8": 87.9546,
+    "ema18": 87.9461,
+    "ema50": null,
+    "rsi": 55.565,
+    "adx": 31.01,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T14:00:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.1,
+    "time": "2026-05-11T14:01:46Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.14,
+    "time": "2026-05-11T14:04:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T14:05:30.580000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.13,
+    "ema8": 87.9936,
+    "ema18": 87.9655,
+    "ema50": null,
+    "rsi": 55.565,
+    "adx": 28.954,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T14:05:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.13,
+    "time": "2026-05-11T14:06:46Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T14:09:46Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T14:10:33.905000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.18,
+    "ema8": 88.035,
+    "ema18": 87.9881,
+    "ema50": null,
+    "rsi": 57.479,
+    "adx": 26.974,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.18,
+    "time": "2026-05-11T14:10:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.18,
+    "time": "2026-05-11T14:11:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.18,
+    "time": "2026-05-11T14:14:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T14:15:35.557000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.17,
+    "ema8": 88.065,
+    "ema18": 88.0072,
+    "ema50": null,
+    "rsi": 56.951,
+    "adx": 25.22,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.15,
+    "time": "2026-05-11T14:15:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.17,
+    "time": "2026-05-11T14:16:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.2,
+    "time": "2026-05-11T14:19:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T14:20:31.028000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.2,
+    "ema8": 88.095,
+    "ema18": 88.0275,
+    "ema50": null,
+    "rsi": 58.192,
+    "adx": 23.43,
+    "atrPct": null
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.21,
+    "time": "2026-05-11T14:20:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.21,
+    "time": "2026-05-11T14:21:44Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "price": 88.22,
+    "time": "2026-05-11T14:24:43Z"
+  },
+  {
+    "secret": "ACT_RAY_5gLe36ui1as9rw8Lwm2ef7Hz8ib9Dq3Ps5Fi7Lk8",
+    "src": "features",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "time": "2026-05-11T14:25:30.465000Z",
+    "open": null,
+    "high": null,
+    "low": null,
+    "close": 88.22,
+    "ema8": 88.1228,
+    "ema18": 88.0478,
+    "ema50": null,
+    "rsi": 59.04,
+    "adx": 21.935,
+    "atrPct": null
+  }
+]
