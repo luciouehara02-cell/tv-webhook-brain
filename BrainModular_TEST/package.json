@@ -1,6 +1,6 @@
 {
-  "name": "brainray-continuation-v6-modular",
-  "version": "6.0.0",
+  "name": "brainray-continuation-v6-1-modular",
+  "version": "6.1.0",
   "type": "module",
   "private": true,
   "scripts": {
