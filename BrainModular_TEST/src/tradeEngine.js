@@ -34,6 +34,7 @@ import {
   barTimeKey,
   ageSec,
   parseTsMs,
+  normalizeSymbol,
   isLaunchMode,
   isProtectedContinuationMode,
   isReentryHarvestMode,
