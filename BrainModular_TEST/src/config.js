@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.0_modular
- * Source behavior: BrainRAY_Continuation_v5.1
+ * BrainRAY_Continuation_v6.1_modular
+ * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
  *
  * All environment variables and default thresholds.
  */
@@ -10,7 +10,7 @@ import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v5.1"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.1_modular"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -37,6 +37,7 @@ export const CONFIG = {
   MAX_LAG_SEC: n(process.env.MAX_LAG_SEC || process.env.THREECOMMAS_MAX_LAG, 300),
   SYMBOL_BOT_MAP: safeJsonParse(process.env.SYMBOL_BOT_MAP || "{}", {}),
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
+  FORWARD_EXIT_WHEN_FLAT: b(process.env.FORWARD_EXIT_WHEN_FLAT, false),
 
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
   RAY_USE_BULLISH_TREND_CONTINUATION: b(process.env.RAY_USE_BULLISH_TREND_CONTINUATION, true),

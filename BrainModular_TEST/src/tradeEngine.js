@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.0_modular
- * Source behavior: BrainRAY_Continuation_v5.1
+ * BrainRAY_Continuation_v6.1_modular
+ * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
  *
  * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
  */
@@ -368,6 +368,8 @@ function resolveRayConflictOnFeature(feature) {
     if (confirm) {
       if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CHANGE) {
         doExit("ray_conflict_bear_confirmed", currentPrice(), feature.time, "regime_break");
+      } else if (CONFIG.FORWARD_EXIT_WHEN_FLAT) {
+        doFlatExitPassthrough("ray_conflict_bear_confirmed_flat_safety_exit", currentPrice(), feature.time, "ray_conflict_confirm_bear");
       }
       turnBullRegimeOff(feature.time, "ray_conflict_confirm_bear");
       log("⚖️ RAY_CONFLICT_RESOLVED", { side, action: "bull_off_confirmed", fvvo: fv });
@@ -453,7 +455,11 @@ export function handleRayEvent(body) {
       return;
     }
     log("🔴 RAY_BEARISH_TREND_CHANGE", { price, ts });
-    if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CHANGE) doExit("ray_bearish_trend_change", price, ts, "regime_break");
+    if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CHANGE) {
+      doExit("ray_bearish_trend_change", price, ts, "regime_break");
+    } else if (CONFIG.FORWARD_EXIT_WHEN_FLAT) {
+      doFlatExitPassthrough("ray_bearish_trend_change_flat_safety_exit", price, ts, "ray_bearish_trend_change");
+    }
     turnBullRegimeOff(ts, "ray_bearish_trend_change");
     return;
   }
@@ -468,6 +474,8 @@ export function handleRayEvent(body) {
     if (S.inPosition && CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION) {
       doExit("ray_bearish_trend_continuation", price, ts, "regime_break");
       turnBullRegimeOff(ts, "ray_bearish_trend_continuation");
+    } else if (CONFIG.FORWARD_EXIT_WHEN_FLAT) {
+      doFlatExitPassthrough("ray_bearish_trend_continuation_flat_safety_exit", price, ts, "ray_bearish_trend_continuation");
     }
   }
 }
@@ -940,7 +948,13 @@ function tryEntry(source, body) {
   else if (source === "tick_confirmed_fast_launch") decision = evaluateFastTickLaunch(n(body.price, NaN));
   else if (source === "ray_bullish_trend_continuation") decision = evaluateElevatedContinuation(source, body);
   else decision = evaluateLaunchEntry(source, body);
-  log("🧪 ENTRY_DECISION", { source, allow: decision.allow, reason: decision.reason, mode: decision.mode, metrics: decision.metrics });
+  log(decision.allow ? "🧪 ENTRY_DECISION" : "🟥⛔ ENTRY_BLOCKED", {
+    source,
+    allow: decision.allow,
+    reason: decision.reason,
+    mode: decision.mode,
+    metrics: decision.metrics,
+  });
   if (decision.allow) doEnter(decision.mode, n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()), currentPrice()), decision, eventIso);
   return decision;
 }
@@ -966,7 +980,15 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   clearTrendChangeLaunch("entered");
   clearFastTickLaunch("entered");
   clearFirstEntry("entered");
-  log("📥 ENTER", { brain: CONFIG.BRAIN_NAME, mode, price, stop, decision });
+  log("🟩🟢 ENTER_LONG", {
+    brain: CONFIG.BRAIN_NAME,
+    mode,
+    price: round4(price),
+    stop: round4(stop),
+    reason: decision?.reason || null,
+    redFlags: Array.isArray(decision?.redFlags) ? decision.redFlags : [],
+    metrics: decision?.metrics || null,
+  });
   forward3Commas("enter_long", price, { mode, setup_type: mode, brain: CONFIG.BRAIN_NAME }, eventIso).catch((err) => {
     log("❌ 3COMMAS_ENTER_ERROR", { err: String(err?.message || err) });
   });
@@ -1358,6 +1380,40 @@ function markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit) {
   });
   armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit);
 }
+function doFlatExitPassthrough(reason, price, ts, source = "flat_safety_exit") {
+  if (!CONFIG.FORWARD_EXIT_WHEN_FLAT) return;
+  if (!canExitByDedup(ts)) {
+    log("⏸️ FLAT_EXIT_DEDUP_BLOCKED", { reason, source, ts, lastExitAtMs: S.lastExitAtMs, attemptClockMs: actionClockMs(ts), exitDedupMs: CONFIG.EXIT_DEDUP_MS });
+    return;
+  }
+  const exitPrice = Number.isFinite(price) ? price : currentPrice();
+  if (!Number.isFinite(exitPrice)) {
+    log("🟥 FLAT_EXIT_PASSTHROUGH_BLOCKED", { reason: "bad_price", source, ts, price });
+    return;
+  }
+  log("🟩🛟 FLAT_EXIT_PASSTHROUGH", {
+    reason,
+    source,
+    price: round4(exitPrice),
+    bullContext: S.ray.bullContext,
+    cycleState: S.cycleState,
+  });
+  forward3Commas("exit_long", exitPrice, { reason, source, brain: CONFIG.BRAIN_NAME, safety: "flat_exit_passthrough" }, ts).catch((err) => {
+    log("❌ 3COMMAS_FLAT_EXIT_ERROR", { err: String(err?.message || err) });
+  });
+  clearFirstEntry("flat_safety_exit");
+  clearFastTickLaunch("flat_safety_exit");
+  clearTrendChangeLaunch("flat_safety_exit");
+  clearReentry("flat_safety_exit");
+  clearPostExitContinuation("flat_safety_exit");
+  S.lastExitAtMs = actionClockMs(ts);
+  S.lastAction = "flat_exit_passthrough";
+  S.lastExitClass = "flat_safety_exit";
+  S.lastExitReason = reason;
+  S.cycleState = "cooldown_flat_safety_exit";
+  S.cooldownUntilMs = actionClockMs(ts) + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
+}
+
 function doExit(reason, price, ts, exitClass = "stop_exit") {
   if (!S.inPosition) return;
   if (!canExitByDedup(ts)) {
@@ -1369,7 +1425,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   const peakBeforeExit = getExitPeakSnapshot(exitPrice);
   const exitMs = actionClockMs(ts);
   const entryMs = parseTsMs(S.entryAt);
-  log("📤 EXIT", {
+  log("🟩🔵 EXIT_LONG", {
     reason,
     exitClass,
     price: round4(exitPrice),
@@ -1382,6 +1438,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   forward3Commas("exit_long", exitPrice, { reason, brain: CONFIG.BRAIN_NAME, entry_mode: S.entryMode }, ts).catch((err) => {
     log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
   });
+  if (reason === "hard_or_breakeven_stop") clearFastTickLaunch("hard_or_breakeven_stop_exit");
   if (exitClass === "cycle_exit") markReentryEligible(reason, exitPrice, pnlPct, peakBeforeExit);
   else {
     clearReentry("non_cycle_exit");

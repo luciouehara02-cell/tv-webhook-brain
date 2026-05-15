@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.0_modular
- * Source behavior: BrainRAY_Continuation_v5.1
+ * BrainRAY_Continuation_v6.1_modular
+ * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
  */
@@ -82,6 +82,7 @@ export function getStatus() {
     barIndex: S.barIndex,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
     replayUseEventTimeForPositionClock: CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
+    forwardExitWhenFlat: CONFIG.FORWARD_EXIT_WHEN_FLAT,
     recentLogs: S.logs.slice(-100),
   };
 }
