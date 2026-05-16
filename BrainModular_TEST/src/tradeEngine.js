@@ -13,6 +13,7 @@ import {
   currentPrice,
   isTickFresh,
   isFeatureFresh,
+  wasWeakeningBar,
   twoConsecutiveWeakeningBars,
   bullishRayRecent,
   getExitPeakSnapshot,
