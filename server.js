@@ -12,9 +12,25 @@ const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 const STRICT_DEST_SECRET =
   String(process.env.STRICT_DEST_SECRET || "true").toLowerCase() === "true";
 
+/**
+ * Cleans Railway/env formatting mistakes:
+ * - outer quotes around whole BRAIN_URLS
+ * - quotes around individual URLs
+ * - accidental newlines
+ * - extra spaces
+ */
+function cleanEnvUrlPart(v) {
+  return String(v || "")
+    .trim()
+    .replace(/^['"]+/, "")
+    .replace(/['"]+$/, "")
+    .trim();
+}
+
 const BRAIN_URLS = String(process.env.BRAIN_URLS || "")
+  .replace(/\r?\n/g, "")
   .split(",")
-  .map((s) => s.trim())
+  .map(cleanEnvUrlPart)
   .filter(Boolean);
 
 let BRAIN_SECRET_MAP = {};
@@ -52,9 +68,13 @@ function hostFromUrl(url) {
   }
 }
 
+function secretFromEnv(envName) {
+  return String(process.env[envName] || "");
+}
+
 function secretFor(url) {
   const host = hostFromUrl(url);
-  const u = String(url).toLowerCase();
+  const u = String(url || "").toLowerCase();
 
   if (host && BRAIN_SECRET_MAP && typeof BRAIN_SECRET_MAP === "object") {
     const mapped = BRAIN_SECRET_MAP[host];
@@ -64,7 +84,7 @@ function secretFor(url) {
   }
 
   if (u.includes("brainact-production")) {
-    const s = String(process.env.BRAIN_SECRET_ACTLONG || "");
+    const s = secretFromEnv("BRAIN_SECRET_ACTLONG");
     if (s) return { secret: s, source: "ENV:BRAIN_SECRET_ACTLONG" };
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_ACTLONG" };
   }
@@ -73,26 +93,26 @@ function secretFor(url) {
     u.includes("braindemolong-production") ||
     u.includes("satisfied-mercy-production")
   ) {
-    const s = String(process.env.BRAIN_SECRET_DEMOLONG || "");
+    const s = secretFromEnv("BRAIN_SECRET_DEMOLONG");
     if (s) return { secret: s, source: "ENV:BRAIN_SECRET_DEMOLONG" };
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOLONG" };
   }
 
   if (u.includes("braindemoshort-production")) {
-    const s = String(process.env.BRAIN_SECRET_DEMOSHORT || "");
+    const s = secretFromEnv("BRAIN_SECRET_DEMOSHORT");
     if (s) return { secret: s, source: "ENV:BRAIN_SECRET_DEMOSHORT" };
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOSHORT" };
   }
 
   if (u.includes("demophase5-production")) {
-    const s = String(process.env.BRAIN_SECRET_DEMOPHASE5 || "");
+    const s = secretFromEnv("BRAIN_SECRET_DEMOPHASE5");
     if (s) return { secret: s, source: "ENV:BRAIN_SECRET_DEMOPHASE5" };
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOPHASE5" };
   }
 
-  // BrainRAY Continuation
+  // Old / original BrainRAY Continuation
   if (u.includes("brainraycontinuation-production")) {
-    const s = String(process.env.BRAIN_SECRET_BRAINRAYCONTINUATION || "");
+    const s = secretFromEnv("BRAIN_SECRET_BRAINRAYCONTINUATION");
     if (s) {
       return { secret: s, source: "ENV:BRAIN_SECRET_BRAINRAYCONTINUATION" };
     }
@@ -102,9 +122,9 @@ function secretFor(url) {
     };
   }
 
-  // NEW: Live BrainRAY
+  // Live BrainRAY Continuation JS
   if (u.includes("brainraylivecontinuationjs-production")) {
-    const s = String(process.env.BRAIN_SECRET_LIVE_BRAINRAY || "");
+    const s = secretFromEnv("BRAIN_SECRET_LIVE_BRAINRAY");
     if (s) {
       return { secret: s, source: "ENV:BRAIN_SECRET_LIVE_BRAINRAY" };
     }
@@ -114,6 +134,19 @@ function secretFor(url) {
     };
   }
 
+  // Paper / Demo BrainRAY Continuation
+  if (u.includes("brainraypapercontinuation-production")) {
+    const s = secretFromEnv("BRAIN_SECRET_PAPER_BRAINRAY");
+    if (s) {
+      return { secret: s, source: "ENV:BRAIN_SECRET_PAPER_BRAINRAY" };
+    }
+    return {
+      secret: "",
+      source: "MISSING_ENV:BRAIN_SECRET_PAPER_BRAINRAY",
+    };
+  }
+
+  // Optional fallback only when strict mode is OFF
   if (!STRICT_DEST_SECRET) {
     if (BRAIN_SECRET) {
       return { secret: BRAIN_SECRET, source: "ENV:BRAIN_SECRET(default)" };
@@ -139,6 +172,7 @@ async function forwardToBrain(url, payload, timeoutMs) {
     });
 
     const text = await resp.text().catch(() => "");
+
     return {
       url,
       ok: resp.ok,
@@ -175,6 +209,7 @@ app.get("/", (_req, res) => {
         process.env.BRAIN_SECRET_BRAINRAYCONTINUATION
       ),
       hasLiveBrainRay: Boolean(process.env.BRAIN_SECRET_LIVE_BRAINRAY),
+      hasPaperBrainRay: Boolean(process.env.BRAIN_SECRET_PAPER_BRAINRAY),
     },
   });
 });
@@ -190,10 +225,23 @@ app.post("/webhook", async (req, res) => {
     return res.status(500).json({ ok: false, error: "BRAIN_URLS_not_set" });
   }
 
+  // Respond quickly to TradingView / tick source.
   res.status(200).json({ ok: true });
 
   const results = await Promise.all(
-    BRAIN_URLS.map(async (u) => {
+    BRAIN_URLS.map(async (uRaw) => {
+      const u = cleanEnvUrlPart(uRaw);
+
+      if (!hostFromUrl(u)) {
+        console.error(`❌ Invalid destination URL -> ${uRaw}`);
+        return {
+          url: uRaw,
+          ok: false,
+          status: 0,
+          resp: "invalid_destination_url",
+        };
+      }
+
       const out = { ...inbound };
 
       const { secret, source } = secretFor(u);
@@ -260,7 +308,10 @@ app.listen(PORT, () => {
       `DEMO_LONG=${process.env.BRAIN_SECRET_DEMOLONG ? "YES" : "NO"}, ` +
       `DEMO_SHORT=${process.env.BRAIN_SECRET_DEMOSHORT ? "YES" : "NO"}, ` +
       `DEMO_PHASE5=${process.env.BRAIN_SECRET_DEMOPHASE5 ? "YES" : "NO"}, ` +
-      `BRAINRAY_CONTINUATION=${process.env.BRAIN_SECRET_BRAINRAYCONTINUATION ? "YES" : "NO"}, ` +
-      `LIVE_BRAINRAY=${process.env.BRAIN_SECRET_LIVE_BRAINRAY ? "YES" : "NO"}`
+      `BRAINRAY_CONTINUATION=${
+        process.env.BRAIN_SECRET_BRAINRAYCONTINUATION ? "YES" : "NO"
+      }, ` +
+      `LIVE_BRAINRAY=${process.env.BRAIN_SECRET_LIVE_BRAINRAY ? "YES" : "NO"}, ` +
+      `PAPER_BRAINRAY=${process.env.BRAIN_SECRET_PAPER_BRAINRAY ? "YES" : "NO"}`
   );
 });
