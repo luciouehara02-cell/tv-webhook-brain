@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.1_modular
- * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
+ * BrainRAY_Continuation_v6.3_modular
+ * Source behavior: v6.2 modular + v6.3 first-entry fail-fast protection
  *
  * All environment variables and default thresholds.
  */
@@ -10,7 +10,7 @@ import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.1_modular"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.3_modular"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -76,7 +76,7 @@ export const CONFIG = {
   FIRST_ENTRY_CONFIRM_ENABLED: b(process.env.FIRST_ENTRY_CONFIRM_ENABLED, true),
   FIRST_ENTRY_CONFIRM_WINDOW_SEC: n(process.env.FIRST_ENTRY_CONFIRM_WINDOW_SEC, 45),
   FIRST_ENTRY_CONFIRM_MIN_RSI: n(process.env.FIRST_ENTRY_CONFIRM_MIN_RSI, 52),
-  FIRST_ENTRY_CONFIRM_MIN_ADX: n(process.env.FIRST_ENTRY_CONFIRM_MIN_ADX, 12),
+  FIRST_ENTRY_CONFIRM_MIN_ADX: n(process.env.FIRST_ENTRY_CONFIRM_MIN_ADX, 13.5),
   FIRST_ENTRY_CONFIRM_MAX_CHASE_PCT: n(process.env.FIRST_ENTRY_CONFIRM_MAX_CHASE_PCT, 0.38),
   FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT: n(process.env.FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT, 0.05),
   FIRST_ENTRY_CONFIRM_MIN_TICKS: n(process.env.FIRST_ENTRY_CONFIRM_MIN_TICKS, 2),
@@ -94,6 +94,18 @@ export const CONFIG = {
   FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY: b(process.env.FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY, true),
   FIRST_ENTRY_RECENT_BEARISH_RAY_SEC: n(process.env.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC, 300),
   FIRST_ENTRY_LOG_DEBUG: b(process.env.FIRST_ENTRY_LOG_DEBUG, true),
+
+  // v6.3 defensive exit: failed first-entry launch protection
+  FIRST_ENTRY_FAIL_FAST_ENABLED: b(process.env.FIRST_ENTRY_FAIL_FAST_ENABLED, true),
+  FIRST_ENTRY_FAIL_FAST_BARS: n(process.env.FIRST_ENTRY_FAIL_FAST_BARS, 12),
+  FIRST_ENTRY_FAIL_FAST_MIN_HELD_SEC: n(process.env.FIRST_ENTRY_FAIL_FAST_MIN_HELD_SEC, 300),
+  FIRST_ENTRY_FAIL_FAST_MAX_HELD_SEC: n(process.env.FIRST_ENTRY_FAIL_FAST_MAX_HELD_SEC, 5400),
+  FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA18: b(process.env.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA18, true),
+  FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA8: b(process.env.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA8, false),
+  FIRST_ENTRY_FAIL_FAST_RSI_BELOW: n(process.env.FIRST_ENTRY_FAIL_FAST_RSI_BELOW, 50),
+  FIRST_ENTRY_FAIL_FAST_MIN_LOSS_PCT: n(process.env.FIRST_ENTRY_FAIL_FAST_MIN_LOSS_PCT, -0.25),
+  FIRST_ENTRY_FAIL_FAST_REQUIRE_ENTRY_MODE_FIRST: b(process.env.FIRST_ENTRY_FAIL_FAST_REQUIRE_ENTRY_MODE_FIRST, true),
+  FIRST_ENTRY_FAIL_FAST_LOG: b(process.env.FIRST_ENTRY_FAIL_FAST_LOG, true),
 
   BREAKOUT_MEMORY_ENABLED: b(process.env.BREAKOUT_MEMORY_ENABLED, true),
   BREAKOUT_MEMORY_BARS: n(process.env.BREAKOUT_MEMORY_BARS, 4),

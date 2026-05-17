@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.1_modular
- * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
+ * BrainRAY_Continuation_v6.3_modular
+ * Source behavior: v6.2 modular + v6.3 first-entry fail-fast protection
  *
  * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
  */
@@ -965,6 +965,7 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   S.inPosition = true;
   S.entryPrice = price;
   S.entryAt = eventIso;
+  S.entryBarIndex = S.barIndex;
   S.entryMode = mode;
   S.stopPrice = stop;
   S.beArmed = false;
@@ -1251,6 +1252,75 @@ function shouldTopHarvestExit() {
   if (!CONFIG.TOP_HARVEST_ENABLED) return { allow: false, reason: "disabled" };
   return { allow: false, reason: "disabled_for_v50" };
 }
+
+function shouldFirstEntryFailFastExit(feature, pnlPct) {
+  if (!CONFIG.FIRST_ENTRY_FAIL_FAST_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition) return { allow: false, reason: "flat" };
+  if (CONFIG.FIRST_ENTRY_FAIL_FAST_REQUIRE_ENTRY_MODE_FIRST && !isFirstEntryMode(S.entryMode)) {
+    return { allow: false, reason: "not_first_entry_mode" };
+  }
+
+  const entryMs = parseTsMs(S.entryAt);
+  const nowFeatureMs = parseTsMs(feature?.time);
+  const heldSec = Number.isFinite(entryMs) && Number.isFinite(nowFeatureMs) ? Math.max(0, Math.round((nowFeatureMs - entryMs) / 1000)) : null;
+  const barsSinceEntry = Number.isFinite(S.entryBarIndex) ? Math.max(0, S.barIndex - S.entryBarIndex) : null;
+
+  const rsi = n(feature?.rsi, NaN);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+  const ema18 = n(feature?.ema18, NaN);
+
+  const barsOk = barsSinceEntry === null || barsSinceEntry <= CONFIG.FIRST_ENTRY_FAIL_FAST_BARS;
+  const minHeldOk = heldSec === null || heldSec >= CONFIG.FIRST_ENTRY_FAIL_FAST_MIN_HELD_SEC;
+  const maxHeldOk = heldSec === null || heldSec <= CONFIG.FIRST_ENTRY_FAIL_FAST_MAX_HELD_SEC;
+  const lossOk = Number.isFinite(pnlPct) && pnlPct <= CONFIG.FIRST_ENTRY_FAIL_FAST_MIN_LOSS_PCT;
+  const rsiFail = Number.isFinite(rsi) && rsi < CONFIG.FIRST_ENTRY_FAIL_FAST_RSI_BELOW;
+
+  const belowEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close < ema8;
+  const belowEma18 = Number.isFinite(close) && Number.isFinite(ema18) && close < ema18;
+  const supportChecksEnabled = CONFIG.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA8 || CONFIG.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA18;
+  const ema8Ok = !CONFIG.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA8 || belowEma8;
+  const ema18Ok = !CONFIG.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA18 || belowEma18;
+  const supportFail = !supportChecksEnabled || (ema8Ok && ema18Ok);
+
+  const allow = barsOk && minHeldOk && maxHeldOk && lossOk && rsiFail && supportFail;
+  const reasons = [];
+  reasonPush(reasons, !barsOk, "outside_bar_window");
+  reasonPush(reasons, !minHeldOk, "too_early_min_held");
+  reasonPush(reasons, !maxHeldOk, "too_late_max_held");
+  reasonPush(reasons, !lossOk, "loss_not_deep_enough");
+  reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
+  reasonPush(reasons, !supportFail, "ema_support_not_failed");
+
+  if (CONFIG.FIRST_ENTRY_FAIL_FAST_LOG && (allow || lossOk || rsiFail || supportFail)) {
+    log("🟨 FIRST_ENTRY_FAIL_FAST_CHECK", {
+      allow,
+      reason: allow ? "first_entry_fail_fast" : reasons[0] || "blocked",
+      entryMode: S.entryMode,
+      barsSinceEntry,
+      heldSec,
+      pnlPct: round4(pnlPct),
+      close: round4(close),
+      ema8: round4(ema8),
+      ema18: round4(ema18),
+      rsi: round4(rsi),
+      belowEma8,
+      belowEma18,
+      thresholds: {
+        bars: CONFIG.FIRST_ENTRY_FAIL_FAST_BARS,
+        minHeldSec: CONFIG.FIRST_ENTRY_FAIL_FAST_MIN_HELD_SEC,
+        maxHeldSec: CONFIG.FIRST_ENTRY_FAIL_FAST_MAX_HELD_SEC,
+        rsiBelow: CONFIG.FIRST_ENTRY_FAIL_FAST_RSI_BELOW,
+        minLossPct: CONFIG.FIRST_ENTRY_FAIL_FAST_MIN_LOSS_PCT,
+        requireBelowEma8: CONFIG.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA8,
+        requireBelowEma18: CONFIG.FIRST_ENTRY_FAIL_FAST_EXIT_IF_CLOSE_BELOW_EMA18,
+      },
+    });
+  }
+
+  return allow ? { allow: true, reason: "first_entry_fail_fast" } : { allow: false, reason: reasons[0] || "blocked" };
+}
+
 function evaluateBarExit(feature) {
   if (!S.inPosition) return;
   const price = n(feature.close, currentPrice());
@@ -1266,6 +1336,9 @@ function evaluateBarExit(feature) {
 
   const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
   if (topHarvest.allow) return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
+
+  const firstEntryFailFast = shouldFirstEntryFailFastExit(feature, pnlPct);
+  if (firstEntryFailFast.allow) return doExit(firstEntryFailFast.reason, price, feature.time, "stop_exit");
 
   if (
     CONFIG.LOCAL_TP_EXIT_ENABLED &&
@@ -1449,6 +1522,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   S.inPosition = false;
   S.entryPrice = null;
   S.entryAt = null;
+  S.entryBarIndex = null;
   S.entryMode = null;
   S.stopPrice = null;
   S.beArmed = false;
