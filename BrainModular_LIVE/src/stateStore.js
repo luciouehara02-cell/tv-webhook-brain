@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.0_modular
+ * BrainRAY_Continuation_v6.3_modular
  * Source behavior: BrainRAY_Continuation_v5.1
  *
  * Runtime state and state helper functions.
@@ -24,6 +24,7 @@ export function buildInitialRuntimeState() {
     inPosition: false,
     entryPrice: null,
     entryAt: null,
+    entryBarIndex: null,
     entryMode: null,
     stopPrice: null,
     beArmed: false,
