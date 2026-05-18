@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.4_modular
- * Source behavior: v6.3 modular + v6.4 no-progress / thesis-failure protection
+ * BrainRAY_Continuation_v6.5_modular
+ * Source behavior: v6.4 modular + v6.5 dynamic breakeven protection
  *
  * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
  */
@@ -1188,6 +1188,75 @@ function shouldReentryTopHarvestExit(feature, pnlPct, fv) {
   if (allow) return { allow: true, path: chosenPath, extFromEma8, extFromEma18, recentRsiHigh, rsiRolldown, oneWeakBar, twoWeakBars, bearishFvvoAccel };
   return { allow: false, reason: classicReasons[0] || postExitSoftReasons[0] || softReasons[0] || "blocked" };
 }
+function dynamicBreakevenProfile(price, pnlPct) {
+  const fallback = {
+    profile: "fixed",
+    armPct: CONFIG.BREAKEVEN_ARM_PCT,
+    offsetPct: CONFIG.BREAKEVEN_OFFSET_PCT,
+    reasons: ["dynamic_be_disabled"],
+    metrics: {},
+  };
+  if (!CONFIG.DYNAMIC_BREAKEVEN_ENABLED) return fallback;
+
+  const feature = S.lastFeature || {};
+  const rsi = n(feature.rsi, NaN);
+  const adx = n(feature.adx, NaN);
+  const ema8 = n(feature.ema8, NaN);
+  const ema18 = n(feature.ema18, NaN);
+  const fv = getFvvoScore();
+  const closeBelowEma8 = Number.isFinite(ema8) && price < ema8;
+  const ema8AboveEma18 = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 > ema18;
+  const bearishFvvo = Boolean(fv.score < 0 || fv.snap?.sniperSell || fv.snap?.burstBearish);
+
+  const strongReasons = [];
+  reasonPush(strongReasons, !(Number.isFinite(rsi) && rsi >= CONFIG.DYNAMIC_BE_STRONG_MIN_RSI), "rsi_not_strong");
+  reasonPush(strongReasons, !(Number.isFinite(adx) && adx >= CONFIG.DYNAMIC_BE_STRONG_MIN_ADX), "adx_not_strong");
+  reasonPush(strongReasons, CONFIG.DYNAMIC_BE_STRONG_REQUIRE_EMA8_ABOVE_EMA18 && !ema8AboveEma18, "ema8_not_above_ema18");
+  reasonPush(strongReasons, CONFIG.DYNAMIC_BE_STRONG_REQUIRE_CLOSE_ABOVE_EMA8 && closeBelowEma8, "close_below_ema8");
+  reasonPush(strongReasons, CONFIG.DYNAMIC_BE_STRONG_BLOCK_IF_BEARISH_FVVO && bearishFvvo, "bearish_fvvo");
+  const strong = strongReasons.length === 0;
+
+  const weakReasons = [];
+  if (Number.isFinite(rsi) && rsi <= CONFIG.DYNAMIC_BE_WEAK_MAX_RSI) weakReasons.push("weak_rsi");
+  if (Number.isFinite(adx) && adx <= CONFIG.DYNAMIC_BE_WEAK_MAX_ADX) weakReasons.push("weak_adx");
+  if (CONFIG.DYNAMIC_BE_WEAK_IF_CLOSE_BELOW_EMA8 && closeBelowEma8) weakReasons.push("close_below_ema8");
+  if (CONFIG.DYNAMIC_BE_WEAK_IF_BEARISH_FVVO && bearishFvvo) weakReasons.push("bearish_fvvo");
+  const weak = weakReasons.length > 0;
+
+  let profile = "normal";
+  let armPct = CONFIG.DYNAMIC_BE_NORMAL_ARM_PCT;
+  let offsetPct = CONFIG.DYNAMIC_BE_NORMAL_OFFSET_PCT;
+  let reasons = ["normal_context"];
+
+  // Strong trend gets more room before moving stop to BE. Weak/choppy context protects earlier.
+  if (strong) {
+    profile = "strong";
+    armPct = CONFIG.DYNAMIC_BE_STRONG_ARM_PCT;
+    offsetPct = CONFIG.DYNAMIC_BE_STRONG_OFFSET_PCT;
+    reasons = ["strong_rsi_adx_structure"];
+  } else if (weak) {
+    profile = "weak";
+    armPct = CONFIG.DYNAMIC_BE_WEAK_ARM_PCT;
+    offsetPct = CONFIG.DYNAMIC_BE_WEAK_OFFSET_PCT;
+    reasons = weakReasons;
+  }
+
+  return {
+    profile,
+    armPct,
+    offsetPct,
+    reasons,
+    metrics: {
+      pnlPct: round4(pnlPct),
+      rsi: round4(rsi),
+      adx: round4(adx),
+      closeBelowEma8,
+      ema8AboveEma18,
+      fvvo: fv,
+    },
+  };
+}
+
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
   if (!Number.isFinite(S.peakPrice) || price > S.peakPrice) S.peakPrice = price;
@@ -1198,11 +1267,20 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     S.dynamicTpTier = tier;
     log(`🎯 DYNAMIC_TP_TIER_${tier}_ARMED`, { pnlPct: round4(pnlPct), peakPnlPct: round4(S.peakPnlPct) });
   }
-  if (!S.beArmed && pnlPct >= CONFIG.BREAKEVEN_ARM_PCT) {
+  const beProfile = dynamicBreakevenProfile(price, pnlPct);
+  if (!S.beArmed && pnlPct >= beProfile.armPct) {
     S.beArmed = true;
-    const beStop = S.entryPrice * (1 + CONFIG.BREAKEVEN_OFFSET_PCT / 100);
+    const beStop = S.entryPrice * (1 + beProfile.offsetPct / 100);
     S.stopPrice = Math.max(S.stopPrice, beStop);
-    log("🛡️ BREAKEVEN_ARMED", { pnlPct: round4(pnlPct), stopPrice: round4(S.stopPrice) });
+    log(CONFIG.DYNAMIC_BREAKEVEN_ENABLED ? "🛡️ DYNAMIC_BREAKEVEN_ARMED" : "🛡️ BREAKEVEN_ARMED", {
+      profile: beProfile.profile,
+      armPct: round4(beProfile.armPct),
+      offsetPct: round4(beProfile.offsetPct),
+      reasons: beProfile.reasons,
+      pnlPct: round4(pnlPct),
+      stopPrice: round4(S.stopPrice),
+      metrics: beProfile.metrics,
+    });
   }
 
   const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, eventIso);
