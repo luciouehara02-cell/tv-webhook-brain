@@ -1,0 +1,32 @@
+//Manual RESET before Replay
+curl -X POST "https://brainraycontinuation-production.up.railway.app/reset" \
+  -H "content-type: application/json" \
+  -d '{
+    "secret":"BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "reason":"before_replay"
+  }'
+
+
+REPLAY_TIMESTAMP_MODE=preserve \
+REPLAY_MIN_GAP_MS=50 \
+REPLAY_MAX_GAP_MS=250 \
+node /workspaces/tv-webhook-brain/BrainModular_TEST/Replay/scripts/replay_brainray_case.cjs \
+  /workspaces/tv-webhook-brain/BrainModular_TEST/Replay/cases/BrainLive_v5.1_May11.json \
+  https://brainraycontinuation-production.up.railway.app/webhook
+
+
+
+REPLAY_TIMESTAMP_MODE=preserve \
+REPLAY_MIN_GAP_MS=50 \
+REPLAY_MAX_GAP_MS=250 \
+node /workspaces/tv-webhook-brain/BrainModular_TEST/Replay/scripts/replay_brainray_case.cjs \
+  /workspaces/tv-webhook-brain/BrainModular_TEST/Replay/cases/BrainRAY_v6_3_May14_two_entries_replay_TEST.json \
+  https://brainraycontinuation-production.up.railway.app/webhook
+
+
+REPLAY_TIMESTAMP_MODE=preserve \
+REPLAY_MIN_GAP_MS=50 \
+REPLAY_MAX_GAP_MS=250 \
+node /workspaces/tv-webhook-brain/BrainModular_TEST/Replay/scripts/replay_brainray_case.cjs \
+  /workspaces/tv-webhook-brain/BrainModular_TEST/Replay/cases/BrainRAY_v6_3_May14_two_entries_replay_TEST_EXTENDED_LITE.json \
+  https://brainraycontinuation-production.up.railway.app/webhook
