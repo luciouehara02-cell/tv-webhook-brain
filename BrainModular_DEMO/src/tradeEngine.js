@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.3_modular
- * Source behavior: v6.2 modular + v6.3 first-entry fail-fast protection
+ * BrainRAY_Continuation_v6.4_modular
+ * Source behavior: v6.3 modular + v6.4 no-progress / thesis-failure protection
  *
  * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
  */
@@ -1289,6 +1289,7 @@ function shouldFirstEntryFailFastExit(feature, pnlPct) {
   reasonPush(reasons, !minHeldOk, "too_early_min_held");
   reasonPush(reasons, !maxHeldOk, "too_late_max_held");
   reasonPush(reasons, !lossOk, "loss_not_deep_enough");
+  reasonPush(reasons, !peakStillFailed, "peak_progress_too_high_for_thesis_fail");
   reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
   reasonPush(reasons, !supportFail, "ema_support_not_failed");
 
@@ -1321,6 +1322,169 @@ function shouldFirstEntryFailFastExit(feature, pnlPct) {
   return allow ? { allow: true, reason: "first_entry_fail_fast" } : { allow: false, reason: reasons[0] || "blocked" };
 }
 
+function firstEntryHeldContext(feature) {
+  const entryMs = parseTsMs(S.entryAt);
+  const nowFeatureMs = parseTsMs(feature?.time);
+  const heldSec = Number.isFinite(entryMs) && Number.isFinite(nowFeatureMs) ? Math.max(0, Math.round((nowFeatureMs - entryMs) / 1000)) : null;
+  const barsSinceEntry = Number.isFinite(S.entryBarIndex) ? Math.max(0, S.barIndex - S.entryBarIndex) : null;
+  return { heldSec, barsSinceEntry };
+}
+
+function firstEntryFvvoNotBullish(fv) {
+  return !(fv?.score > 0 || fv?.snap?.sniperBuy || fv?.snap?.burstBullish);
+}
+
+function shouldFirstEntryNoProgressExit(feature, pnlPct, fv) {
+  if (!CONFIG.FIRST_ENTRY_NO_PROGRESS_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition) return { allow: false, reason: "flat" };
+  if (CONFIG.FIRST_ENTRY_NO_PROGRESS_REQUIRE_ENTRY_MODE_FIRST && !isFirstEntryMode(S.entryMode)) {
+    return { allow: false, reason: "not_first_entry_mode" };
+  }
+
+  const { heldSec, barsSinceEntry } = firstEntryHeldContext(feature);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+  const ema18 = n(feature?.ema18, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const featureHighPnlPct = Number.isFinite(feature?.high) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, feature.high) : NaN;
+  const featureClosePnlPct = Number.isFinite(close) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, close) : NaN;
+  const peakPnlPct = Math.max(
+    Number.isFinite(S.peakPnlPct) ? S.peakPnlPct : 0,
+    Number.isFinite(featureHighPnlPct) ? featureHighPnlPct : Number.NEGATIVE_INFINITY,
+    Number.isFinite(featureClosePnlPct) ? featureClosePnlPct : Number.NEGATIVE_INFINITY
+  );
+
+  const minBarsOk = barsSinceEntry === null || barsSinceEntry >= CONFIG.FIRST_ENTRY_NO_PROGRESS_MIN_BARS;
+  const maxBarsOk = barsSinceEntry === null || barsSinceEntry <= CONFIG.FIRST_ENTRY_NO_PROGRESS_MAX_BARS;
+  const noProgressOk = peakPnlPct < CONFIG.FIRST_ENTRY_NO_PROGRESS_MIN_PEAK_PCT;
+  const currentPnlOk = Number.isFinite(pnlPct) && pnlPct <= CONFIG.FIRST_ENTRY_NO_PROGRESS_MAX_CURRENT_PCT;
+  const rsiWeak = Number.isFinite(rsi) && rsi < CONFIG.FIRST_ENTRY_NO_PROGRESS_RSI_BELOW;
+  const belowEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close < ema8;
+  const belowEma18 = Number.isFinite(close) && Number.isFinite(ema18) && close < ema18;
+  const ema8Ok = !CONFIG.FIRST_ENTRY_NO_PROGRESS_EXIT_IF_CLOSE_BELOW_EMA8 || belowEma8;
+  const ema18Ok = !CONFIG.FIRST_ENTRY_NO_PROGRESS_EXIT_IF_CLOSE_BELOW_EMA18 || belowEma18;
+  const fvvoOk = !CONFIG.FIRST_ENTRY_NO_PROGRESS_REQUIRE_NOT_BULLISH_FVVO || firstEntryFvvoNotBullish(fv);
+
+  const allow = minBarsOk && maxBarsOk && noProgressOk && currentPnlOk && rsiWeak && ema8Ok && ema18Ok && fvvoOk;
+  const reasons = [];
+  reasonPush(reasons, !minBarsOk, "too_early_no_progress_window");
+  reasonPush(reasons, !maxBarsOk, "outside_no_progress_window");
+  reasonPush(reasons, !noProgressOk, "peak_progress_ok");
+  reasonPush(reasons, !currentPnlOk, "current_pnl_too_high");
+  reasonPush(reasons, !rsiWeak, "rsi_not_weak");
+  reasonPush(reasons, !ema8Ok, "close_not_below_ema8");
+  reasonPush(reasons, !ema18Ok, "close_not_below_ema18");
+  reasonPush(reasons, !fvvoOk, "fvvo_still_bullish");
+
+  const logWindowOk = barsSinceEntry === null || barsSinceEntry <= CONFIG.FIRST_ENTRY_NO_PROGRESS_MAX_BARS;
+  if (CONFIG.FIRST_ENTRY_NO_PROGRESS_LOG && logWindowOk && (allow || (minBarsOk && noProgressOk) || currentPnlOk || rsiWeak)) {
+    log("🟧 FIRST_ENTRY_NO_PROGRESS_CHECK", {
+      allow,
+      reason: allow ? "first_entry_no_progress" : reasons[0] || "blocked",
+      entryMode: S.entryMode,
+      barsSinceEntry,
+      heldSec,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      close: round4(close),
+      ema8: round4(ema8),
+      ema18: round4(ema18),
+      rsi: round4(rsi),
+      belowEma8,
+      belowEma18,
+      fvvo: fv,
+      thresholds: {
+        minBars: CONFIG.FIRST_ENTRY_NO_PROGRESS_MIN_BARS,
+        maxBars: CONFIG.FIRST_ENTRY_NO_PROGRESS_MAX_BARS,
+        minPeakPct: CONFIG.FIRST_ENTRY_NO_PROGRESS_MIN_PEAK_PCT,
+        maxCurrentPct: CONFIG.FIRST_ENTRY_NO_PROGRESS_MAX_CURRENT_PCT,
+        rsiBelow: CONFIG.FIRST_ENTRY_NO_PROGRESS_RSI_BELOW,
+        requireBelowEma8: CONFIG.FIRST_ENTRY_NO_PROGRESS_EXIT_IF_CLOSE_BELOW_EMA8,
+        requireBelowEma18: CONFIG.FIRST_ENTRY_NO_PROGRESS_EXIT_IF_CLOSE_BELOW_EMA18,
+        requireNotBullishFvvo: CONFIG.FIRST_ENTRY_NO_PROGRESS_REQUIRE_NOT_BULLISH_FVVO,
+      },
+    });
+  }
+
+  return allow ? { allow: true, reason: "first_entry_no_progress" } : { allow: false, reason: reasons[0] || "blocked" };
+}
+
+function shouldFirstEntryThesisFailExit(feature, pnlPct, fv) {
+  if (!CONFIG.FIRST_ENTRY_THESIS_FAIL_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition) return { allow: false, reason: "flat" };
+  if (CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_ENTRY_MODE_FIRST && !isFirstEntryMode(S.entryMode)) {
+    return { allow: false, reason: "not_first_entry_mode" };
+  }
+
+  const { heldSec, barsSinceEntry } = firstEntryHeldContext(feature);
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+  const ema18 = n(feature?.ema18, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const featureHighPnlPct = Number.isFinite(feature?.high) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, feature.high) : NaN;
+  const featureClosePnlPct = Number.isFinite(close) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, close) : NaN;
+  const peakPnlPct = Math.max(
+    Number.isFinite(S.peakPnlPct) ? S.peakPnlPct : 0,
+    Number.isFinite(featureHighPnlPct) ? featureHighPnlPct : Number.NEGATIVE_INFINITY,
+    Number.isFinite(featureClosePnlPct) ? featureClosePnlPct : Number.NEGATIVE_INFINITY
+  );
+
+  const minBarsOk = barsSinceEntry === null || barsSinceEntry >= CONFIG.FIRST_ENTRY_THESIS_FAIL_MIN_BARS;
+  const maxBarsOk = barsSinceEntry === null || barsSinceEntry <= CONFIG.FIRST_ENTRY_THESIS_FAIL_MAX_BARS;
+  const lossOk = Number.isFinite(pnlPct) && pnlPct <= CONFIG.FIRST_ENTRY_THESIS_FAIL_MIN_LOSS_PCT;
+  const peakStillFailed = peakPnlPct <= CONFIG.FIRST_ENTRY_THESIS_FAIL_MAX_PEAK_PCT;
+  const rsiFail = Number.isFinite(rsi) && rsi < CONFIG.FIRST_ENTRY_THESIS_FAIL_RSI_BELOW;
+  const belowEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close < ema8;
+  const belowEma18 = Number.isFinite(close) && Number.isFinite(ema18) && close < ema18;
+  const ema8Ok = !CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_CLOSE_BELOW_EMA8 || belowEma8;
+  const ema18Ok = !CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_CLOSE_BELOW_EMA18 || belowEma18;
+  const fvvoOk = !CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_NOT_BULLISH_FVVO || firstEntryFvvoNotBullish(fv);
+
+  const allow = minBarsOk && maxBarsOk && lossOk && peakStillFailed && rsiFail && ema8Ok && ema18Ok && fvvoOk;
+  const reasons = [];
+  reasonPush(reasons, !minBarsOk, "too_early_thesis_fail_window");
+  reasonPush(reasons, !maxBarsOk, "outside_thesis_fail_window");
+  reasonPush(reasons, !lossOk, "loss_not_deep_enough");
+  reasonPush(reasons, !peakStillFailed, "peak_progress_too_high_for_thesis_fail");
+  reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
+  reasonPush(reasons, !ema8Ok, "close_not_below_ema8");
+  reasonPush(reasons, !ema18Ok, "close_not_below_ema18");
+  reasonPush(reasons, !fvvoOk, "fvvo_still_bullish");
+
+  const logWindowOk = barsSinceEntry === null || barsSinceEntry <= CONFIG.FIRST_ENTRY_THESIS_FAIL_MAX_BARS;
+  if (CONFIG.FIRST_ENTRY_THESIS_FAIL_LOG && logWindowOk && (allow || lossOk || rsiFail || belowEma8 || belowEma18)) {
+    log("🟥 FIRST_ENTRY_THESIS_FAIL_CHECK", {
+      allow,
+      reason: allow ? "first_entry_thesis_fail" : reasons[0] || "blocked",
+      entryMode: S.entryMode,
+      barsSinceEntry,
+      heldSec,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      close: round4(close),
+      ema8: round4(ema8),
+      ema18: round4(ema18),
+      rsi: round4(rsi),
+      belowEma8,
+      belowEma18,
+      fvvo: fv,
+      thresholds: {
+        minBars: CONFIG.FIRST_ENTRY_THESIS_FAIL_MIN_BARS,
+        maxBars: CONFIG.FIRST_ENTRY_THESIS_FAIL_MAX_BARS,
+        minLossPct: CONFIG.FIRST_ENTRY_THESIS_FAIL_MIN_LOSS_PCT,
+        maxPeakPct: CONFIG.FIRST_ENTRY_THESIS_FAIL_MAX_PEAK_PCT,
+        rsiBelow: CONFIG.FIRST_ENTRY_THESIS_FAIL_RSI_BELOW,
+        requireBelowEma8: CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_CLOSE_BELOW_EMA8,
+        requireBelowEma18: CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_CLOSE_BELOW_EMA18,
+        requireNotBullishFvvo: CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_NOT_BULLISH_FVVO,
+      },
+    });
+  }
+
+  return allow ? { allow: true, reason: "first_entry_thesis_fail" } : { allow: false, reason: reasons[0] || "blocked" };
+}
+
+
 function evaluateBarExit(feature) {
   if (!S.inPosition) return;
   const price = n(feature.close, currentPrice());
@@ -1336,6 +1500,12 @@ function evaluateBarExit(feature) {
 
   const topHarvest = shouldTopHarvestExit(feature, pnlPct, fv);
   if (topHarvest.allow) return doExit("cycle_top_harvest_exit", price, feature.time, "cycle_exit");
+
+  const firstEntryNoProgress = shouldFirstEntryNoProgressExit(feature, pnlPct, fv);
+  if (firstEntryNoProgress.allow) return doExit(firstEntryNoProgress.reason, price, feature.time, "stop_exit");
+
+  const firstEntryThesisFail = shouldFirstEntryThesisFailExit(feature, pnlPct, fv);
+  if (firstEntryThesisFail.allow) return doExit(firstEntryThesisFail.reason, price, feature.time, "stop_exit");
 
   const firstEntryFailFast = shouldFirstEntryFailFastExit(feature, pnlPct);
   if (firstEntryFailFast.allow) return doExit(firstEntryFailFast.reason, price, feature.time, "stop_exit");
