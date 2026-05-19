@@ -6188,6 +6188,22 @@
     "src": "tick",
     "symbol": "BINANCE:SOLUSDT",
     "tf": "5",
+    "price": 93.27,
+    "time": "2026-05-14T18:34:01Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
+    "price": 93.22,
+    "time": "2026-05-14T18:34:16Z"
+  },
+  {
+    "secret": "BrainRAY_Secret_7r2blD9xK5nM6sT3aP8eG7",
+    "src": "tick",
+    "symbol": "BINANCE:SOLUSDT",
+    "tf": "5",
     "price": 93.19,
     "time": "2026-05-14T18:34:32Z"
   },
