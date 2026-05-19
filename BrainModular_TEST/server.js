@@ -96,6 +96,9 @@ app.listen(CONFIG.PORT, () => {
       weakMaxAdx: CONFIG.DYNAMIC_BE_WEAK_MAX_ADX,
       strongMinRsi: CONFIG.DYNAMIC_BE_STRONG_MIN_RSI,
       strongMinAdx: CONFIG.DYNAMIC_BE_STRONG_MIN_ADX,
+      strongLockEnabled: CONFIG.DYNAMIC_BE_STRONG_LOCK_ENABLED,
+      strongLockArmPct: CONFIG.DYNAMIC_BE_STRONG_LOCK_ARM_PCT,
+      strongLockPct: CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT,
     },
     postExitProfitGuard: {
       enabled: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ENABLED,
