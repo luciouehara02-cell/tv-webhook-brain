@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.4_modular
- * Source behavior: v6.3 modular + v6.4 no-progress / thesis-failure protection
+ * BrainRAY_Continuation_v6.5a_modular
+ * Source behavior: v6.4 modular + v6.5a dynamic breakeven + strong lock protection
  *
  * All environment variables and default thresholds.
  */
@@ -10,7 +10,7 @@ import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.4_modular"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.5a_modular"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -141,6 +141,34 @@ export const CONFIG = {
   HARD_STOP_PCT: n(process.env.HARD_STOP_PCT, 0.8),
   BREAKEVEN_ARM_PCT: n(process.env.BREAKEVEN_ARM_PCT, 0.4),
   BREAKEVEN_OFFSET_PCT: n(process.env.BREAKEVEN_OFFSET_PCT, 0.05),
+
+  // v6.5 dynamic breakeven: adapt BE arming to weak / normal / strong trade quality.
+  DYNAMIC_BREAKEVEN_ENABLED: b(process.env.DYNAMIC_BREAKEVEN_ENABLED, false),
+  DYNAMIC_BE_WEAK_ARM_PCT: n(process.env.DYNAMIC_BE_WEAK_ARM_PCT, 0.30),
+  DYNAMIC_BE_NORMAL_ARM_PCT: n(process.env.DYNAMIC_BE_NORMAL_ARM_PCT, process.env.BREAKEVEN_ARM_PCT ?? 0.40),
+  DYNAMIC_BE_STRONG_ARM_PCT: n(process.env.DYNAMIC_BE_STRONG_ARM_PCT, 0.50),
+  DYNAMIC_BE_WEAK_OFFSET_PCT: n(process.env.DYNAMIC_BE_WEAK_OFFSET_PCT, 0.03),
+  DYNAMIC_BE_NORMAL_OFFSET_PCT: n(process.env.DYNAMIC_BE_NORMAL_OFFSET_PCT, process.env.BREAKEVEN_OFFSET_PCT ?? 0.05),
+  DYNAMIC_BE_STRONG_OFFSET_PCT: n(process.env.DYNAMIC_BE_STRONG_OFFSET_PCT, 0.05),
+  DYNAMIC_BE_WEAK_MAX_RSI: n(process.env.DYNAMIC_BE_WEAK_MAX_RSI, 54),
+  DYNAMIC_BE_WEAK_MAX_ADX: n(process.env.DYNAMIC_BE_WEAK_MAX_ADX, 18),
+  DYNAMIC_BE_WEAK_IF_CLOSE_BELOW_EMA8: b(process.env.DYNAMIC_BE_WEAK_IF_CLOSE_BELOW_EMA8, true),
+  DYNAMIC_BE_WEAK_IF_BEARISH_FVVO: b(process.env.DYNAMIC_BE_WEAK_IF_BEARISH_FVVO, true),
+  DYNAMIC_BE_STRONG_MIN_RSI: n(process.env.DYNAMIC_BE_STRONG_MIN_RSI, 64),
+  DYNAMIC_BE_STRONG_MIN_ADX: n(process.env.DYNAMIC_BE_STRONG_MIN_ADX, 30),
+  DYNAMIC_BE_STRONG_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.DYNAMIC_BE_STRONG_REQUIRE_EMA8_ABOVE_EMA18, true),
+  DYNAMIC_BE_STRONG_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.DYNAMIC_BE_STRONG_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  DYNAMIC_BE_STRONG_BLOCK_IF_BEARISH_FVVO: b(process.env.DYNAMIC_BE_STRONG_BLOCK_IF_BEARISH_FVVO, true),
+
+  // v6.5a strong-trend profit lock after Dynamic TP Tier 1 area.
+  // This does not replace Dynamic TP; it raises the local stop floor after a strong trade reaches the arm level.
+  DYNAMIC_BE_STRONG_LOCK_ENABLED: b(process.env.DYNAMIC_BE_STRONG_LOCK_ENABLED, false),
+  DYNAMIC_BE_STRONG_LOCK_ARM_PCT: n(process.env.DYNAMIC_BE_STRONG_LOCK_ARM_PCT, 0.60),
+  DYNAMIC_BE_STRONG_LOCK_PCT: n(process.env.DYNAMIC_BE_STRONG_LOCK_PCT, 0.30),
+  DYNAMIC_BE_STRONG_LOCK_REQUIRE_PROFILE_STRONG: b(process.env.DYNAMIC_BE_STRONG_LOCK_REQUIRE_PROFILE_STRONG, true),
+  DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED: b(process.env.DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED, true),
+  DYNAMIC_BE_STRONG_LOCK_LOG: b(process.env.DYNAMIC_BE_STRONG_LOCK_LOG, true),
+  DYNAMIC_BE_LOG: b(process.env.DYNAMIC_BE_LOG, true),
   PROFIT_LOCK_ARM_PCT: n(process.env.PROFIT_LOCK_ARM_PCT, 0.6),
   PROFIT_LOCK_GIVEBACK_PCT: n(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.35),
   TRAIL_ARM_PCT: n(process.env.TRAIL_ARM_PCT, 1.0),
