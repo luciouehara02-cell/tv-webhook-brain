@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.5_modular
- * Source behavior: v6.4 modular + v6.5 dynamic breakeven protection
+ * BrainRAY_Continuation_v6.5a_modular
+ * Source behavior: v6.4 modular + v6.5a dynamic breakeven + strong lock protection
  *
  * All environment variables and default thresholds.
  */
@@ -10,7 +10,7 @@ import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.5_modular"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.5a_modular"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -159,6 +159,15 @@ export const CONFIG = {
   DYNAMIC_BE_STRONG_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.DYNAMIC_BE_STRONG_REQUIRE_EMA8_ABOVE_EMA18, true),
   DYNAMIC_BE_STRONG_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.DYNAMIC_BE_STRONG_REQUIRE_CLOSE_ABOVE_EMA8, true),
   DYNAMIC_BE_STRONG_BLOCK_IF_BEARISH_FVVO: b(process.env.DYNAMIC_BE_STRONG_BLOCK_IF_BEARISH_FVVO, true),
+
+  // v6.5a strong-trend profit lock after Dynamic TP Tier 1 area.
+  // This does not replace Dynamic TP; it raises the local stop floor after a strong trade reaches the arm level.
+  DYNAMIC_BE_STRONG_LOCK_ENABLED: b(process.env.DYNAMIC_BE_STRONG_LOCK_ENABLED, false),
+  DYNAMIC_BE_STRONG_LOCK_ARM_PCT: n(process.env.DYNAMIC_BE_STRONG_LOCK_ARM_PCT, 0.60),
+  DYNAMIC_BE_STRONG_LOCK_PCT: n(process.env.DYNAMIC_BE_STRONG_LOCK_PCT, 0.30),
+  DYNAMIC_BE_STRONG_LOCK_REQUIRE_PROFILE_STRONG: b(process.env.DYNAMIC_BE_STRONG_LOCK_REQUIRE_PROFILE_STRONG, true),
+  DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED: b(process.env.DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED, true),
+  DYNAMIC_BE_STRONG_LOCK_LOG: b(process.env.DYNAMIC_BE_STRONG_LOCK_LOG, true),
   DYNAMIC_BE_LOG: b(process.env.DYNAMIC_BE_LOG, true),
   PROFIT_LOCK_ARM_PCT: n(process.env.PROFIT_LOCK_ARM_PCT, 0.6),
   PROFIT_LOCK_GIVEBACK_PCT: n(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.35),

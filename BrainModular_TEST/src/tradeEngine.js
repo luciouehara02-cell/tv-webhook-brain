@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.5_modular
- * Source behavior: v6.4 modular + v6.5 dynamic breakeven protection
+ * BrainRAY_Continuation_v6.5a_modular
+ * Source behavior: v6.4 modular + v6.5a dynamic breakeven + strong lock protection
  *
  * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
  */
@@ -1281,6 +1281,35 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
       stopPrice: round4(S.stopPrice),
       metrics: beProfile.metrics,
     });
+  }
+
+  // v6.5a: Strong-trend lock.
+  // Dynamic BE still arms first, but if a strong trade reaches the Tier-1 area, raise the stop floor
+  // to protect more than the basic BE offset. This is intentionally separate from Dynamic TP.
+  if (
+    CONFIG.DYNAMIC_BREAKEVEN_ENABLED &&
+    CONFIG.DYNAMIC_BE_STRONG_LOCK_ENABLED &&
+    !S.dynamicBeStrongLockArmed &&
+    S.peakPnlPct >= CONFIG.DYNAMIC_BE_STRONG_LOCK_ARM_PCT &&
+    (!CONFIG.DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED || S.beArmed) &&
+    (!CONFIG.DYNAMIC_BE_STRONG_LOCK_REQUIRE_PROFILE_STRONG || beProfile.profile === "strong")
+  ) {
+    S.dynamicBeStrongLockArmed = true;
+    const strongLockStop = S.entryPrice * (1 + CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT / 100);
+    const prevStop = S.stopPrice;
+    S.stopPrice = Math.max(S.stopPrice, strongLockStop);
+    if (CONFIG.DYNAMIC_BE_STRONG_LOCK_LOG) {
+      log("🛡️🔒 DYNAMIC_BE_STRONG_LOCK_ARMED", {
+        profile: beProfile.profile,
+        armPct: round4(CONFIG.DYNAMIC_BE_STRONG_LOCK_ARM_PCT),
+        lockPct: round4(CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT),
+        pnlPct: round4(pnlPct),
+        peakPnlPct: round4(S.peakPnlPct),
+        prevStop: round4(prevStop),
+        stopPrice: round4(S.stopPrice),
+        metrics: beProfile.metrics,
+      });
+    }
   }
 
   const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, eventIso);
