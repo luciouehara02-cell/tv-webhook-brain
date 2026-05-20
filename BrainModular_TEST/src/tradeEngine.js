@@ -1,8 +1,8 @@
 /**
- * BrainRAY_Continuation_v6.5a_modular
- * Source behavior: v6.4 modular + v6.5a dynamic breakeven + strong lock protection
+ * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
+ * Source behavior: v6.5a modular + ATR / structure stop exit layer
  *
- * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
+ * Trading logic only. Entry behavior is preserved; v6.6 adds an exit-only ATR / structure stop layer.
  */
 
 import { CONFIG } from "./config.js";
@@ -530,6 +530,9 @@ function updateBarProgress(ts) {
 export function handleFeature(body) {
   const ts = pickFirst(body, ["time", "timestamp"], isoNow());
   updateBarProgress(ts);
+  const rawAtr = n(body.atr, NaN);
+  const rawClose = n(body.close, NaN);
+  const rawAtrPct = n(body.atrPct, NaN);
   const feature = {
     symbol: normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)),
     tf: s(pickFirst(body, ["tf"], CONFIG.ENTRY_TF)),
@@ -537,25 +540,34 @@ export function handleFeature(body) {
     open: n(body.open, NaN),
     high: n(body.high, NaN),
     low: n(body.low, NaN),
-    close: n(body.close, NaN),
+    close: rawClose,
     ema8: n(body.ema8, NaN),
     ema18: n(body.ema18, NaN),
     ema50: n(body.ema50, NaN),
     rsi: n(body.rsi, NaN),
     adx: n(body.adx, NaN),
-    atrPct: n(body.atrPct, NaN),
+    atr: rawAtr,
+    atrPct: Number.isFinite(rawAtrPct)
+      ? rawAtrPct
+      : Number.isFinite(rawAtr) && Number.isFinite(rawClose) && rawClose > 0
+      ? (rawAtr / rawClose) * 100
+      : NaN,
   };
   S.prevPrevFeature = S.prevFeature ? { ...S.prevFeature } : null;
   S.prevFeature = S.lastFeature ? { ...S.lastFeature } : null;
   S.lastFeature = feature;
   S.lastFeatureTime = ts;
   S.lastFeatureBarKey = S.lastBarKey;
+  S.featureHistory = Array.isArray(S.featureHistory) ? S.featureHistory : [];
+  S.featureHistory.push({ ...feature });
+  if (S.featureHistory.length > 50) S.featureHistory.shift();
   log("📊 FEATURE_5M", {
     close: feature.close,
     ema8: feature.ema8,
     ema18: feature.ema18,
     rsi: feature.rsi,
     adx: feature.adx,
+    atrPct: Number.isFinite(feature.atrPct) ? round4(feature.atrPct) : null,
     barIndex: S.barIndex,
     fvvo: getFvvoScore(),
   });
@@ -968,7 +980,10 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   S.entryBarIndex = S.barIndex;
   S.entryMode = mode;
   S.stopPrice = stop;
+  S.stopSource = "hard_stop";
+  S.stopMeta = { initialStop: stop, hardStopPct: CONFIG.HARD_STOP_PCT };
   S.beArmed = false;
+  S.dynamicBeStrongLockArmed = false;
   S.peakPrice = price;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
@@ -1257,6 +1272,170 @@ function dynamicBreakevenProfile(price, pnlPct) {
   };
 }
 
+function clampPct(x, minPct, maxPct) {
+  if (!Number.isFinite(x)) return NaN;
+  let out = x;
+  if (Number.isFinite(minPct)) out = Math.max(out, minPct);
+  if (Number.isFinite(maxPct)) out = Math.min(out, maxPct);
+  return out;
+}
+function isStrongReentryMode(mode) {
+  return isReentryHarvestMode(mode) && /strong/i.test(String(mode || ""));
+}
+function atrStopMultiplierForMode(mode) {
+  if (isStrongReentryMode(mode)) return CONFIG.ATR_STOP_MULT_STRONG_REENTRY;
+  if (isReentryHarvestMode(mode) || isProtectedContinuationMode(mode)) return CONFIG.ATR_STOP_MULT_REENTRY;
+  if (isFirstEntryMode(mode)) return CONFIG.ATR_STOP_MULT_FIRST_ENTRY;
+  return CONFIG.ATR_STOP_MULT_FIRST_ENTRY;
+}
+function atrStructureAppliesForMode(mode) {
+  if (isFirstEntryMode(mode)) return CONFIG.ATR_STOP_APPLY_FIRST_ENTRY;
+  if (isReentryHarvestMode(mode) || isProtectedContinuationMode(mode)) return CONFIG.ATR_STOP_APPLY_REENTRY;
+  return CONFIG.ATR_STOP_APPLY_OTHER_MODES;
+}
+function atrStructureBarsSinceEntry() {
+  if (!Number.isFinite(S.entryBarIndex) || !Number.isFinite(S.barIndex)) return null;
+  return Math.max(0, S.barIndex - S.entryBarIndex);
+}
+function recentStructureLow(lookbackBars = CONFIG.ATR_STRUCTURE_LOOKBACK_BARS) {
+  const hist = Array.isArray(S.featureHistory) ? S.featureHistory : [];
+  const lookback = Math.max(1, Math.floor(n(lookbackBars, 1)));
+  const recent = hist.slice(-lookback);
+  const lows = recent
+    .map((f) => (Number.isFinite(f?.low) ? f.low : Number.isFinite(f?.close) ? f.close : NaN))
+    .filter(Number.isFinite);
+  if (!lows.length) return NaN;
+  return Math.min(...lows);
+}
+function derivedAtrPctFromHistory(lookbackBars = CONFIG.ATR_STRUCTURE_LOOKBACK_BARS) {
+  if (!CONFIG.ATR_STOP_DERIVE_IF_MISSING) return NaN;
+  const hist = Array.isArray(S.featureHistory) ? S.featureHistory : [];
+  const lookback = Math.max(2, Math.floor(n(lookbackBars, 6)));
+  const recent = hist.slice(-lookback);
+  const ranges = [];
+  for (let i = 0; i < recent.length; i += 1) {
+    const f = recent[i];
+    const close = n(f?.close, NaN);
+    const high = n(f?.high, NaN);
+    const low = n(f?.low, NaN);
+    if (Number.isFinite(high) && Number.isFinite(low) && Number.isFinite(close) && close > 0 && high >= low) {
+      ranges.push(((high - low) / close) * 100);
+      continue;
+    }
+    const prevClose = n(recent[i - 1]?.close, NaN);
+    if (Number.isFinite(close) && Number.isFinite(prevClose) && prevClose > 0) {
+      ranges.push(Math.abs(pctDiff(prevClose, close)));
+    }
+  }
+  const good = ranges.filter((x) => Number.isFinite(x) && x >= 0);
+  if (!good.length) return NaN;
+  return good.reduce((a, b2) => a + b2, 0) / good.length;
+}
+function raiseActiveStop(candidateStop, source, meta = {}) {
+  if (!Number.isFinite(candidateStop)) return false;
+  if (!Number.isFinite(S.stopPrice)) {
+    S.stopPrice = candidateStop;
+    S.stopSource = source;
+    S.stopMeta = meta;
+    return true;
+  }
+  if (CONFIG.ATR_STOP_ALLOW_TIGHTEN_ONLY && candidateStop <= S.stopPrice) return false;
+  if (!CONFIG.ATR_STOP_ALLOW_TIGHTEN_ONLY && candidateStop < S.stopPrice) return false;
+  S.stopPrice = candidateStop;
+  S.stopSource = source;
+  S.stopMeta = meta;
+  return true;
+}
+function updateAtrStructureStop(price, eventIso = isoNow()) {
+  if (!CONFIG.ATR_STRUCTURE_STOP_ENABLED) return { updated: false, reason: "disabled" };
+  if (!S.inPosition || !Number.isFinite(S.entryPrice)) return { updated: false, reason: "flat" };
+  if (!atrStructureAppliesForMode(S.entryMode)) return { updated: false, reason: "mode_not_enabled", entryMode: S.entryMode };
+  const barsSinceEntry = atrStructureBarsSinceEntry();
+  if (barsSinceEntry !== null && barsSinceEntry < CONFIG.ATR_STOP_MIN_BARS_AFTER_ENTRY) {
+    return { updated: false, reason: "too_early_after_entry", barsSinceEntry };
+  }
+  if (CONFIG.ATR_STOP_REQUIRE_FEATURE_FRESH && !isFeatureFresh()) return { updated: false, reason: "stale_feature" };
+
+  const feature = S.lastFeature || {};
+  const rawAtrPct = n(feature.atrPct, NaN);
+  const derivedAtrPct = derivedAtrPctFromHistory(CONFIG.ATR_STRUCTURE_LOOKBACK_BARS);
+  const atrPct = Number.isFinite(rawAtrPct) ? rawAtrPct : derivedAtrPct;
+  const atrPctSource = Number.isFinite(rawAtrPct) ? "feature_atrPct" : Number.isFinite(derivedAtrPct) ? "derived_history" : "missing";
+  const pnlPct = Number.isFinite(price) ? pctDiff(S.entryPrice, price) : 0;
+  if (CONFIG.ATR_STOP_UPDATE_ONLY_IN_PROFIT && pnlPct <= 0) return { updated: false, reason: "not_in_profit" };
+
+  const mult = atrStopMultiplierForMode(S.entryMode);
+  const atrDistancePct = Number.isFinite(atrPct)
+    ? clampPct(atrPct * mult, CONFIG.ATR_STOP_MIN_PCT, CONFIG.ATR_STOP_MAX_PCT)
+    : NaN;
+  const atrStop = Number.isFinite(atrDistancePct) ? S.entryPrice * (1 - atrDistancePct / 100) : NaN;
+
+  const structureLow = CONFIG.ATR_STRUCTURE_USE_RECENT_LOW ? recentStructureLow(CONFIG.ATR_STRUCTURE_LOOKBACK_BARS) : NaN;
+  const structureStop = Number.isFinite(structureLow)
+    ? structureLow * (1 - CONFIG.ATR_STRUCTURE_BUFFER_PCT / 100)
+    : NaN;
+
+  const candidates = [];
+  if (CONFIG.ATR_STOP_USE_TIGHTER_OF_HARD_OR_ATR && Number.isFinite(atrStop)) {
+    candidates.push({ source: "atr_stop", stop: atrStop });
+  }
+  if (Number.isFinite(structureStop)) {
+    candidates.push({ source: "structure_stop", stop: structureStop });
+  }
+  if (!candidates.length) return { updated: false, reason: "no_valid_candidate", atrPct, atrDistancePct, structureLow };
+
+  // For long trades, the highest valid stop is the tightest valid protection.
+  const chosen = candidates.reduce((best, x) => (x.stop > best.stop ? x : best), candidates[0]);
+  const prevStop = S.stopPrice;
+  const updated = raiseActiveStop(chosen.stop, chosen.source, {
+    atrPct,
+    atrPctSource,
+    rawAtrPct,
+    derivedAtrPct,
+    atrDistancePct,
+    multiplier: mult,
+    structureLow,
+    structureBufferPct: CONFIG.ATR_STRUCTURE_BUFFER_PCT,
+    eventIso,
+    barsSinceEntry,
+  });
+
+  if (updated && CONFIG.ATR_STRUCTURE_LOG) {
+    log("🛡️📐 ATR_STRUCTURE_STOP_UPDATED", {
+      source: chosen.source,
+      entryMode: S.entryMode,
+      entryPrice: round4(S.entryPrice),
+      price: round4(price),
+      pnlPct: round4(pnlPct),
+      prevStop: round4(prevStop),
+      stopPrice: round4(S.stopPrice),
+      atrPct: round4(atrPct),
+      atrPctSource,
+      rawAtrPct: round4(rawAtrPct),
+      derivedAtrPct: round4(derivedAtrPct),
+      atrDistancePct: round4(atrDistancePct),
+      multiplier: round4(mult),
+      structureLow: round4(structureLow),
+      structureStop: round4(structureStop),
+      lookbackBars: CONFIG.ATR_STRUCTURE_LOOKBACK_BARS,
+      bufferPct: CONFIG.ATR_STRUCTURE_BUFFER_PCT,
+      barsSinceEntry,
+    });
+  }
+  return { updated, reason: updated ? "updated" : "not_tighter", source: chosen.source, stop: chosen.stop };
+}
+function activeStopExitReason() {
+  if (S.stopSource === "atr_stop") return "atr_stop";
+  if (S.stopSource === "structure_stop") return "structure_stop";
+  return "hard_or_breakeven_stop";
+}
+function atrStructureStopExitAllowed(stopReason, pnlPct) {
+  if (!["atr_stop", "structure_stop"].includes(stopReason)) return true;
+  if (!Number.isFinite(pnlPct)) return true;
+  if (pnlPct >= 0) return true;
+  return pnlPct <= CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT;
+}
+
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
   if (!Number.isFinite(S.peakPrice) || price > S.peakPrice) S.peakPrice = price;
@@ -1271,7 +1450,12 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.beArmed && pnlPct >= beProfile.armPct) {
     S.beArmed = true;
     const beStop = S.entryPrice * (1 + beProfile.offsetPct / 100);
+    const prevStop = S.stopPrice;
     S.stopPrice = Math.max(S.stopPrice, beStop);
+    if (S.stopPrice !== prevStop) {
+      S.stopSource = CONFIG.DYNAMIC_BREAKEVEN_ENABLED ? "dynamic_breakeven" : "breakeven";
+      S.stopMeta = { profile: beProfile.profile, armPct: beProfile.armPct, offsetPct: beProfile.offsetPct };
+    }
     log(CONFIG.DYNAMIC_BREAKEVEN_ENABLED ? "🛡️ DYNAMIC_BREAKEVEN_ARMED" : "🛡️ BREAKEVEN_ARMED", {
       profile: beProfile.profile,
       armPct: round4(beProfile.armPct),
@@ -1298,6 +1482,10 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     const strongLockStop = S.entryPrice * (1 + CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT / 100);
     const prevStop = S.stopPrice;
     S.stopPrice = Math.max(S.stopPrice, strongLockStop);
+    if (S.stopPrice !== prevStop) {
+      S.stopSource = "dynamic_be_strong_lock";
+      S.stopMeta = { armPct: CONFIG.DYNAMIC_BE_STRONG_LOCK_ARM_PCT, lockPct: CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT, profile: beProfile.profile };
+    }
     if (CONFIG.DYNAMIC_BE_STRONG_LOCK_LOG) {
       log("🛡️🔒 DYNAMIC_BE_STRONG_LOCK_ARMED", {
         profile: beProfile.profile,
@@ -1312,14 +1500,33 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     }
   }
 
+  updateAtrStructureStop(price, eventIso);
+
   const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, eventIso);
   if (postExitProfitGuard.allow) {
     return doExit(postExitProfitGuard.reason, price, eventIso, "cycle_exit");
   }
 
   if (price <= S.stopPrice) {
-    const exitClass = S.beArmed ? "cycle_exit" : "stop_exit";
-    return doExit("hard_or_breakeven_stop", price, eventIso, exitClass);
+    const stopReason = activeStopExitReason();
+    if (!atrStructureStopExitAllowed(stopReason, pnlPct)) {
+      if (CONFIG.ATR_STRUCTURE_LOG && ["atr_stop", "structure_stop"].includes(stopReason)) {
+        log("🛡️📐 ATR_STRUCTURE_STOP_HOLD", {
+          reason: "loss_not_deep_enough",
+          stopReason,
+          price: round4(price),
+          stopPrice: round4(S.stopPrice),
+          pnlPct: round4(pnlPct),
+          minLossTriggerPct: CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT,
+          entryMode: S.entryMode,
+        });
+      }
+      return;
+    }
+    const exitClass = stopReason === "hard_or_breakeven_stop"
+      ? (S.beArmed ? "cycle_exit" : "stop_exit")
+      : (pnlPct >= 0 ? "cycle_exit" : "stop_exit");
+    return doExit(stopReason, price, eventIso, exitClass);
   }
   if (CONFIG.DYNAMIC_TP_ENABLED && S.dynamicTpTier > 0) {
     const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
@@ -1599,6 +1806,29 @@ function evaluateBarExit(feature) {
   const fv = getFvvoScore();
   const prev = S.prevFeature;
 
+  updateAtrStructureStop(price, feature.time);
+  if (price <= S.stopPrice) {
+    const stopReason = activeStopExitReason();
+    if (!atrStructureStopExitAllowed(stopReason, pnlPct)) {
+      if (CONFIG.ATR_STRUCTURE_LOG && ["atr_stop", "structure_stop"].includes(stopReason)) {
+        log("🛡️📐 ATR_STRUCTURE_STOP_HOLD", {
+          reason: "loss_not_deep_enough",
+          stopReason,
+          price: round4(price),
+          stopPrice: round4(S.stopPrice),
+          pnlPct: round4(pnlPct),
+          minLossTriggerPct: CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT,
+          entryMode: S.entryMode,
+        });
+      }
+    } else {
+      const exitClass = stopReason === "hard_or_breakeven_stop"
+        ? (S.beArmed ? "cycle_exit" : "stop_exit")
+        : (pnlPct >= 0 ? "cycle_exit" : "stop_exit");
+      return doExit(stopReason, price, feature.time, exitClass);
+    }
+  }
+
   const reentryHarvest = shouldReentryTopHarvestExit(feature, pnlPct, fv);
   if (reentryHarvest.allow) return doExit("reentry_top_harvest_exit", price, feature.time, "cycle_exit");
 
@@ -1789,7 +2019,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   forward3Commas("exit_long", exitPrice, { reason, brain: CONFIG.BRAIN_NAME, entry_mode: S.entryMode }, ts).catch((err) => {
     log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
   });
-  if (reason === "hard_or_breakeven_stop") clearFastTickLaunch("hard_or_breakeven_stop_exit");
+  if (["hard_or_breakeven_stop", "atr_stop", "structure_stop"].includes(reason)) clearFastTickLaunch(`${reason}_exit`);
   if (exitClass === "cycle_exit") markReentryEligible(reason, exitPrice, pnlPct, peakBeforeExit);
   else {
     clearReentry("non_cycle_exit");
@@ -1802,7 +2032,10 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   S.entryBarIndex = null;
   S.entryMode = null;
   S.stopPrice = null;
+  S.stopSource = null;
+  S.stopMeta = null;
   S.beArmed = false;
+  S.dynamicBeStrongLockArmed = false;
   S.peakPrice = null;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;

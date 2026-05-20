@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.5a_modular
- * Source behavior: v6.4 modular + v6.5a dynamic breakeven + strong lock protection
+ * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
+ * Source behavior: v6.5a modular + ATR / structure stop exit layer
  *
  * All environment variables and default thresholds.
  */
@@ -10,7 +10,7 @@ import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.5a_modular"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -169,6 +169,29 @@ export const CONFIG = {
   DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED: b(process.env.DYNAMIC_BE_STRONG_LOCK_REQUIRE_BE_ARMED, true),
   DYNAMIC_BE_STRONG_LOCK_LOG: b(process.env.DYNAMIC_BE_STRONG_LOCK_LOG, true),
   DYNAMIC_BE_LOG: b(process.env.DYNAMIC_BE_LOG, true),
+
+  // v6.6 ATR / structure stop exit layer.
+  // Exit-only module. Entries are unchanged. For long positions, the active stop is tightened only.
+  ATR_STRUCTURE_STOP_ENABLED: b(process.env.ATR_STRUCTURE_STOP_ENABLED, false),
+  ATR_STOP_MULT_FIRST_ENTRY: n(process.env.ATR_STOP_MULT_FIRST_ENTRY, 1.8),
+  ATR_STOP_MULT_REENTRY: n(process.env.ATR_STOP_MULT_REENTRY, 1.4),
+  ATR_STOP_MULT_STRONG_REENTRY: n(process.env.ATR_STOP_MULT_STRONG_REENTRY, 1.3),
+  ATR_STOP_MIN_PCT: n(process.env.ATR_STOP_MIN_PCT, 0.45),
+  ATR_STOP_MAX_PCT: n(process.env.ATR_STOP_MAX_PCT, 1.0),
+  ATR_STOP_USE_TIGHTER_OF_HARD_OR_ATR: b(process.env.ATR_STOP_USE_TIGHTER_OF_HARD_OR_ATR, true),
+  ATR_STOP_UPDATE_ONLY_IN_PROFIT: b(process.env.ATR_STOP_UPDATE_ONLY_IN_PROFIT, false),
+  ATR_STOP_ALLOW_TIGHTEN_ONLY: b(process.env.ATR_STOP_ALLOW_TIGHTEN_ONLY, true),
+  ATR_STOP_REQUIRE_FEATURE_FRESH: b(process.env.ATR_STOP_REQUIRE_FEATURE_FRESH, true),
+  ATR_STOP_DERIVE_IF_MISSING: b(process.env.ATR_STOP_DERIVE_IF_MISSING, true),
+  ATR_STOP_APPLY_FIRST_ENTRY: b(process.env.ATR_STOP_APPLY_FIRST_ENTRY, false),
+  ATR_STOP_APPLY_REENTRY: b(process.env.ATR_STOP_APPLY_REENTRY, true),
+  ATR_STOP_APPLY_OTHER_MODES: b(process.env.ATR_STOP_APPLY_OTHER_MODES, false),
+  ATR_STOP_MIN_BARS_AFTER_ENTRY: n(process.env.ATR_STOP_MIN_BARS_AFTER_ENTRY, 1),
+  ATR_STOP_MIN_LOSS_TRIGGER_PCT: n(process.env.ATR_STOP_MIN_LOSS_TRIGGER_PCT, -0.35),
+  ATR_STRUCTURE_LOOKBACK_BARS: n(process.env.ATR_STRUCTURE_LOOKBACK_BARS, 6),
+  ATR_STRUCTURE_BUFFER_PCT: n(process.env.ATR_STRUCTURE_BUFFER_PCT, 0.08),
+  ATR_STRUCTURE_USE_RECENT_LOW: b(process.env.ATR_STRUCTURE_USE_RECENT_LOW, true),
+  ATR_STRUCTURE_LOG: b(process.env.ATR_STRUCTURE_LOG, true),
   PROFIT_LOCK_ARM_PCT: n(process.env.PROFIT_LOCK_ARM_PCT, 0.6),
   PROFIT_LOCK_GIVEBACK_PCT: n(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.35),
   TRAIL_ARM_PCT: n(process.env.TRAIL_ARM_PCT, 1.0),

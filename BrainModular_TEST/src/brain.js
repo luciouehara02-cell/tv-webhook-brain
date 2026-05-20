@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.1_modular
- * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
+ * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
+ * Source behavior: v6.5a + ATR / structure stop exit layer
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
  */
@@ -47,6 +47,8 @@ export function getStatus() {
     entryAt: S.entryAt,
     entryMode: S.entryMode,
     stopPrice: S.stopPrice,
+    stopSource: S.stopSource,
+    stopMeta: S.stopMeta,
     peakPrice: S.peakPrice,
     peakPnlPct: S.peakPnlPct,
     dynamicTpTier: S.dynamicTpTier,
@@ -60,6 +62,23 @@ export function getStatus() {
     firstEntry: S.firstEntry,
     reentry: S.reentry,
     postExitContinuation: S.postExitContinuation,
+    atrStructureStopConfig: {
+      enabled: CONFIG.ATR_STRUCTURE_STOP_ENABLED,
+      multFirstEntry: CONFIG.ATR_STOP_MULT_FIRST_ENTRY,
+      multReentry: CONFIG.ATR_STOP_MULT_REENTRY,
+      multStrongReentry: CONFIG.ATR_STOP_MULT_STRONG_REENTRY,
+      minPct: CONFIG.ATR_STOP_MIN_PCT,
+      maxPct: CONFIG.ATR_STOP_MAX_PCT,
+      lookbackBars: CONFIG.ATR_STRUCTURE_LOOKBACK_BARS,
+      bufferPct: CONFIG.ATR_STRUCTURE_BUFFER_PCT,
+      tightenOnly: CONFIG.ATR_STOP_ALLOW_TIGHTEN_ONLY,
+      deriveIfMissing: CONFIG.ATR_STOP_DERIVE_IF_MISSING,
+      applyFirstEntry: CONFIG.ATR_STOP_APPLY_FIRST_ENTRY,
+      applyReentry: CONFIG.ATR_STOP_APPLY_REENTRY,
+      applyOtherModes: CONFIG.ATR_STOP_APPLY_OTHER_MODES,
+      minBarsAfterEntry: CONFIG.ATR_STOP_MIN_BARS_AFTER_ENTRY,
+      minLossTriggerPct: CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT,
+    },
     postExitProfitGuardConfig: {
       enabled: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ENABLED,
       armPeakPct: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ARM_PEAK_PCT,

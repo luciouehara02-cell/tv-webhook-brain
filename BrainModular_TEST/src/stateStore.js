@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.5a_modular
- * Source behavior: BrainRAY_Continuation_v5.1
+ * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
+ * Source behavior: v6.5a + ATR / structure stop exit layer
  *
  * Runtime state and state helper functions.
  */
@@ -17,6 +17,7 @@ export function buildInitialRuntimeState() {
     lastTickTime: null,
     tickCount: 0,
     lastFeature: null,
+    featureHistory: [],
     lastFeatureTime: null,
     lastFeatureBarKey: null,
     prevFeature: null,
@@ -27,6 +28,8 @@ export function buildInitialRuntimeState() {
     entryBarIndex: null,
     entryMode: null,
     stopPrice: null,
+    stopSource: null,
+    stopMeta: null,
     beArmed: false,
     dynamicBeStrongLockArmed: false,
     peakPrice: null,
