@@ -58,6 +58,7 @@ export function getStatus() {
     lastExitClass: S.lastExitClass,
     lastExitReason: S.lastExitReason,
     firstEntry: S.firstEntry,
+    firstEntryFeatureSync: S.firstEntryFeatureSync,
     reentry: S.reentry,
     postExitContinuation: S.postExitContinuation,
     postExitProfitGuardConfig: {

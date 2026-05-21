@@ -78,6 +78,18 @@ export function buildInitialRuntimeState() {
       decision: null,
       redFlags: [],
     },
+    firstEntryFeatureSync: {
+      pending: false,
+      armedAtMs: null,
+      expiresAtMs: null,
+      bullRegimeId: null,
+      rayPrice: null,
+      rayTime: null,
+      decision: null,
+      featureTimeAtArm: null,
+      featureLagSecAtArm: null,
+      lastEvaluatedFeatureTime: null,
+    },
     breakoutMemory: {
       active: false,
       used: false,

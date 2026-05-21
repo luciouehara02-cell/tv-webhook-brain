@@ -94,6 +94,12 @@ export const CONFIG = {
   FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY: b(process.env.FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY, true),
   FIRST_ENTRY_RECENT_BEARISH_RAY_SEC: n(process.env.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC, 300),
   FIRST_ENTRY_LOG_DEBUG: b(process.env.FIRST_ENTRY_LOG_DEBUG, true),
+  // v6.6a / v6.5b first-entry feature-sync grace.
+  // Handles the safe race condition where a Ray BUY arrives seconds before the fresh 5m feature alert.
+  FIRST_ENTRY_FEATURE_SYNC_ENABLED: b(process.env.FIRST_ENTRY_FEATURE_SYNC_ENABLED, true),
+  FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC: n(process.env.FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC, 10),
+  FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC: n(process.env.FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC, 240),
+  FIRST_ENTRY_FEATURE_SYNC_ONLY_ON_SYNCABLE_REASONS: b(process.env.FIRST_ENTRY_FEATURE_SYNC_ONLY_ON_SYNCABLE_REASONS, true),
 
   // v6.3 defensive exit: failed first-entry launch protection
   FIRST_ENTRY_FAIL_FAST_ENABLED: b(process.env.FIRST_ENTRY_FAIL_FAST_ENABLED, true),
