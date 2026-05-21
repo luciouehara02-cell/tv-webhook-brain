@@ -50,6 +50,9 @@ app.listen(CONFIG.PORT, () => {
       confirmWindowSec: CONFIG.FIRST_ENTRY_CONFIRM_WINDOW_SEC,
       confirmMinAdx: CONFIG.FIRST_ENTRY_CONFIRM_MIN_ADX,
       weakBlockEnabled: CONFIG.FIRST_ENTRY_WEAK_BLOCK_ENABLED,
+      featureSyncEnabled: CONFIG.FIRST_ENTRY_FEATURE_SYNC_ENABLED,
+      featureSyncGraceSec: CONFIG.FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC,
+      featureSyncMinFeatureLagSec: CONFIG.FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC,
     },
     firstEntryFailFast: {
       enabled: CONFIG.FIRST_ENTRY_FAIL_FAST_ENABLED,
