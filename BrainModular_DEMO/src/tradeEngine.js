@@ -1,8 +1,8 @@
 /**
- * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
- * Source behavior: v6.5a modular + ATR / structure stop exit layer
+ * BrainRAY_Continuation_BrainRAY_Continuation_v6.6a_ATR_STRUCTURE_SYNC
+ * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
- * Trading logic only. Entry behavior is preserved; v6.6 adds an exit-only ATR / structure stop layer.
+ * Trading logic only. Entry behavior is preserved; feature-sync grace only rechecks first-entry decisions when Ray arrives just before the fresh feature bar. ATR / structure stop remains exit-only when enabled.
  */
 
 import { CONFIG } from "./config.js";
@@ -56,6 +56,146 @@ function clearFirstEntry(reason = "reset") {
     decision: null,
     redFlags: [],
   };
+}
+function clearFirstEntryFeatureSync(reason = "reset") {
+  if (S.firstEntryFeatureSync?.pending) log("🟢 FIRST_ENTRY_FEATURE_SYNC_CLEARED", { reason });
+  S.firstEntryFeatureSync = {
+    pending: false,
+    armedAtMs: null,
+    expiresAtMs: null,
+    bullRegimeId: null,
+    rayPrice: null,
+    rayTime: null,
+    decision: null,
+    featureTimeAtArm: null,
+    featureLagSecAtArm: null,
+    lastEvaluatedFeatureTime: null,
+  };
+}
+function firstEntryFeatureLagSec(featureTime, rayTime) {
+  const fMs = parseTsMs(featureTime);
+  const rMs = parseTsMs(rayTime);
+  if (!Number.isFinite(fMs) || !Number.isFinite(rMs)) return null;
+  return (rMs - fMs) / 1000;
+}
+function firstEntryFeatureSyncableDecision(decision, rayTime) {
+  if (!CONFIG.FIRST_ENTRY_FEATURE_SYNC_ENABLED) return false;
+  if (S.inPosition) return false;
+  if (!decision || decision.action !== "block") return false;
+  const reason = String(decision.reason || "");
+  const redFlags = Array.isArray(decision.redFlags) ? decision.redFlags : [];
+  const featureTime = decision.metrics?.featureTime || S.lastFeature?.time || null;
+  const featureLagSec = firstEntryFeatureLagSec(featureTime, rayTime);
+  const featureBehindRay = featureLagSec === null || featureLagSec >= CONFIG.FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC;
+  if (!featureBehindRay) return false;
+
+  if (!CONFIG.FIRST_ENTRY_FEATURE_SYNC_ONLY_ON_SYNCABLE_REASONS) return true;
+
+  const reasonOk = reason === "first_entry_not_confirmable" || reason === "weak_first_bullish_trend_change";
+  const syncableFlags = new Set([
+    "adx_below_block_floor",
+    "rsi_below_block_floor",
+    "ema8_below_ema18",
+    "close_below_ema8",
+    "strong_bearish_fvvo",
+  ]);
+  const redFlagsOk = redFlags.length === 0 || redFlags.every((flag) => syncableFlags.has(flag));
+  return reasonOk && redFlagsOk;
+}
+function armFirstEntryFeatureSync(rayPrice, rayTime, decision = {}) {
+  const featureTimeAtArm = decision.metrics?.featureTime || S.lastFeature?.time || null;
+  const featureLagSecAtArm = firstEntryFeatureLagSec(featureTimeAtArm, rayTime);
+  S.firstEntryFeatureSync = {
+    pending: true,
+    armedAtMs: nowMs(),
+    expiresAtMs: nowMs() + CONFIG.FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC * 1000,
+    bullRegimeId: S.ray.bullRegimeId,
+    rayPrice,
+    rayTime,
+    decision,
+    featureTimeAtArm,
+    featureLagSecAtArm,
+    lastEvaluatedFeatureTime: null,
+  };
+  log("🟢 FIRST_ENTRY_FEATURE_SYNC_ARMED", {
+    rayPrice: round4(rayPrice),
+    rayTime,
+    expiresAt: new Date(S.firstEntryFeatureSync.expiresAtMs).toISOString(),
+    bullRegimeId: S.firstEntryFeatureSync.bullRegimeId,
+    reason: decision.reason || null,
+    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    featureTimeAtArm,
+    featureLagSecAtArm: featureLagSecAtArm === null ? null : round4(featureLagSecAtArm),
+  });
+}
+function evaluateFirstEntryFeatureSyncOnFeature(feature) {
+  if (!S.firstEntryFeatureSync?.pending) return { handled: false };
+  if (S.inPosition) {
+    clearFirstEntryFeatureSync("already_in_position");
+    return { handled: false };
+  }
+  if (nowMs() > n(S.firstEntryFeatureSync.expiresAtMs, 0)) {
+    clearFirstEntryFeatureSync("expired");
+    return { handled: false };
+  }
+  if (!S.ray.bullContext) {
+    clearFirstEntryFeatureSync("bull_context_off");
+    return { handled: false };
+  }
+  if (S.firstEntryFeatureSync.bullRegimeId !== S.ray.bullRegimeId) {
+    clearFirstEntryFeatureSync("bull_regime_changed");
+    return { handled: false };
+  }
+
+  const featureTime = feature?.time || null;
+  if (featureTime && featureTime === S.firstEntryFeatureSync.lastEvaluatedFeatureTime) return { handled: false };
+  const armFeatureMs = parseTsMs(S.firstEntryFeatureSync.featureTimeAtArm);
+  const featureMs = parseTsMs(featureTime);
+  const hasNewerFeature =
+    !Number.isFinite(armFeatureMs) || !Number.isFinite(featureMs) || featureMs > armFeatureMs;
+  if (!hasNewerFeature) return { handled: false };
+
+  S.firstEntryFeatureSync.lastEvaluatedFeatureTime = featureTime;
+  const rayPrice = n(S.firstEntryFeatureSync.rayPrice, NaN);
+  const rayTime = S.firstEntryFeatureSync.rayTime || featureTime || isoNow();
+  if (!Number.isFinite(rayPrice)) {
+    clearFirstEntryFeatureSync("bad_ray_price");
+    return { handled: false };
+  }
+
+  const decision = evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime);
+  log("🟢 FIRST_ENTRY_FEATURE_SYNC_EVAL", {
+    action: decision.action,
+    reason: decision.reason || null,
+    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    rayPrice: round4(rayPrice),
+    rayTime,
+    featureTime,
+    featureLagSec: firstEntryFeatureLagSec(featureTime, rayTime),
+    metrics: decision.metrics || null,
+  });
+
+  if (decision.action === "enter") {
+    const entryPrice = Number.isFinite(n(feature?.close, NaN)) ? n(feature.close, NaN) : rayPrice;
+    if (canEnterByDedup("first_entry_feature_sync", featureTime || rayTime)) {
+      doEnter(decision.mode, entryPrice, { ...decision, reason: `${decision.reason}_feature_sync` }, featureTime || rayTime);
+      clearFirstEntryFeatureSync("consumed_on_entry");
+      return { handled: true, entered: true };
+    }
+    log("🚫 FIRST_ENTRY_FEATURE_SYNC_BLOCKED_BY_DEDUP", decision);
+    clearFirstEntryFeatureSync("blocked_by_dedup");
+    return { handled: true };
+  }
+
+  if (decision.action === "confirm") {
+    armFirstEntryConfirm(rayPrice, rayTime, { ...decision, reason: `${decision.reason}_after_feature_sync` });
+    clearFirstEntryFeatureSync("converted_to_tick_confirm");
+    return { handled: true };
+  }
+
+  log("🚫 FIRST_ENTRY_FEATURE_SYNC_BLOCKED", decision);
+  clearFirstEntryFeatureSync(decision.reason || "blocked_after_sync");
+  return { handled: true };
 }
 function firstEntryStrongBearishFvvo(fv) {
   return Boolean(fv?.snap?.burstBearish || fv?.score <= -2);
@@ -315,6 +455,7 @@ function turnBullRegimeOff(ts, reason) {
     S.ray.bullContext = false;
     S.cycleState = S.inPosition ? "long" : "disabled_by_bear_regime";
     clearFirstEntry("bull_regime_off");
+    clearFirstEntryFeatureSync("bull_regime_off");
     clearBreakoutMemory("bull_regime_off");
     clearReentry("bull_regime_off");
     clearPostExitContinuation("bull_regime_off");
@@ -409,8 +550,15 @@ export function handleRayEvent(body) {
         return;
       }
       if (firstDecision.action === "block") {
+        if (firstEntryFeatureSyncableDecision(firstDecision, ts)) {
+          log("🟡 FIRST_ENTRY_BLOCK_HELD_FOR_FEATURE_SYNC", firstDecision);
+          clearFirstEntry("feature_sync_armed");
+          armFirstEntryFeatureSync(price, ts, firstDecision);
+          return;
+        }
         log("🚫 FIRST_ENTRY_BLOCKED", firstDecision);
         clearFirstEntry("blocked_weak_first_entry");
+        clearFirstEntryFeatureSync("blocked_weak_first_entry");
         return;
       }
     }
@@ -590,6 +738,9 @@ export function handleFeature(body) {
     barIndex: S.barIndex,
     fvvo: getFvvoScore(),
   });
+  const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
+  if (featureSyncResult?.entered) return;
+
   resolveRayConflictOnFeature(feature);
   evaluateStructureAndArmMemory(feature);
   evaluateReentryEligibilityFromFeature(feature);
@@ -1016,6 +1167,7 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   clearTrendChangeLaunch("entered");
   clearFastTickLaunch("entered");
   clearFirstEntry("entered");
+  clearFirstEntryFeatureSync("entered");
   log("🟩🟢 ENTER_LONG", {
     brain: CONFIG.BRAIN_NAME,
     mode,

@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
+ * BrainRAY_Continuation_BrainRAY_Continuation_v6.6a_ATR_STRUCTURE_SYNC
  * Source behavior: v6.5a + ATR / structure stop exit layer
  *
  * Runtime state and state helper functions.
@@ -80,6 +80,18 @@ export function buildInitialRuntimeState() {
       lastConfirmedTickPrice: null,
       decision: null,
       redFlags: [],
+    },
+    firstEntryFeatureSync: {
+      pending: false,
+      armedAtMs: null,
+      expiresAtMs: null,
+      bullRegimeId: null,
+      rayPrice: null,
+      rayTime: null,
+      decision: null,
+      featureTimeAtArm: null,
+      featureLagSecAtArm: null,
+      lastEvaluatedFeatureTime: null,
     },
     breakoutMemory: {
       active: false,
