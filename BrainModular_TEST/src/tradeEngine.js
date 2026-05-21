@@ -533,6 +533,15 @@ export function handleFeature(body) {
   const rawAtr = n(body.atr, NaN);
   const rawClose = n(body.close, NaN);
   const rawAtrPct = n(body.atrPct, NaN);
+  const atrPct = Number.isFinite(rawAtrPct)
+    ? rawAtrPct
+    : Number.isFinite(rawAtr) && Number.isFinite(rawClose) && rawClose > 0
+    ? (rawAtr / rawClose) * 100
+    : NaN;
+  const rawAtrReady = pickFirst(body, ["atrReady", "atr_ready"], null);
+  const atrReady = rawAtrReady === null
+    ? Number.isFinite(rawAtr) && rawAtr > 0 && Number.isFinite(atrPct) && atrPct > 0
+    : b(rawAtrReady, false);
   const feature = {
     symbol: normalizeSymbol(pickFirst(body, ["symbol"], CONFIG.SYMBOL)),
     tf: s(pickFirst(body, ["tf"], CONFIG.ENTRY_TF)),
@@ -547,11 +556,8 @@ export function handleFeature(body) {
     rsi: n(body.rsi, NaN),
     adx: n(body.adx, NaN),
     atr: rawAtr,
-    atrPct: Number.isFinite(rawAtrPct)
-      ? rawAtrPct
-      : Number.isFinite(rawAtr) && Number.isFinite(rawClose) && rawClose > 0
-      ? (rawAtr / rawClose) * 100
-      : NaN,
+    atrPct,
+    atrReady,
   };
   S.prevPrevFeature = S.prevFeature ? { ...S.prevFeature } : null;
   S.prevFeature = S.lastFeature ? { ...S.lastFeature } : null;
@@ -562,12 +568,25 @@ export function handleFeature(body) {
   S.featureHistory.push({ ...feature });
   if (S.featureHistory.length > 50) S.featureHistory.shift();
   log("📊 FEATURE_5M", {
-    close: feature.close,
-    ema8: feature.ema8,
-    ema18: feature.ema18,
-    rsi: feature.rsi,
-    adx: feature.adx,
-    atrPct: Number.isFinite(feature.atrPct) ? round4(feature.atrPct) : null,
+    time: feature.time,
+    open: round4(feature.open),
+    high: round4(feature.high),
+    low: round4(feature.low),
+    close: round4(feature.close),
+    ema8: round4(feature.ema8),
+    ema18: round4(feature.ema18),
+    ema50: round4(feature.ema50),
+    rsi: round4(feature.rsi),
+    adx: round4(feature.adx),
+    atr: round4(feature.atr),
+    atrPct: round4(feature.atrPct),
+    atrReady: feature.atrReady,
+    oiTrend: Number.isFinite(n(body.oiTrend, NaN)) ? n(body.oiTrend, NaN) : null,
+    oiDeltaBias: Number.isFinite(n(body.oiDeltaBias, NaN)) ? n(body.oiDeltaBias, NaN) : null,
+    cvdTrend: Number.isFinite(n(body.cvdTrend, NaN)) ? n(body.cvdTrend, NaN) : null,
+    priceDropPct: round4(n(body.priceDropPct, NaN)),
+    patternAReady: Number.isFinite(n(body.patternAReady, NaN)) ? n(body.patternAReady, NaN) : null,
+    patternAWatch: Number.isFinite(n(body.patternAWatch, NaN)) ? n(body.patternAWatch, NaN) : null,
     barIndex: S.barIndex,
     fvvo: getFvvoScore(),
   });
