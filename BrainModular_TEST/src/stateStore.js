@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
- * Source behavior: v6.5a + ATR / structure stop exit layer + strong-feature first-entry confirm upgrade
+ * BrainRAY_Continuation_v6.6d_ATR_STRUCTURE_SYNC_ADAPTIVE_TP
+ * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
  *
  * Runtime state and state helper functions.
  */
@@ -35,6 +35,13 @@ export function buildInitialRuntimeState() {
     peakPrice: null,
     peakPnlPct: 0,
     dynamicTpTier: 0,
+    adaptiveTp: {
+      armed: false,
+      profile: null,
+      level: null,
+      lastExitLinePct: null,
+      lastAllowedGivebackPct: null,
+    },
     cooldownUntilMs: 0,
     lastEnterAtMs: 0,
     lastExitAtMs: 0,
