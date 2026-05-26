@@ -1195,22 +1195,79 @@ function dynamicTpGivebackForTier(tier) {
   if (tier === 1) return CONFIG.DTP_TIER1_GIVEBACK_PCT;
   return null;
 }
-function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv) {
+function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv, ctx = {}) {
   if (!CONFIG.LAUNCH_TP_PROTECTION_ENABLED) return false;
   if (!isLaunchMode(S.entryMode)) return false;
   if (tier !== 1 || !CONFIG.LAUNCH_TP_PROTECTION_BLOCK_TIER1) return false;
+
   const adx = n(feature?.adx, NaN);
   const rsi = n(feature?.rsi, NaN);
   const close = n(feature?.close, NaN);
   const ema8 = n(feature?.ema8, NaN);
+  const peakPnlPct = n(ctx?.peakPnlPct, NaN);
+  const pnlGiveback = n(ctx?.pnlGiveback, NaN);
+  const forceTier1Exit = !!ctx?.forceTier1Exit;
+
   const adxOk = Number.isFinite(adx) && adx >= CONFIG.LAUNCH_TP_PROTECTION_MIN_ADX;
   const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.LAUNCH_TP_PROTECTION_MIN_RSI;
   const profitTooEarly = pnlPct < CONFIG.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT;
   const priceAboveEma8Ok = !CONFIG.LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
-  const bullishFvvoHold = CONFIG.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+  const belowEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close < ema8;
+  const bearishFvvo = !!(fv?.snap?.sniperSell || fv?.snap?.burstBearish || n(fv?.score, 0) < 0);
+  const bullishFvvoHold = CONFIG.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && n(fv?.score, 0) > 0;
+
+  const maxGivebackHit =
+    CONFIG.LAUNCH_TP_PROTECTION_FORCE_ALLOW_ON_MAX_GIVEBACK &&
+    Number.isFinite(pnlGiveback) &&
+    Number.isFinite(CONFIG.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT) &&
+    pnlGiveback >= CONFIG.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT;
+  const bearishOverride = CONFIG.LAUNCH_TP_PROTECTION_DISABLE_ON_BEARISH_FVVO && bearishFvvo;
+  const belowEma8Override = CONFIG.LAUNCH_TP_PROTECTION_DISABLE_BELOW_EMA8 && belowEma8;
+
+  if (forceTier1Exit || maxGivebackHit || bearishOverride || belowEma8Override) {
+    if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+      const reasons = [];
+      if (forceTier1Exit) reasons.push("tier1_force_exit_giveback");
+      if (maxGivebackHit) reasons.push("max_giveback_hit");
+      if (bearishOverride) reasons.push("bearish_fvvo");
+      if (belowEma8Override) reasons.push("below_ema8");
+      log("🟦✅ LAUNCH_TP_PROTECTION_OVERRIDE", {
+        block: false,
+        reasons,
+        entryMode: S.entryMode,
+        tier,
+        pnlPct: round4(pnlPct),
+        peakPnlPct: round4(peakPnlPct),
+        pnlGiveback: round4(pnlGiveback),
+        maxGivebackPct: round4(CONFIG.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT),
+        adx: round4(adx),
+        rsi: round4(rsi),
+        priceAboveEma8Ok,
+        belowEma8,
+        bearishFvvo,
+        fvvo: fv,
+      });
+    }
+    return false;
+  }
+
   const block = profitTooEarly || ((adxOk && rsiOk && priceAboveEma8Ok) || bullishFvvoHold);
   if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
-    log("🟦 LAUNCH_TP_PROTECTION_CHECK", { block, entryMode: S.entryMode, tier, pnlPct: round4(pnlPct), adx: round4(adx), rsi: round4(rsi), priceAboveEma8Ok, bullishFvvoHold, fvvo: fv });
+    log("🟦 LAUNCH_TP_PROTECTION_CHECK", {
+      block,
+      entryMode: S.entryMode,
+      tier,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      pnlGiveback: round4(pnlGiveback),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      priceAboveEma8Ok,
+      belowEma8,
+      bearishFvvo,
+      bullishFvvoHold,
+      fvvo: fv,
+    });
   }
   return block;
 }
@@ -1510,8 +1567,19 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     const pnlGiveback = peakPnl - pnlPct;
     const fv = getFvvoScore();
     const feature = S.lastFeature;
-    if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
-      if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+    const normalGivebackHit = Number.isFinite(giveback) && pnlGiveback >= giveback;
+    const forceTier1Exit =
+      S.dynamicTpTier === 1 &&
+      Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT) &&
+      Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT) &&
+      pnlGiveback >= CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT &&
+      pnlPct >= CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT;
+
+    if (normalGivebackHit || forceTier1Exit) {
+      const tpReason = forceTier1Exit && !normalGivebackHit
+        ? `dynamic_tp_tier${S.dynamicTpTier}_force_giveback`
+        : `dynamic_tp_tier${S.dynamicTpTier}_giveback`;
+      if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv, { peakPnlPct: peakPnl, pnlGiveback, forceTier1Exit })) {
         log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
         return;
       }
@@ -1519,7 +1587,18 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
         log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
         return;
       }
-      return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, eventIso, "cycle_exit");
+      if (forceTier1Exit && CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+        log("🎯⚠️ DYNAMIC_TP_TIER1_FORCE_EXIT", {
+          reason: tpReason,
+          pnlPct: round4(pnlPct),
+          peakPnlPct: round4(peakPnl),
+          pnlGiveback: round4(pnlGiveback),
+          forceGivebackPct: round4(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT),
+          minExitPnlPct: round4(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT),
+          entryMode: S.entryMode,
+        });
+      }
+      return doExit(tpReason, price, eventIso, "cycle_exit");
     }
   } else {
     const drawFromPeakPct = Number.isFinite(S.peakPrice) ? -pctDiff(S.peakPrice, price) : 0;
