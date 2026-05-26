@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
- * Source behavior: v6.5a + ATR / structure stop exit layer
+ * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
+ * Source behavior: v6.5a + ATR / structure stop exit layer + strong-feature first-entry confirm upgrade
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
  */
@@ -60,6 +60,7 @@ export function getStatus() {
     lastExitClass: S.lastExitClass,
     lastExitReason: S.lastExitReason,
     firstEntry: S.firstEntry,
+    firstEntryFeatureSync: S.firstEntryFeatureSync,
     reentry: S.reentry,
     postExitContinuation: S.postExitContinuation,
     atrStructureStopConfig: {

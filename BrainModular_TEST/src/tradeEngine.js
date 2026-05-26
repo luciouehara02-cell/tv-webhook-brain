@@ -1,8 +1,8 @@
 /**
- * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
- * Source behavior: v6.5a modular + ATR / structure stop exit layer
+ * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
+ * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
- * Trading logic only. Entry behavior is preserved; v6.6 adds an exit-only ATR / structure stop layer.
+ * Trading logic only. Entry behavior is preserved except for v6.6c first-entry confirm upgrade: a fresh/strong feature after Ray can upgrade a pending confirm into immediate entry or reduce confirm to 1 tick. ATR / structure stop remains exit-only when enabled.
  */
 
 import { CONFIG } from "./config.js";
@@ -50,12 +50,154 @@ function clearFirstEntry(reason = "reset") {
     expiresAtMs: null,
     bullRegimeId: null,
     rayPrice: null,
+    rayTime: null,
+    featureTimeAtArm: null,
     confirmPrice: null,
     ticksAboveConfirm: 0,
     lastConfirmedTickPrice: null,
     decision: null,
     redFlags: [],
   };
+}
+function clearFirstEntryFeatureSync(reason = "reset") {
+  if (S.firstEntryFeatureSync?.pending) log("🟢 FIRST_ENTRY_FEATURE_SYNC_CLEARED", { reason });
+  S.firstEntryFeatureSync = {
+    pending: false,
+    armedAtMs: null,
+    expiresAtMs: null,
+    bullRegimeId: null,
+    rayPrice: null,
+    rayTime: null,
+    decision: null,
+    featureTimeAtArm: null,
+    featureLagSecAtArm: null,
+    lastEvaluatedFeatureTime: null,
+  };
+}
+function firstEntryFeatureLagSec(featureTime, rayTime) {
+  const fMs = parseTsMs(featureTime);
+  const rMs = parseTsMs(rayTime);
+  if (!Number.isFinite(fMs) || !Number.isFinite(rMs)) return null;
+  return (rMs - fMs) / 1000;
+}
+function firstEntryFeatureSyncableDecision(decision, rayTime) {
+  if (!CONFIG.FIRST_ENTRY_FEATURE_SYNC_ENABLED) return false;
+  if (S.inPosition) return false;
+  if (!decision || decision.action !== "block") return false;
+  const reason = String(decision.reason || "");
+  const redFlags = Array.isArray(decision.redFlags) ? decision.redFlags : [];
+  const featureTime = decision.metrics?.featureTime || S.lastFeature?.time || null;
+  const featureLagSec = firstEntryFeatureLagSec(featureTime, rayTime);
+  const featureBehindRay = featureLagSec === null || featureLagSec >= CONFIG.FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC;
+  if (!featureBehindRay) return false;
+
+  if (!CONFIG.FIRST_ENTRY_FEATURE_SYNC_ONLY_ON_SYNCABLE_REASONS) return true;
+
+  const reasonOk = reason === "first_entry_not_confirmable" || reason === "weak_first_bullish_trend_change";
+  const syncableFlags = new Set([
+    "adx_below_block_floor",
+    "rsi_below_block_floor",
+    "ema8_below_ema18",
+    "close_below_ema8",
+    "strong_bearish_fvvo",
+  ]);
+  const redFlagsOk = redFlags.length === 0 || redFlags.every((flag) => syncableFlags.has(flag));
+  return reasonOk && redFlagsOk;
+}
+function armFirstEntryFeatureSync(rayPrice, rayTime, decision = {}) {
+  const featureTimeAtArm = decision.metrics?.featureTime || S.lastFeature?.time || null;
+  const featureLagSecAtArm = firstEntryFeatureLagSec(featureTimeAtArm, rayTime);
+  S.firstEntryFeatureSync = {
+    pending: true,
+    armedAtMs: nowMs(),
+    expiresAtMs: nowMs() + CONFIG.FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC * 1000,
+    bullRegimeId: S.ray.bullRegimeId,
+    rayPrice,
+    rayTime,
+    decision,
+    featureTimeAtArm,
+    featureLagSecAtArm,
+    lastEvaluatedFeatureTime: null,
+  };
+  log("🟢 FIRST_ENTRY_FEATURE_SYNC_ARMED", {
+    rayPrice: round4(rayPrice),
+    rayTime,
+    expiresAt: new Date(S.firstEntryFeatureSync.expiresAtMs).toISOString(),
+    bullRegimeId: S.firstEntryFeatureSync.bullRegimeId,
+    reason: decision.reason || null,
+    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    featureTimeAtArm,
+    featureLagSecAtArm: featureLagSecAtArm === null ? null : round4(featureLagSecAtArm),
+  });
+}
+function evaluateFirstEntryFeatureSyncOnFeature(feature) {
+  if (!S.firstEntryFeatureSync?.pending) return { handled: false };
+  if (S.inPosition) {
+    clearFirstEntryFeatureSync("already_in_position");
+    return { handled: false };
+  }
+  if (nowMs() > n(S.firstEntryFeatureSync.expiresAtMs, 0)) {
+    clearFirstEntryFeatureSync("expired");
+    return { handled: false };
+  }
+  if (!S.ray.bullContext) {
+    clearFirstEntryFeatureSync("bull_context_off");
+    return { handled: false };
+  }
+  if (S.firstEntryFeatureSync.bullRegimeId !== S.ray.bullRegimeId) {
+    clearFirstEntryFeatureSync("bull_regime_changed");
+    return { handled: false };
+  }
+
+  const featureTime = feature?.time || null;
+  if (featureTime && featureTime === S.firstEntryFeatureSync.lastEvaluatedFeatureTime) return { handled: false };
+  const armFeatureMs = parseTsMs(S.firstEntryFeatureSync.featureTimeAtArm);
+  const featureMs = parseTsMs(featureTime);
+  const hasNewerFeature =
+    !Number.isFinite(armFeatureMs) || !Number.isFinite(featureMs) || featureMs > armFeatureMs;
+  if (!hasNewerFeature) return { handled: false };
+
+  S.firstEntryFeatureSync.lastEvaluatedFeatureTime = featureTime;
+  const rayPrice = n(S.firstEntryFeatureSync.rayPrice, NaN);
+  const rayTime = S.firstEntryFeatureSync.rayTime || featureTime || isoNow();
+  if (!Number.isFinite(rayPrice)) {
+    clearFirstEntryFeatureSync("bad_ray_price");
+    return { handled: false };
+  }
+
+  const decision = evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime);
+  log("🟢 FIRST_ENTRY_FEATURE_SYNC_EVAL", {
+    action: decision.action,
+    reason: decision.reason || null,
+    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    rayPrice: round4(rayPrice),
+    rayTime,
+    featureTime,
+    featureLagSec: firstEntryFeatureLagSec(featureTime, rayTime),
+    metrics: decision.metrics || null,
+  });
+
+  if (decision.action === "enter") {
+    const entryPrice = Number.isFinite(n(feature?.close, NaN)) ? n(feature.close, NaN) : rayPrice;
+    if (canEnterByDedup("first_entry_feature_sync", featureTime || rayTime)) {
+      doEnter(decision.mode, entryPrice, { ...decision, reason: `${decision.reason}_feature_sync` }, featureTime || rayTime);
+      clearFirstEntryFeatureSync("consumed_on_entry");
+      return { handled: true, entered: true };
+    }
+    log("🚫 FIRST_ENTRY_FEATURE_SYNC_BLOCKED_BY_DEDUP", decision);
+    clearFirstEntryFeatureSync("blocked_by_dedup");
+    return { handled: true };
+  }
+
+  if (decision.action === "confirm") {
+    armFirstEntryConfirm(rayPrice, rayTime, { ...decision, reason: `${decision.reason}_after_feature_sync` });
+    clearFirstEntryFeatureSync("converted_to_tick_confirm");
+    return { handled: true };
+  }
+
+  log("🚫 FIRST_ENTRY_FEATURE_SYNC_BLOCKED", decision);
+  clearFirstEntryFeatureSync(decision.reason || "blocked_after_sync");
+  return { handled: true };
 }
 function firstEntryStrongBearishFvvo(fv) {
   return Boolean(fv?.snap?.burstBearish || fv?.score <= -2);
@@ -66,6 +208,111 @@ function recentBearishRayForFirstEntry() {
     ageSec(S.ray.lastBearTrendContinuationAt) <= CONFIG.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC
   );
 }
+function firstEntryStrongFeatureForConfirm(feature = S.lastFeature, rayPrice = S.firstEntry?.rayPrice, prefix = "CONFIRM") {
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+  const ema18 = n(feature?.ema18, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const adx = n(feature?.adx, NaN);
+  const minRsi = prefix === "UPGRADE" ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_MIN_RSI : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_MIN_RSI;
+  const minAdx = prefix === "UPGRADE" ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_MIN_ADX : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_MIN_ADX;
+  const requireCloseGeRay = prefix === "UPGRADE"
+    ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_GE_RAY
+    : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_GE_RAY;
+  const requireEma8AboveEma18 = prefix === "UPGRADE"
+    ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_EMA8_ABOVE_EMA18
+    : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_EMA8_ABOVE_EMA18;
+  const requireCloseAboveEma8 = prefix === "UPGRADE"
+    ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_ABOVE_EMA8
+    : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_ABOVE_EMA8;
+
+  const reasons = [];
+  if (!Number.isFinite(close)) reasons.push("close_missing");
+  if (!Number.isFinite(rsi) || rsi < minRsi) reasons.push("rsi_not_strong");
+  if (!Number.isFinite(adx) || adx < minAdx) reasons.push("adx_not_strong");
+  if (requireCloseGeRay && (!Number.isFinite(close) || !Number.isFinite(rayPrice) || close < rayPrice)) reasons.push("close_below_ray");
+  if (requireEma8AboveEma18 && (!Number.isFinite(ema8) || !Number.isFinite(ema18) || ema8 < ema18)) reasons.push("ema8_below_ema18");
+  if (requireCloseAboveEma8 && (!Number.isFinite(close) || !Number.isFinite(ema8) || close < ema8)) reasons.push("close_below_ema8");
+  return {
+    ok: reasons.length === 0,
+    reasons,
+    metrics: {
+      close: round4(close),
+      rayPrice: round4(rayPrice),
+      ema8: round4(ema8),
+      ema18: round4(ema18),
+      rsi: round4(rsi),
+      adx: round4(adx),
+      featureTime: feature?.time || null,
+    },
+  };
+}
+function firstEntryConfirmRequiredTicks() {
+  const defaultTicks = Math.max(1, Math.floor(n(CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS, 2)));
+  if (!S.firstEntry?.pending) return defaultTicks;
+  const strong = firstEntryStrongFeatureForConfirm(S.lastFeature, n(S.firstEntry.rayPrice, NaN), "CONFIRM");
+  if (strong.ok) return Math.max(1, Math.floor(n(CONFIG.FIRST_ENTRY_CONFIRM_STRONG_FEATURE_TICKS, 1)));
+  return defaultTicks;
+}
+function evaluateFirstEntryConfirmUpgradeOnFeature(feature) {
+  if (!CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_ENABLED) return { handled: false };
+  if (!S.firstEntry?.pending || S.inPosition) return { handled: false };
+  if (nowMs() > n(S.firstEntry.expiresAtMs, 0)) {
+    clearFirstEntry("expired_before_confirm_upgrade");
+    return { handled: false };
+  }
+  if (!S.ray.bullContext) {
+    clearFirstEntry("bull_context_off_before_confirm_upgrade");
+    return { handled: false };
+  }
+  if (S.firstEntry.bullRegimeId !== S.ray.bullRegimeId) {
+    clearFirstEntry("regime_changed_before_confirm_upgrade");
+    return { handled: false };
+  }
+  const rayPrice = n(S.firstEntry.rayPrice, NaN);
+  const rayTime = S.firstEntry.rayTime || S.firstEntry.decision?.metrics?.rayTime || feature?.time || isoNow();
+  if (!Number.isFinite(rayPrice)) return { handled: false };
+  const armedAgeSec = (nowMs() - n(S.firstEntry.armedAtMs, nowMs())) / 1000;
+  if (armedAgeSec > CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_GRACE_SEC) return { handled: false };
+
+  const featureTime = feature?.time || null;
+  const armFeatureMs = parseTsMs(S.firstEntry.featureTimeAtArm || S.firstEntry.decision?.metrics?.featureTime);
+  const featureMs = parseTsMs(featureTime);
+  const hasNewerFeature = !Number.isFinite(armFeatureMs) || !Number.isFinite(featureMs) || featureMs > armFeatureMs;
+  if (!hasNewerFeature) return { handled: false };
+
+  const strong = firstEntryStrongFeatureForConfirm(feature, rayPrice, "UPGRADE");
+  const decision = evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime);
+  log("🟢 FIRST_ENTRY_CONFIRM_UPGRADE_EVAL", {
+    action: decision.action,
+    reason: decision.reason || null,
+    strongFeature: strong.ok,
+    strongReasons: strong.reasons,
+    strongMetrics: strong.metrics,
+    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    metrics: decision.metrics || null,
+  });
+
+  if (decision.action === "enter" && strong.ok) {
+    const entryPrice = Number.isFinite(n(feature?.close, NaN)) ? n(feature.close, NaN) : rayPrice;
+    if (canEnterByDedup("first_entry_confirm_upgrade", featureTime || rayTime)) {
+      log("🟩🟢 FIRST_ENTRY_CONFIRM_UPGRADED_TO_IMMEDIATE", {
+        entryPrice: round4(entryPrice),
+        rayPrice: round4(rayPrice),
+        rayTime,
+        featureTime,
+        decisionReason: decision.reason || null,
+        strongMetrics: strong.metrics,
+      });
+      doEnter(decision.mode, entryPrice, { ...decision, reason: `${decision.reason}_confirm_upgrade` }, featureTime || rayTime);
+      clearFirstEntry("consumed_on_confirm_upgrade");
+      return { handled: true, entered: true };
+    }
+    log("🚫 FIRST_ENTRY_CONFIRM_UPGRADE_BLOCKED_BY_DEDUP", { decision, strongMetrics: strong.metrics });
+    return { handled: true };
+  }
+  return { handled: false };
+}
 function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
   if (!CONFIG.FIRST_ENTRY_CONFIRM_ENABLED) return;
   const confirmPrice = rayPrice * (1 + CONFIG.FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT / 100);
@@ -75,6 +322,8 @@ function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
     expiresAtMs: nowMs() + CONFIG.FIRST_ENTRY_CONFIRM_WINDOW_SEC * 1000,
     bullRegimeId: S.ray.bullRegimeId,
     rayPrice,
+    rayTime,
+    featureTimeAtArm: decision.metrics?.featureTime || S.lastFeature?.time || null,
     confirmPrice,
     ticksAboveConfirm: 0,
     lastConfirmedTickPrice: null,
@@ -86,6 +335,7 @@ function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
     confirmPrice: round4(confirmPrice),
     expiresAt: new Date(S.firstEntry.expiresAtMs).toISOString(),
     bullRegimeId: S.firstEntry.bullRegimeId,
+    featureTimeAtArm: S.firstEntry.featureTimeAtArm,
     decision,
   });
 }
@@ -315,6 +565,7 @@ function turnBullRegimeOff(ts, reason) {
     S.ray.bullContext = false;
     S.cycleState = S.inPosition ? "long" : "disabled_by_bear_regime";
     clearFirstEntry("bull_regime_off");
+    clearFirstEntryFeatureSync("bull_regime_off");
     clearBreakoutMemory("bull_regime_off");
     clearReentry("bull_regime_off");
     clearPostExitContinuation("bull_regime_off");
@@ -409,8 +660,15 @@ export function handleRayEvent(body) {
         return;
       }
       if (firstDecision.action === "block") {
+        if (firstEntryFeatureSyncableDecision(firstDecision, ts)) {
+          log("🟡 FIRST_ENTRY_BLOCK_HELD_FOR_FEATURE_SYNC", firstDecision);
+          clearFirstEntry("feature_sync_armed");
+          armFirstEntryFeatureSync(price, ts, firstDecision);
+          return;
+        }
         log("🚫 FIRST_ENTRY_BLOCKED", firstDecision);
         clearFirstEntry("blocked_weak_first_entry");
+        clearFirstEntryFeatureSync("blocked_weak_first_entry");
         return;
       }
     }
@@ -590,6 +848,12 @@ export function handleFeature(body) {
     barIndex: S.barIndex,
     fvvo: getFvvoScore(),
   });
+  const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
+  if (featureSyncResult?.entered) return;
+
+  const confirmUpgradeResult = evaluateFirstEntryConfirmUpgradeOnFeature(feature);
+  if (confirmUpgradeResult?.entered) return;
+
   resolveRayConflictOnFeature(feature);
   evaluateStructureAndArmMemory(feature);
   evaluateReentryEligibilityFromFeature(feature);
@@ -1016,6 +1280,7 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   clearTrendChangeLaunch("entered");
   clearFastTickLaunch("entered");
   clearFirstEntry("entered");
+  clearFirstEntryFeatureSync("entered");
   log("🟩🟢 ENTER_LONG", {
     brain: CONFIG.BRAIN_NAME,
     mode,
@@ -2085,14 +2350,20 @@ export function handleTick(body) {
     if (S.firstEntry.pending && px >= n(S.firstEntry.confirmPrice, Infinity)) {
       S.firstEntry.ticksAboveConfirm += 1;
       S.firstEntry.lastConfirmedTickPrice = px;
+      const requiredTicks = firstEntryConfirmRequiredTicks();
+      const strongConfirm = firstEntryStrongFeatureForConfirm(S.lastFeature, n(S.firstEntry.rayPrice, NaN), "CONFIRM");
       log("🟢 FIRST_ENTRY_TICK_CONFIRM", {
         price: px,
         ticksAboveConfirm: S.firstEntry.ticksAboveConfirm,
-        required: CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS,
+        required: requiredTicks,
+        defaultRequired: CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS,
+        strongFeatureTicks: CONFIG.FIRST_ENTRY_CONFIRM_STRONG_FEATURE_TICKS,
+        strongFeature: strongConfirm.ok,
+        strongReasons: strongConfirm.reasons,
         confirmPrice: round4(S.firstEntry.confirmPrice),
         rayPrice: round4(S.firstEntry.rayPrice),
       });
-      if (S.firstEntry.ticksAboveConfirm >= CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS) {
+      if (S.firstEntry.ticksAboveConfirm >= requiredTicks) {
         const decision = {
           ...(S.firstEntry.decision || {}),
           mode: "first_bullish_trend_change_confirmed_long",

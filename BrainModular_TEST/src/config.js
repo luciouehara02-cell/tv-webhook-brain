@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular
- * Source behavior: v6.5a modular + ATR / structure stop exit layer
+ * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
+ * Source behavior: v6.5a modular + ATR / structure stop exit layer + strong-feature first-entry confirm upgrade
  *
  * All environment variables and default thresholds.
  */
@@ -10,7 +10,7 @@ import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.6_ATR_STRUCTURE_modular"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -80,6 +80,21 @@ export const CONFIG = {
   FIRST_ENTRY_CONFIRM_MAX_CHASE_PCT: n(process.env.FIRST_ENTRY_CONFIRM_MAX_CHASE_PCT, 0.38),
   FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT: n(process.env.FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT, 0.05),
   FIRST_ENTRY_CONFIRM_MIN_TICKS: n(process.env.FIRST_ENTRY_CONFIRM_MIN_TICKS, 2),
+  // v6.6c: when a fresh/strong feature arrives just after Ray, allow a faster 1-tick confirmation
+  // or upgrade the pending confirm into an immediate first-entry. This keeps weak/stale confirms at 2 ticks.
+  FIRST_ENTRY_CONFIRM_STRONG_FEATURE_TICKS: n(process.env.FIRST_ENTRY_CONFIRM_STRONG_FEATURE_TICKS, 1),
+  FIRST_ENTRY_CONFIRM_STRONG_MIN_RSI: n(process.env.FIRST_ENTRY_CONFIRM_STRONG_MIN_RSI, 60),
+  FIRST_ENTRY_CONFIRM_STRONG_MIN_ADX: n(process.env.FIRST_ENTRY_CONFIRM_STRONG_MIN_ADX, 14),
+  FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_GE_RAY: b(process.env.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_GE_RAY, true),
+  FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FIRST_ENTRY_CONFIRM_UPGRADE_ENABLED: b(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_ENABLED, true),
+  FIRST_ENTRY_CONFIRM_UPGRADE_GRACE_SEC: n(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_GRACE_SEC, 10),
+  FIRST_ENTRY_CONFIRM_UPGRADE_MIN_RSI: n(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_MIN_RSI, 60),
+  FIRST_ENTRY_CONFIRM_UPGRADE_MIN_ADX: n(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_MIN_ADX, 14),
+  FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_GE_RAY: b(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_GE_RAY, true),
+  FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_ABOVE_EMA8, true),
   FIRST_ENTRY_CONFIRM_ALLOW_CLOSE_NEAR_EMA8: b(process.env.FIRST_ENTRY_CONFIRM_ALLOW_CLOSE_NEAR_EMA8, true),
   FIRST_ENTRY_CONFIRM_MAX_BELOW_EMA8_PCT: n(process.env.FIRST_ENTRY_CONFIRM_MAX_BELOW_EMA8_PCT, 0.08),
   FIRST_ENTRY_WEAK_BLOCK_ENABLED: b(process.env.FIRST_ENTRY_WEAK_BLOCK_ENABLED, true),
@@ -94,6 +109,12 @@ export const CONFIG = {
   FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY: b(process.env.FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY, true),
   FIRST_ENTRY_RECENT_BEARISH_RAY_SEC: n(process.env.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC, 300),
   FIRST_ENTRY_LOG_DEBUG: b(process.env.FIRST_ENTRY_LOG_DEBUG, true),
+  // v6.6a / v6.5b first-entry feature-sync grace.
+  // Handles the safe race condition where a Ray BUY arrives seconds before the fresh 5m feature alert.
+  FIRST_ENTRY_FEATURE_SYNC_ENABLED: b(process.env.FIRST_ENTRY_FEATURE_SYNC_ENABLED, true),
+  FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC: n(process.env.FIRST_ENTRY_FEATURE_SYNC_GRACE_SEC, 10),
+  FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC: n(process.env.FIRST_ENTRY_FEATURE_SYNC_MIN_FEATURE_LAG_SEC, 240),
+  FIRST_ENTRY_FEATURE_SYNC_ONLY_ON_SYNCABLE_REASONS: b(process.env.FIRST_ENTRY_FEATURE_SYNC_ONLY_ON_SYNCABLE_REASONS, true),
 
   // v6.3 defensive exit: failed first-entry launch protection
   FIRST_ENTRY_FAIL_FAST_ENABLED: b(process.env.FIRST_ENTRY_FAIL_FAST_ENABLED, true),
