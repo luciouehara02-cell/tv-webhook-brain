@@ -1,8 +1,8 @@
 /**
- * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
- * Trading logic only. Entry behavior is preserved except for v6.6c first-entry confirm upgrade: a fresh/strong feature after Ray can upgrade a pending confirm into immediate entry or reduce confirm to 1 tick. ATR / structure stop remains exit-only when enabled.
+ * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
  */
 
 import { CONFIG } from "./config.js";
@@ -363,12 +363,19 @@ function clearReentry(reason = "reset") {
   if (S.reentry.eligible) log("🔁 REENTRY_DISABLED", { reason });
   S.reentry = {
     eligible: false,
+    armedAtBar: null,
     eligibleUntilBar: null,
     eligibleFromBar: null,
     exitPrice: null,
     peakBeforeExit: null,
     anchorPrice: null,
     bullRegimeId: null,
+    exitReason: null,
+    exitPnlPct: null,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
 }
 function clearPostExitContinuation(reason = "reset") {
@@ -384,6 +391,10 @@ function clearPostExitContinuation(reason = "reset") {
     bullRegimeId: null,
     exitReason: null,
     exitPnlPct: null,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
 }
 function armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit) {
@@ -396,17 +407,28 @@ function armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit) 
     : Number.isFinite(exitPrice)
     ? exitPrice
     : peakBeforeExit;
+  const adaptiveTpExit = isAdaptiveTpExitReason(reason);
+  const eligibleDelayBars = adaptiveTpExit
+    ? Math.max(1, CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS)
+    : 1;
+  const windowBars = adaptiveTpExit
+    ? Math.max(CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS, CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS)
+    : CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS;
   S.postExitContinuation = {
     active: true,
     armedAtBar: S.barIndex,
-    eligibleFromBar: S.barIndex + 1,
-    expiresBar: S.barIndex + CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS,
+    eligibleFromBar: S.barIndex + eligibleDelayBars,
+    expiresBar: S.barIndex + windowBars,
     exitPrice,
     peakBeforeExit,
     anchorPrice: anchor,
     bullRegimeId: S.ray.bullRegimeId,
     exitReason: reason,
     exitPnlPct,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
   log("🔁 POST_EXIT_CONTINUATION_ARMED", {
     reason,
@@ -517,6 +539,29 @@ function getFvvoSnapshot() {
     burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt),
   };
 }
+function isAdaptiveTpExitReason(reason) {
+  return /^adaptive_tp_/i.test(String(reason || ""));
+}
+function eventAgeSecAt(eventIso, pastIso) {
+  if (!eventIso || !pastIso) return Number.POSITIVE_INFINITY;
+  const eventMs = parseTsMs(eventIso);
+  const pastMs = parseTsMs(pastIso);
+  if (!Number.isFinite(eventMs) || !Number.isFinite(pastMs)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (eventMs - pastMs) / 1000);
+}
+function bearishFvvoRecentAt(eventIso) {
+  const maxSec = CONFIG.POST_ADAPTIVE_TP_REENTRY_BLOCK_BEARISH_FVVO_SEC;
+  if (!Number.isFinite(maxSec) || maxSec <= 0) return false;
+  return eventAgeSecAt(eventIso, S.fvvo.lastSniperSellAt) <= maxSec || eventAgeSecAt(eventIso, S.fvvo.lastBurstBearishAt) <= maxSec;
+}
+function resetPostAdaptiveTpTracking(state) {
+  if (!state) return;
+  state.adaptiveTpResetSeen = false;
+  state.adaptiveTpResetSeenBar = null;
+  state.adaptiveTpResetLow = null;
+  state.adaptiveTpResetReason = null;
+}
+
 export function getFvvoScore() {
   if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot() };
   const snap = getFvvoSnapshot();
@@ -1102,6 +1147,140 @@ function evaluateLaunchEntry(source, body) {
     metrics: { source, triggerPrice, close, chasePct, rsi, adx, ext8, ext18, fvvo: fv, reasons },
   };
 }
+function evaluatePostAdaptiveTpReentryGate(source, state, ctx) {
+  if (!CONFIG.POST_ADAPTIVE_TP_REENTRY_ENABLED) return { allow: true, reason: "disabled" };
+  if (!state || !isAdaptiveTpExitReason(state.exitReason)) return { allow: true, reason: "not_adaptive_tp_exit" };
+
+  const { f, fv, close, ema8, ema18, adx, rsi } = ctx;
+  const eventIso = f?.time || isoNow();
+  const low = Number.isFinite(n(f?.low, NaN)) ? n(f.low, NaN) : close;
+  const high = Number.isFinite(n(f?.high, NaN)) ? n(f.high, NaN) : close;
+  const open = n(f?.open, NaN);
+  const barsSinceExit = S.barIndex - n(state.armedAtBar, S.barIndex);
+  const resetFromPeakPct = Number.isFinite(state.peakBeforeExit) ? Math.max(0, -pctDiff(state.peakBeforeExit, low)) : 0;
+  const resetFromExitPct = Number.isFinite(state.exitPrice) ? Math.max(0, -pctDiff(state.exitPrice, low)) : 0;
+  const touchedEma8 = Number.isFinite(low) && Number.isFinite(ema8) && low <= ema8;
+  const touchedEma18 = Number.isFinite(low) && Number.isFinite(ema18) && low <= ema18;
+  const greenBodyPct = Number.isFinite(open) && Number.isFinite(close) ? pctDiff(open, close) : 0;
+
+  const resetReasons = [];
+  if (resetFromPeakPct >= CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_PEAK_PCT) resetReasons.push("reset_from_peak");
+  if (resetFromExitPct >= CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_EXIT_PCT) resetReasons.push("reset_from_exit");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA8_TOUCH_RESET && touchedEma8) resetReasons.push("ema8_touch");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA18_TOUCH_RESET && touchedEma18) resetReasons.push("ema18_touch");
+
+  if (resetReasons.length > 0) {
+    const betterLow = !Number.isFinite(n(state.adaptiveTpResetLow, NaN)) || low < n(state.adaptiveTpResetLow, Infinity);
+    const firstReset = !state.adaptiveTpResetSeen;
+    state.adaptiveTpResetSeen = true;
+    if (firstReset || betterLow) {
+      state.adaptiveTpResetSeenBar = S.barIndex;
+      state.adaptiveTpResetLow = low;
+      state.adaptiveTpResetReason = resetReasons[0];
+      if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+        log("🔁 POST_ADAPTIVE_TP_RESET_SEEN", {
+          source,
+          reason: resetReasons[0],
+          barIndex: S.barIndex,
+          low: round4(low),
+          close: round4(close),
+          exitPrice: round4(state.exitPrice),
+          peakBeforeExit: round4(state.peakBeforeExit),
+          resetFromPeakPct: round4(resetFromPeakPct),
+          resetFromExitPct: round4(resetFromExitPct),
+          touchedEma8,
+          touchedEma18,
+          eventIso,
+        });
+      }
+    }
+  }
+
+  if (barsSinceExit < CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS) {
+    if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+      log("🔁 POST_ADAPTIVE_TP_WAIT_RESET", {
+        source,
+        reason: "cooldown_bars",
+        barsSinceExit,
+        requiredBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS,
+        close: round4(close),
+        resetSeen: !!state.adaptiveTpResetSeen,
+        eventIso,
+      });
+    }
+    return { allow: false, reason: "post_adaptive_tp_cooldown", metrics: { barsSinceExit } };
+  }
+
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_RESET && !state.adaptiveTpResetSeen) {
+    if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+      log("🔁 POST_ADAPTIVE_TP_WAIT_RESET", {
+        source,
+        reason: "reset_not_seen",
+        close: round4(close),
+        low: round4(low),
+        exitPrice: round4(state.exitPrice),
+        peakBeforeExit: round4(state.peakBeforeExit),
+        resetFromPeakPct: round4(resetFromPeakPct),
+        resetFromExitPct: round4(resetFromExitPct),
+        touchedEma8,
+        touchedEma18,
+        eventIso,
+      });
+    }
+    return { allow: false, reason: "post_adaptive_tp_wait_reset", metrics: { resetFromPeakPct, resetFromExitPct, touchedEma8, touchedEma18 } };
+  }
+
+  if (!CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_RECLAIM) {
+    return { allow: true, reason: "post_adaptive_tp_reset_ok" };
+  }
+
+  const resetLow = Number.isFinite(n(state.adaptiveTpResetLow, NaN)) ? n(state.adaptiveTpResetLow, NaN) : low;
+  const chaseFromReclaimPct = Number.isFinite(resetLow) ? pctDiff(resetLow, close) : 0;
+  const closeAboveEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8;
+  const ema8AboveEma18 = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18;
+  const bearishRecent = bearishFvvoRecentAt(eventIso) || !!fv?.snap?.sniperSell || !!fv?.snap?.burstBearish;
+  const reasons = [];
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8) reasons.push("close_not_above_ema8");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_EMA8_ABOVE_EMA18 && !ema8AboveEma18) reasons.push("ema8_not_above_ema18");
+  if (Number.isFinite(rsi) && rsi < CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_RSI) reasons.push("rsi_too_low");
+  if (Number.isFinite(adx) && adx < CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_ADX) reasons.push("adx_too_low");
+  if (chaseFromReclaimPct > CONFIG.POST_ADAPTIVE_TP_REENTRY_MAX_CHASE_FROM_RECLAIM_PCT) reasons.push("reclaim_chase_too_high");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_GREEN_BODY && greenBodyPct < CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_GREEN_BODY_PCT) reasons.push("green_body_too_small");
+  if (bearishRecent) reasons.push("recent_bearish_fvvo");
+
+  const payload = {
+    source,
+    allow: reasons.length === 0,
+    reason: reasons[0] || "post_adaptive_tp_reset_reclaim",
+    barIndex: S.barIndex,
+    barsSinceExit,
+    barsSinceReset: S.barIndex - n(state.adaptiveTpResetSeenBar, S.barIndex),
+    close: round4(close),
+    high: round4(high),
+    low: round4(low),
+    resetLow: round4(resetLow),
+    exitPrice: round4(state.exitPrice),
+    peakBeforeExit: round4(state.peakBeforeExit),
+    resetFromPeakPct: round4(resetFromPeakPct),
+    resetFromExitPct: round4(resetFromExitPct),
+    chaseFromReclaimPct: round4(chaseFromReclaimPct),
+    greenBodyPct: round4(greenBodyPct),
+    rsi: round4(rsi),
+    adx: round4(adx),
+    closeAboveEma8,
+    ema8AboveEma18,
+    bearishRecent,
+    resetReason: state.adaptiveTpResetReason,
+    eventIso,
+  };
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) log("🔁 POST_ADAPTIVE_TP_RECLAIM_CHECK", payload);
+
+  if (reasons.length > 0) {
+    return { allow: false, reason: `post_adaptive_tp_${reasons[0]}`, metrics: payload };
+  }
+  return { allow: true, reason: "post_adaptive_tp_reset_reclaim", metrics: payload };
+}
+
 function evaluateFeatureReentry(source, body) {
   const ctx = baseFeatureEntryContext();
   if (!ctx.ok) return { allow: false, reason: ctx.reason };
@@ -1118,6 +1297,13 @@ function evaluateFeatureReentry(source, body) {
     if (S.barIndex < S.reentry.eligibleFromBar) return { allow: false, reason: "reentry_too_early" };
     if (S.barIndex > S.reentry.eligibleUntilBar) return { allow: false, reason: "reentry_expired" };
   }
+
+  const postAdaptiveGate = evaluatePostAdaptiveTpReentryGate(source, state, { f, fv, close, ema8, ema18, adx, rsi, ext18 });
+  if (!postAdaptiveGate.allow) {
+    return { allow: false, reason: postAdaptiveGate.reason, metrics: postAdaptiveGate.metrics || {} };
+  }
+  const postAdaptiveGateReason = postAdaptiveGate.reason;
+
   let maxChase = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
   let minRsi = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MIN_RSI : CONFIG.FAST_REENTRY_MIN_RSI;
   let minAdx = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MIN_ADX : CONFIG.FAST_REENTRY_MIN_ADX;
@@ -1158,7 +1344,7 @@ function evaluateFeatureReentry(source, body) {
   const allow = reasons.length === 0 || strongPostExit || strongReentry;
   return {
     allow,
-    reason: allow ? (strongPostExit || strongReentry ? "strong_reentry_override" : "reentry_ok") : reasons[0],
+    reason: allow ? (postAdaptiveGateReason === "post_adaptive_tp_reset_reclaim" ? "post_adaptive_tp_reset_reclaim" : strongPostExit || strongReentry ? "strong_reentry_override" : "reentry_ok") : reasons[0],
     mode:
       source === "post_exit_continuation_reentry"
         ? strongPostExit
@@ -1168,7 +1354,7 @@ function evaluateFeatureReentry(source, body) {
         ? "feature_pullback_reclaim_reentry_long_strong"
         : "feature_pullback_reclaim_reentry_long",
     stop: Number.isFinite(ema18) ? ema18 * (1 - CONFIG.HARD_STOP_PCT / 100) : close * (1 - CONFIG.HARD_STOP_PCT / 100),
-    metrics: { source, anchor, close, chasePct, resetPct, rsi, adx, ext18, fvvo: fv, reasons, strongPostExit, strongReentry },
+    metrics: { source, anchor, close, chasePct, resetPct, rsi, adx, ext18, fvvo: fv, reasons, strongPostExit, strongReentry, postAdaptiveGateReason },
   };
 }
 function evaluateElevatedContinuation(source, body) {
@@ -1270,6 +1456,13 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   S.peakPrice = price;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
+  S.adaptiveTp = {
+    armed: false,
+    profile: null,
+    level: null,
+    lastExitLinePct: null,
+    lastAllowedGivebackPct: null,
+  };
   S.lastEnterAtMs = actionClockMs(eventIso);
   S.lastAction = "enter";
   S.cycleState = "long";
@@ -1311,22 +1504,308 @@ function dynamicTpGivebackForTier(tier) {
   if (tier === 1) return CONFIG.DTP_TIER1_GIVEBACK_PCT;
   return null;
 }
-function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv) {
+function adaptiveTpProfileForMode(mode = S.entryMode) {
+  const m = String(mode || "");
+  const strongReentry = /reentry.*strong|strong.*reentry/i.test(m);
+  const reentry = isReentryHarvestMode(m) || isProtectedContinuationMode(m);
+
+  if (strongReentry) {
+    return {
+      name: "strong_reentry",
+      armPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_ARM_PCT,
+      tier1Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_TIER1_PCT,
+      midPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_MID_PCT,
+      tier2Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_TIER2_PCT,
+      abovePct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_ABOVE_PCT,
+      givebackArmPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_ARM_PCT,
+      givebackTier1Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_TIER1_PCT,
+      givebackMidPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_MID_PCT,
+      givebackTier2Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_TIER2_PCT,
+      givebackAbovePct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_ABOVE_PCT,
+    };
+  }
+
+  if (reentry) {
+    return {
+      name: "reentry",
+      armPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_ARM_PCT,
+      tier1Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_TIER1_PCT,
+      midPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_MID_PCT,
+      tier2Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_TIER2_PCT,
+      abovePct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_ABOVE_PCT,
+      givebackArmPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_ARM_PCT,
+      givebackTier1Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_TIER1_PCT,
+      givebackMidPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_MID_PCT,
+      givebackTier2Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_TIER2_PCT,
+      givebackAbovePct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_ABOVE_PCT,
+    };
+  }
+
+  return {
+    name: "first",
+    armPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_ARM_PCT,
+    tier1Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_TIER1_PCT,
+    midPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_MID_PCT,
+    tier2Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_TIER2_PCT,
+    abovePct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_ABOVE_PCT,
+    givebackArmPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_ARM_PCT,
+    givebackTier1Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_TIER1_PCT,
+    givebackMidPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_MID_PCT,
+    givebackTier2Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_TIER2_PCT,
+    givebackAbovePct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_ABOVE_PCT,
+  };
+}
+function adaptiveTpLevelForPeak(peakPnlPct, profile) {
+  if (!Number.isFinite(peakPnlPct) || !profile) return null;
+  if (peakPnlPct >= profile.abovePct) return { level: "above", allowedGivebackPct: profile.givebackAbovePct, thresholdPct: profile.abovePct };
+  if (peakPnlPct >= profile.tier2Pct) return { level: "tier2", allowedGivebackPct: profile.givebackTier2Pct, thresholdPct: profile.tier2Pct };
+  if (peakPnlPct >= profile.midPct) return { level: "mid", allowedGivebackPct: profile.givebackMidPct, thresholdPct: profile.midPct };
+  if (peakPnlPct >= profile.tier1Pct) return { level: "tier1", allowedGivebackPct: profile.givebackTier1Pct, thresholdPct: profile.tier1Pct };
+  if (peakPnlPct >= profile.armPct) return { level: "arm", allowedGivebackPct: profile.givebackArmPct, thresholdPct: profile.armPct };
+  return null;
+}
+function adaptiveTpNetPnl(pnlPct) {
+  return pnlPct - CONFIG.FEE_ROUND_TRIP_PCT - CONFIG.SLIPPAGE_BUFFER_PCT;
+}
+function adaptiveTpMinGrossExitPct(profile = null) {
+  const profileMin = profile?.name === "reentry" ? Math.min(CONFIG.DYNAMIC_TP_MIN_GROSS_EXIT_PNL_PCT, 0.30) : CONFIG.DYNAMIC_TP_MIN_GROSS_EXIT_PNL_PCT;
+  return Number.isFinite(profileMin) ? profileMin : 0.35;
+}
+function refreshAdaptiveTpState(profile, levelInfo, exitLinePct) {
+  if (!S.adaptiveTp) {
+    S.adaptiveTp = { armed: false, profile: null, level: null, lastExitLinePct: null, lastAllowedGivebackPct: null };
+  }
+  const wasArmed = !!S.adaptiveTp.armed;
+  const levelChanged = S.adaptiveTp.level !== levelInfo.level || S.adaptiveTp.profile !== profile.name;
+  const exitLineImproved = !Number.isFinite(n(S.adaptiveTp.lastExitLinePct, NaN)) || exitLinePct > n(S.adaptiveTp.lastExitLinePct, -Infinity) + 0.0001;
+
+  S.adaptiveTp = {
+    armed: true,
+    profile: profile.name,
+    level: levelInfo.level,
+    lastExitLinePct: exitLinePct,
+    lastAllowedGivebackPct: levelInfo.allowedGivebackPct,
+  };
+
+  if (CONFIG.DYNAMIC_TP_ADAPTIVE_LOG && (!wasArmed || levelChanged || exitLineImproved)) {
+    const label = !wasArmed ? "🎯 ADAPTIVE_TP_ARMED" : levelChanged ? "🎯 ADAPTIVE_TP_LEVEL_UP" : "🎯 ADAPTIVE_TP_TRAIL_UPDATE";
+    log(label, {
+      profile: profile.name,
+      level: levelInfo.level,
+      peakPnlPct: round4(S.peakPnlPct),
+      allowedGivebackPct: round4(levelInfo.allowedGivebackPct),
+      exitLinePct: round4(exitLinePct),
+      entryMode: S.entryMode,
+    });
+  }
+}
+function adaptiveTpDecision(price, pnlPct, feature = S.lastFeature, eventIso = isoNow(), source = "tick") {
+  if (!CONFIG.DYNAMIC_TP_ENABLED || !CONFIG.DYNAMIC_TP_ADAPTIVE_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return { allow: false, reason: "flat_or_bad_price" };
+
+  const profile = adaptiveTpProfileForMode(S.entryMode);
+  const peakPnlPct = Math.max(n(S.peakPnlPct, pnlPct), pnlPct);
+  const levelInfo = adaptiveTpLevelForPeak(peakPnlPct, profile);
+  if (!levelInfo || !Number.isFinite(levelInfo.allowedGivebackPct)) return { allow: false, reason: "not_armed", profile: profile.name, peakPnlPct };
+
+  const pnlGiveback = Math.max(0, peakPnlPct - pnlPct);
+  const exitLinePct = peakPnlPct - levelInfo.allowedGivebackPct;
+  refreshAdaptiveTpState(profile, levelInfo, exitLinePct);
+
+  const minGrossExitPct = adaptiveTpMinGrossExitPct(profile);
+  const netPnlPct = adaptiveTpNetPnl(pnlPct);
+  const grossOk = pnlPct >= minGrossExitPct;
+  const netOk = netPnlPct >= CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT;
+  const givebackHit = pnlGiveback >= levelInfo.allowedGivebackPct && pnlPct <= exitLinePct + 0.0001;
+
+  if (givebackHit && grossOk && netOk) {
+    return {
+      allow: true,
+      reason: `adaptive_tp_${profile.name}_${levelInfo.level}_giveback`,
+      profile: profile.name,
+      level: levelInfo.level,
+      source,
+      pnlPct,
+      peakPnlPct,
+      pnlGiveback,
+      allowedGivebackPct: levelInfo.allowedGivebackPct,
+      exitLinePct,
+      minGrossExitPct,
+      netPnlPct,
+      minNetExitPct: CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT,
+    };
+  }
+
+  if (CONFIG.DYNAMIC_TP_ADAPTIVE_LOG && givebackHit && (!grossOk || !netOk)) {
+    log("🎯 ADAPTIVE_TP_HOLD_MIN_PROFIT", {
+      source,
+      profile: profile.name,
+      level: levelInfo.level,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      pnlGiveback: round4(pnlGiveback),
+      allowedGivebackPct: round4(levelInfo.allowedGivebackPct),
+      exitLinePct: round4(exitLinePct),
+      grossOk,
+      netOk,
+      minGrossExitPct: round4(minGrossExitPct),
+      netPnlPct: round4(netPnlPct),
+      minNetExitPct: round4(CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT),
+      entryMode: S.entryMode,
+      eventIso,
+    });
+  }
+
+  return {
+    allow: false,
+    reason: givebackHit ? "min_profit_not_met" : "giveback_not_hit",
+    profile: profile.name,
+    level: levelInfo.level,
+    pnlPct,
+    peakPnlPct,
+    pnlGiveback,
+    allowedGivebackPct: levelInfo.allowedGivebackPct,
+    exitLinePct,
+    minGrossExitPct,
+    netPnlPct,
+  };
+}
+function adaptiveTpOneBarPullbackDecision(feature, pnlPct, fv, eventIso = isoNow()) {
+  if (!CONFIG.DYNAMIC_TP_ENABLED || !CONFIG.DYNAMIC_TP_ADAPTIVE_ENABLED || !CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition || !feature || !S.prevFeature) return { allow: false, reason: "missing_feature" };
+
+  const profile = adaptiveTpProfileForMode(S.entryMode);
+  const peakPnlPct = Math.max(n(S.peakPnlPct, pnlPct), pnlPct);
+  const minPeakPct = Math.max(CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_MIN_PEAK_PCT, profile.tier1Pct);
+  if (peakPnlPct < minPeakPct) return { allow: false, reason: "peak_too_low" };
+
+  const close = n(feature.close, NaN);
+  const prevClose = n(S.prevFeature.close, NaN);
+  const prevHigh = n(S.prevFeature.high, NaN);
+  const high = n(feature.high, NaN);
+  if (!Number.isFinite(close) || !Number.isFinite(prevClose)) return { allow: false, reason: "bad_close" };
+
+  const oneBarPullback = close < prevClose;
+  const failedToMakeNewHigh = Number.isFinite(high) && Number.isFinite(prevHigh) ? high <= prevHigh : true;
+  const pnlGiveback = Math.max(0, peakPnlPct - pnlPct);
+  const minGivebackOk = pnlGiveback >= CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_MIN_GIVEBACK_PCT;
+  const minGross = Math.max(CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_MIN_EXIT_PNL_PCT, adaptiveTpMinGrossExitPct(profile));
+  const grossOk = pnlPct >= minGross;
+  const netPnlPct = adaptiveTpNetPnl(pnlPct);
+  const netOk = netPnlPct >= CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT;
+  const bearishHint = !!(fv?.snap?.sniperSell || fv?.snap?.burstBearish || n(fv?.score, 0) < 0 || close < n(feature.ema8, -Infinity));
+
+  if (oneBarPullback && failedToMakeNewHigh && minGivebackOk && grossOk && netOk) {
+    return {
+      allow: true,
+      reason: `adaptive_tp_${profile.name}_one_bar_pullback`,
+      profile: profile.name,
+      source: "feature",
+      pnlPct,
+      peakPnlPct,
+      pnlGiveback,
+      minGrossExitPct: minGross,
+      netPnlPct,
+      oneBarPullback,
+      failedToMakeNewHigh,
+      bearishHint,
+      eventIso,
+    };
+  }
+  return { allow: false, reason: "one_bar_not_hit", profile: profile.name, pnlPct, peakPnlPct, pnlGiveback, oneBarPullback, failedToMakeNewHigh, minGivebackOk, grossOk, netOk, bearishHint };
+}
+function logAdaptiveTpForceExit(decision) {
+  if (!CONFIG.DYNAMIC_TP_ADAPTIVE_LOG) return;
+  log("🎯⚠️ ADAPTIVE_TP_FORCE_EXIT", {
+    reason: decision.reason,
+    source: decision.source,
+    profile: decision.profile,
+    level: decision.level || null,
+    pnlPct: round4(decision.pnlPct),
+    peakPnlPct: round4(decision.peakPnlPct),
+    pnlGiveback: round4(decision.pnlGiveback),
+    allowedGivebackPct: round4(decision.allowedGivebackPct),
+    exitLinePct: round4(decision.exitLinePct),
+    minGrossExitPct: round4(decision.minGrossExitPct),
+    netPnlPct: round4(decision.netPnlPct),
+    entryMode: S.entryMode,
+  });
+}
+function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv, ctx = {}) {
   if (!CONFIG.LAUNCH_TP_PROTECTION_ENABLED) return false;
   if (!isLaunchMode(S.entryMode)) return false;
   if (tier !== 1 || !CONFIG.LAUNCH_TP_PROTECTION_BLOCK_TIER1) return false;
+
   const adx = n(feature?.adx, NaN);
   const rsi = n(feature?.rsi, NaN);
   const close = n(feature?.close, NaN);
   const ema8 = n(feature?.ema8, NaN);
+  const peakPnlPct = n(ctx?.peakPnlPct, NaN);
+  const pnlGiveback = n(ctx?.pnlGiveback, NaN);
+  const forceTier1Exit = !!ctx?.forceTier1Exit;
+  const adaptiveTpExit = !!ctx?.adaptiveTpExit;
+
   const adxOk = Number.isFinite(adx) && adx >= CONFIG.LAUNCH_TP_PROTECTION_MIN_ADX;
   const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.LAUNCH_TP_PROTECTION_MIN_RSI;
   const profitTooEarly = pnlPct < CONFIG.LAUNCH_TP_PROTECTION_MIN_PROFIT_PCT;
   const priceAboveEma8Ok = !CONFIG.LAUNCH_TP_PROTECTION_REQUIRE_PRICE_ABOVE_EMA8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
-  const bullishFvvoHold = CONFIG.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && fv.score > 0;
+  const belowEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close < ema8;
+  const bearishFvvo = !!(fv?.snap?.sniperSell || fv?.snap?.burstBearish || n(fv?.score, 0) < 0);
+  const bullishFvvoHold = CONFIG.LAUNCH_TP_PROTECTION_BLOCK_IF_BULLISH_FVVO && n(fv?.score, 0) > 0;
+
+  const maxGivebackHit =
+    CONFIG.LAUNCH_TP_PROTECTION_FORCE_ALLOW_ON_MAX_GIVEBACK &&
+    Number.isFinite(pnlGiveback) &&
+    Number.isFinite(CONFIG.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT) &&
+    pnlGiveback >= CONFIG.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT;
+  const bearishOverride = CONFIG.LAUNCH_TP_PROTECTION_DISABLE_ON_BEARISH_FVVO && bearishFvvo;
+  const belowEma8Override = CONFIG.LAUNCH_TP_PROTECTION_DISABLE_BELOW_EMA8 && belowEma8;
+
+  if (adaptiveTpExit || forceTier1Exit || maxGivebackHit || bearishOverride || belowEma8Override) {
+    if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+      const reasons = [];
+      if (adaptiveTpExit) reasons.push("adaptive_tp_exit");
+      if (forceTier1Exit) reasons.push("tier1_force_exit_giveback");
+      if (maxGivebackHit) reasons.push("max_giveback_hit");
+      if (bearishOverride) reasons.push("bearish_fvvo");
+      if (belowEma8Override) reasons.push("below_ema8");
+      log("🟦✅ LAUNCH_TP_PROTECTION_OVERRIDE", {
+        block: false,
+        reasons,
+        entryMode: S.entryMode,
+        tier,
+        pnlPct: round4(pnlPct),
+        peakPnlPct: round4(peakPnlPct),
+        pnlGiveback: round4(pnlGiveback),
+        maxGivebackPct: round4(CONFIG.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT),
+        adx: round4(adx),
+        rsi: round4(rsi),
+        priceAboveEma8Ok,
+        belowEma8,
+        bearishFvvo,
+        fvvo: fv,
+      });
+    }
+    return false;
+  }
+
   const block = profitTooEarly || ((adxOk && rsiOk && priceAboveEma8Ok) || bullishFvvoHold);
   if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
-    log("🟦 LAUNCH_TP_PROTECTION_CHECK", { block, entryMode: S.entryMode, tier, pnlPct: round4(pnlPct), adx: round4(adx), rsi: round4(rsi), priceAboveEma8Ok, bullishFvvoHold, fvvo: fv });
+    log("🟦 LAUNCH_TP_PROTECTION_CHECK", {
+      block,
+      entryMode: S.entryMode,
+      tier,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      pnlGiveback: round4(pnlGiveback),
+      adx: round4(adx),
+      rsi: round4(rsi),
+      priceAboveEma8Ok,
+      belowEma8,
+      bearishFvvo,
+      bullishFvvoHold,
+      fvvo: fv,
+    });
   }
   return block;
 }
@@ -1812,22 +2291,53 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
       : (pnlPct >= 0 ? "cycle_exit" : "stop_exit");
     return doExit(stopReason, price, eventIso, exitClass);
   }
-  if (CONFIG.DYNAMIC_TP_ENABLED && S.dynamicTpTier > 0) {
-    const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
+  if (CONFIG.DYNAMIC_TP_ENABLED) {
     const peakPnl = S.peakPnlPct || 0;
     const pnlGiveback = peakPnl - pnlPct;
     const fv = getFvvoScore();
     const feature = S.lastFeature;
-    if (Number.isFinite(giveback) && pnlGiveback >= giveback) {
-      if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
-        log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
-        return;
+
+    const adaptiveTp = adaptiveTpDecision(price, pnlPct, feature, eventIso, "tick");
+    if (adaptiveTp.allow) {
+      logAdaptiveTpForceExit(adaptiveTp);
+      return doExit(adaptiveTp.reason, price, eventIso, "cycle_exit");
+    }
+
+    if (S.dynamicTpTier > 0) {
+      const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
+      const normalGivebackHit = Number.isFinite(giveback) && pnlGiveback >= giveback;
+      const forceTier1Exit =
+        S.dynamicTpTier === 1 &&
+        Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT) &&
+        Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT) &&
+        pnlGiveback >= CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT &&
+        pnlPct >= CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT;
+
+      if (normalGivebackHit || forceTier1Exit) {
+        const tpReason = forceTier1Exit && !normalGivebackHit
+          ? `dynamic_tp_tier${S.dynamicTpTier}_force_giveback`
+          : `dynamic_tp_tier${S.dynamicTpTier}_giveback`;
+        if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv, { peakPnlPct: peakPnl, pnlGiveback, forceTier1Exit })) {
+          log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
+          return;
+        }
+        if (shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+          log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
+          return;
+        }
+        if (forceTier1Exit && CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+          log("🎯⚠️ DYNAMIC_TP_TIER1_FORCE_EXIT", {
+            reason: tpReason,
+            pnlPct: round4(pnlPct),
+            peakPnlPct: round4(peakPnl),
+            pnlGiveback: round4(pnlGiveback),
+            forceGivebackPct: round4(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT),
+            minExitPnlPct: round4(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT),
+            entryMode: S.entryMode,
+          });
+        }
+        return doExit(tpReason, price, eventIso, "cycle_exit");
       }
-      if (shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
-        log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
-        return;
-      }
-      return doExit(`dynamic_tp_tier${S.dynamicTpTier}_giveback`, price, eventIso, "cycle_exit");
     }
   } else {
     const drawFromPeakPct = Number.isFinite(S.peakPrice) ? -pctDiff(S.peakPrice, price) : 0;
@@ -1887,7 +2397,6 @@ function shouldFirstEntryFailFastExit(feature, pnlPct) {
   reasonPush(reasons, !minHeldOk, "too_early_min_held");
   reasonPush(reasons, !maxHeldOk, "too_late_max_held");
   reasonPush(reasons, !lossOk, "loss_not_deep_enough");
-  reasonPush(reasons, !peakStillFailed, "peak_progress_too_high_for_thesis_fail");
   reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
   reasonPush(reasons, !supportFail, "ema_support_not_failed");
 
@@ -2043,7 +2552,6 @@ function shouldFirstEntryThesisFailExit(feature, pnlPct, fv) {
   reasonPush(reasons, !minBarsOk, "too_early_thesis_fail_window");
   reasonPush(reasons, !maxBarsOk, "outside_thesis_fail_window");
   reasonPush(reasons, !lossOk, "loss_not_deep_enough");
-  reasonPush(reasons, !peakStillFailed, "peak_progress_too_high_for_thesis_fail");
   reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
   reasonPush(reasons, !ema8Ok, "close_not_below_ema8");
   reasonPush(reasons, !ema18Ok, "close_not_below_ema18");
@@ -2111,6 +2619,12 @@ function evaluateBarExit(feature) {
         : (pnlPct >= 0 ? "cycle_exit" : "stop_exit");
       return doExit(stopReason, price, feature.time, exitClass);
     }
+  }
+
+  const adaptiveBarPullback = adaptiveTpOneBarPullbackDecision(feature, pnlPct, fv, feature.time);
+  if (adaptiveBarPullback.allow) {
+    logAdaptiveTpForceExit(adaptiveBarPullback);
+    return doExit(adaptiveBarPullback.reason, price, feature.time, "cycle_exit");
   }
 
   const reentryHarvest = shouldReentryTopHarvestExit(feature, pnlPct, fv);
@@ -2224,14 +2738,28 @@ function markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit) {
   if (!S.ray.bullContext) return;
   if (S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME) return;
   const anchor = Number.isFinite(S.lastFeature?.ema8) ? S.lastFeature.ema8 : Number.isFinite(exitPrice) ? exitPrice : peakBeforeExit;
+  const adaptiveTpExit = isAdaptiveTpExitReason(reason);
+  const eligibleDelayBars = adaptiveTpExit
+    ? Math.max(CONFIG.REENTRY_MIN_BARS_AFTER_EXIT, CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS)
+    : CONFIG.REENTRY_MIN_BARS_AFTER_EXIT;
+  const eligibleWindowBars = adaptiveTpExit
+    ? Math.max(6, CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS)
+    : 6;
   S.reentry = {
     eligible: true,
-    eligibleUntilBar: S.barIndex + 6,
-    eligibleFromBar: S.barIndex + CONFIG.REENTRY_MIN_BARS_AFTER_EXIT,
+    armedAtBar: S.barIndex,
+    eligibleUntilBar: S.barIndex + eligibleWindowBars,
+    eligibleFromBar: S.barIndex + eligibleDelayBars,
     exitPrice,
     peakBeforeExit,
     anchorPrice: anchor,
     bullRegimeId: S.ray.bullRegimeId,
+    exitReason: reason,
+    exitPnlPct,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
   S.cycleState = "tp_exit_wait_reentry";
   log("🔁 TP_EXIT_WAIT_REENTRY", {
@@ -2323,6 +2851,13 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   S.peakPrice = null;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
+  S.adaptiveTp = {
+    armed: false,
+    profile: null,
+    level: null,
+    lastExitLinePct: null,
+    lastAllowedGivebackPct: null,
+  };
   S.lastExitAtMs = actionClockMs(ts);
   S.lastAction = "exit";
   S.lastExitClass = exitClass;

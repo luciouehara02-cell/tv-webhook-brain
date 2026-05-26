@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
- * Source behavior: v6.5a + ATR / structure stop exit layer + strong-feature first-entry confirm upgrade
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
  */
@@ -35,6 +35,13 @@ export function buildInitialRuntimeState() {
     peakPrice: null,
     peakPnlPct: 0,
     dynamicTpTier: 0,
+    adaptiveTp: {
+      armed: false,
+      profile: null,
+      level: null,
+      lastExitLinePct: null,
+      lastAllowedGivebackPct: null,
+    },
     cooldownUntilMs: 0,
     lastEnterAtMs: 0,
     lastExitAtMs: 0,
@@ -108,12 +115,19 @@ export function buildInitialRuntimeState() {
     },
     reentry: {
       eligible: false,
+      armedAtBar: null,
       eligibleUntilBar: null,
       eligibleFromBar: null,
       exitPrice: null,
       peakBeforeExit: null,
       anchorPrice: null,
       bullRegimeId: null,
+      exitReason: null,
+      exitPnlPct: null,
+      adaptiveTpResetSeen: false,
+      adaptiveTpResetSeenBar: null,
+      adaptiveTpResetLow: null,
+      adaptiveTpResetReason: null,
     },
     postExitContinuation: {
       active: false,
@@ -126,6 +140,10 @@ export function buildInitialRuntimeState() {
       bullRegimeId: null,
       exitReason: null,
       exitPnlPct: null,
+      adaptiveTpResetSeen: false,
+      adaptiveTpResetSeenBar: null,
+      adaptiveTpResetLow: null,
+      adaptiveTpResetReason: null,
     },
     trendChangeLaunch: {
       pending: false,

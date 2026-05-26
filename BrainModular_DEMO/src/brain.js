@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6c_ATR_STRUCTURE_SYNC
- * Source behavior: v6.5a + ATR / structure stop exit layer + strong-feature first-entry confirm upgrade
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
  */
@@ -52,6 +52,27 @@ export function getStatus() {
     peakPrice: S.peakPrice,
     peakPnlPct: S.peakPnlPct,
     dynamicTpTier: S.dynamicTpTier,
+    adaptiveTp: S.adaptiveTp,
+    adaptiveTpConfig: {
+      enabled: CONFIG.DYNAMIC_TP_ADAPTIVE_ENABLED,
+      minGrossExitPnlPct: CONFIG.DYNAMIC_TP_MIN_GROSS_EXIT_PNL_PCT,
+      minNetExitPnlPct: CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT,
+      feeRoundTripPct: CONFIG.FEE_ROUND_TRIP_PCT,
+      slippageBufferPct: CONFIG.SLIPPAGE_BUFFER_PCT,
+      oneBarPullbackEnabled: CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_ENABLED,
+    },
+    postAdaptiveTpReentryConfig: {
+      enabled: CONFIG.POST_ADAPTIVE_TP_REENTRY_ENABLED,
+      cooldownBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS,
+      windowBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS,
+      minResetFromPeakPct: CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_PEAK_PCT,
+      minResetFromExitPct: CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_EXIT_PCT,
+      allowEma8TouchReset: CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA8_TOUCH_RESET,
+      allowEma18TouchReset: CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA18_TOUCH_RESET,
+      reclaimMinRsi: CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_RSI,
+      reclaimMinAdx: CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_ADX,
+      maxChaseFromReclaimPct: CONFIG.POST_ADAPTIVE_TP_REENTRY_MAX_CHASE_FROM_RECLAIM_PCT,
+    },
     cooldownUntil: S.cooldownUntilMs ? new Date(S.cooldownUntilMs).toISOString() : null,
     bullContext: S.ray.bullContext,
     bullRegimeId: S.ray.bullRegimeId,
