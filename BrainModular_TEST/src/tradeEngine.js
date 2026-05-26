@@ -1,8 +1,8 @@
 /**
- * BrainRAY_Continuation_v6.6d_ATR_STRUCTURE_SYNC_ADAPTIVE_TP
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
- * Trading logic only. v6.6d keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
+ * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
  */
 
 import { CONFIG } from "./config.js";
@@ -363,12 +363,19 @@ function clearReentry(reason = "reset") {
   if (S.reentry.eligible) log("🔁 REENTRY_DISABLED", { reason });
   S.reentry = {
     eligible: false,
+    armedAtBar: null,
     eligibleUntilBar: null,
     eligibleFromBar: null,
     exitPrice: null,
     peakBeforeExit: null,
     anchorPrice: null,
     bullRegimeId: null,
+    exitReason: null,
+    exitPnlPct: null,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
 }
 function clearPostExitContinuation(reason = "reset") {
@@ -384,6 +391,10 @@ function clearPostExitContinuation(reason = "reset") {
     bullRegimeId: null,
     exitReason: null,
     exitPnlPct: null,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
 }
 function armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit) {
@@ -396,17 +407,28 @@ function armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit) 
     : Number.isFinite(exitPrice)
     ? exitPrice
     : peakBeforeExit;
+  const adaptiveTpExit = isAdaptiveTpExitReason(reason);
+  const eligibleDelayBars = adaptiveTpExit
+    ? Math.max(1, CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS)
+    : 1;
+  const windowBars = adaptiveTpExit
+    ? Math.max(CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS, CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS)
+    : CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS;
   S.postExitContinuation = {
     active: true,
     armedAtBar: S.barIndex,
-    eligibleFromBar: S.barIndex + 1,
-    expiresBar: S.barIndex + CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS,
+    eligibleFromBar: S.barIndex + eligibleDelayBars,
+    expiresBar: S.barIndex + windowBars,
     exitPrice,
     peakBeforeExit,
     anchorPrice: anchor,
     bullRegimeId: S.ray.bullRegimeId,
     exitReason: reason,
     exitPnlPct,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
   log("🔁 POST_EXIT_CONTINUATION_ARMED", {
     reason,
@@ -517,6 +539,29 @@ function getFvvoSnapshot() {
     burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt),
   };
 }
+function isAdaptiveTpExitReason(reason) {
+  return /^adaptive_tp_/i.test(String(reason || ""));
+}
+function eventAgeSecAt(eventIso, pastIso) {
+  if (!eventIso || !pastIso) return Number.POSITIVE_INFINITY;
+  const eventMs = parseTsMs(eventIso);
+  const pastMs = parseTsMs(pastIso);
+  if (!Number.isFinite(eventMs) || !Number.isFinite(pastMs)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (eventMs - pastMs) / 1000);
+}
+function bearishFvvoRecentAt(eventIso) {
+  const maxSec = CONFIG.POST_ADAPTIVE_TP_REENTRY_BLOCK_BEARISH_FVVO_SEC;
+  if (!Number.isFinite(maxSec) || maxSec <= 0) return false;
+  return eventAgeSecAt(eventIso, S.fvvo.lastSniperSellAt) <= maxSec || eventAgeSecAt(eventIso, S.fvvo.lastBurstBearishAt) <= maxSec;
+}
+function resetPostAdaptiveTpTracking(state) {
+  if (!state) return;
+  state.adaptiveTpResetSeen = false;
+  state.adaptiveTpResetSeenBar = null;
+  state.adaptiveTpResetLow = null;
+  state.adaptiveTpResetReason = null;
+}
+
 export function getFvvoScore() {
   if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot() };
   const snap = getFvvoSnapshot();
@@ -1102,6 +1147,140 @@ function evaluateLaunchEntry(source, body) {
     metrics: { source, triggerPrice, close, chasePct, rsi, adx, ext8, ext18, fvvo: fv, reasons },
   };
 }
+function evaluatePostAdaptiveTpReentryGate(source, state, ctx) {
+  if (!CONFIG.POST_ADAPTIVE_TP_REENTRY_ENABLED) return { allow: true, reason: "disabled" };
+  if (!state || !isAdaptiveTpExitReason(state.exitReason)) return { allow: true, reason: "not_adaptive_tp_exit" };
+
+  const { f, fv, close, ema8, ema18, adx, rsi } = ctx;
+  const eventIso = f?.time || isoNow();
+  const low = Number.isFinite(n(f?.low, NaN)) ? n(f.low, NaN) : close;
+  const high = Number.isFinite(n(f?.high, NaN)) ? n(f.high, NaN) : close;
+  const open = n(f?.open, NaN);
+  const barsSinceExit = S.barIndex - n(state.armedAtBar, S.barIndex);
+  const resetFromPeakPct = Number.isFinite(state.peakBeforeExit) ? Math.max(0, -pctDiff(state.peakBeforeExit, low)) : 0;
+  const resetFromExitPct = Number.isFinite(state.exitPrice) ? Math.max(0, -pctDiff(state.exitPrice, low)) : 0;
+  const touchedEma8 = Number.isFinite(low) && Number.isFinite(ema8) && low <= ema8;
+  const touchedEma18 = Number.isFinite(low) && Number.isFinite(ema18) && low <= ema18;
+  const greenBodyPct = Number.isFinite(open) && Number.isFinite(close) ? pctDiff(open, close) : 0;
+
+  const resetReasons = [];
+  if (resetFromPeakPct >= CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_PEAK_PCT) resetReasons.push("reset_from_peak");
+  if (resetFromExitPct >= CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_EXIT_PCT) resetReasons.push("reset_from_exit");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA8_TOUCH_RESET && touchedEma8) resetReasons.push("ema8_touch");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA18_TOUCH_RESET && touchedEma18) resetReasons.push("ema18_touch");
+
+  if (resetReasons.length > 0) {
+    const betterLow = !Number.isFinite(n(state.adaptiveTpResetLow, NaN)) || low < n(state.adaptiveTpResetLow, Infinity);
+    const firstReset = !state.adaptiveTpResetSeen;
+    state.adaptiveTpResetSeen = true;
+    if (firstReset || betterLow) {
+      state.adaptiveTpResetSeenBar = S.barIndex;
+      state.adaptiveTpResetLow = low;
+      state.adaptiveTpResetReason = resetReasons[0];
+      if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+        log("🔁 POST_ADAPTIVE_TP_RESET_SEEN", {
+          source,
+          reason: resetReasons[0],
+          barIndex: S.barIndex,
+          low: round4(low),
+          close: round4(close),
+          exitPrice: round4(state.exitPrice),
+          peakBeforeExit: round4(state.peakBeforeExit),
+          resetFromPeakPct: round4(resetFromPeakPct),
+          resetFromExitPct: round4(resetFromExitPct),
+          touchedEma8,
+          touchedEma18,
+          eventIso,
+        });
+      }
+    }
+  }
+
+  if (barsSinceExit < CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS) {
+    if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+      log("🔁 POST_ADAPTIVE_TP_WAIT_RESET", {
+        source,
+        reason: "cooldown_bars",
+        barsSinceExit,
+        requiredBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS,
+        close: round4(close),
+        resetSeen: !!state.adaptiveTpResetSeen,
+        eventIso,
+      });
+    }
+    return { allow: false, reason: "post_adaptive_tp_cooldown", metrics: { barsSinceExit } };
+  }
+
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_RESET && !state.adaptiveTpResetSeen) {
+    if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+      log("🔁 POST_ADAPTIVE_TP_WAIT_RESET", {
+        source,
+        reason: "reset_not_seen",
+        close: round4(close),
+        low: round4(low),
+        exitPrice: round4(state.exitPrice),
+        peakBeforeExit: round4(state.peakBeforeExit),
+        resetFromPeakPct: round4(resetFromPeakPct),
+        resetFromExitPct: round4(resetFromExitPct),
+        touchedEma8,
+        touchedEma18,
+        eventIso,
+      });
+    }
+    return { allow: false, reason: "post_adaptive_tp_wait_reset", metrics: { resetFromPeakPct, resetFromExitPct, touchedEma8, touchedEma18 } };
+  }
+
+  if (!CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_RECLAIM) {
+    return { allow: true, reason: "post_adaptive_tp_reset_ok" };
+  }
+
+  const resetLow = Number.isFinite(n(state.adaptiveTpResetLow, NaN)) ? n(state.adaptiveTpResetLow, NaN) : low;
+  const chaseFromReclaimPct = Number.isFinite(resetLow) ? pctDiff(resetLow, close) : 0;
+  const closeAboveEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8;
+  const ema8AboveEma18 = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18;
+  const bearishRecent = bearishFvvoRecentAt(eventIso) || !!fv?.snap?.sniperSell || !!fv?.snap?.burstBearish;
+  const reasons = [];
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8) reasons.push("close_not_above_ema8");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_EMA8_ABOVE_EMA18 && !ema8AboveEma18) reasons.push("ema8_not_above_ema18");
+  if (Number.isFinite(rsi) && rsi < CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_RSI) reasons.push("rsi_too_low");
+  if (Number.isFinite(adx) && adx < CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_ADX) reasons.push("adx_too_low");
+  if (chaseFromReclaimPct > CONFIG.POST_ADAPTIVE_TP_REENTRY_MAX_CHASE_FROM_RECLAIM_PCT) reasons.push("reclaim_chase_too_high");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_GREEN_BODY && greenBodyPct < CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_GREEN_BODY_PCT) reasons.push("green_body_too_small");
+  if (bearishRecent) reasons.push("recent_bearish_fvvo");
+
+  const payload = {
+    source,
+    allow: reasons.length === 0,
+    reason: reasons[0] || "post_adaptive_tp_reset_reclaim",
+    barIndex: S.barIndex,
+    barsSinceExit,
+    barsSinceReset: S.barIndex - n(state.adaptiveTpResetSeenBar, S.barIndex),
+    close: round4(close),
+    high: round4(high),
+    low: round4(low),
+    resetLow: round4(resetLow),
+    exitPrice: round4(state.exitPrice),
+    peakBeforeExit: round4(state.peakBeforeExit),
+    resetFromPeakPct: round4(resetFromPeakPct),
+    resetFromExitPct: round4(resetFromExitPct),
+    chaseFromReclaimPct: round4(chaseFromReclaimPct),
+    greenBodyPct: round4(greenBodyPct),
+    rsi: round4(rsi),
+    adx: round4(adx),
+    closeAboveEma8,
+    ema8AboveEma18,
+    bearishRecent,
+    resetReason: state.adaptiveTpResetReason,
+    eventIso,
+  };
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) log("🔁 POST_ADAPTIVE_TP_RECLAIM_CHECK", payload);
+
+  if (reasons.length > 0) {
+    return { allow: false, reason: `post_adaptive_tp_${reasons[0]}`, metrics: payload };
+  }
+  return { allow: true, reason: "post_adaptive_tp_reset_reclaim", metrics: payload };
+}
+
 function evaluateFeatureReentry(source, body) {
   const ctx = baseFeatureEntryContext();
   if (!ctx.ok) return { allow: false, reason: ctx.reason };
@@ -1118,6 +1297,13 @@ function evaluateFeatureReentry(source, body) {
     if (S.barIndex < S.reentry.eligibleFromBar) return { allow: false, reason: "reentry_too_early" };
     if (S.barIndex > S.reentry.eligibleUntilBar) return { allow: false, reason: "reentry_expired" };
   }
+
+  const postAdaptiveGate = evaluatePostAdaptiveTpReentryGate(source, state, { f, fv, close, ema8, ema18, adx, rsi, ext18 });
+  if (!postAdaptiveGate.allow) {
+    return { allow: false, reason: postAdaptiveGate.reason, metrics: postAdaptiveGate.metrics || {} };
+  }
+  const postAdaptiveGateReason = postAdaptiveGate.reason;
+
   let maxChase = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
   let minRsi = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MIN_RSI : CONFIG.FAST_REENTRY_MIN_RSI;
   let minAdx = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MIN_ADX : CONFIG.FAST_REENTRY_MIN_ADX;
@@ -1158,7 +1344,7 @@ function evaluateFeatureReentry(source, body) {
   const allow = reasons.length === 0 || strongPostExit || strongReentry;
   return {
     allow,
-    reason: allow ? (strongPostExit || strongReentry ? "strong_reentry_override" : "reentry_ok") : reasons[0],
+    reason: allow ? (postAdaptiveGateReason === "post_adaptive_tp_reset_reclaim" ? "post_adaptive_tp_reset_reclaim" : strongPostExit || strongReentry ? "strong_reentry_override" : "reentry_ok") : reasons[0],
     mode:
       source === "post_exit_continuation_reentry"
         ? strongPostExit
@@ -1168,7 +1354,7 @@ function evaluateFeatureReentry(source, body) {
         ? "feature_pullback_reclaim_reentry_long_strong"
         : "feature_pullback_reclaim_reentry_long",
     stop: Number.isFinite(ema18) ? ema18 * (1 - CONFIG.HARD_STOP_PCT / 100) : close * (1 - CONFIG.HARD_STOP_PCT / 100),
-    metrics: { source, anchor, close, chasePct, resetPct, rsi, adx, ext18, fvvo: fv, reasons, strongPostExit, strongReentry },
+    metrics: { source, anchor, close, chasePct, resetPct, rsi, adx, ext18, fvvo: fv, reasons, strongPostExit, strongReentry, postAdaptiveGateReason },
   };
 }
 function evaluateElevatedContinuation(source, body) {
@@ -2552,14 +2738,28 @@ function markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit) {
   if (!S.ray.bullContext) return;
   if (S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME) return;
   const anchor = Number.isFinite(S.lastFeature?.ema8) ? S.lastFeature.ema8 : Number.isFinite(exitPrice) ? exitPrice : peakBeforeExit;
+  const adaptiveTpExit = isAdaptiveTpExitReason(reason);
+  const eligibleDelayBars = adaptiveTpExit
+    ? Math.max(CONFIG.REENTRY_MIN_BARS_AFTER_EXIT, CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS)
+    : CONFIG.REENTRY_MIN_BARS_AFTER_EXIT;
+  const eligibleWindowBars = adaptiveTpExit
+    ? Math.max(6, CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS)
+    : 6;
   S.reentry = {
     eligible: true,
-    eligibleUntilBar: S.barIndex + 6,
-    eligibleFromBar: S.barIndex + CONFIG.REENTRY_MIN_BARS_AFTER_EXIT,
+    armedAtBar: S.barIndex,
+    eligibleUntilBar: S.barIndex + eligibleWindowBars,
+    eligibleFromBar: S.barIndex + eligibleDelayBars,
     exitPrice,
     peakBeforeExit,
     anchorPrice: anchor,
     bullRegimeId: S.ray.bullRegimeId,
+    exitReason: reason,
+    exitPnlPct,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
   S.cycleState = "tp_exit_wait_reentry";
   log("🔁 TP_EXIT_WAIT_REENTRY", {

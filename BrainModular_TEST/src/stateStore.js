@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6d_ATR_STRUCTURE_SYNC_ADAPTIVE_TP
- * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
  */
@@ -115,12 +115,19 @@ export function buildInitialRuntimeState() {
     },
     reentry: {
       eligible: false,
+      armedAtBar: null,
       eligibleUntilBar: null,
       eligibleFromBar: null,
       exitPrice: null,
       peakBeforeExit: null,
       anchorPrice: null,
       bullRegimeId: null,
+      exitReason: null,
+      exitPnlPct: null,
+      adaptiveTpResetSeen: false,
+      adaptiveTpResetSeenBar: null,
+      adaptiveTpResetLow: null,
+      adaptiveTpResetReason: null,
     },
     postExitContinuation: {
       active: false,
@@ -133,6 +140,10 @@ export function buildInitialRuntimeState() {
       bullRegimeId: null,
       exitReason: null,
       exitPnlPct: null,
+      adaptiveTpResetSeen: false,
+      adaptiveTpResetSeenBar: null,
+      adaptiveTpResetLow: null,
+      adaptiveTpResetReason: null,
     },
     trendChangeLaunch: {
       pending: false,
