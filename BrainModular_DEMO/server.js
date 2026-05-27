@@ -93,6 +93,15 @@ app.listen(CONFIG.PORT, () => {
       requireNotBullishFvvo: CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_NOT_BULLISH_FVVO,
     },
 
+    tier1ForceExitLoaded: {
+      givebackPct: CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT,
+      minExitPnlPct: CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT,
+      envShortGiveback: process.env.DYNAMIC_TP_TIER1_FORCE_GIVEBACK_PCT || null,
+      envLongGiveback: process.env.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT || null,
+      envShortMinExit: process.env.DYNAMIC_TP_TIER1_FORCE_MIN_EXIT_PNL_PCT || null,
+      envLongMinExit: process.env.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT || null,
+    },
+
     dynamicBreakeven: {
       enabled: CONFIG.DYNAMIC_BREAKEVEN_ENABLED,
       weakArmPct: CONFIG.DYNAMIC_BE_WEAK_ARM_PCT,
