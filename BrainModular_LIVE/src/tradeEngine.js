@@ -1,8 +1,8 @@
 /**
- * BrainRAY_Continuation_v6.5a_modular
- * Source behavior: v6.4 modular + v6.5a dynamic breakeven + strong lock protection
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
- * Trading logic only. Strategy behavior, thresholds, modes, reasons, and logs are preserved.
+ * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
  */
 
 import { CONFIG } from "./config.js";
@@ -50,6 +50,8 @@ function clearFirstEntry(reason = "reset") {
     expiresAtMs: null,
     bullRegimeId: null,
     rayPrice: null,
+    rayTime: null,
+    featureTimeAtArm: null,
     confirmPrice: null,
     ticksAboveConfirm: 0,
     lastConfirmedTickPrice: null,
@@ -206,6 +208,111 @@ function recentBearishRayForFirstEntry() {
     ageSec(S.ray.lastBearTrendContinuationAt) <= CONFIG.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC
   );
 }
+function firstEntryStrongFeatureForConfirm(feature = S.lastFeature, rayPrice = S.firstEntry?.rayPrice, prefix = "CONFIRM") {
+  const close = n(feature?.close, NaN);
+  const ema8 = n(feature?.ema8, NaN);
+  const ema18 = n(feature?.ema18, NaN);
+  const rsi = n(feature?.rsi, NaN);
+  const adx = n(feature?.adx, NaN);
+  const minRsi = prefix === "UPGRADE" ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_MIN_RSI : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_MIN_RSI;
+  const minAdx = prefix === "UPGRADE" ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_MIN_ADX : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_MIN_ADX;
+  const requireCloseGeRay = prefix === "UPGRADE"
+    ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_GE_RAY
+    : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_GE_RAY;
+  const requireEma8AboveEma18 = prefix === "UPGRADE"
+    ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_EMA8_ABOVE_EMA18
+    : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_EMA8_ABOVE_EMA18;
+  const requireCloseAboveEma8 = prefix === "UPGRADE"
+    ? CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_REQUIRE_CLOSE_ABOVE_EMA8
+    : CONFIG.FIRST_ENTRY_CONFIRM_STRONG_REQUIRE_CLOSE_ABOVE_EMA8;
+
+  const reasons = [];
+  if (!Number.isFinite(close)) reasons.push("close_missing");
+  if (!Number.isFinite(rsi) || rsi < minRsi) reasons.push("rsi_not_strong");
+  if (!Number.isFinite(adx) || adx < minAdx) reasons.push("adx_not_strong");
+  if (requireCloseGeRay && (!Number.isFinite(close) || !Number.isFinite(rayPrice) || close < rayPrice)) reasons.push("close_below_ray");
+  if (requireEma8AboveEma18 && (!Number.isFinite(ema8) || !Number.isFinite(ema18) || ema8 < ema18)) reasons.push("ema8_below_ema18");
+  if (requireCloseAboveEma8 && (!Number.isFinite(close) || !Number.isFinite(ema8) || close < ema8)) reasons.push("close_below_ema8");
+  return {
+    ok: reasons.length === 0,
+    reasons,
+    metrics: {
+      close: round4(close),
+      rayPrice: round4(rayPrice),
+      ema8: round4(ema8),
+      ema18: round4(ema18),
+      rsi: round4(rsi),
+      adx: round4(adx),
+      featureTime: feature?.time || null,
+    },
+  };
+}
+function firstEntryConfirmRequiredTicks() {
+  const defaultTicks = Math.max(1, Math.floor(n(CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS, 2)));
+  if (!S.firstEntry?.pending) return defaultTicks;
+  const strong = firstEntryStrongFeatureForConfirm(S.lastFeature, n(S.firstEntry.rayPrice, NaN), "CONFIRM");
+  if (strong.ok) return Math.max(1, Math.floor(n(CONFIG.FIRST_ENTRY_CONFIRM_STRONG_FEATURE_TICKS, 1)));
+  return defaultTicks;
+}
+function evaluateFirstEntryConfirmUpgradeOnFeature(feature) {
+  if (!CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_ENABLED) return { handled: false };
+  if (!S.firstEntry?.pending || S.inPosition) return { handled: false };
+  if (nowMs() > n(S.firstEntry.expiresAtMs, 0)) {
+    clearFirstEntry("expired_before_confirm_upgrade");
+    return { handled: false };
+  }
+  if (!S.ray.bullContext) {
+    clearFirstEntry("bull_context_off_before_confirm_upgrade");
+    return { handled: false };
+  }
+  if (S.firstEntry.bullRegimeId !== S.ray.bullRegimeId) {
+    clearFirstEntry("regime_changed_before_confirm_upgrade");
+    return { handled: false };
+  }
+  const rayPrice = n(S.firstEntry.rayPrice, NaN);
+  const rayTime = S.firstEntry.rayTime || S.firstEntry.decision?.metrics?.rayTime || feature?.time || isoNow();
+  if (!Number.isFinite(rayPrice)) return { handled: false };
+  const armedAgeSec = (nowMs() - n(S.firstEntry.armedAtMs, nowMs())) / 1000;
+  if (armedAgeSec > CONFIG.FIRST_ENTRY_CONFIRM_UPGRADE_GRACE_SEC) return { handled: false };
+
+  const featureTime = feature?.time || null;
+  const armFeatureMs = parseTsMs(S.firstEntry.featureTimeAtArm || S.firstEntry.decision?.metrics?.featureTime);
+  const featureMs = parseTsMs(featureTime);
+  const hasNewerFeature = !Number.isFinite(armFeatureMs) || !Number.isFinite(featureMs) || featureMs > armFeatureMs;
+  if (!hasNewerFeature) return { handled: false };
+
+  const strong = firstEntryStrongFeatureForConfirm(feature, rayPrice, "UPGRADE");
+  const decision = evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime);
+  log("🟢 FIRST_ENTRY_CONFIRM_UPGRADE_EVAL", {
+    action: decision.action,
+    reason: decision.reason || null,
+    strongFeature: strong.ok,
+    strongReasons: strong.reasons,
+    strongMetrics: strong.metrics,
+    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    metrics: decision.metrics || null,
+  });
+
+  if (decision.action === "enter" && strong.ok) {
+    const entryPrice = Number.isFinite(n(feature?.close, NaN)) ? n(feature.close, NaN) : rayPrice;
+    if (canEnterByDedup("first_entry_confirm_upgrade", featureTime || rayTime)) {
+      log("🟩🟢 FIRST_ENTRY_CONFIRM_UPGRADED_TO_IMMEDIATE", {
+        entryPrice: round4(entryPrice),
+        rayPrice: round4(rayPrice),
+        rayTime,
+        featureTime,
+        decisionReason: decision.reason || null,
+        strongMetrics: strong.metrics,
+      });
+      doEnter(decision.mode, entryPrice, { ...decision, reason: `${decision.reason}_confirm_upgrade` }, featureTime || rayTime);
+      clearFirstEntry("consumed_on_confirm_upgrade");
+      return { handled: true, entered: true };
+    }
+    log("🚫 FIRST_ENTRY_CONFIRM_UPGRADE_BLOCKED_BY_DEDUP", { decision, strongMetrics: strong.metrics });
+    return { handled: true };
+  }
+  return { handled: false };
+}
 function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
   if (!CONFIG.FIRST_ENTRY_CONFIRM_ENABLED) return;
   const confirmPrice = rayPrice * (1 + CONFIG.FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT / 100);
@@ -215,6 +322,8 @@ function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
     expiresAtMs: nowMs() + CONFIG.FIRST_ENTRY_CONFIRM_WINDOW_SEC * 1000,
     bullRegimeId: S.ray.bullRegimeId,
     rayPrice,
+    rayTime,
+    featureTimeAtArm: decision.metrics?.featureTime || S.lastFeature?.time || null,
     confirmPrice,
     ticksAboveConfirm: 0,
     lastConfirmedTickPrice: null,
@@ -226,6 +335,7 @@ function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
     confirmPrice: round4(confirmPrice),
     expiresAt: new Date(S.firstEntry.expiresAtMs).toISOString(),
     bullRegimeId: S.firstEntry.bullRegimeId,
+    featureTimeAtArm: S.firstEntry.featureTimeAtArm,
     decision,
   });
 }
@@ -253,12 +363,19 @@ function clearReentry(reason = "reset") {
   if (S.reentry.eligible) log("🔁 REENTRY_DISABLED", { reason });
   S.reentry = {
     eligible: false,
+    armedAtBar: null,
     eligibleUntilBar: null,
     eligibleFromBar: null,
     exitPrice: null,
     peakBeforeExit: null,
     anchorPrice: null,
     bullRegimeId: null,
+    exitReason: null,
+    exitPnlPct: null,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
 }
 function clearPostExitContinuation(reason = "reset") {
@@ -274,6 +391,10 @@ function clearPostExitContinuation(reason = "reset") {
     bullRegimeId: null,
     exitReason: null,
     exitPnlPct: null,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
 }
 function armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit) {
@@ -286,17 +407,28 @@ function armPostExitContinuation(reason, exitPrice, exitPnlPct, peakBeforeExit) 
     : Number.isFinite(exitPrice)
     ? exitPrice
     : peakBeforeExit;
+  const adaptiveTpExit = isAdaptiveTpExitReason(reason);
+  const eligibleDelayBars = adaptiveTpExit
+    ? Math.max(1, CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS)
+    : 1;
+  const windowBars = adaptiveTpExit
+    ? Math.max(CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS, CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS)
+    : CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS;
   S.postExitContinuation = {
     active: true,
     armedAtBar: S.barIndex,
-    eligibleFromBar: S.barIndex + 1,
-    expiresBar: S.barIndex + CONFIG.POST_EXIT_CONTINUATION_WINDOW_BARS,
+    eligibleFromBar: S.barIndex + eligibleDelayBars,
+    expiresBar: S.barIndex + windowBars,
     exitPrice,
     peakBeforeExit,
     anchorPrice: anchor,
     bullRegimeId: S.ray.bullRegimeId,
     exitReason: reason,
     exitPnlPct,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
   log("🔁 POST_EXIT_CONTINUATION_ARMED", {
     reason,
@@ -407,6 +539,29 @@ function getFvvoSnapshot() {
     burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt),
   };
 }
+function isAdaptiveTpExitReason(reason) {
+  return /^adaptive_tp_/i.test(String(reason || ""));
+}
+function eventAgeSecAt(eventIso, pastIso) {
+  if (!eventIso || !pastIso) return Number.POSITIVE_INFINITY;
+  const eventMs = parseTsMs(eventIso);
+  const pastMs = parseTsMs(pastIso);
+  if (!Number.isFinite(eventMs) || !Number.isFinite(pastMs)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (eventMs - pastMs) / 1000);
+}
+function bearishFvvoRecentAt(eventIso) {
+  const maxSec = CONFIG.POST_ADAPTIVE_TP_REENTRY_BLOCK_BEARISH_FVVO_SEC;
+  if (!Number.isFinite(maxSec) || maxSec <= 0) return false;
+  return eventAgeSecAt(eventIso, S.fvvo.lastSniperSellAt) <= maxSec || eventAgeSecAt(eventIso, S.fvvo.lastBurstBearishAt) <= maxSec;
+}
+function resetPostAdaptiveTpTracking(state) {
+  if (!state) return;
+  state.adaptiveTpResetSeen = false;
+  state.adaptiveTpResetSeenBar = null;
+  state.adaptiveTpResetLow = null;
+  state.adaptiveTpResetReason = null;
+}
+
 export function getFvvoScore() {
   if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot() };
   const snap = getFvvoSnapshot();
@@ -741,6 +896,9 @@ export function handleFeature(body) {
   const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
   if (featureSyncResult?.entered) return;
 
+  const confirmUpgradeResult = evaluateFirstEntryConfirmUpgradeOnFeature(feature);
+  if (confirmUpgradeResult?.entered) return;
+
   resolveRayConflictOnFeature(feature);
   evaluateStructureAndArmMemory(feature);
   evaluateReentryEligibilityFromFeature(feature);
@@ -989,6 +1147,140 @@ function evaluateLaunchEntry(source, body) {
     metrics: { source, triggerPrice, close, chasePct, rsi, adx, ext8, ext18, fvvo: fv, reasons },
   };
 }
+function evaluatePostAdaptiveTpReentryGate(source, state, ctx) {
+  if (!CONFIG.POST_ADAPTIVE_TP_REENTRY_ENABLED) return { allow: true, reason: "disabled" };
+  if (!state || !isAdaptiveTpExitReason(state.exitReason)) return { allow: true, reason: "not_adaptive_tp_exit" };
+
+  const { f, fv, close, ema8, ema18, adx, rsi } = ctx;
+  const eventIso = f?.time || isoNow();
+  const low = Number.isFinite(n(f?.low, NaN)) ? n(f.low, NaN) : close;
+  const high = Number.isFinite(n(f?.high, NaN)) ? n(f.high, NaN) : close;
+  const open = n(f?.open, NaN);
+  const barsSinceExit = S.barIndex - n(state.armedAtBar, S.barIndex);
+  const resetFromPeakPct = Number.isFinite(state.peakBeforeExit) ? Math.max(0, -pctDiff(state.peakBeforeExit, low)) : 0;
+  const resetFromExitPct = Number.isFinite(state.exitPrice) ? Math.max(0, -pctDiff(state.exitPrice, low)) : 0;
+  const touchedEma8 = Number.isFinite(low) && Number.isFinite(ema8) && low <= ema8;
+  const touchedEma18 = Number.isFinite(low) && Number.isFinite(ema18) && low <= ema18;
+  const greenBodyPct = Number.isFinite(open) && Number.isFinite(close) ? pctDiff(open, close) : 0;
+
+  const resetReasons = [];
+  if (resetFromPeakPct >= CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_PEAK_PCT) resetReasons.push("reset_from_peak");
+  if (resetFromExitPct >= CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_EXIT_PCT) resetReasons.push("reset_from_exit");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA8_TOUCH_RESET && touchedEma8) resetReasons.push("ema8_touch");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA18_TOUCH_RESET && touchedEma18) resetReasons.push("ema18_touch");
+
+  if (resetReasons.length > 0) {
+    const betterLow = !Number.isFinite(n(state.adaptiveTpResetLow, NaN)) || low < n(state.adaptiveTpResetLow, Infinity);
+    const firstReset = !state.adaptiveTpResetSeen;
+    state.adaptiveTpResetSeen = true;
+    if (firstReset || betterLow) {
+      state.adaptiveTpResetSeenBar = S.barIndex;
+      state.adaptiveTpResetLow = low;
+      state.adaptiveTpResetReason = resetReasons[0];
+      if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+        log("🔁 POST_ADAPTIVE_TP_RESET_SEEN", {
+          source,
+          reason: resetReasons[0],
+          barIndex: S.barIndex,
+          low: round4(low),
+          close: round4(close),
+          exitPrice: round4(state.exitPrice),
+          peakBeforeExit: round4(state.peakBeforeExit),
+          resetFromPeakPct: round4(resetFromPeakPct),
+          resetFromExitPct: round4(resetFromExitPct),
+          touchedEma8,
+          touchedEma18,
+          eventIso,
+        });
+      }
+    }
+  }
+
+  if (barsSinceExit < CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS) {
+    if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+      log("🔁 POST_ADAPTIVE_TP_WAIT_RESET", {
+        source,
+        reason: "cooldown_bars",
+        barsSinceExit,
+        requiredBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS,
+        close: round4(close),
+        resetSeen: !!state.adaptiveTpResetSeen,
+        eventIso,
+      });
+    }
+    return { allow: false, reason: "post_adaptive_tp_cooldown", metrics: { barsSinceExit } };
+  }
+
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_RESET && !state.adaptiveTpResetSeen) {
+    if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) {
+      log("🔁 POST_ADAPTIVE_TP_WAIT_RESET", {
+        source,
+        reason: "reset_not_seen",
+        close: round4(close),
+        low: round4(low),
+        exitPrice: round4(state.exitPrice),
+        peakBeforeExit: round4(state.peakBeforeExit),
+        resetFromPeakPct: round4(resetFromPeakPct),
+        resetFromExitPct: round4(resetFromExitPct),
+        touchedEma8,
+        touchedEma18,
+        eventIso,
+      });
+    }
+    return { allow: false, reason: "post_adaptive_tp_wait_reset", metrics: { resetFromPeakPct, resetFromExitPct, touchedEma8, touchedEma18 } };
+  }
+
+  if (!CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_RECLAIM) {
+    return { allow: true, reason: "post_adaptive_tp_reset_ok" };
+  }
+
+  const resetLow = Number.isFinite(n(state.adaptiveTpResetLow, NaN)) ? n(state.adaptiveTpResetLow, NaN) : low;
+  const chaseFromReclaimPct = Number.isFinite(resetLow) ? pctDiff(resetLow, close) : 0;
+  const closeAboveEma8 = Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8;
+  const ema8AboveEma18 = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18;
+  const bearishRecent = bearishFvvoRecentAt(eventIso) || !!fv?.snap?.sniperSell || !!fv?.snap?.burstBearish;
+  const reasons = [];
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8) reasons.push("close_not_above_ema8");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_EMA8_ABOVE_EMA18 && !ema8AboveEma18) reasons.push("ema8_not_above_ema18");
+  if (Number.isFinite(rsi) && rsi < CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_RSI) reasons.push("rsi_too_low");
+  if (Number.isFinite(adx) && adx < CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_ADX) reasons.push("adx_too_low");
+  if (chaseFromReclaimPct > CONFIG.POST_ADAPTIVE_TP_REENTRY_MAX_CHASE_FROM_RECLAIM_PCT) reasons.push("reclaim_chase_too_high");
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_REQUIRE_GREEN_BODY && greenBodyPct < CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_GREEN_BODY_PCT) reasons.push("green_body_too_small");
+  if (bearishRecent) reasons.push("recent_bearish_fvvo");
+
+  const payload = {
+    source,
+    allow: reasons.length === 0,
+    reason: reasons[0] || "post_adaptive_tp_reset_reclaim",
+    barIndex: S.barIndex,
+    barsSinceExit,
+    barsSinceReset: S.barIndex - n(state.adaptiveTpResetSeenBar, S.barIndex),
+    close: round4(close),
+    high: round4(high),
+    low: round4(low),
+    resetLow: round4(resetLow),
+    exitPrice: round4(state.exitPrice),
+    peakBeforeExit: round4(state.peakBeforeExit),
+    resetFromPeakPct: round4(resetFromPeakPct),
+    resetFromExitPct: round4(resetFromExitPct),
+    chaseFromReclaimPct: round4(chaseFromReclaimPct),
+    greenBodyPct: round4(greenBodyPct),
+    rsi: round4(rsi),
+    adx: round4(adx),
+    closeAboveEma8,
+    ema8AboveEma18,
+    bearishRecent,
+    resetReason: state.adaptiveTpResetReason,
+    eventIso,
+  };
+  if (CONFIG.POST_ADAPTIVE_TP_REENTRY_LOG) log("🔁 POST_ADAPTIVE_TP_RECLAIM_CHECK", payload);
+
+  if (reasons.length > 0) {
+    return { allow: false, reason: `post_adaptive_tp_${reasons[0]}`, metrics: payload };
+  }
+  return { allow: true, reason: "post_adaptive_tp_reset_reclaim", metrics: payload };
+}
+
 function evaluateFeatureReentry(source, body) {
   const ctx = baseFeatureEntryContext();
   if (!ctx.ok) return { allow: false, reason: ctx.reason };
@@ -1005,6 +1297,13 @@ function evaluateFeatureReentry(source, body) {
     if (S.barIndex < S.reentry.eligibleFromBar) return { allow: false, reason: "reentry_too_early" };
     if (S.barIndex > S.reentry.eligibleUntilBar) return { allow: false, reason: "reentry_expired" };
   }
+
+  const postAdaptiveGate = evaluatePostAdaptiveTpReentryGate(source, state, { f, fv, close, ema8, ema18, adx, rsi, ext18 });
+  if (!postAdaptiveGate.allow) {
+    return { allow: false, reason: postAdaptiveGate.reason, metrics: postAdaptiveGate.metrics || {} };
+  }
+  const postAdaptiveGateReason = postAdaptiveGate.reason;
+
   let maxChase = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MAX_CHASE_PCT : CONFIG.REENTRY_MAX_CHASE_PCT;
   let minRsi = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MIN_RSI : CONFIG.FAST_REENTRY_MIN_RSI;
   let minAdx = source === "post_exit_continuation_reentry" ? CONFIG.POST_EXIT_CONTINUATION_MIN_ADX : CONFIG.FAST_REENTRY_MIN_ADX;
@@ -1045,7 +1344,7 @@ function evaluateFeatureReentry(source, body) {
   const allow = reasons.length === 0 || strongPostExit || strongReentry;
   return {
     allow,
-    reason: allow ? (strongPostExit || strongReentry ? "strong_reentry_override" : "reentry_ok") : reasons[0],
+    reason: allow ? (postAdaptiveGateReason === "post_adaptive_tp_reset_reclaim" ? "post_adaptive_tp_reset_reclaim" : strongPostExit || strongReentry ? "strong_reentry_override" : "reentry_ok") : reasons[0],
     mode:
       source === "post_exit_continuation_reentry"
         ? strongPostExit
@@ -1055,7 +1354,7 @@ function evaluateFeatureReentry(source, body) {
         ? "feature_pullback_reclaim_reentry_long_strong"
         : "feature_pullback_reclaim_reentry_long",
     stop: Number.isFinite(ema18) ? ema18 * (1 - CONFIG.HARD_STOP_PCT / 100) : close * (1 - CONFIG.HARD_STOP_PCT / 100),
-    metrics: { source, anchor, close, chasePct, resetPct, rsi, adx, ext18, fvvo: fv, reasons, strongPostExit, strongReentry },
+    metrics: { source, anchor, close, chasePct, resetPct, rsi, adx, ext18, fvvo: fv, reasons, strongPostExit, strongReentry, postAdaptiveGateReason },
   };
 }
 function evaluateElevatedContinuation(source, body) {
@@ -1150,10 +1449,20 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   S.entryBarIndex = S.barIndex;
   S.entryMode = mode;
   S.stopPrice = stop;
+  S.stopSource = "hard_stop";
+  S.stopMeta = { initialStop: stop, hardStopPct: CONFIG.HARD_STOP_PCT };
   S.beArmed = false;
+  S.dynamicBeStrongLockArmed = false;
   S.peakPrice = price;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
+  S.adaptiveTp = {
+    armed: false,
+    profile: null,
+    level: null,
+    lastExitLinePct: null,
+    lastAllowedGivebackPct: null,
+  };
   S.lastEnterAtMs = actionClockMs(eventIso);
   S.lastAction = "enter";
   S.cycleState = "long";
@@ -1195,6 +1504,233 @@ function dynamicTpGivebackForTier(tier) {
   if (tier === 1) return CONFIG.DTP_TIER1_GIVEBACK_PCT;
   return null;
 }
+function adaptiveTpProfileForMode(mode = S.entryMode) {
+  const m = String(mode || "");
+  const strongReentry = /reentry.*strong|strong.*reentry/i.test(m);
+  const reentry = isReentryHarvestMode(m) || isProtectedContinuationMode(m);
+
+  if (strongReentry) {
+    return {
+      name: "strong_reentry",
+      armPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_ARM_PCT,
+      tier1Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_TIER1_PCT,
+      midPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_MID_PCT,
+      tier2Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_TIER2_PCT,
+      abovePct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_ABOVE_PCT,
+      givebackArmPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_ARM_PCT,
+      givebackTier1Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_TIER1_PCT,
+      givebackMidPct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_MID_PCT,
+      givebackTier2Pct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_TIER2_PCT,
+      givebackAbovePct: CONFIG.DYNAMIC_TP_PROFILE_STRONG_REENTRY_GIVEBACK_ABOVE_PCT,
+    };
+  }
+
+  if (reentry) {
+    return {
+      name: "reentry",
+      armPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_ARM_PCT,
+      tier1Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_TIER1_PCT,
+      midPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_MID_PCT,
+      tier2Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_TIER2_PCT,
+      abovePct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_ABOVE_PCT,
+      givebackArmPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_ARM_PCT,
+      givebackTier1Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_TIER1_PCT,
+      givebackMidPct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_MID_PCT,
+      givebackTier2Pct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_TIER2_PCT,
+      givebackAbovePct: CONFIG.DYNAMIC_TP_PROFILE_REENTRY_GIVEBACK_ABOVE_PCT,
+    };
+  }
+
+  return {
+    name: "first",
+    armPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_ARM_PCT,
+    tier1Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_TIER1_PCT,
+    midPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_MID_PCT,
+    tier2Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_TIER2_PCT,
+    abovePct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_ABOVE_PCT,
+    givebackArmPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_ARM_PCT,
+    givebackTier1Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_TIER1_PCT,
+    givebackMidPct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_MID_PCT,
+    givebackTier2Pct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_TIER2_PCT,
+    givebackAbovePct: CONFIG.DYNAMIC_TP_PROFILE_FIRST_GIVEBACK_ABOVE_PCT,
+  };
+}
+function adaptiveTpLevelForPeak(peakPnlPct, profile) {
+  if (!Number.isFinite(peakPnlPct) || !profile) return null;
+  if (peakPnlPct >= profile.abovePct) return { level: "above", allowedGivebackPct: profile.givebackAbovePct, thresholdPct: profile.abovePct };
+  if (peakPnlPct >= profile.tier2Pct) return { level: "tier2", allowedGivebackPct: profile.givebackTier2Pct, thresholdPct: profile.tier2Pct };
+  if (peakPnlPct >= profile.midPct) return { level: "mid", allowedGivebackPct: profile.givebackMidPct, thresholdPct: profile.midPct };
+  if (peakPnlPct >= profile.tier1Pct) return { level: "tier1", allowedGivebackPct: profile.givebackTier1Pct, thresholdPct: profile.tier1Pct };
+  if (peakPnlPct >= profile.armPct) return { level: "arm", allowedGivebackPct: profile.givebackArmPct, thresholdPct: profile.armPct };
+  return null;
+}
+function adaptiveTpNetPnl(pnlPct) {
+  return pnlPct - CONFIG.FEE_ROUND_TRIP_PCT - CONFIG.SLIPPAGE_BUFFER_PCT;
+}
+function adaptiveTpMinGrossExitPct(profile = null) {
+  const profileMin = profile?.name === "reentry" ? Math.min(CONFIG.DYNAMIC_TP_MIN_GROSS_EXIT_PNL_PCT, 0.30) : CONFIG.DYNAMIC_TP_MIN_GROSS_EXIT_PNL_PCT;
+  return Number.isFinite(profileMin) ? profileMin : 0.35;
+}
+function refreshAdaptiveTpState(profile, levelInfo, exitLinePct) {
+  if (!S.adaptiveTp) {
+    S.adaptiveTp = { armed: false, profile: null, level: null, lastExitLinePct: null, lastAllowedGivebackPct: null };
+  }
+  const wasArmed = !!S.adaptiveTp.armed;
+  const levelChanged = S.adaptiveTp.level !== levelInfo.level || S.adaptiveTp.profile !== profile.name;
+  const exitLineImproved = !Number.isFinite(n(S.adaptiveTp.lastExitLinePct, NaN)) || exitLinePct > n(S.adaptiveTp.lastExitLinePct, -Infinity) + 0.0001;
+
+  S.adaptiveTp = {
+    armed: true,
+    profile: profile.name,
+    level: levelInfo.level,
+    lastExitLinePct: exitLinePct,
+    lastAllowedGivebackPct: levelInfo.allowedGivebackPct,
+  };
+
+  if (CONFIG.DYNAMIC_TP_ADAPTIVE_LOG && (!wasArmed || levelChanged || exitLineImproved)) {
+    const label = !wasArmed ? "🎯 ADAPTIVE_TP_ARMED" : levelChanged ? "🎯 ADAPTIVE_TP_LEVEL_UP" : "🎯 ADAPTIVE_TP_TRAIL_UPDATE";
+    log(label, {
+      profile: profile.name,
+      level: levelInfo.level,
+      peakPnlPct: round4(S.peakPnlPct),
+      allowedGivebackPct: round4(levelInfo.allowedGivebackPct),
+      exitLinePct: round4(exitLinePct),
+      entryMode: S.entryMode,
+    });
+  }
+}
+function adaptiveTpDecision(price, pnlPct, feature = S.lastFeature, eventIso = isoNow(), source = "tick") {
+  if (!CONFIG.DYNAMIC_TP_ENABLED || !CONFIG.DYNAMIC_TP_ADAPTIVE_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return { allow: false, reason: "flat_or_bad_price" };
+
+  const profile = adaptiveTpProfileForMode(S.entryMode);
+  const peakPnlPct = Math.max(n(S.peakPnlPct, pnlPct), pnlPct);
+  const levelInfo = adaptiveTpLevelForPeak(peakPnlPct, profile);
+  if (!levelInfo || !Number.isFinite(levelInfo.allowedGivebackPct)) return { allow: false, reason: "not_armed", profile: profile.name, peakPnlPct };
+
+  const pnlGiveback = Math.max(0, peakPnlPct - pnlPct);
+  const exitLinePct = peakPnlPct - levelInfo.allowedGivebackPct;
+  refreshAdaptiveTpState(profile, levelInfo, exitLinePct);
+
+  const minGrossExitPct = adaptiveTpMinGrossExitPct(profile);
+  const netPnlPct = adaptiveTpNetPnl(pnlPct);
+  const grossOk = pnlPct >= minGrossExitPct;
+  const netOk = netPnlPct >= CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT;
+  const givebackHit = pnlGiveback >= levelInfo.allowedGivebackPct && pnlPct <= exitLinePct + 0.0001;
+
+  if (givebackHit && grossOk && netOk) {
+    return {
+      allow: true,
+      reason: `adaptive_tp_${profile.name}_${levelInfo.level}_giveback`,
+      profile: profile.name,
+      level: levelInfo.level,
+      source,
+      pnlPct,
+      peakPnlPct,
+      pnlGiveback,
+      allowedGivebackPct: levelInfo.allowedGivebackPct,
+      exitLinePct,
+      minGrossExitPct,
+      netPnlPct,
+      minNetExitPct: CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT,
+    };
+  }
+
+  if (CONFIG.DYNAMIC_TP_ADAPTIVE_LOG && givebackHit && (!grossOk || !netOk)) {
+    log("🎯 ADAPTIVE_TP_HOLD_MIN_PROFIT", {
+      source,
+      profile: profile.name,
+      level: levelInfo.level,
+      pnlPct: round4(pnlPct),
+      peakPnlPct: round4(peakPnlPct),
+      pnlGiveback: round4(pnlGiveback),
+      allowedGivebackPct: round4(levelInfo.allowedGivebackPct),
+      exitLinePct: round4(exitLinePct),
+      grossOk,
+      netOk,
+      minGrossExitPct: round4(minGrossExitPct),
+      netPnlPct: round4(netPnlPct),
+      minNetExitPct: round4(CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT),
+      entryMode: S.entryMode,
+      eventIso,
+    });
+  }
+
+  return {
+    allow: false,
+    reason: givebackHit ? "min_profit_not_met" : "giveback_not_hit",
+    profile: profile.name,
+    level: levelInfo.level,
+    pnlPct,
+    peakPnlPct,
+    pnlGiveback,
+    allowedGivebackPct: levelInfo.allowedGivebackPct,
+    exitLinePct,
+    minGrossExitPct,
+    netPnlPct,
+  };
+}
+function adaptiveTpOneBarPullbackDecision(feature, pnlPct, fv, eventIso = isoNow()) {
+  if (!CONFIG.DYNAMIC_TP_ENABLED || !CONFIG.DYNAMIC_TP_ADAPTIVE_ENABLED || !CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_ENABLED) return { allow: false, reason: "disabled" };
+  if (!S.inPosition || !feature || !S.prevFeature) return { allow: false, reason: "missing_feature" };
+
+  const profile = adaptiveTpProfileForMode(S.entryMode);
+  const peakPnlPct = Math.max(n(S.peakPnlPct, pnlPct), pnlPct);
+  const minPeakPct = Math.max(CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_MIN_PEAK_PCT, profile.tier1Pct);
+  if (peakPnlPct < minPeakPct) return { allow: false, reason: "peak_too_low" };
+
+  const close = n(feature.close, NaN);
+  const prevClose = n(S.prevFeature.close, NaN);
+  const prevHigh = n(S.prevFeature.high, NaN);
+  const high = n(feature.high, NaN);
+  if (!Number.isFinite(close) || !Number.isFinite(prevClose)) return { allow: false, reason: "bad_close" };
+
+  const oneBarPullback = close < prevClose;
+  const failedToMakeNewHigh = Number.isFinite(high) && Number.isFinite(prevHigh) ? high <= prevHigh : true;
+  const pnlGiveback = Math.max(0, peakPnlPct - pnlPct);
+  const minGivebackOk = pnlGiveback >= CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_MIN_GIVEBACK_PCT;
+  const minGross = Math.max(CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_MIN_EXIT_PNL_PCT, adaptiveTpMinGrossExitPct(profile));
+  const grossOk = pnlPct >= minGross;
+  const netPnlPct = adaptiveTpNetPnl(pnlPct);
+  const netOk = netPnlPct >= CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT;
+  const bearishHint = !!(fv?.snap?.sniperSell || fv?.snap?.burstBearish || n(fv?.score, 0) < 0 || close < n(feature.ema8, -Infinity));
+
+  if (oneBarPullback && failedToMakeNewHigh && minGivebackOk && grossOk && netOk) {
+    return {
+      allow: true,
+      reason: `adaptive_tp_${profile.name}_one_bar_pullback`,
+      profile: profile.name,
+      source: "feature",
+      pnlPct,
+      peakPnlPct,
+      pnlGiveback,
+      minGrossExitPct: minGross,
+      netPnlPct,
+      oneBarPullback,
+      failedToMakeNewHigh,
+      bearishHint,
+      eventIso,
+    };
+  }
+  return { allow: false, reason: "one_bar_not_hit", profile: profile.name, pnlPct, peakPnlPct, pnlGiveback, oneBarPullback, failedToMakeNewHigh, minGivebackOk, grossOk, netOk, bearishHint };
+}
+function logAdaptiveTpForceExit(decision) {
+  if (!CONFIG.DYNAMIC_TP_ADAPTIVE_LOG) return;
+  log("🎯⚠️ ADAPTIVE_TP_FORCE_EXIT", {
+    reason: decision.reason,
+    source: decision.source,
+    profile: decision.profile,
+    level: decision.level || null,
+    pnlPct: round4(decision.pnlPct),
+    peakPnlPct: round4(decision.peakPnlPct),
+    pnlGiveback: round4(decision.pnlGiveback),
+    allowedGivebackPct: round4(decision.allowedGivebackPct),
+    exitLinePct: round4(decision.exitLinePct),
+    minGrossExitPct: round4(decision.minGrossExitPct),
+    netPnlPct: round4(decision.netPnlPct),
+    entryMode: S.entryMode,
+  });
+}
 function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv, ctx = {}) {
   if (!CONFIG.LAUNCH_TP_PROTECTION_ENABLED) return false;
   if (!isLaunchMode(S.entryMode)) return false;
@@ -1207,6 +1743,7 @@ function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv, ctx = {}) {
   const peakPnlPct = n(ctx?.peakPnlPct, NaN);
   const pnlGiveback = n(ctx?.pnlGiveback, NaN);
   const forceTier1Exit = !!ctx?.forceTier1Exit;
+  const adaptiveTpExit = !!ctx?.adaptiveTpExit;
 
   const adxOk = Number.isFinite(adx) && adx >= CONFIG.LAUNCH_TP_PROTECTION_MIN_ADX;
   const rsiOk = Number.isFinite(rsi) && rsi >= CONFIG.LAUNCH_TP_PROTECTION_MIN_RSI;
@@ -1224,9 +1761,10 @@ function shouldBlockLaunchDynamicTp(feature, pnlPct, tier, fv, ctx = {}) {
   const bearishOverride = CONFIG.LAUNCH_TP_PROTECTION_DISABLE_ON_BEARISH_FVVO && bearishFvvo;
   const belowEma8Override = CONFIG.LAUNCH_TP_PROTECTION_DISABLE_BELOW_EMA8 && belowEma8;
 
-  if (forceTier1Exit || maxGivebackHit || bearishOverride || belowEma8Override) {
+  if (adaptiveTpExit || forceTier1Exit || maxGivebackHit || bearishOverride || belowEma8Override) {
     if (CONFIG.LAUNCH_TP_PROTECTION_LOG) {
       const reasons = [];
+      if (adaptiveTpExit) reasons.push("adaptive_tp_exit");
       if (forceTier1Exit) reasons.push("tier1_force_exit_giveback");
       if (maxGivebackHit) reasons.push("max_giveback_hit");
       if (bearishOverride) reasons.push("bearish_fvvo");
@@ -1497,6 +2035,170 @@ function dynamicBreakevenProfile(price, pnlPct) {
   };
 }
 
+function clampPct(x, minPct, maxPct) {
+  if (!Number.isFinite(x)) return NaN;
+  let out = x;
+  if (Number.isFinite(minPct)) out = Math.max(out, minPct);
+  if (Number.isFinite(maxPct)) out = Math.min(out, maxPct);
+  return out;
+}
+function isStrongReentryMode(mode) {
+  return isReentryHarvestMode(mode) && /strong/i.test(String(mode || ""));
+}
+function atrStopMultiplierForMode(mode) {
+  if (isStrongReentryMode(mode)) return CONFIG.ATR_STOP_MULT_STRONG_REENTRY;
+  if (isReentryHarvestMode(mode) || isProtectedContinuationMode(mode)) return CONFIG.ATR_STOP_MULT_REENTRY;
+  if (isFirstEntryMode(mode)) return CONFIG.ATR_STOP_MULT_FIRST_ENTRY;
+  return CONFIG.ATR_STOP_MULT_FIRST_ENTRY;
+}
+function atrStructureAppliesForMode(mode) {
+  if (isFirstEntryMode(mode)) return CONFIG.ATR_STOP_APPLY_FIRST_ENTRY;
+  if (isReentryHarvestMode(mode) || isProtectedContinuationMode(mode)) return CONFIG.ATR_STOP_APPLY_REENTRY;
+  return CONFIG.ATR_STOP_APPLY_OTHER_MODES;
+}
+function atrStructureBarsSinceEntry() {
+  if (!Number.isFinite(S.entryBarIndex) || !Number.isFinite(S.barIndex)) return null;
+  return Math.max(0, S.barIndex - S.entryBarIndex);
+}
+function recentStructureLow(lookbackBars = CONFIG.ATR_STRUCTURE_LOOKBACK_BARS) {
+  const hist = Array.isArray(S.featureHistory) ? S.featureHistory : [];
+  const lookback = Math.max(1, Math.floor(n(lookbackBars, 1)));
+  const recent = hist.slice(-lookback);
+  const lows = recent
+    .map((f) => (Number.isFinite(f?.low) ? f.low : Number.isFinite(f?.close) ? f.close : NaN))
+    .filter(Number.isFinite);
+  if (!lows.length) return NaN;
+  return Math.min(...lows);
+}
+function derivedAtrPctFromHistory(lookbackBars = CONFIG.ATR_STRUCTURE_LOOKBACK_BARS) {
+  if (!CONFIG.ATR_STOP_DERIVE_IF_MISSING) return NaN;
+  const hist = Array.isArray(S.featureHistory) ? S.featureHistory : [];
+  const lookback = Math.max(2, Math.floor(n(lookbackBars, 6)));
+  const recent = hist.slice(-lookback);
+  const ranges = [];
+  for (let i = 0; i < recent.length; i += 1) {
+    const f = recent[i];
+    const close = n(f?.close, NaN);
+    const high = n(f?.high, NaN);
+    const low = n(f?.low, NaN);
+    if (Number.isFinite(high) && Number.isFinite(low) && Number.isFinite(close) && close > 0 && high >= low) {
+      ranges.push(((high - low) / close) * 100);
+      continue;
+    }
+    const prevClose = n(recent[i - 1]?.close, NaN);
+    if (Number.isFinite(close) && Number.isFinite(prevClose) && prevClose > 0) {
+      ranges.push(Math.abs(pctDiff(prevClose, close)));
+    }
+  }
+  const good = ranges.filter((x) => Number.isFinite(x) && x >= 0);
+  if (!good.length) return NaN;
+  return good.reduce((a, b2) => a + b2, 0) / good.length;
+}
+function raiseActiveStop(candidateStop, source, meta = {}) {
+  if (!Number.isFinite(candidateStop)) return false;
+  if (!Number.isFinite(S.stopPrice)) {
+    S.stopPrice = candidateStop;
+    S.stopSource = source;
+    S.stopMeta = meta;
+    return true;
+  }
+  if (CONFIG.ATR_STOP_ALLOW_TIGHTEN_ONLY && candidateStop <= S.stopPrice) return false;
+  if (!CONFIG.ATR_STOP_ALLOW_TIGHTEN_ONLY && candidateStop < S.stopPrice) return false;
+  S.stopPrice = candidateStop;
+  S.stopSource = source;
+  S.stopMeta = meta;
+  return true;
+}
+function updateAtrStructureStop(price, eventIso = isoNow()) {
+  if (!CONFIG.ATR_STRUCTURE_STOP_ENABLED) return { updated: false, reason: "disabled" };
+  if (!S.inPosition || !Number.isFinite(S.entryPrice)) return { updated: false, reason: "flat" };
+  if (!atrStructureAppliesForMode(S.entryMode)) return { updated: false, reason: "mode_not_enabled", entryMode: S.entryMode };
+  const barsSinceEntry = atrStructureBarsSinceEntry();
+  if (barsSinceEntry !== null && barsSinceEntry < CONFIG.ATR_STOP_MIN_BARS_AFTER_ENTRY) {
+    return { updated: false, reason: "too_early_after_entry", barsSinceEntry };
+  }
+  if (CONFIG.ATR_STOP_REQUIRE_FEATURE_FRESH && !isFeatureFresh()) return { updated: false, reason: "stale_feature" };
+
+  const feature = S.lastFeature || {};
+  const rawAtrPct = n(feature.atrPct, NaN);
+  const derivedAtrPct = derivedAtrPctFromHistory(CONFIG.ATR_STRUCTURE_LOOKBACK_BARS);
+  const atrPct = Number.isFinite(rawAtrPct) ? rawAtrPct : derivedAtrPct;
+  const atrPctSource = Number.isFinite(rawAtrPct) ? "feature_atrPct" : Number.isFinite(derivedAtrPct) ? "derived_history" : "missing";
+  const pnlPct = Number.isFinite(price) ? pctDiff(S.entryPrice, price) : 0;
+  if (CONFIG.ATR_STOP_UPDATE_ONLY_IN_PROFIT && pnlPct <= 0) return { updated: false, reason: "not_in_profit" };
+
+  const mult = atrStopMultiplierForMode(S.entryMode);
+  const atrDistancePct = Number.isFinite(atrPct)
+    ? clampPct(atrPct * mult, CONFIG.ATR_STOP_MIN_PCT, CONFIG.ATR_STOP_MAX_PCT)
+    : NaN;
+  const atrStop = Number.isFinite(atrDistancePct) ? S.entryPrice * (1 - atrDistancePct / 100) : NaN;
+
+  const structureLow = CONFIG.ATR_STRUCTURE_USE_RECENT_LOW ? recentStructureLow(CONFIG.ATR_STRUCTURE_LOOKBACK_BARS) : NaN;
+  const structureStop = Number.isFinite(structureLow)
+    ? structureLow * (1 - CONFIG.ATR_STRUCTURE_BUFFER_PCT / 100)
+    : NaN;
+
+  const candidates = [];
+  if (CONFIG.ATR_STOP_USE_TIGHTER_OF_HARD_OR_ATR && Number.isFinite(atrStop)) {
+    candidates.push({ source: "atr_stop", stop: atrStop });
+  }
+  if (Number.isFinite(structureStop)) {
+    candidates.push({ source: "structure_stop", stop: structureStop });
+  }
+  if (!candidates.length) return { updated: false, reason: "no_valid_candidate", atrPct, atrDistancePct, structureLow };
+
+  // For long trades, the highest valid stop is the tightest valid protection.
+  const chosen = candidates.reduce((best, x) => (x.stop > best.stop ? x : best), candidates[0]);
+  const prevStop = S.stopPrice;
+  const updated = raiseActiveStop(chosen.stop, chosen.source, {
+    atrPct,
+    atrPctSource,
+    rawAtrPct,
+    derivedAtrPct,
+    atrDistancePct,
+    multiplier: mult,
+    structureLow,
+    structureBufferPct: CONFIG.ATR_STRUCTURE_BUFFER_PCT,
+    eventIso,
+    barsSinceEntry,
+  });
+
+  if (updated && CONFIG.ATR_STRUCTURE_LOG) {
+    log("🛡️📐 ATR_STRUCTURE_STOP_UPDATED", {
+      source: chosen.source,
+      entryMode: S.entryMode,
+      entryPrice: round4(S.entryPrice),
+      price: round4(price),
+      pnlPct: round4(pnlPct),
+      prevStop: round4(prevStop),
+      stopPrice: round4(S.stopPrice),
+      atrPct: round4(atrPct),
+      atrPctSource,
+      rawAtrPct: round4(rawAtrPct),
+      derivedAtrPct: round4(derivedAtrPct),
+      atrDistancePct: round4(atrDistancePct),
+      multiplier: round4(mult),
+      structureLow: round4(structureLow),
+      structureStop: round4(structureStop),
+      lookbackBars: CONFIG.ATR_STRUCTURE_LOOKBACK_BARS,
+      bufferPct: CONFIG.ATR_STRUCTURE_BUFFER_PCT,
+      barsSinceEntry,
+    });
+  }
+  return { updated, reason: updated ? "updated" : "not_tighter", source: chosen.source, stop: chosen.stop };
+}
+function activeStopExitReason() {
+  if (S.stopSource === "atr_stop") return "atr_stop";
+  if (S.stopSource === "structure_stop") return "structure_stop";
+  return "hard_or_breakeven_stop";
+}
+function atrStructureStopExitAllowed(stopReason, pnlPct) {
+  if (!["atr_stop", "structure_stop"].includes(stopReason)) return true;
+  if (!Number.isFinite(pnlPct)) return true;
+  if (pnlPct >= 0) return true;
+  return pnlPct <= CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT;
+}
+
 function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.inPosition || !Number.isFinite(price) || !Number.isFinite(S.entryPrice)) return;
   if (!Number.isFinite(S.peakPrice) || price > S.peakPrice) S.peakPrice = price;
@@ -1511,7 +2213,12 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
   if (!S.beArmed && pnlPct >= beProfile.armPct) {
     S.beArmed = true;
     const beStop = S.entryPrice * (1 + beProfile.offsetPct / 100);
+    const prevStop = S.stopPrice;
     S.stopPrice = Math.max(S.stopPrice, beStop);
+    if (S.stopPrice !== prevStop) {
+      S.stopSource = CONFIG.DYNAMIC_BREAKEVEN_ENABLED ? "dynamic_breakeven" : "breakeven";
+      S.stopMeta = { profile: beProfile.profile, armPct: beProfile.armPct, offsetPct: beProfile.offsetPct };
+    }
     log(CONFIG.DYNAMIC_BREAKEVEN_ENABLED ? "🛡️ DYNAMIC_BREAKEVEN_ARMED" : "🛡️ BREAKEVEN_ARMED", {
       profile: beProfile.profile,
       armPct: round4(beProfile.armPct),
@@ -1538,6 +2245,10 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     const strongLockStop = S.entryPrice * (1 + CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT / 100);
     const prevStop = S.stopPrice;
     S.stopPrice = Math.max(S.stopPrice, strongLockStop);
+    if (S.stopPrice !== prevStop) {
+      S.stopSource = "dynamic_be_strong_lock";
+      S.stopMeta = { armPct: CONFIG.DYNAMIC_BE_STRONG_LOCK_ARM_PCT, lockPct: CONFIG.DYNAMIC_BE_STRONG_LOCK_PCT, profile: beProfile.profile };
+    }
     if (CONFIG.DYNAMIC_BE_STRONG_LOCK_LOG) {
       log("🛡️🔒 DYNAMIC_BE_STRONG_LOCK_ARMED", {
         profile: beProfile.profile,
@@ -1552,53 +2263,81 @@ function updatePositionFromTick(price, eventIso = isoNow()) {
     }
   }
 
+  updateAtrStructureStop(price, eventIso);
+
   const postExitProfitGuard = shouldPostExitContinuationProfitGuardExit(price, eventIso);
   if (postExitProfitGuard.allow) {
     return doExit(postExitProfitGuard.reason, price, eventIso, "cycle_exit");
   }
 
   if (price <= S.stopPrice) {
-    const exitClass = S.beArmed ? "cycle_exit" : "stop_exit";
-    return doExit("hard_or_breakeven_stop", price, eventIso, exitClass);
+    const stopReason = activeStopExitReason();
+    if (!atrStructureStopExitAllowed(stopReason, pnlPct)) {
+      if (CONFIG.ATR_STRUCTURE_LOG && ["atr_stop", "structure_stop"].includes(stopReason)) {
+        log("🛡️📐 ATR_STRUCTURE_STOP_HOLD", {
+          reason: "loss_not_deep_enough",
+          stopReason,
+          price: round4(price),
+          stopPrice: round4(S.stopPrice),
+          pnlPct: round4(pnlPct),
+          minLossTriggerPct: CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT,
+          entryMode: S.entryMode,
+        });
+      }
+      return;
+    }
+    const exitClass = stopReason === "hard_or_breakeven_stop"
+      ? (S.beArmed ? "cycle_exit" : "stop_exit")
+      : (pnlPct >= 0 ? "cycle_exit" : "stop_exit");
+    return doExit(stopReason, price, eventIso, exitClass);
   }
-  if (CONFIG.DYNAMIC_TP_ENABLED && S.dynamicTpTier > 0) {
-    const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
+  if (CONFIG.DYNAMIC_TP_ENABLED) {
     const peakPnl = S.peakPnlPct || 0;
     const pnlGiveback = peakPnl - pnlPct;
     const fv = getFvvoScore();
     const feature = S.lastFeature;
-    const normalGivebackHit = Number.isFinite(giveback) && pnlGiveback >= giveback;
-    const forceTier1Exit =
-      S.dynamicTpTier === 1 &&
-      Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT) &&
-      Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT) &&
-      pnlGiveback >= CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT &&
-      pnlPct >= CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT;
 
-    if (normalGivebackHit || forceTier1Exit) {
-      const tpReason = forceTier1Exit && !normalGivebackHit
-        ? `dynamic_tp_tier${S.dynamicTpTier}_force_giveback`
-        : `dynamic_tp_tier${S.dynamicTpTier}_giveback`;
-      if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv, { peakPnlPct: peakPnl, pnlGiveback, forceTier1Exit })) {
-        log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
-        return;
+    const adaptiveTp = adaptiveTpDecision(price, pnlPct, feature, eventIso, "tick");
+    if (adaptiveTp.allow) {
+      logAdaptiveTpForceExit(adaptiveTp);
+      return doExit(adaptiveTp.reason, price, eventIso, "cycle_exit");
+    }
+
+    if (S.dynamicTpTier > 0) {
+      const giveback = dynamicTpGivebackForTier(S.dynamicTpTier);
+      const normalGivebackHit = Number.isFinite(giveback) && pnlGiveback >= giveback;
+      const forceTier1Exit =
+        S.dynamicTpTier === 1 &&
+        Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT) &&
+        Number.isFinite(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT) &&
+        pnlGiveback >= CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT &&
+        pnlPct >= CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT;
+
+      if (normalGivebackHit || forceTier1Exit) {
+        const tpReason = forceTier1Exit && !normalGivebackHit
+          ? `dynamic_tp_tier${S.dynamicTpTier}_force_giveback`
+          : `dynamic_tp_tier${S.dynamicTpTier}_giveback`;
+        if (shouldBlockLaunchDynamicTp(feature, pnlPct, S.dynamicTpTier, fv, { peakPnlPct: peakPnl, pnlGiveback, forceTier1Exit })) {
+          log("🟦 LAUNCH_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
+          return;
+        }
+        if (shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
+          log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
+          return;
+        }
+        if (forceTier1Exit && CONFIG.LAUNCH_TP_PROTECTION_LOG) {
+          log("🎯⚠️ DYNAMIC_TP_TIER1_FORCE_EXIT", {
+            reason: tpReason,
+            pnlPct: round4(pnlPct),
+            peakPnlPct: round4(peakPnl),
+            pnlGiveback: round4(pnlGiveback),
+            forceGivebackPct: round4(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT),
+            minExitPnlPct: round4(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT),
+            entryMode: S.entryMode,
+          });
+        }
+        return doExit(tpReason, price, eventIso, "cycle_exit");
       }
-      if (shouldBlockPostExitContinuationDynamicTp(feature, pnlPct, S.dynamicTpTier, fv)) {
-        log("🟪 POST_EXIT_CONT_TP_PROTECTION_BLOCKED_EXIT", { tier: S.dynamicTpTier, pnlPct: round4(pnlPct), peakPnlPct: round4(peakPnl), pnlGiveback: round4(pnlGiveback), entryMode: S.entryMode });
-        return;
-      }
-      if (forceTier1Exit && CONFIG.LAUNCH_TP_PROTECTION_LOG) {
-        log("🎯⚠️ DYNAMIC_TP_TIER1_FORCE_EXIT", {
-          reason: tpReason,
-          pnlPct: round4(pnlPct),
-          peakPnlPct: round4(peakPnl),
-          pnlGiveback: round4(pnlGiveback),
-          forceGivebackPct: round4(CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT),
-          minExitPnlPct: round4(CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT),
-          entryMode: S.entryMode,
-        });
-      }
-      return doExit(tpReason, price, eventIso, "cycle_exit");
     }
   } else {
     const drawFromPeakPct = Number.isFinite(S.peakPrice) ? -pctDiff(S.peakPrice, price) : 0;
@@ -1658,7 +2397,6 @@ function shouldFirstEntryFailFastExit(feature, pnlPct) {
   reasonPush(reasons, !minHeldOk, "too_early_min_held");
   reasonPush(reasons, !maxHeldOk, "too_late_max_held");
   reasonPush(reasons, !lossOk, "loss_not_deep_enough");
-  reasonPush(reasons, !peakStillFailed, "peak_progress_too_high_for_thesis_fail");
   reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
   reasonPush(reasons, !supportFail, "ema_support_not_failed");
 
@@ -1814,7 +2552,6 @@ function shouldFirstEntryThesisFailExit(feature, pnlPct, fv) {
   reasonPush(reasons, !minBarsOk, "too_early_thesis_fail_window");
   reasonPush(reasons, !maxBarsOk, "outside_thesis_fail_window");
   reasonPush(reasons, !lossOk, "loss_not_deep_enough");
-  reasonPush(reasons, !peakStillFailed, "peak_progress_too_high_for_thesis_fail");
   reasonPush(reasons, !rsiFail, "rsi_not_below_threshold");
   reasonPush(reasons, !ema8Ok, "close_not_below_ema8");
   reasonPush(reasons, !ema18Ok, "close_not_below_ema18");
@@ -1860,6 +2597,35 @@ function evaluateBarExit(feature) {
   const pnlPct = pctDiff(S.entryPrice, price);
   const fv = getFvvoScore();
   const prev = S.prevFeature;
+
+  updateAtrStructureStop(price, feature.time);
+  if (price <= S.stopPrice) {
+    const stopReason = activeStopExitReason();
+    if (!atrStructureStopExitAllowed(stopReason, pnlPct)) {
+      if (CONFIG.ATR_STRUCTURE_LOG && ["atr_stop", "structure_stop"].includes(stopReason)) {
+        log("🛡️📐 ATR_STRUCTURE_STOP_HOLD", {
+          reason: "loss_not_deep_enough",
+          stopReason,
+          price: round4(price),
+          stopPrice: round4(S.stopPrice),
+          pnlPct: round4(pnlPct),
+          minLossTriggerPct: CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT,
+          entryMode: S.entryMode,
+        });
+      }
+    } else {
+      const exitClass = stopReason === "hard_or_breakeven_stop"
+        ? (S.beArmed ? "cycle_exit" : "stop_exit")
+        : (pnlPct >= 0 ? "cycle_exit" : "stop_exit");
+      return doExit(stopReason, price, feature.time, exitClass);
+    }
+  }
+
+  const adaptiveBarPullback = adaptiveTpOneBarPullbackDecision(feature, pnlPct, fv, feature.time);
+  if (adaptiveBarPullback.allow) {
+    logAdaptiveTpForceExit(adaptiveBarPullback);
+    return doExit(adaptiveBarPullback.reason, price, feature.time, "cycle_exit");
+  }
 
   const reentryHarvest = shouldReentryTopHarvestExit(feature, pnlPct, fv);
   if (reentryHarvest.allow) return doExit("reentry_top_harvest_exit", price, feature.time, "cycle_exit");
@@ -1972,14 +2738,28 @@ function markReentryEligible(reason, exitPrice, exitPnlPct, peakBeforeExit) {
   if (!S.ray.bullContext) return;
   if (S.ray.reentryCountInRegime >= CONFIG.MAX_REENTRIES_PER_BULL_REGIME) return;
   const anchor = Number.isFinite(S.lastFeature?.ema8) ? S.lastFeature.ema8 : Number.isFinite(exitPrice) ? exitPrice : peakBeforeExit;
+  const adaptiveTpExit = isAdaptiveTpExitReason(reason);
+  const eligibleDelayBars = adaptiveTpExit
+    ? Math.max(CONFIG.REENTRY_MIN_BARS_AFTER_EXIT, CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS)
+    : CONFIG.REENTRY_MIN_BARS_AFTER_EXIT;
+  const eligibleWindowBars = adaptiveTpExit
+    ? Math.max(6, CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS)
+    : 6;
   S.reentry = {
     eligible: true,
-    eligibleUntilBar: S.barIndex + 6,
-    eligibleFromBar: S.barIndex + CONFIG.REENTRY_MIN_BARS_AFTER_EXIT,
+    armedAtBar: S.barIndex,
+    eligibleUntilBar: S.barIndex + eligibleWindowBars,
+    eligibleFromBar: S.barIndex + eligibleDelayBars,
     exitPrice,
     peakBeforeExit,
     anchorPrice: anchor,
     bullRegimeId: S.ray.bullRegimeId,
+    exitReason: reason,
+    exitPnlPct,
+    adaptiveTpResetSeen: false,
+    adaptiveTpResetSeenBar: null,
+    adaptiveTpResetLow: null,
+    adaptiveTpResetReason: null,
   };
   S.cycleState = "tp_exit_wait_reentry";
   log("🔁 TP_EXIT_WAIT_REENTRY", {
@@ -2051,7 +2831,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   forward3Commas("exit_long", exitPrice, { reason, brain: CONFIG.BRAIN_NAME, entry_mode: S.entryMode }, ts).catch((err) => {
     log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
   });
-  if (reason === "hard_or_breakeven_stop") clearFastTickLaunch("hard_or_breakeven_stop_exit");
+  if (["hard_or_breakeven_stop", "atr_stop", "structure_stop"].includes(reason)) clearFastTickLaunch(`${reason}_exit`);
   if (exitClass === "cycle_exit") markReentryEligible(reason, exitPrice, pnlPct, peakBeforeExit);
   else {
     clearReentry("non_cycle_exit");
@@ -2064,10 +2844,20 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
   S.entryBarIndex = null;
   S.entryMode = null;
   S.stopPrice = null;
+  S.stopSource = null;
+  S.stopMeta = null;
   S.beArmed = false;
+  S.dynamicBeStrongLockArmed = false;
   S.peakPrice = null;
   S.peakPnlPct = 0;
   S.dynamicTpTier = 0;
+  S.adaptiveTp = {
+    armed: false,
+    profile: null,
+    level: null,
+    lastExitLinePct: null,
+    lastAllowedGivebackPct: null,
+  };
   S.lastExitAtMs = actionClockMs(ts);
   S.lastAction = "exit";
   S.lastExitClass = exitClass;
@@ -2095,14 +2885,20 @@ export function handleTick(body) {
     if (S.firstEntry.pending && px >= n(S.firstEntry.confirmPrice, Infinity)) {
       S.firstEntry.ticksAboveConfirm += 1;
       S.firstEntry.lastConfirmedTickPrice = px;
+      const requiredTicks = firstEntryConfirmRequiredTicks();
+      const strongConfirm = firstEntryStrongFeatureForConfirm(S.lastFeature, n(S.firstEntry.rayPrice, NaN), "CONFIRM");
       log("🟢 FIRST_ENTRY_TICK_CONFIRM", {
         price: px,
         ticksAboveConfirm: S.firstEntry.ticksAboveConfirm,
-        required: CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS,
+        required: requiredTicks,
+        defaultRequired: CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS,
+        strongFeatureTicks: CONFIG.FIRST_ENTRY_CONFIRM_STRONG_FEATURE_TICKS,
+        strongFeature: strongConfirm.ok,
+        strongReasons: strongConfirm.reasons,
         confirmPrice: round4(S.firstEntry.confirmPrice),
         rayPrice: round4(S.firstEntry.rayPrice),
       });
-      if (S.firstEntry.ticksAboveConfirm >= CONFIG.FIRST_ENTRY_CONFIRM_MIN_TICKS) {
+      if (S.firstEntry.ticksAboveConfirm >= requiredTicks) {
         const decision = {
           ...(S.firstEntry.decision || {}),
           mode: "first_bullish_trend_change_confirmed_long",

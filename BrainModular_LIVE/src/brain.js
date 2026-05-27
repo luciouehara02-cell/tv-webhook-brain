@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.1_modular
- * Source behavior: BrainRAY_Continuation_v5.1 + v5.1a safety/log improvements
+ * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
  */
@@ -47,9 +47,32 @@ export function getStatus() {
     entryAt: S.entryAt,
     entryMode: S.entryMode,
     stopPrice: S.stopPrice,
+    stopSource: S.stopSource,
+    stopMeta: S.stopMeta,
     peakPrice: S.peakPrice,
     peakPnlPct: S.peakPnlPct,
     dynamicTpTier: S.dynamicTpTier,
+    adaptiveTp: S.adaptiveTp,
+    adaptiveTpConfig: {
+      enabled: CONFIG.DYNAMIC_TP_ADAPTIVE_ENABLED,
+      minGrossExitPnlPct: CONFIG.DYNAMIC_TP_MIN_GROSS_EXIT_PNL_PCT,
+      minNetExitPnlPct: CONFIG.DYNAMIC_TP_MIN_NET_EXIT_PNL_PCT,
+      feeRoundTripPct: CONFIG.FEE_ROUND_TRIP_PCT,
+      slippageBufferPct: CONFIG.SLIPPAGE_BUFFER_PCT,
+      oneBarPullbackEnabled: CONFIG.DYNAMIC_TP_ONE_BAR_PULLBACK_ENABLED,
+    },
+    postAdaptiveTpReentryConfig: {
+      enabled: CONFIG.POST_ADAPTIVE_TP_REENTRY_ENABLED,
+      cooldownBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_COOLDOWN_BARS,
+      windowBars: CONFIG.POST_ADAPTIVE_TP_REENTRY_WINDOW_BARS,
+      minResetFromPeakPct: CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_PEAK_PCT,
+      minResetFromExitPct: CONFIG.POST_ADAPTIVE_TP_REENTRY_MIN_RESET_FROM_EXIT_PCT,
+      allowEma8TouchReset: CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA8_TOUCH_RESET,
+      allowEma18TouchReset: CONFIG.POST_ADAPTIVE_TP_REENTRY_ALLOW_EMA18_TOUCH_RESET,
+      reclaimMinRsi: CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_RSI,
+      reclaimMinAdx: CONFIG.POST_ADAPTIVE_TP_REENTRY_RECLAIM_MIN_ADX,
+      maxChaseFromReclaimPct: CONFIG.POST_ADAPTIVE_TP_REENTRY_MAX_CHASE_FROM_RECLAIM_PCT,
+    },
     cooldownUntil: S.cooldownUntilMs ? new Date(S.cooldownUntilMs).toISOString() : null,
     bullContext: S.ray.bullContext,
     bullRegimeId: S.ray.bullRegimeId,
@@ -61,6 +84,23 @@ export function getStatus() {
     firstEntryFeatureSync: S.firstEntryFeatureSync,
     reentry: S.reentry,
     postExitContinuation: S.postExitContinuation,
+    atrStructureStopConfig: {
+      enabled: CONFIG.ATR_STRUCTURE_STOP_ENABLED,
+      multFirstEntry: CONFIG.ATR_STOP_MULT_FIRST_ENTRY,
+      multReentry: CONFIG.ATR_STOP_MULT_REENTRY,
+      multStrongReentry: CONFIG.ATR_STOP_MULT_STRONG_REENTRY,
+      minPct: CONFIG.ATR_STOP_MIN_PCT,
+      maxPct: CONFIG.ATR_STOP_MAX_PCT,
+      lookbackBars: CONFIG.ATR_STRUCTURE_LOOKBACK_BARS,
+      bufferPct: CONFIG.ATR_STRUCTURE_BUFFER_PCT,
+      tightenOnly: CONFIG.ATR_STOP_ALLOW_TIGHTEN_ONLY,
+      deriveIfMissing: CONFIG.ATR_STOP_DERIVE_IF_MISSING,
+      applyFirstEntry: CONFIG.ATR_STOP_APPLY_FIRST_ENTRY,
+      applyReentry: CONFIG.ATR_STOP_APPLY_REENTRY,
+      applyOtherModes: CONFIG.ATR_STOP_APPLY_OTHER_MODES,
+      minBarsAfterEntry: CONFIG.ATR_STOP_MIN_BARS_AFTER_ENTRY,
+      minLossTriggerPct: CONFIG.ATR_STOP_MIN_LOSS_TRIGGER_PCT,
+    },
     postExitProfitGuardConfig: {
       enabled: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ENABLED,
       armPeakPct: CONFIG.POST_EXIT_CONT_PROFIT_GUARD_ARM_PEAK_PCT,
