@@ -93,7 +93,7 @@ app.listen(CONFIG.PORT, () => {
       requireNotBullishFvvo: CONFIG.FIRST_ENTRY_THESIS_FAIL_REQUIRE_NOT_BULLISH_FVVO,
     },
 
-    dynamicTpTier1Force: {
+    tier1ForceExitLoaded: {
       givebackPct: CONFIG.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT,
       minExitPnlPct: CONFIG.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT,
       envShortGiveback: process.env.DYNAMIC_TP_TIER1_FORCE_GIVEBACK_PCT || null,
