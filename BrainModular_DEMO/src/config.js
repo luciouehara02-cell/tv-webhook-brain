@@ -7,6 +7,14 @@
 
 import { n, s, b, normalizeSymbol, safeJsonParse } from "./utils.js";
 
+function envAlias(...keys) {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return undefined;
+}
+
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
@@ -352,8 +360,22 @@ export const CONFIG = {
   LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT: n(process.env.LAUNCH_TP_PROTECTION_MAX_GIVEBACK_PCT, 0.30),
   LAUNCH_TP_PROTECTION_DISABLE_ON_BEARISH_FVVO: b(process.env.LAUNCH_TP_PROTECTION_DISABLE_ON_BEARISH_FVVO, true),
   LAUNCH_TP_PROTECTION_DISABLE_BELOW_EMA8: b(process.env.LAUNCH_TP_PROTECTION_DISABLE_BELOW_EMA8, true),
-  DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT: n(process.env.DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT, 0.30),
-  DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT: n(process.env.DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT, 0.30),
+  // v6.6e-fix1: accept both the original long env names and the shorter TEST3 names.
+  // Priority is the short/current TEST3 name first, then the original v6.6e name, then default.
+  DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT: n(
+    envAlias(
+      "DYNAMIC_TP_TIER1_FORCE_GIVEBACK_PCT",
+      "DYNAMIC_TP_TIER1_FORCE_EXIT_GIVEBACK_PCT"
+    ),
+    0.30
+  ),
+  DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT: n(
+    envAlias(
+      "DYNAMIC_TP_TIER1_FORCE_MIN_EXIT_PNL_PCT",
+      "DYNAMIC_TP_TIER1_MIN_EXIT_PNL_PCT"
+    ),
+    0.30
+  ),
 
   // v6.6e Adaptive TP ladder: higher peaks get tighter giveback windows.
   DYNAMIC_TP_ADAPTIVE_ENABLED: b(process.env.DYNAMIC_TP_ADAPTIVE_ENABLED, true),
