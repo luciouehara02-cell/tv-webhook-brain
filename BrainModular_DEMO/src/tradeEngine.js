@@ -283,17 +283,27 @@ function evaluateFirstEntryConfirmUpgradeOnFeature(feature) {
 
   const strong = firstEntryStrongFeatureForConfirm(feature, rayPrice, "UPGRADE");
   const decision = evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime);
+  const decisionRedFlags = Array.isArray(decision.redFlags) ? decision.redFlags : [];
+  const immediateDecisionOk = decision.action === "enter" && decisionRedFlags.length === 0;
   log("🟢 FIRST_ENTRY_CONFIRM_UPGRADE_EVAL", {
     action: decision.action,
     reason: decision.reason || null,
+    immediateDecisionOk,
     strongFeature: strong.ok,
     strongReasons: strong.reasons,
     strongMetrics: strong.metrics,
-    redFlags: Array.isArray(decision.redFlags) ? decision.redFlags : [],
+    redFlags: decisionRedFlags,
     metrics: decision.metrics || null,
   });
 
-  if (decision.action === "enter" && strong.ok) {
+  // v6.6e FIX4:
+  // The original v6.6c sync-upgrade idea was to correct the race where a Ray BUY arrives
+  // just before the fresh 5m feature bar. In v6.6e the upgrade was still too strict:
+  // it required the refreshed feature to be "strong". That missed valid immediate entries
+  // where the refreshed feature passes normal first-entry rules but is not strong enough
+  // for the 1-tick shortcut. Keep "strongFeature" only for the reduced tick requirement;
+  // for confirm -> immediate upgrade, allow any normal immediate-entry decision with no red flags.
+  if (immediateDecisionOk) {
     const entryPrice = Number.isFinite(n(feature?.close, NaN)) ? n(feature.close, NaN) : rayPrice;
     if (canEnterByDedup("first_entry_confirm_upgrade", featureTime || rayTime)) {
       log("🟩🟢 FIRST_ENTRY_CONFIRM_UPGRADED_TO_IMMEDIATE", {
@@ -302,13 +312,22 @@ function evaluateFirstEntryConfirmUpgradeOnFeature(feature) {
         rayTime,
         featureTime,
         decisionReason: decision.reason || null,
+        immediateDecisionOk,
+        strongFeature: strong.ok,
+        strongReasons: strong.reasons,
         strongMetrics: strong.metrics,
       });
-      doEnter(decision.mode, entryPrice, { ...decision, reason: `${decision.reason}_confirm_upgrade` }, featureTime || rayTime);
+      const entryEventTime = rayTime || featureTime || isoNow();
+      doEnter(decision.mode, entryPrice, { ...decision, reason: `${decision.reason}_confirm_upgrade` }, entryEventTime);
       clearFirstEntry("consumed_on_confirm_upgrade");
       return { handled: true, entered: true };
     }
-    log("🚫 FIRST_ENTRY_CONFIRM_UPGRADE_BLOCKED_BY_DEDUP", { decision, strongMetrics: strong.metrics });
+    log("🚫 FIRST_ENTRY_CONFIRM_UPGRADE_BLOCKED_BY_DEDUP", {
+      decision,
+      immediateDecisionOk,
+      strongFeature: strong.ok,
+      strongMetrics: strong.metrics,
+    });
     return { handled: true };
   }
   return { handled: false };
