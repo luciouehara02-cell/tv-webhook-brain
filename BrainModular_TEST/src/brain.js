@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
@@ -80,6 +80,12 @@ export function getStatus() {
     cycleState: S.cycleState,
     lastExitClass: S.lastExitClass,
     lastExitReason: S.lastExitReason,
+    pendingExit: S.pendingExit,
+    exitForwardRetryConfig: {
+      enabled: CONFIG.EXIT_FORWARD_RETRY_ENABLED,
+      delaysMs: CONFIG.EXIT_FORWARD_RETRY_DELAYS_MS,
+      blockEntries: CONFIG.EXIT_FORWARD_RETRY_BLOCK_ENTRIES,
+    },
     firstEntry: S.firstEntry,
     firstEntryFeatureSync: S.firstEntryFeatureSync,
     reentry: S.reentry,

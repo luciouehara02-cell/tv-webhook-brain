@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -2826,30 +2826,61 @@ function doFlatExitPassthrough(reason, price, ts, source = "flat_safety_exit") {
   S.cooldownUntilMs = actionClockMs(ts) + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
 }
 
-function doExit(reason, price, ts, exitClass = "stop_exit") {
-  if (!S.inPosition) return;
-  if (!canExitByDedup(ts)) {
-    log("⏸️ EXIT_DEDUP_BLOCKED", { reason, ts, entryMode: S.entryMode, lastExitAtMs: S.lastExitAtMs, attemptClockMs: actionClockMs(ts), exitDedupMs: CONFIG.EXIT_DEDUP_MS });
-    return;
-  }
-  const exitPrice = Number.isFinite(price) ? price : currentPrice();
-  const pnlPct = Number.isFinite(exitPrice) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, exitPrice) : 0;
-  const peakBeforeExit = getExitPeakSnapshot(exitPrice);
-  const exitMs = actionClockMs(ts);
-  const entryMs = parseTsMs(S.entryAt);
-  log("🟩🔵 EXIT_LONG", {
-    reason,
-    exitClass,
-    price: round4(exitPrice),
-    pnlPct: round4(pnlPct),
-    entryPrice: round4(S.entryPrice),
-    entryMode: S.entryMode,
-    peakBeforeExit: round4(peakBeforeExit),
-    heldSec: Number.isFinite(entryMs) && Number.isFinite(exitMs) ? Math.max(0, Math.round((exitMs - entryMs) / 1000)) : null,
-  });
-  forward3Commas("exit_long", exitPrice, { reason, brain: CONFIG.BRAIN_NAME, entry_mode: S.entryMode }, ts).catch((err) => {
-    log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
-  });
+function clearPendingExitState(reason = "reset") {
+  S.pendingExit = {
+    active: false,
+    reason: null,
+    exitClass: null,
+    price: null,
+    pnlPct: null,
+    peakBeforeExit: null,
+    requestedAt: null,
+    attempt: 0,
+    lastAttemptAt: null,
+    lastStatus: null,
+    lastError: null,
+    nextRetryAt: null,
+    clearedReason: reason,
+  };
+}
+
+function setPendingExitState(ctx) {
+  S.pendingExit = {
+    active: true,
+    reason: ctx.reason,
+    exitClass: ctx.exitClass,
+    price: ctx.exitPrice,
+    pnlPct: ctx.pnlPct,
+    peakBeforeExit: ctx.peakBeforeExit,
+    requestedAt: isoNow(),
+    attempt: 0,
+    lastAttemptAt: null,
+    lastStatus: null,
+    lastError: null,
+    nextRetryAt: null,
+  };
+}
+
+function updatePendingExitAttempt(ctx, attempt, status = null, error = null, nextRetryAt = null) {
+  if (!S.pendingExit?.active) return;
+  S.pendingExit = {
+    ...S.pendingExit,
+    reason: ctx.reason,
+    exitClass: ctx.exitClass,
+    price: ctx.exitPrice,
+    pnlPct: ctx.pnlPct,
+    peakBeforeExit: ctx.peakBeforeExit,
+    attempt,
+    lastAttemptAt: isoNow(),
+    lastStatus: status,
+    lastError: error,
+    nextRetryAt,
+  };
+}
+
+function finalizeExitState(ctx, forwardResult = null) {
+  const { reason, exitClass, exitPrice, pnlPct, peakBeforeExit, ts } = ctx;
+
   if (["hard_or_breakeven_stop", "atr_stop", "structure_stop"].includes(reason)) clearFastTickLaunch(`${reason}_exit`);
   if (exitClass === "cycle_exit") markReentryEligible(reason, exitPrice, pnlPct, peakBeforeExit);
   else {
@@ -2857,6 +2888,7 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
     clearPostExitContinuation("non_cycle_exit");
   }
   if (exitClass === "regime_break") turnBullRegimeOff(ts, reason);
+
   S.inPosition = false;
   S.entryPrice = null;
   S.entryAt = null;
@@ -2886,8 +2918,144 @@ function doExit(reason, price, ts, exitClass = "stop_exit") {
     S.cooldownUntilMs = actionClockMs(ts) + CONFIG.EXIT_COOLDOWN_MIN * 60 * 1000;
     S.cycleState = "cooldown_hard";
   }
+  clearPendingExitState("exit_forward_confirmed");
+  if (forwardResult) {
+    log("✅ EXIT_FORWARD_CONFIRMED", {
+      reason,
+      exitClass,
+      price: round4(exitPrice),
+      pnlPct: round4(pnlPct),
+      status: forwardResult.status ?? null,
+      skipped: Boolean(forwardResult.skipped),
+    });
+  }
 }
 
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+async function forwardExitWithRetry(ctx) {
+  const delays = Array.isArray(CONFIG.EXIT_FORWARD_RETRY_DELAYS_MS) && CONFIG.EXIT_FORWARD_RETRY_DELAYS_MS.length
+    ? CONFIG.EXIT_FORWARD_RETRY_DELAYS_MS
+    : [0, 2000, 5000, 15000];
+  const maxAttempts = Math.max(1, delays.length);
+
+  for (let i = 0; i < maxAttempts; i += 1) {
+    if (!S.pendingExit?.active) {
+      log("ℹ️ EXIT_FORWARD_RETRY_ABORTED", { reason: "pending_exit_cleared", originalReason: ctx.reason });
+      return;
+    }
+
+    const delay = Number(delays[i]) || 0;
+    const nextRetryAt = delay > 0 ? new Date(Date.now() + delay).toISOString() : isoNow();
+    updatePendingExitAttempt(ctx, i + 1, S.pendingExit.lastStatus, S.pendingExit.lastError, nextRetryAt);
+    if (delay > 0) await sleepMs(delay);
+
+    log("🔁 EXIT_FORWARD_RETRY_ATTEMPT", {
+      reason: ctx.reason,
+      attempt: i + 1,
+      maxAttempts,
+      delayMs: delay,
+      price: round4(ctx.exitPrice),
+      pnlPct: round4(ctx.pnlPct),
+    });
+
+    const result = await forward3Commas(
+      "exit_long",
+      ctx.exitPrice,
+      { reason: ctx.reason, brain: CONFIG.BRAIN_NAME, entry_mode: ctx.entryMode, retryAttempt: i + 1, retryMaxAttempts: maxAttempts },
+      i === 0 ? ctx.ts : isoNow()
+    );
+
+    updatePendingExitAttempt(ctx, i + 1, result?.status ?? null, result?.error || null, null);
+
+    if (result?.ok) {
+      finalizeExitState(ctx, result);
+      return;
+    }
+
+    log("⚠️ EXIT_FORWARD_RETRY_FAILED", {
+      reason: ctx.reason,
+      attempt: i + 1,
+      maxAttempts,
+      status: result?.status ?? null,
+      error: result?.error || null,
+      keepBrainPositionOpen: true,
+    });
+  }
+
+  log("🟥 EXIT_FORWARD_RETRY_EXHAUSTED_POSITION_STILL_MARKED_LONG", {
+    reason: ctx.reason,
+    exitClass: ctx.exitClass,
+    price: round4(ctx.exitPrice),
+    pnlPct: round4(ctx.pnlPct),
+    attempts: maxAttempts,
+    actionRequired: "check_3commas_position_or_reset_after_manual_close",
+  });
+}
+
+function doExit(reason, price, ts, exitClass = "stop_exit") {
+  if (!S.inPosition) return;
+  if (S.pendingExit?.active) {
+    log("⏳ EXIT_ALREADY_PENDING", {
+      existingReason: S.pendingExit.reason,
+      newReason: reason,
+      pendingPrice: round4(S.pendingExit.price),
+      newPrice: round4(Number.isFinite(price) ? price : currentPrice()),
+      attempt: S.pendingExit.attempt,
+      lastStatus: S.pendingExit.lastStatus,
+    });
+    return;
+  }
+  if (!canExitByDedup(ts)) {
+    log("⏸️ EXIT_DEDUP_BLOCKED", { reason, ts, entryMode: S.entryMode, lastExitAtMs: S.lastExitAtMs, attemptClockMs: actionClockMs(ts), exitDedupMs: CONFIG.EXIT_DEDUP_MS });
+    return;
+  }
+  const exitPrice = Number.isFinite(price) ? price : currentPrice();
+  const pnlPct = Number.isFinite(exitPrice) && Number.isFinite(S.entryPrice) ? pctDiff(S.entryPrice, exitPrice) : 0;
+  const peakBeforeExit = getExitPeakSnapshot(exitPrice);
+  const exitMs = actionClockMs(ts);
+  const entryMs = parseTsMs(S.entryAt);
+  const ctx = {
+    reason,
+    exitClass,
+    exitPrice,
+    pnlPct,
+    peakBeforeExit,
+    ts,
+    entryMode: S.entryMode,
+    entryPrice: S.entryPrice,
+    entryAt: S.entryAt,
+  };
+
+  log("🟩🔵 EXIT_LONG", {
+    reason,
+    exitClass,
+    price: round4(exitPrice),
+    pnlPct: round4(pnlPct),
+    entryPrice: round4(S.entryPrice),
+    entryMode: S.entryMode,
+    peakBeforeExit: round4(peakBeforeExit),
+    heldSec: Number.isFinite(entryMs) && Number.isFinite(exitMs) ? Math.max(0, Math.round((exitMs - entryMs) / 1000)) : null,
+  });
+
+  if (!CONFIG.ENABLE_HTTP_FORWARD || !CONFIG.EXIT_FORWARD_RETRY_ENABLED) {
+    forward3Commas("exit_long", exitPrice, { reason, brain: CONFIG.BRAIN_NAME, entry_mode: S.entryMode }, ts).catch((err) => {
+      log("❌ 3COMMAS_EXIT_ERROR", { err: String(err?.message || err) });
+    });
+    finalizeExitState(ctx, { ok: true, skipped: !CONFIG.ENABLE_HTTP_FORWARD, status: CONFIG.ENABLE_HTTP_FORWARD ? "retry_disabled" : "disabled" });
+    return;
+  }
+
+  setPendingExitState(ctx);
+  forwardExitWithRetry(ctx).catch((err) => {
+    if (S.pendingExit?.active) {
+      S.pendingExit.lastError = String(err?.message || err);
+    }
+    log("💥 EXIT_FORWARD_RETRY_FATAL", { err: String(err?.stack || err), reason, price: round4(exitPrice) });
+  });
+}
 // --------------------------------------------------
 // ticks
 // --------------------------------------------------

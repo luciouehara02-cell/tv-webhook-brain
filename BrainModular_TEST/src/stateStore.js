@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -49,6 +49,20 @@ export function buildInitialRuntimeState() {
     cycleState: "flat",
     lastExitClass: null,
     lastExitReason: null,
+    pendingExit: {
+      active: false,
+      reason: null,
+      exitClass: null,
+      price: null,
+      pnlPct: null,
+      peakBeforeExit: null,
+      requestedAt: null,
+      attempt: 0,
+      lastAttemptAt: null,
+      lastStatus: null,
+      lastError: null,
+      nextRetryAt: null,
+    },
     ray: {
       bullContext: false,
       bullRegimeId: 0,
