@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
+ * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
@@ -88,6 +88,21 @@ export function getStatus() {
     },
     firstEntry: S.firstEntry,
     firstEntryFeatureSync: S.firstEntryFeatureSync,
+    firstEntryLateExtWatch: S.firstEntryLateExtWatch,
+    firstEntryContextQualityConfig: {
+      enabled: CONFIG.FIRST_ENTRY_CONTEXT_QUALITY_BLOCK_ENABLED,
+      compressedRsiBelow: CONFIG.FIRST_ENTRY_COMPRESSED_RSI_BELOW,
+      compressedAdxBelow: CONFIG.FIRST_ENTRY_COMPRESSED_ADX_BELOW,
+      compressedEmaSpreadBelowPct: CONFIG.FIRST_ENTRY_COMPRESSED_EMA_SPREAD_BELOW_PCT,
+      lateExtLowAdxEnabled: CONFIG.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED,
+      lateExtAdxBelow: CONFIG.FIRST_ENTRY_LATE_EXT_ADX_BELOW,
+      lateExtExt18AbovePct: CONFIG.FIRST_ENTRY_LATE_EXT_EXT18_ABOVE_PCT,
+      lateExtRsiAbove: CONFIG.FIRST_ENTRY_LATE_EXT_RSI_ABOVE,
+      lateExtAction: CONFIG.FIRST_ENTRY_LATE_EXT_ACTION,
+      lateExtWatchBars: CONFIG.FIRST_ENTRY_LATE_EXT_WATCH_BARS,
+      lateExtReentryAdxMin: CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN,
+      lateExtReentryEmaSpreadMinPct: CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT,
+    },
     reentry: S.reentry,
     postExitContinuation: S.postExitContinuation,
     atrStructureStopConfig: {
