@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
  *
  * All environment variables and default thresholds.
@@ -15,10 +15,20 @@ function envAlias(...keys) {
   return undefined;
 }
 
+function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
+  const raw = process.env[key];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const values = String(raw)
+    .split(",")
+    .map((x) => Number(String(x).trim()))
+    .filter((x) => Number.isFinite(x) && x >= 0);
+  return values.length ? values : fallback;
+}
+
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -46,6 +56,13 @@ export const CONFIG = {
   SYMBOL_BOT_MAP: safeJsonParse(process.env.SYMBOL_BOT_MAP || "{}", {}),
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
   FORWARD_EXIT_WHEN_FLAT: b(process.env.FORWARD_EXIT_WHEN_FLAT, false),
+
+  // v6.7 live safety: exit webhook retry / pending-exit protection.
+  // If 3Commas returns 503 or times out on an exit, keep the Brain logically long,
+  // block new entries, and retry before considering the exit delivered.
+  EXIT_FORWARD_RETRY_ENABLED: b(process.env.EXIT_FORWARD_RETRY_ENABLED, true),
+  EXIT_FORWARD_RETRY_DELAYS_MS: envMsList("EXIT_FORWARD_RETRY_DELAYS_MS", [0, 2000, 5000, 15000]),
+  EXIT_FORWARD_RETRY_BLOCK_ENTRIES: b(process.env.EXIT_FORWARD_RETRY_BLOCK_ENTRIES, true),
 
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
   RAY_USE_BULLISH_TREND_CONTINUATION: b(process.env.RAY_USE_BULLISH_TREND_CONTINUATION, true),
