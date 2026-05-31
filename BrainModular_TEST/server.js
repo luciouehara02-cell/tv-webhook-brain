@@ -41,6 +41,11 @@ app.listen(CONFIG.PORT, () => {
     enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
     replayUseEventTimeForPositionClock: CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
+    exitForwardRetry: {
+      enabled: CONFIG.EXIT_FORWARD_RETRY_ENABLED,
+      delaysMs: CONFIG.EXIT_FORWARD_RETRY_DELAYS_MS,
+      blockEntries: CONFIG.EXIT_FORWARD_RETRY_BLOCK_ENTRIES,
+    },
     firstEntry: {
       enabled: CONFIG.FIRST_ENTRY_ENGINE_ENABLED,
       immediateMaxChasePct: CONFIG.FIRST_ENTRY_IMMEDIATE_MAX_CHASE_PCT,
