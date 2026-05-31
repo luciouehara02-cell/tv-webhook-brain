@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
+ * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
  * Source behavior: BrainRAY_Continuation_v5.1
  *
  * 3Commas / HTTP forwarding only.

@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
+ * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -114,6 +114,17 @@ export function buildInitialRuntimeState() {
       decision: null,
       featureTimeAtArm: null,
       featureLagSecAtArm: null,
+      lastEvaluatedFeatureTime: null,
+    },
+    firstEntryLateExtWatch: {
+      pending: false,
+      armedBar: null,
+      expiresBar: null,
+      bullRegimeId: null,
+      rayPrice: null,
+      rayTime: null,
+      decision: null,
+      reason: null,
       lastEvaluatedFeatureTime: null,
     },
     breakoutMemory: {

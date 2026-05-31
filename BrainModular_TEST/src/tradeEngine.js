@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
+ * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -73,6 +73,60 @@ function clearFirstEntryFeatureSync(reason = "reset") {
     featureLagSecAtArm: null,
     lastEvaluatedFeatureTime: null,
   };
+}
+function clearFirstEntryLateExtWatch(reason = "reset") {
+  if (S.firstEntryLateExtWatch?.pending) log("🟡 FIRST_ENTRY_LATE_EXT_WATCH_CLEARED", { reason });
+  S.firstEntryLateExtWatch = {
+    pending: false,
+    armedBar: null,
+    expiresBar: null,
+    bullRegimeId: null,
+    rayPrice: null,
+    rayTime: null,
+    decision: null,
+    reason: null,
+    lastEvaluatedFeatureTime: null,
+  };
+}
+function ema8Ema18SpreadPct(ema8, ema18) {
+  if (!Number.isFinite(ema8) || !Number.isFinite(ema18) || ema18 === 0) return NaN;
+  return ((ema8 - ema18) / ema18) * 100;
+}
+function firstEntryBullishFvvo(fv) {
+  if (!fv) return false;
+  const snap = fv.snap || {};
+  return Number(fv.score || 0) > 0 || snap.sniperBuy === true || snap.burstBullish === true;
+}
+function firstEntryBearishFvvo(fv) {
+  if (!fv) return false;
+  const snap = fv.snap || {};
+  return Number(fv.score || 0) < 0 || snap.sniperSell === true || snap.burstBearish === true;
+}
+function firstEntryLateExtActionIsDefer() {
+  return String(CONFIG.FIRST_ENTRY_LATE_EXT_ACTION || "defer").toLowerCase() === "defer";
+}
+function armFirstEntryLateExtWatch(rayPrice, rayTime, decision = {}) {
+  if (!CONFIG.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED) return;
+  S.firstEntryLateExtWatch = {
+    pending: true,
+    armedBar: S.barIndex,
+    expiresBar: S.barIndex + Math.max(1, Math.floor(n(CONFIG.FIRST_ENTRY_LATE_EXT_WATCH_BARS, 3))),
+    bullRegimeId: S.ray.bullRegimeId,
+    rayPrice,
+    rayTime,
+    decision,
+    reason: decision.reason || "first_entry_late_ext_low_adx_defer",
+    lastEvaluatedFeatureTime: null,
+  };
+  log("🟡 FIRST_ENTRY_LATE_EXT_WATCH_ARMED", {
+    bullRegimeId: S.firstEntryLateExtWatch.bullRegimeId,
+    armedBar: S.firstEntryLateExtWatch.armedBar,
+    expiresBar: S.firstEntryLateExtWatch.expiresBar,
+    rayPrice: round4(rayPrice),
+    rayTime,
+    reason: S.firstEntryLateExtWatch.reason,
+    metrics: decision.metrics || null,
+  });
 }
 function firstEntryFeatureLagSec(featureTime, rayTime) {
   const fMs = parseTsMs(featureTime);
@@ -332,6 +386,77 @@ function evaluateFirstEntryConfirmUpgradeOnFeature(feature) {
   }
   return { handled: false };
 }
+function evaluateFirstEntryLateExtWatchOnFeature(feature) {
+  if (!CONFIG.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED) return { entered: false };
+  if (!S.firstEntryLateExtWatch?.pending) return { entered: false };
+  if (S.inPosition) {
+    clearFirstEntryLateExtWatch("already_in_position");
+    return { entered: false };
+  }
+  if (!S.ray.bullContext) {
+    clearFirstEntryLateExtWatch("bull_context_off");
+    return { entered: false };
+  }
+  if (S.ray.bullRegimeId !== S.firstEntryLateExtWatch.bullRegimeId) {
+    clearFirstEntryLateExtWatch("bull_regime_changed");
+    return { entered: false };
+  }
+  if (S.barIndex > n(S.firstEntryLateExtWatch.expiresBar, -1)) {
+    clearFirstEntryLateExtWatch("expired");
+    return { entered: false };
+  }
+  if (S.firstEntryLateExtWatch.lastEvaluatedFeatureTime === feature.time) return { entered: false };
+  S.firstEntryLateExtWatch.lastEvaluatedFeatureTime = feature.time;
+
+  const fv = getFvvoScore();
+  const close = n(feature.close, NaN);
+  const ema8 = n(feature.ema8, NaN);
+  const ema18 = n(feature.ema18, NaN);
+  const adx = n(feature.adx, NaN);
+  const rsi = n(feature.rsi, NaN);
+  const spreadPct = ema8Ema18SpreadPct(ema8, ema18);
+  const closeAboveEma8Ok = !CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8 || (Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8);
+  const emaTrendOk = !CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18 || (Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18);
+  const adxOk = Number.isFinite(adx) && adx >= CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN;
+  const spreadOk = Number.isFinite(spreadPct) && spreadPct >= CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT;
+  const fvvoOk = !CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO || !firstEntryBearishFvvo(fv);
+  const reasons = [];
+  reasonPush(reasons, !closeAboveEma8Ok, "close_not_above_ema8");
+  reasonPush(reasons, !emaTrendOk, "ema8_not_above_ema18");
+  reasonPush(reasons, !adxOk, "adx_not_recovered");
+  reasonPush(reasons, !spreadOk, "ema_spread_not_expanded");
+  reasonPush(reasons, !fvvoOk, "bearish_fvvo");
+
+  const metrics = {
+    rayPrice: round4(S.firstEntryLateExtWatch.rayPrice),
+    close: round4(close),
+    ema8: round4(ema8),
+    ema18: round4(ema18),
+    emaSpreadPct: round4(spreadPct),
+    rsi: round4(rsi),
+    adx: round4(adx),
+    fvvo: fv,
+    rayTime: S.firstEntryLateExtWatch.rayTime,
+    featureTime: feature.time,
+    armedBar: S.firstEntryLateExtWatch.armedBar,
+    expiresBar: S.firstEntryLateExtWatch.expiresBar,
+  };
+  log("🟡 FIRST_ENTRY_LATE_EXT_WATCH_EVAL", { allow: reasons.length === 0, reasons, metrics });
+  if (reasons.length > 0) return { entered: false };
+
+  const decision = {
+    action: "enter",
+    mode: "first_bullish_trend_change_late_ext_deferred_long",
+    reason: "first_entry_late_ext_deferred_reclaim_ok",
+    redFlags: [],
+    metrics,
+  };
+  log("🟩 FIRST_ENTRY_LATE_EXT_WATCH_ENTER", decision);
+  doEnter(decision.mode, close, decision, feature.time);
+  clearFirstEntryLateExtWatch("entered");
+  return { entered: true };
+}
+
 function armFirstEntryConfirm(rayPrice, rayTime, decision = {}) {
   if (!CONFIG.FIRST_ENTRY_CONFIRM_ENABLED) return;
   const confirmPrice = rayPrice * (1 + CONFIG.FIRST_ENTRY_CONFIRM_TICK_CONFIRM_PCT / 100);
@@ -630,6 +755,7 @@ function turnBullRegimeOff(ts, reason) {
     S.cycleState = S.inPosition ? "long" : "disabled_by_bear_regime";
     clearFirstEntry("bull_regime_off");
     clearFirstEntryFeatureSync("bull_regime_off");
+    clearFirstEntryLateExtWatch("bull_regime_off");
     clearBreakoutMemory("bull_regime_off");
     clearReentry("bull_regime_off");
     clearPostExitContinuation("bull_regime_off");
@@ -721,6 +847,10 @@ export function handleRayEvent(body) {
       }
       if (firstDecision.action === "confirm") {
         armFirstEntryConfirm(price, ts, firstDecision);
+        return;
+      }
+      if (firstDecision.action === "defer") {
+        armFirstEntryLateExtWatch(price, ts, firstDecision);
         return;
       }
       if (firstDecision.action === "block") {
@@ -842,6 +972,7 @@ function updateBarProgress(ts) {
     S.barIndex += 1;
     S.lastBarKey = key;
     invalidateFirstEntryConfirm();
+    invalidateFirstEntryLateExtWatch();
     invalidateBreakoutMemory();
     invalidateReentry();
     invalidatePostExitContinuation();
@@ -917,6 +1048,9 @@ export function handleFeature(body) {
 
   const confirmUpgradeResult = evaluateFirstEntryConfirmUpgradeOnFeature(feature);
   if (confirmUpgradeResult?.entered) return;
+
+  const lateExtWatchResult = evaluateFirstEntryLateExtWatchOnFeature(feature);
+  if (lateExtWatchResult?.entered) return;
 
   resolveRayConflictOnFeature(feature);
   evaluateStructureAndArmMemory(feature);
@@ -994,6 +1128,12 @@ function evaluateStructureAndArmMemory(f) {
     fvvo: fv,
   });
 }
+function invalidateFirstEntryLateExtWatch() {
+  if (!S.firstEntryLateExtWatch?.pending) return;
+  if (!S.ray.bullContext) return clearFirstEntryLateExtWatch("bull_context_off");
+  if (S.ray.bullRegimeId !== S.firstEntryLateExtWatch.bullRegimeId) return clearFirstEntryLateExtWatch("bull_regime_changed");
+  if (S.barIndex > n(S.firstEntryLateExtWatch.expiresBar, -1)) return clearFirstEntryLateExtWatch("expired");
+}
 function invalidateBreakoutMemory() {
   if (!S.breakoutMemory.active) return;
   if (S.barIndex > S.breakoutMemory.expiresBar) return clearBreakoutMemory("expired");
@@ -1058,6 +1198,7 @@ function evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime) {
   }
   const { f, fv, close, ema8, ema18, adx, rsi, ext18 } = ctx;
   const chasePct = pctDiff(rayPrice, close);
+  const emaSpreadPct = ema8Ema18SpreadPct(ema8, ema18);
   const redFlags = [];
   reasonPush(redFlags, Number.isFinite(rsi) && rsi < CONFIG.FIRST_ENTRY_BLOCK_RSI_BELOW, "rsi_below_block_floor");
   reasonPush(redFlags, Number.isFinite(adx) && adx < CONFIG.FIRST_ENTRY_BLOCK_ADX_BELOW, "adx_below_block_floor");
@@ -1067,6 +1208,24 @@ function evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime) {
   reasonPush(redFlags, CONFIG.FIRST_ENTRY_BLOCK_IF_CLOSE_BELOW_EMA8 && Number.isFinite(close) && Number.isFinite(ema8) && close < ema8, "close_below_ema8");
   reasonPush(redFlags, CONFIG.FIRST_ENTRY_BLOCK_IF_STRONG_BEARISH_FVVO && firstEntryStrongBearishFvvo(fv), "strong_bearish_fvvo");
   reasonPush(redFlags, CONFIG.FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY && recentBearishRayForFirstEntry(), "recent_bearish_ray");
+  const compressedWeakEntry =
+    CONFIG.FIRST_ENTRY_CONTEXT_QUALITY_BLOCK_ENABLED &&
+    Number.isFinite(rsi) &&
+    rsi < CONFIG.FIRST_ENTRY_COMPRESSED_RSI_BELOW &&
+    Number.isFinite(adx) &&
+    adx < CONFIG.FIRST_ENTRY_COMPRESSED_ADX_BELOW &&
+    Number.isFinite(emaSpreadPct) &&
+    emaSpreadPct < CONFIG.FIRST_ENTRY_COMPRESSED_EMA_SPREAD_BELOW_PCT &&
+    (!CONFIG.FIRST_ENTRY_COMPRESSED_BLOCK_IF_NO_BULLISH_FVVO || !firstEntryBullishFvvo(fv));
+  reasonPush(redFlags, compressedWeakEntry, "weak_compressed_first_entry");
+  const lateExtLowAdx =
+    CONFIG.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED &&
+    Number.isFinite(adx) &&
+    adx < CONFIG.FIRST_ENTRY_LATE_EXT_ADX_BELOW &&
+    Number.isFinite(ext18) &&
+    ext18 > CONFIG.FIRST_ENTRY_LATE_EXT_EXT18_ABOVE_PCT &&
+    Number.isFinite(rsi) &&
+    rsi >= CONFIG.FIRST_ENTRY_LATE_EXT_RSI_ABOVE;
   const metrics = {
     rayPrice: round4(rayPrice),
     close: round4(close),
@@ -1074,12 +1233,22 @@ function evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime) {
     ext18: round4(ext18),
     ema8: round4(ema8),
     ema18: round4(ema18),
+    emaSpreadPct: round4(emaSpreadPct),
     rsi: round4(rsi),
     adx: round4(adx),
     fvvo: fv,
     rayTime,
     featureTime: f.time,
   };
+  if (lateExtLowAdx) {
+    const lateRedFlags = [...redFlags, "late_ext_low_adx"];
+    if (CONFIG.FIRST_ENTRY_LOG_DEBUG) log("🟡 FIRST_ENTRY_LATE_EXT_LOW_ADX", { metrics, redFlags: lateRedFlags, action: CONFIG.FIRST_ENTRY_LATE_EXT_ACTION });
+    if (firstEntryLateExtActionIsDefer()) {
+      return { action: "defer", reason: "first_entry_late_ext_low_adx_defer", redFlags: lateRedFlags, metrics };
+    }
+    return { action: "block", reason: "first_entry_late_ext_low_adx_block", redFlags: lateRedFlags, metrics };
+  }
+
   if (CONFIG.FIRST_ENTRY_LOG_DEBUG) log("🟢 FIRST_ENTRY_EVAL", { metrics, redFlags });
   if (CONFIG.FIRST_ENTRY_WEAK_BLOCK_ENABLED && redFlags.length >= CONFIG.FIRST_ENTRY_BLOCK_MIN_RED_FLAGS) {
     return { action: "block", reason: "weak_first_bullish_trend_change", redFlags, metrics };
@@ -1493,6 +1662,7 @@ function doEnter(mode, price, decision, eventIso = isoNow()) {
   clearFastTickLaunch("entered");
   clearFirstEntry("entered");
   clearFirstEntryFeatureSync("entered");
+  clearFirstEntryLateExtWatch("entered");
   log("🟩🟢 ENTER_LONG", {
     brain: CONFIG.BRAIN_NAME,
     mode,

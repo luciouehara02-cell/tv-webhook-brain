@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT
+ * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
  *
  * All environment variables and default thresholds.
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7_EXIT_RETRY_PROFIT_PROTECT"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -133,6 +133,28 @@ export const CONFIG = {
   FIRST_ENTRY_BLOCK_IF_STRONG_BEARISH_FVVO: b(process.env.FIRST_ENTRY_BLOCK_IF_STRONG_BEARISH_FVVO, true),
   FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY: b(process.env.FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY, true),
   FIRST_ENTRY_RECENT_BEARISH_RAY_SEC: n(process.env.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC, 300),
+
+  // v6.7a: first-entry context quality filter.
+  // This does not raise the normal ADX/RSI entry minimums. It only blocks/defer when
+  // multiple weak conditions appear together.
+  FIRST_ENTRY_CONTEXT_QUALITY_BLOCK_ENABLED: b(process.env.FIRST_ENTRY_CONTEXT_QUALITY_BLOCK_ENABLED, false),
+  FIRST_ENTRY_COMPRESSED_RSI_BELOW: n(process.env.FIRST_ENTRY_COMPRESSED_RSI_BELOW, 58.5),
+  FIRST_ENTRY_COMPRESSED_ADX_BELOW: n(process.env.FIRST_ENTRY_COMPRESSED_ADX_BELOW, 19),
+  FIRST_ENTRY_COMPRESSED_EMA_SPREAD_BELOW_PCT: n(process.env.FIRST_ENTRY_COMPRESSED_EMA_SPREAD_BELOW_PCT, 0.04),
+  FIRST_ENTRY_COMPRESSED_BLOCK_IF_NO_BULLISH_FVVO: b(process.env.FIRST_ENTRY_COMPRESSED_BLOCK_IF_NO_BULLISH_FVVO, true),
+
+  FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED: b(process.env.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED, false),
+  FIRST_ENTRY_LATE_EXT_ADX_BELOW: n(process.env.FIRST_ENTRY_LATE_EXT_ADX_BELOW, 15.5),
+  FIRST_ENTRY_LATE_EXT_EXT18_ABOVE_PCT: n(process.env.FIRST_ENTRY_LATE_EXT_EXT18_ABOVE_PCT, 0.25),
+  FIRST_ENTRY_LATE_EXT_RSI_ABOVE: n(process.env.FIRST_ENTRY_LATE_EXT_RSI_ABOVE, 60),
+  FIRST_ENTRY_LATE_EXT_ACTION: s(process.env.FIRST_ENTRY_LATE_EXT_ACTION, "defer"),
+  FIRST_ENTRY_LATE_EXT_WATCH_BARS: n(process.env.FIRST_ENTRY_LATE_EXT_WATCH_BARS, 3),
+  FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN: n(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN, 18),
+  FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT: n(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT, 0.05),
+  FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO, true),
+
   FIRST_ENTRY_LOG_DEBUG: b(process.env.FIRST_ENTRY_LOG_DEBUG, true),
   // v6.6a / v6.5b first-entry feature-sync grace.
   // Handles the safe race condition where a Ray BUY arrives seconds before the fresh 5m feature alert.
