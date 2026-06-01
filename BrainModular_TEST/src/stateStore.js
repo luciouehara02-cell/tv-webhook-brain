@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
+ * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -181,6 +181,10 @@ export function buildInitialRuntimeState() {
       active: false,
       openedAtMs: null,
       expiresAtMs: null,
+      openedAtEventMs: null,
+      expiresAtEventMs: null,
+      openedAtEventIso: null,
+      expiresAtEventIso: null,
       bullRegimeId: null,
       source: null,
       rayPrice: null,

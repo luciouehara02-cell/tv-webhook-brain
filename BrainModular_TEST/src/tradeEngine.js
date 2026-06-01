@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
+ * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -599,15 +599,90 @@ function clearTrendChangeLaunch(reason = "reset") {
   if (S.trendChangeLaunch.pending) log("🚀 TREND_CHANGE_LAUNCH_CLEARED", { reason });
   S.trendChangeLaunch = { pending: false, armedBar: null, expiresBar: null, rayPrice: null, rayTime: null };
 }
-function armFastTickLaunch(source, rayPrice) {
-  if (!CONFIG.FAST_TICK_LAUNCH_ENABLED) return;
+function fastTickExpiryMs(eventIso = null) {
+  if (!S.fastTickLaunch.active) return NaN;
+  const eventExpiry = n(S.fastTickLaunch.expiresAtEventMs, NaN);
+  const wallExpiry = n(S.fastTickLaunch.expiresAtMs, NaN);
+  return CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK && Number.isFinite(eventExpiry) ? eventExpiry : wallExpiry;
+}
+function isFastTickLaunchExpired(eventIso = null) {
+  if (!S.fastTickLaunch.active) return false;
+  const expiryMs = fastTickExpiryMs(eventIso);
+  if (!Number.isFinite(expiryMs)) return false;
+  return actionClockMs(eventIso) > expiryMs;
+}
+function fastTickArmContextDecision(source, rayPrice, eventIso = null, entryDecision = null) {
+  if (!CONFIG.FAST_TICK_LAUNCH_ENABLED) return { allow: false, reason: "disabled" };
+  if (S.inPosition) return { allow: false, reason: "already_in_position" };
+  if (!S.ray.bullContext) return { allow: false, reason: "bull_context_off" };
+  const f = S.lastFeature;
+  if (!f) return { allow: false, reason: "no_feature" };
+  if (!CONFIG.FAST_TICK_LAUNCH_REQUIRE_ARM_CONTEXT) return { allow: true, reason: "arm_context_not_required" };
+
+  const close = n(f.close, NaN);
+  const ema8 = n(f.ema8, NaN);
+  const ema18 = n(f.ema18, NaN);
+  const rsi = n(f.rsi, NaN);
+  const adx = n(f.adx, NaN);
+  const fv = getFvvoScore();
+  const contextReasons = [];
+
+  reasonPush(contextReasons, !Number.isFinite(rsi) || rsi < CONFIG.FAST_TICK_LAUNCH_ARM_MIN_RSI, "arm_rsi_too_low");
+  reasonPush(contextReasons, !Number.isFinite(adx) || adx < CONFIG.FAST_TICK_LAUNCH_ARM_MIN_ADX, "arm_adx_too_low");
+  reasonPush(
+    contextReasons,
+    CONFIG.FAST_TICK_LAUNCH_REQUIRE_CLOSE_ABOVE_EMA8 && !(Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8),
+    "arm_close_below_ema8"
+  );
+  reasonPush(
+    contextReasons,
+    CONFIG.FAST_TICK_LAUNCH_REQUIRE_EMA8_ABOVE_EMA18 && !(Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18),
+    "arm_ema8_not_above_ema18"
+  );
+  reasonPush(contextReasons, CONFIG.FAST_TICK_LAUNCH_REQUIRE_FVVO_NON_NEGATIVE && fv.score < 0, "arm_fvvo_negative");
+
+  const allow = contextReasons.length === 0;
+  return {
+    allow,
+    reason: allow ? "fast_tick_arm_context_ok" : contextReasons[0],
+    metrics: {
+      source,
+      rayPrice,
+      featureTime: f.time,
+      close,
+      ema8,
+      ema18,
+      rsi,
+      adx,
+      fvvo: fv,
+      contextReasons,
+      entryDecisionReason: entryDecision?.reason || null,
+      entryDecisionReasons: entryDecision?.metrics?.reasons || [],
+      eventIso,
+    },
+  };
+}
+function armFastTickLaunch(source, rayPrice, eventIso = null, entryDecision = null) {
+  const armDecision = fastTickArmContextDecision(source, rayPrice, eventIso, entryDecision);
+  if (!armDecision.allow) {
+    log("⚡ FAST_TICK_LAUNCH_NOT_ARMED", armDecision);
+    return;
+  }
   const f = S.lastFeature;
   if (!f) return;
   const confirmPrice = rayPrice * (1 + CONFIG.FAST_TICK_LAUNCH_CONFIRM_PCT / 100);
+  const openedAtMs = nowMs();
+  const expiresAtMs = openedAtMs + CONFIG.FAST_TICK_LAUNCH_WINDOW_SEC * 1000;
+  const openedAtEventMs = actionClockMs(eventIso);
+  const expiresAtEventMs = openedAtEventMs + CONFIG.FAST_TICK_LAUNCH_WINDOW_SEC * 1000;
   S.fastTickLaunch = {
     active: true,
-    openedAtMs: nowMs(),
-    expiresAtMs: nowMs() + CONFIG.FAST_TICK_LAUNCH_WINDOW_SEC * 1000,
+    openedAtMs,
+    expiresAtMs,
+    openedAtEventMs,
+    expiresAtEventMs,
+    openedAtEventIso: eventIso || null,
+    expiresAtEventIso: Number.isFinite(expiresAtEventMs) ? new Date(expiresAtEventMs).toISOString() : null,
     bullRegimeId: S.ray.bullRegimeId,
     source,
     rayPrice,
@@ -627,8 +702,10 @@ function armFastTickLaunch(source, rayPrice) {
     rayPrice,
     confirmPrice: round4(confirmPrice),
     expiresAt: new Date(S.fastTickLaunch.expiresAtMs).toISOString(),
+    expiresAtEvent: S.fastTickLaunch.expiresAtEventIso,
     rsi: f.rsi,
     adx: f.adx,
+    armReason: armDecision.reason,
   });
 }
 function clearFastTickLaunch(reason = "reset") {
@@ -637,6 +714,10 @@ function clearFastTickLaunch(reason = "reset") {
     active: false,
     openedAtMs: null,
     expiresAtMs: null,
+    openedAtEventMs: null,
+    expiresAtEventMs: null,
+    openedAtEventIso: null,
+    expiresAtEventIso: null,
     bullRegimeId: null,
     source: null,
     rayPrice: null,
@@ -877,7 +958,7 @@ export function handleRayEvent(body) {
         price,
         time: ts,
       });
-      if (!decision.allow) armFastTickLaunch("ray_bullish_trend_change", price);
+      if (!decision.allow) armFastTickLaunch("ray_bullish_trend_change", price, ts, decision);
     }
     return;
   }
@@ -891,7 +972,7 @@ export function handleRayEvent(body) {
     if (!S.ray.bullContext) turnBullRegimeOn(ts, "ray_bullish_trend_continuation");
     log("🟩 RAY_BULLISH_TREND_CONTINUATION", { price, ts });
     const decision = tryEntry("ray_bullish_trend_continuation", body);
-    if (!decision.allow && CONFIG.FAST_TICK_LAUNCH_ENABLED) armFastTickLaunch("ray_bullish_trend_continuation", price);
+    if (!decision.allow && CONFIG.FAST_TICK_LAUNCH_ENABLED) armFastTickLaunch("ray_bullish_trend_continuation", price, ts, decision);
     return;
   }
 
@@ -977,7 +1058,7 @@ function updateBarProgress(ts) {
     invalidateReentry();
     invalidatePostExitContinuation();
     invalidateTrendChangeLaunch();
-    invalidateFastTickLaunch();
+    invalidateFastTickLaunch(ts);
   }
 }
 export function handleFeature(body) {
@@ -1163,10 +1244,10 @@ function invalidateTrendChangeLaunch() {
   if (!S.ray.bullContext) return clearTrendChangeLaunch("bull_context_off");
   if (S.barIndex > S.trendChangeLaunch.expiresBar) return clearTrendChangeLaunch("expired");
 }
-function invalidateFastTickLaunch() {
+function invalidateFastTickLaunch(eventIso = null) {
   if (!S.fastTickLaunch.active) return;
   if (!S.ray.bullContext) return clearFastTickLaunch("bull_context_off");
-  if (nowMs() > S.fastTickLaunch.expiresAtMs) return clearFastTickLaunch("expired");
+  if (isFastTickLaunchExpired(eventIso)) return clearFastTickLaunch("expired");
   if (S.fastTickLaunch.bullRegimeId !== S.ray.bullRegimeId) return clearFastTickLaunch("bull_regime_changed");
 }
 
@@ -1571,27 +1652,44 @@ function evaluateElevatedContinuation(source, body) {
     metrics: { source, triggerPrice, close, chasePct, rsi, adx, ext18, ema8SlopePct, fvvo: fv, reasons },
   };
 }
-function evaluateFastTickLaunch(px) {
+function evaluateFastTickLaunch(px, eventIso = null) {
   const ftl = S.fastTickLaunch;
   if (!ftl.active) return { allow: false, reason: "not_active" };
-  if (nowMs() > ftl.expiresAtMs) {
+  if (isFastTickLaunchExpired(eventIso)) {
     clearFastTickLaunch("expired");
     return { allow: false, reason: "expired" };
   }
   if (ftl.bullRegimeId !== S.ray.bullRegimeId || !S.ray.bullContext) return { allow: false, reason: "regime_changed" };
   const f = S.lastFeature;
   const fv = getFvvoScore();
+  const close = n(f?.close ?? ftl.featureClose, NaN);
+  const ema8 = n(f?.ema8 ?? ftl.ema8, NaN);
+  const ema18 = n(f?.ema18 ?? ftl.ema18, NaN);
   const adx = n(f?.adx ?? ftl.adx, NaN);
   const rsi = n(f?.rsi ?? ftl.rsi, NaN);
-  const ema18 = n(f?.ema18 ?? ftl.ema18, NaN);
   const chasePct = pctDiff(ftl.rayPrice, px);
+  const confirmContextReasons = [];
+  reasonPush(
+    confirmContextReasons,
+    CONFIG.FAST_TICK_LAUNCH_REQUIRE_CLOSE_ABOVE_EMA8 && !(Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8),
+    "confirm_close_below_ema8"
+  );
+  reasonPush(
+    confirmContextReasons,
+    CONFIG.FAST_TICK_LAUNCH_REQUIRE_EMA8_ABOVE_EMA18 && !(Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18),
+    "confirm_ema8_not_above_ema18"
+  );
+  reasonPush(confirmContextReasons, CONFIG.FAST_TICK_LAUNCH_REQUIRE_FVVO_NON_NEGATIVE && fv.score < 0, "confirm_fvvo_negative");
+  const contextOk = confirmContextReasons.length === 0;
   const strong =
+    contextOk &&
     Number.isFinite(rsi) &&
     rsi >= CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_RSI &&
     Number.isFinite(adx) &&
     adx >= CONFIG.FAST_TICK_LAUNCH_STRONG_MIN_ADX &&
     chasePct <= CONFIG.FAST_TICK_LAUNCH_STRONG_MAX_CHASE_PCT;
   const normal =
+    contextOk &&
     Number.isFinite(rsi) &&
     rsi >= CONFIG.FAST_TICK_LAUNCH_MIN_RSI &&
     Number.isFinite(adx) &&
@@ -1601,10 +1699,26 @@ function evaluateFastTickLaunch(px) {
   const allow = strong || normal;
   return {
     allow,
-    reason: allow ? (strong ? "fast_tick_strong_confirmed" : "fast_tick_confirmed") : "not_confirmed",
+    reason: allow ? (strong ? "fast_tick_strong_confirmed" : "fast_tick_confirmed") : (contextOk ? "not_confirmed" : confirmContextReasons[0]),
     mode: strong ? "tick_confirmed_launch_long_strong" : "tick_confirmed_launch_long",
     stop: Number.isFinite(ema18) ? ema18 * (1 - CONFIG.HARD_STOP_PCT / 100) : px * (1 - CONFIG.HARD_STOP_PCT / 100),
-    metrics: { price: px, rayPrice: ftl.rayPrice, confirmPrice: ftl.confirmPrice, chasePct, rsi, adx, ticksAboveConfirm: ftl.ticksAboveConfirm, fvvo: fv },
+    metrics: {
+      price: px,
+      rayPrice: ftl.rayPrice,
+      confirmPrice: ftl.confirmPrice,
+      chasePct,
+      close,
+      ema8,
+      ema18,
+      rsi,
+      adx,
+      ticksAboveConfirm: ftl.ticksAboveConfirm,
+      fvvo: fv,
+      contextReasons: confirmContextReasons,
+      openedAtEventIso: ftl.openedAtEventIso,
+      expiresAtEventIso: ftl.expiresAtEventIso,
+      eventIso,
+    },
   };
 }
 function tryEntry(source, body) {
@@ -1615,7 +1729,7 @@ function tryEntry(source, body) {
   if (!canEnterByDedup(source, eventIso)) return { allow: false, reason: "enter_dedup" };
   let decision;
   if (source === "feature_reentry" || source === "post_exit_continuation_reentry") decision = evaluateFeatureReentry(source, body);
-  else if (source === "tick_confirmed_fast_launch") decision = evaluateFastTickLaunch(n(body.price, NaN));
+  else if (source === "tick_confirmed_fast_launch") decision = evaluateFastTickLaunch(n(body.price, NaN), pickFirst(body, ["time", "timestamp"], null));
   else if (source === "ray_bullish_trend_continuation") decision = evaluateElevatedContinuation(source, body);
   else decision = evaluateLaunchEntry(source, body);
   log(decision.allow ? "🧪 ENTRY_DECISION" : "🟥⛔ ENTRY_BLOCKED", {
@@ -3273,10 +3387,17 @@ export function handleTick(body) {
   }
 
   if (S.fastTickLaunch.active && !S.inPosition) {
-    if (px >= n(S.fastTickLaunch.confirmPrice, Infinity)) {
+    if (isFastTickLaunchExpired(ts)) {
+      clearFastTickLaunch("expired");
+    } else if (px >= n(S.fastTickLaunch.confirmPrice, Infinity)) {
       S.fastTickLaunch.ticksAboveConfirm += 1;
       S.fastTickLaunch.lastConfirmedTickPrice = px;
-      log("⚡ FAST_TICK_CONFIRM", { price: px, ticksAboveConfirm: S.fastTickLaunch.ticksAboveConfirm, confirmPrice: round4(S.fastTickLaunch.confirmPrice) });
+      log("⚡ FAST_TICK_CONFIRM", {
+        price: px,
+        ticksAboveConfirm: S.fastTickLaunch.ticksAboveConfirm,
+        confirmPrice: round4(S.fastTickLaunch.confirmPrice),
+        expiresAtEvent: S.fastTickLaunch.expiresAtEventIso,
+      });
       tryEntry("tick_confirmed_fast_launch", { src: "tick", symbol: CONFIG.SYMBOL, tf: CONFIG.ENTRY_TF, price: px, time: ts });
     }
   }

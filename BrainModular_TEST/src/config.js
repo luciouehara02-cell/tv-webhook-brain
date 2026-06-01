@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER
+ * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
  *
  * All environment variables and default thresholds.
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7a_FIRST_ENTRY_QUALITY_FILTER"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -552,6 +552,13 @@ export const CONFIG = {
   STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
   FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
   FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
+  // v6.7b fix: fast-tick launch must only arm from a healthy context and must expire on event time in replay.
+  FAST_TICK_LAUNCH_REQUIRE_ARM_CONTEXT: b(process.env.FAST_TICK_LAUNCH_REQUIRE_ARM_CONTEXT, true),
+  FAST_TICK_LAUNCH_ARM_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_ARM_MIN_RSI, 56),
+  FAST_TICK_LAUNCH_ARM_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_ARM_MIN_ADX, 18),
+  FAST_TICK_LAUNCH_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FAST_TICK_LAUNCH_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FAST_TICK_LAUNCH_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FAST_TICK_LAUNCH_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FAST_TICK_LAUNCH_REQUIRE_FVVO_NON_NEGATIVE: b(process.env.FAST_TICK_LAUNCH_REQUIRE_FVVO_NON_NEGATIVE, true),
   FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
   FAST_TICK_LAUNCH_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_MIN_ADX, 18),
   FAST_TICK_LAUNCH_CONFIRM_PCT: n(process.env.FAST_TICK_LAUNCH_CONFIRM_PCT, 0.05),
