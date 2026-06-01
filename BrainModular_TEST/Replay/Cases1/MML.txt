@@ -1,0 +1,3 @@
+echo "Replay finished - stopped"
+node BrainModular_TEST/Replay/scripts/replay_to_test_brain.mjs BrainModular_TEST/Replay/cases/v6_7a_TEST2_replay_events_May28_31_full.jsonl
+node BrainModular_TEST/Replay/scripts/replay_to_test_brain.mjs BrainModular_TEST/Replay/Cases1/v6_7c_replay_events_June1_from_logs.jsonl
