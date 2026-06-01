@@ -1,6 +1,6 @@
 {
-  "name": "brainray-continuation-v6-7a-first-entry-quality-filter",
-  "version": "6.7.1",
+  "name": "brainray-continuation-v6-7b-fast-tick-launch-fix",
+  "version": "6.7.2",
   "type": "module",
   "private": true,
   "scripts": {
