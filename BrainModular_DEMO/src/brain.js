@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
+ * BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
@@ -102,6 +102,18 @@ export function getStatus() {
       lateExtWatchBars: CONFIG.FIRST_ENTRY_LATE_EXT_WATCH_BARS,
       lateExtReentryAdxMin: CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN,
       lateExtReentryEmaSpreadMinPct: CONFIG.FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT,
+    },
+    firstEntryDeepRecoveryOverrideConfig: {
+      enabled: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE_ENABLED,
+      lookbackBars: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS,
+      minDropPct: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT,
+      maxExt18Pct: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT,
+      minRsi: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_RSI,
+      minAdx: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_ADX,
+      maxChasePct: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MAX_CHASE_PCT,
+      requireBullishFvvo: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_BULLISH_FVVO,
+      requireCloseAboveEma8: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_CLOSE_ABOVE_EMA8,
+      requireEma8AboveEma18: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_EMA8_ABOVE_EMA18,
     },
     reentry: S.reentry,
     postExitContinuation: S.postExitContinuation,
