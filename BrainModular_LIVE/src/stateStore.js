@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
+ * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -49,6 +49,20 @@ export function buildInitialRuntimeState() {
     cycleState: "flat",
     lastExitClass: null,
     lastExitReason: null,
+    pendingExit: {
+      active: false,
+      reason: null,
+      exitClass: null,
+      price: null,
+      pnlPct: null,
+      peakBeforeExit: null,
+      requestedAt: null,
+      attempt: 0,
+      lastAttemptAt: null,
+      lastStatus: null,
+      lastError: null,
+      nextRetryAt: null,
+    },
     ray: {
       bullContext: false,
       bullRegimeId: 0,
@@ -100,6 +114,17 @@ export function buildInitialRuntimeState() {
       decision: null,
       featureTimeAtArm: null,
       featureLagSecAtArm: null,
+      lastEvaluatedFeatureTime: null,
+    },
+    firstEntryLateExtWatch: {
+      pending: false,
+      armedBar: null,
+      expiresBar: null,
+      bullRegimeId: null,
+      rayPrice: null,
+      rayTime: null,
+      decision: null,
+      reason: null,
       lastEvaluatedFeatureTime: null,
     },
     breakoutMemory: {
@@ -156,6 +181,10 @@ export function buildInitialRuntimeState() {
       active: false,
       openedAtMs: null,
       expiresAtMs: null,
+      openedAtEventMs: null,
+      expiresAtEventMs: null,
+      openedAtEventIso: null,
+      expiresAtEventIso: null,
       bullRegimeId: null,
       source: null,
       rayPrice: null,

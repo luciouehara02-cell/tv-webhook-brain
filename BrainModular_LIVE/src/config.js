@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY
- * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
+ * BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE
+ * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
  */
@@ -15,10 +15,20 @@ function envAlias(...keys) {
   return undefined;
 }
 
+function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
+  const raw = process.env[key];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const values = String(raw)
+    .split(",")
+    .map((x) => Number(String(x).trim()))
+    .filter((x) => Number.isFinite(x) && x >= 0);
+  return values.length ? values : fallback;
+}
+
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.6e_ATR_STRUCTURE_SYNC_ADAPTIVE_TP_RESET_REENTRY"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -46,6 +56,13 @@ export const CONFIG = {
   SYMBOL_BOT_MAP: safeJsonParse(process.env.SYMBOL_BOT_MAP || "{}", {}),
   ENABLE_HTTP_FORWARD: b(process.env.ENABLE_HTTP_FORWARD, true),
   FORWARD_EXIT_WHEN_FLAT: b(process.env.FORWARD_EXIT_WHEN_FLAT, false),
+
+  // v6.7 live safety: exit webhook retry / pending-exit protection.
+  // If 3Commas returns 503 or times out on an exit, keep the Brain logically long,
+  // block new entries, and retry before considering the exit delivered.
+  EXIT_FORWARD_RETRY_ENABLED: b(process.env.EXIT_FORWARD_RETRY_ENABLED, true),
+  EXIT_FORWARD_RETRY_DELAYS_MS: envMsList("EXIT_FORWARD_RETRY_DELAYS_MS", [0, 2000, 5000, 15000]),
+  EXIT_FORWARD_RETRY_BLOCK_ENTRIES: b(process.env.EXIT_FORWARD_RETRY_BLOCK_ENTRIES, true),
 
   RAY_USE_BULLISH_TREND_CHANGE: b(process.env.RAY_USE_BULLISH_TREND_CHANGE, true),
   RAY_USE_BULLISH_TREND_CONTINUATION: b(process.env.RAY_USE_BULLISH_TREND_CONTINUATION, true),
@@ -116,6 +133,44 @@ export const CONFIG = {
   FIRST_ENTRY_BLOCK_IF_STRONG_BEARISH_FVVO: b(process.env.FIRST_ENTRY_BLOCK_IF_STRONG_BEARISH_FVVO, true),
   FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY: b(process.env.FIRST_ENTRY_BLOCK_IF_RECENT_BEARISH_RAY, true),
   FIRST_ENTRY_RECENT_BEARISH_RAY_SEC: n(process.env.FIRST_ENTRY_RECENT_BEARISH_RAY_SEC, 300),
+
+  // v6.7a: first-entry context quality filter.
+  // This does not raise the normal ADX/RSI entry minimums. It only blocks/defer when
+  // multiple weak conditions appear together.
+  FIRST_ENTRY_CONTEXT_QUALITY_BLOCK_ENABLED: b(process.env.FIRST_ENTRY_CONTEXT_QUALITY_BLOCK_ENABLED, false),
+  FIRST_ENTRY_COMPRESSED_RSI_BELOW: n(process.env.FIRST_ENTRY_COMPRESSED_RSI_BELOW, 58.5),
+  FIRST_ENTRY_COMPRESSED_ADX_BELOW: n(process.env.FIRST_ENTRY_COMPRESSED_ADX_BELOW, 19),
+  FIRST_ENTRY_COMPRESSED_EMA_SPREAD_BELOW_PCT: n(process.env.FIRST_ENTRY_COMPRESSED_EMA_SPREAD_BELOW_PCT, 0.04),
+  FIRST_ENTRY_COMPRESSED_BLOCK_IF_NO_BULLISH_FVVO: b(process.env.FIRST_ENTRY_COMPRESSED_BLOCK_IF_NO_BULLISH_FVVO, true),
+
+  FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED: b(process.env.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED, false),
+  FIRST_ENTRY_LATE_EXT_ADX_BELOW: n(process.env.FIRST_ENTRY_LATE_EXT_ADX_BELOW, 15.5),
+  FIRST_ENTRY_LATE_EXT_EXT18_ABOVE_PCT: n(process.env.FIRST_ENTRY_LATE_EXT_EXT18_ABOVE_PCT, 0.25),
+  FIRST_ENTRY_LATE_EXT_RSI_ABOVE: n(process.env.FIRST_ENTRY_LATE_EXT_RSI_ABOVE, 60),
+  FIRST_ENTRY_LATE_EXT_ACTION: s(process.env.FIRST_ENTRY_LATE_EXT_ACTION, "defer"),
+  FIRST_ENTRY_LATE_EXT_WATCH_BARS: n(process.env.FIRST_ENTRY_LATE_EXT_WATCH_BARS, 3),
+  FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN: n(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_ADX_MIN, 18),
+  FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT: n(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_EMA_SPREAD_MIN_PCT, 0.05),
+  FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO, true),
+
+  // v6.7c: conditional deep-drop recovery override.
+  // This does not loosen the normal first-entry extension guard globally.
+  // It only removes the ext18 red flag when the bullish signal follows a large recent drop
+  // and RSI/ADX/EMA/FVVO recovery quality is strong enough.
+  FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE_ENABLED: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE_ENABLED, false),
+  FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS, 24),
+  FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT, 1.50),
+  FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT, 0.55),
+  FIRST_ENTRY_DEEP_RECOVERY_MIN_RSI: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MIN_RSI, 58),
+  FIRST_ENTRY_DEEP_RECOVERY_MIN_ADX: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MIN_ADX, 20),
+  FIRST_ENTRY_DEEP_RECOVERY_MAX_CHASE_PCT: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MAX_CHASE_PCT, 0.45),
+  FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_BULLISH_FVVO: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_BULLISH_FVVO, true),
+  FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FIRST_ENTRY_DEEP_RECOVERY_LOG: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_LOG, true),
+
   FIRST_ENTRY_LOG_DEBUG: b(process.env.FIRST_ENTRY_LOG_DEBUG, true),
   // v6.6a / v6.5b first-entry feature-sync grace.
   // Handles the safe race condition where a Ray BUY arrives seconds before the fresh 5m feature alert.
@@ -513,6 +568,13 @@ export const CONFIG = {
   STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT: n(process.env.STRONG_LAUNCH_MAX_EXT_FROM_EMA18_PCT, 1.35),
   FAST_TICK_LAUNCH_ENABLED: b(process.env.FAST_TICK_LAUNCH_ENABLED, true),
   FAST_TICK_LAUNCH_WINDOW_SEC: n(process.env.FAST_TICK_LAUNCH_WINDOW_SEC, 45),
+  // v6.7b fix: fast-tick launch must only arm from a healthy context and must expire on event time in replay.
+  FAST_TICK_LAUNCH_REQUIRE_ARM_CONTEXT: b(process.env.FAST_TICK_LAUNCH_REQUIRE_ARM_CONTEXT, true),
+  FAST_TICK_LAUNCH_ARM_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_ARM_MIN_RSI, 56),
+  FAST_TICK_LAUNCH_ARM_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_ARM_MIN_ADX, 18),
+  FAST_TICK_LAUNCH_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FAST_TICK_LAUNCH_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FAST_TICK_LAUNCH_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FAST_TICK_LAUNCH_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FAST_TICK_LAUNCH_REQUIRE_FVVO_NON_NEGATIVE: b(process.env.FAST_TICK_LAUNCH_REQUIRE_FVVO_NON_NEGATIVE, true),
   FAST_TICK_LAUNCH_MIN_RSI: n(process.env.FAST_TICK_LAUNCH_MIN_RSI, 56),
   FAST_TICK_LAUNCH_MIN_ADX: n(process.env.FAST_TICK_LAUNCH_MIN_ADX, 18),
   FAST_TICK_LAUNCH_CONFIRM_PCT: n(process.env.FAST_TICK_LAUNCH_CONFIRM_PCT, 0.05),
