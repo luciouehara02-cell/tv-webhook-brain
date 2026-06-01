@@ -1,0 +1,50 @@
+BrainRAY / BrainModular v6.7b FAST_TICK_LAUNCH_FIX
+=====================================================
+
+Base:
+- v6.7a TEST2 first-entry filter package.
+
+Why this version exists:
+- Full replay showed the first-entry TEST2 filter worked correctly.
+- The weak part was FAST_TICK_LAUNCH: it produced two poor replay trades:
+  - tick_confirmed_launch_long -1.0681%
+  - tick_confirmed_launch_long -0.3391%
+
+Code fix added in v6.7b:
+1. Fast-tick launch expiry now uses event-time when REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK=true.
+   This removes the replay-compression issue where a 45-second live window could cover many market minutes in replay.
+2. Fast-tick launch now arms only from a healthy feature context:
+   - RSI >= FAST_TICK_LAUNCH_ARM_MIN_RSI
+   - ADX >= FAST_TICK_LAUNCH_ARM_MIN_ADX
+   - close >= EMA8
+   - EMA8 >= EMA18
+   - FVVO score is non-negative
+3. Fast-tick launch re-checks EMA/FVVO context again at tick confirmation before entry.
+4. Blocked launch arms are logged as FAST_TICK_LAUNCH_NOT_ARMED with the exact reason.
+
+Recommended DEMO delta:
+- BrainModular_v6.7b_FAST_TICK_LAUNCH_FIX_delta_DEMO.env
+
+Recommended LIVE delta:
+- BrainModular_v6.7b_FAST_TICK_LAUNCH_FIX_delta_LIVE.env
+
+Important variable to keep:
+- FIRST_ENTRY_BLOCK_MAX_EXT_EMA18_PCT="0.30"
+  This protects against overextended first entries such as the May29 15:10 replay case.
+
+Local validation performed:
+- Replay file: v6_7a_TEST2_replay_events_May28_31_full.jsonl
+- Events processed: 19,807
+- Failed events: 0
+- FAST_TICK_LAUNCH_ARMED: 0
+- FAST_TICK_LAUNCH_NOT_ARMED: 11
+- tick_confirmed_launch_long entries: 0
+- FIRST_ENTRY_BLOCKED: 3
+- Yellow 1 blocked by weak_compressed_first_entry.
+- Yellow 2 blocked by late_ext_low_adx.
+- May29 overextended entry remained blocked by ext_ema18_too_high.
+
+Deployment note:
+- Deploy to DEMO first.
+- For replay TEST brain, use ENABLE_HTTP_FORWARD="false".
+- For DEMO/LIVE real 3Commas testing, set ENABLE_HTTP_FORWARD according to your plan.
