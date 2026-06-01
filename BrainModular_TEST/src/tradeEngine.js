@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
+ * BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -104,6 +104,38 @@ function firstEntryBearishFvvo(fv) {
 }
 function firstEntryLateExtActionIsDefer() {
   return String(CONFIG.FIRST_ENTRY_LATE_EXT_ACTION || "defer").toLowerCase() === "defer";
+}
+function evaluateFirstEntryDeepRecoveryOverride(ctx, rayPrice) {
+  const fv = ctx?.fv;
+  const close = n(ctx?.close, NaN);
+  const highLookbackBars = Math.max(2, Math.floor(n(CONFIG.FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS, 24)));
+  const hist = Array.isArray(S.featureHistory) ? S.featureHistory.slice(-highLookbackBars) : [];
+  const highCandidates = [...hist.map((x) => n(x.high, NaN)), n(ctx?.f?.high, NaN)].filter(Number.isFinite);
+  const highInLookback = highCandidates.length ? Math.max(...highCandidates) : NaN;
+  const dropFromHighPct = Number.isFinite(highInLookback) && Number.isFinite(close) && highInLookback > 0 ? pctDiff(highInLookback, close) * -1 : 0;
+  const ok =
+    CONFIG.FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE_ENABLED &&
+    Number.isFinite(close) &&
+    Number.isFinite(highInLookback) &&
+    dropFromHighPct >= CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT &&
+    Number.isFinite(ctx.ext18) &&
+    ctx.ext18 <= CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT &&
+    Number.isFinite(ctx.rsi) &&
+    ctx.rsi >= CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_RSI &&
+    Number.isFinite(ctx.adx) &&
+    ctx.adx >= CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_ADX &&
+    pctDiff(rayPrice, close) <= CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MAX_CHASE_PCT &&
+    (!CONFIG.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_BULLISH_FVVO || firstEntryBullishFvvo(fv)) &&
+    (!CONFIG.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_CLOSE_ABOVE_EMA8 || (Number.isFinite(ctx.ema8) && close >= ctx.ema8)) &&
+    (!CONFIG.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_EMA8_ABOVE_EMA18 || (Number.isFinite(ctx.ema8) && Number.isFinite(ctx.ema18) && ctx.ema8 >= ctx.ema18));
+  return {
+    ok,
+    dropFromHighPct,
+    highInLookback,
+    lookbackBars: highLookbackBars,
+    maxExt18Pct: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT,
+    minDropPct: CONFIG.FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT,
+  };
 }
 function armFirstEntryLateExtWatch(rayPrice, rayTime, decision = {}) {
   if (!CONFIG.FIRST_ENTRY_LATE_EXT_LOW_ADX_ENABLED) return;
@@ -753,15 +785,16 @@ function armRayConflict(side, event, eventTime, source, price) {
 // --------------------------------------------------
 // FVVO memory / score
 // --------------------------------------------------
-function fvvoRecent(iso, maxSec = CONFIG.FVVO_MEMORY_SEC) {
+function fvvoRecent(iso, maxSec = CONFIG.FVVO_MEMORY_SEC, atIso = null) {
+  if (atIso) return eventAgeSecAt(atIso, iso) <= maxSec;
   return ageSec(iso) <= maxSec;
 }
-function getFvvoSnapshot() {
+function getFvvoSnapshot(atIso = null) {
   return {
-    sniperBuy: fvvoRecent(S.fvvo.lastSniperBuyAt),
-    sniperSell: fvvoRecent(S.fvvo.lastSniperSellAt),
-    burstBullish: fvvoRecent(S.fvvo.lastBurstBullishAt),
-    burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt),
+    sniperBuy: fvvoRecent(S.fvvo.lastSniperBuyAt, CONFIG.FVVO_MEMORY_SEC, atIso),
+    sniperSell: fvvoRecent(S.fvvo.lastSniperSellAt, CONFIG.FVVO_MEMORY_SEC, atIso),
+    burstBullish: fvvoRecent(S.fvvo.lastBurstBullishAt, CONFIG.FVVO_MEMORY_SEC, atIso),
+    burstBearish: fvvoRecent(S.fvvo.lastBurstBearishAt, CONFIG.FVVO_MEMORY_SEC, atIso),
   };
 }
 function isAdaptiveTpExitReason(reason) {
@@ -787,9 +820,9 @@ function resetPostAdaptiveTpTracking(state) {
   state.adaptiveTpResetReason = null;
 }
 
-export function getFvvoScore() {
-  if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot() };
-  const snap = getFvvoSnapshot();
+export function getFvvoScore(atIso = null) {
+  if (!CONFIG.FVVO_ENABLED) return { score: 0, tags: [], snap: getFvvoSnapshot(atIso) };
+  const snap = getFvvoSnapshot(atIso);
   let score = 0;
   const tags = [];
   if (snap.sniperBuy) {
@@ -1100,7 +1133,8 @@ export function handleFeature(body) {
   S.lastFeatureBarKey = S.lastBarKey;
   S.featureHistory = Array.isArray(S.featureHistory) ? S.featureHistory : [];
   S.featureHistory.push({ ...feature });
-  if (S.featureHistory.length > 50) S.featureHistory.shift();
+  const featureHistoryMax = Math.max(50, Math.floor(n(CONFIG.FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS, 24)) + 5, Math.floor(n(CONFIG.ATR_STRUCTURE_LOOKBACK_BARS, 6)) + 5);
+  while (S.featureHistory.length > featureHistoryMax) S.featureHistory.shift();
   log("📊 FEATURE_5M", {
     time: feature.time,
     open: round4(feature.open),
@@ -1122,7 +1156,7 @@ export function handleFeature(body) {
     patternAReady: Number.isFinite(n(body.patternAReady, NaN)) ? n(body.patternAReady, NaN) : null,
     patternAWatch: Number.isFinite(n(body.patternAWatch, NaN)) ? n(body.patternAWatch, NaN) : null,
     barIndex: S.barIndex,
-    fvvo: getFvvoScore(),
+    fvvo: getFvvoScore(ts),
   });
   const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
   if (featureSyncResult?.entered) return;
@@ -1254,13 +1288,13 @@ function invalidateFastTickLaunch(eventIso = null) {
 // --------------------------------------------------
 // entry decisions
 // --------------------------------------------------
-function baseFeatureEntryContext() {
+function baseFeatureEntryContext(eventIso = null) {
   const f = S.lastFeature;
   if (!f) return { ok: false, reason: "no_feature" };
   if (normalizeSymbol(f.symbol) !== CONFIG.SYMBOL) return { ok: false, reason: "symbol_mismatch" };
   if (String(f.tf) !== String(CONFIG.ENTRY_TF)) return { ok: false, reason: "tf_mismatch" };
   if (!isFeatureFresh()) return { ok: false, reason: "stale_feature" };
-  const fv = getFvvoScore();
+  const fv = getFvvoScore(eventIso || S.lastFeature?.time || null);
   const price = currentPrice();
   const close = n(f.close, NaN);
   const ema8 = n(f.ema8, NaN);
@@ -1273,18 +1307,19 @@ function baseFeatureEntryContext() {
   return { ok: true, f, fv, price, close, ema8, ema18, adx, rsi, ext8, ext18, ema8SlopePct };
 }
 function evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime) {
-  const ctx = baseFeatureEntryContext();
+  const ctx = baseFeatureEntryContext(rayTime);
   if (!ctx.ok) {
     return { action: "confirm", mode: "first_bullish_trend_change_confirmed_long", reason: `feature_not_ready:${ctx.reason}`, rayPrice };
   }
   const { f, fv, close, ema8, ema18, adx, rsi, ext18 } = ctx;
   const chasePct = pctDiff(rayPrice, close);
   const emaSpreadPct = ema8Ema18SpreadPct(ema8, ema18);
+  const deepRecoveryOverride = evaluateFirstEntryDeepRecoveryOverride(ctx, rayPrice);
   const redFlags = [];
   reasonPush(redFlags, Number.isFinite(rsi) && rsi < CONFIG.FIRST_ENTRY_BLOCK_RSI_BELOW, "rsi_below_block_floor");
   reasonPush(redFlags, Number.isFinite(adx) && adx < CONFIG.FIRST_ENTRY_BLOCK_ADX_BELOW, "adx_below_block_floor");
   reasonPush(redFlags, chasePct > CONFIG.FIRST_ENTRY_BLOCK_MAX_CHASE_PCT, "chase_too_high");
-  reasonPush(redFlags, ext18 > CONFIG.FIRST_ENTRY_BLOCK_MAX_EXT_EMA18_PCT, "ext_ema18_too_high");
+  reasonPush(redFlags, ext18 > CONFIG.FIRST_ENTRY_BLOCK_MAX_EXT_EMA18_PCT && !deepRecoveryOverride.ok, "ext_ema18_too_high");
   reasonPush(redFlags, CONFIG.FIRST_ENTRY_BLOCK_IF_EMA8_BELOW_EMA18 && Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 < ema18, "ema8_below_ema18");
   reasonPush(redFlags, CONFIG.FIRST_ENTRY_BLOCK_IF_CLOSE_BELOW_EMA8 && Number.isFinite(close) && Number.isFinite(ema8) && close < ema8, "close_below_ema8");
   reasonPush(redFlags, CONFIG.FIRST_ENTRY_BLOCK_IF_STRONG_BEARISH_FVVO && firstEntryStrongBearishFvvo(fv), "strong_bearish_fvvo");
@@ -1318,9 +1353,21 @@ function evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime) {
     rsi: round4(rsi),
     adx: round4(adx),
     fvvo: fv,
+    deepRecoveryOverride: {
+      ok: deepRecoveryOverride.ok,
+      dropFromHighPct: round4(deepRecoveryOverride.dropFromHighPct),
+      highInLookback: round4(deepRecoveryOverride.highInLookback),
+      lookbackBars: deepRecoveryOverride.lookbackBars,
+      maxExt18Pct: round4(deepRecoveryOverride.maxExt18Pct),
+      minDropPct: round4(deepRecoveryOverride.minDropPct),
+    },
     rayTime,
     featureTime: f.time,
   };
+  if (deepRecoveryOverride.ok && CONFIG.FIRST_ENTRY_DEEP_RECOVERY_LOG) {
+    log("🟢 FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE", { metrics });
+  }
+
   if (lateExtLowAdx) {
     const lateRedFlags = [...redFlags, "late_ext_low_adx"];
     if (CONFIG.FIRST_ENTRY_LOG_DEBUG) log("🟡 FIRST_ENTRY_LATE_EXT_LOW_ADX", { metrics, redFlags: lateRedFlags, action: CONFIG.FIRST_ENTRY_LATE_EXT_ACTION });
@@ -1369,7 +1416,7 @@ function evaluateFirstBullishTrendChangeEntry(rayPrice, rayTime) {
   return { action: "block", reason: "first_entry_not_confirmable", redFlags, metrics };
 }
 function evaluateLaunchEntry(source, body) {
-  const ctx = baseFeatureEntryContext();
+  const ctx = baseFeatureEntryContext(pickFirst(body, ["time", "timestamp"], S.lastFeature?.time || null));
   if (!ctx.ok) return { allow: false, reason: ctx.reason };
   const { f, fv, close, ema8, ema18, adx, rsi, ext8, ext18 } = ctx;
   if (!S.ray.bullContext) return { allow: false, reason: "no_bull_context" };

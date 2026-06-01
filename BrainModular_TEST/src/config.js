@@ -1,6 +1,6 @@
 /**
- * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
- * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder
+ * BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE
+ * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
  */
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -154,6 +154,22 @@ export const CONFIG = {
   FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_CLOSE_ABOVE_EMA8, true),
   FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_REQUIRE_EMA8_ABOVE_EMA18, true),
   FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO: b(process.env.FIRST_ENTRY_LATE_EXT_REENTRY_BLOCK_BEARISH_FVVO, true),
+
+  // v6.7c: conditional deep-drop recovery override.
+  // This does not loosen the normal first-entry extension guard globally.
+  // It only removes the ext18 red flag when the bullish signal follows a large recent drop
+  // and RSI/ADX/EMA/FVVO recovery quality is strong enough.
+  FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE_ENABLED: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_OVERRIDE_ENABLED, false),
+  FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_LOOKBACK_BARS, 24),
+  FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MIN_DROP_PCT, 1.50),
+  FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MAX_EXT18_PCT, 0.55),
+  FIRST_ENTRY_DEEP_RECOVERY_MIN_RSI: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MIN_RSI, 58),
+  FIRST_ENTRY_DEEP_RECOVERY_MIN_ADX: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MIN_ADX, 20),
+  FIRST_ENTRY_DEEP_RECOVERY_MAX_CHASE_PCT: n(process.env.FIRST_ENTRY_DEEP_RECOVERY_MAX_CHASE_PCT, 0.45),
+  FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_BULLISH_FVVO: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_BULLISH_FVVO, true),
+  FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_REQUIRE_EMA8_ABOVE_EMA18, true),
+  FIRST_ENTRY_DEEP_RECOVERY_LOG: b(process.env.FIRST_ENTRY_DEEP_RECOVERY_LOG, true),
 
   FIRST_ENTRY_LOG_DEBUG: b(process.env.FIRST_ENTRY_LOG_DEBUG, true),
   // v6.6a / v6.5b first-entry feature-sync grace.
