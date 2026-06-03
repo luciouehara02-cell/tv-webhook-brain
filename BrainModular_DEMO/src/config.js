@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC
+ * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
  * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
@@ -28,17 +28,20 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
   WEBHOOK_PATH: s(process.env.WEBHOOK_PATH, "/webhook"),
 
-  // v6.7d: sanitized webhook receive logging for timing verification.
+  // v6.7e: sanitized webhook receive logging for timing verification.
   WEBHOOK_RX_LOG_ENABLED: b(process.env.WEBHOOK_RX_LOG_ENABLED, true),
   WEBHOOK_RX_LOG_BODY: b(process.env.WEBHOOK_RX_LOG_BODY, false),
+  // Reduce noise by default. Use "all" to log ticks too. Accepted families:
+  // tick, feature/features, ray, ray_probe, fvvo, fvvo_probe, unknown.
+  WEBHOOK_RX_LOG_FAMILIES: s(process.env.WEBHOOK_RX_LOG_FAMILIES, "ray,ray_probe,fvvo,fvvo_probe,feature,unknown"),
 
-  // v6.7d: hold selected Ray close-bar events briefly when they arrive milliseconds
+  // v6.7e: hold selected Ray close-bar events briefly when they arrive milliseconds
   // before the matching closed 5m FEATURE alert. This fixes event ordering only;
   // it does not loosen entries or change thresholds.
   RAY_FEATURE_SYNC_WAIT_ENABLED: b(process.env.RAY_FEATURE_SYNC_WAIT_ENABLED, true),
@@ -48,6 +51,24 @@ export const CONFIG = {
   RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC: n(process.env.RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20),
   RAY_FEATURE_SYNC_EVENTS: s(process.env.RAY_FEATURE_SYNC_EVENTS, "Bullish Trend Change"),
   RAY_PROBE_LOG_ENABLED: b(process.env.RAY_PROBE_LOG_ENABLED, true),
+
+  // v6.7e: direct FVVO event timing/early-entry shadow diagnostics.
+  // These do not place trades. They only log what direct FVVO OPB/Close/Burst would have allowed/blocked.
+  FVVO_PROBE_LOG_ENABLED: b(process.env.FVVO_PROBE_LOG_ENABLED, true),
+  FVVO_DIRECT_EVENT_SHADOW_ENABLED: b(process.env.FVVO_DIRECT_EVENT_SHADOW_ENABLED, true),
+  FVVO_DIRECT_EVENT_TTL_SEC: n(process.env.FVVO_DIRECT_EVENT_TTL_SEC, 360),
+  FVVO_DIRECT_EVENT_ACCEPT_TF: s(process.env.FVVO_DIRECT_EVENT_ACCEPT_TF, "3,5"),
+  // Keep OPB direct FVVO as shadow by default. Close/Alert events still update normal FVVO memory.
+  FVVO_OPB_UPDATE_REAL_MEMORY: b(process.env.FVVO_OPB_UPDATE_REAL_MEMORY, false),
+  EARLY_FVVO_ENTRY_SHADOW_ENABLED: b(process.env.EARLY_FVVO_ENTRY_SHADOW_ENABLED, true),
+  EARLY_FVVO_ENTRY_SHADOW_REQUIRE_BULL_CONTEXT: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_BULL_CONTEXT, false),
+  EARLY_FVVO_ENTRY_SHADOW_MIN_RSI: n(process.env.EARLY_FVVO_ENTRY_SHADOW_MIN_RSI, 58),
+  EARLY_FVVO_ENTRY_SHADOW_MIN_ADX: n(process.env.EARLY_FVVO_ENTRY_SHADOW_MIN_ADX, 20),
+  EARLY_FVVO_ENTRY_SHADOW_MAX_EXT18_PCT: n(process.env.EARLY_FVVO_ENTRY_SHADOW_MAX_EXT18_PCT, 0.55),
+  EARLY_FVVO_ENTRY_SHADOW_MAX_CHASE_PCT: n(process.env.EARLY_FVVO_ENTRY_SHADOW_MAX_CHASE_PCT, 0.45),
+  EARLY_FVVO_ENTRY_SHADOW_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18, true),
+  EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO: b(process.env.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO, true),
 
   SYMBOL: normalizeSymbol(s(process.env.SYMBOL || "BINANCE:SOLUSDT")),
   ENTRY_TF: s(process.env.ENTRY_TF || "5"),

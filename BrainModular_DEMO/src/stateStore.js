@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC
+ * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -97,6 +97,14 @@ export function buildInitialRuntimeState() {
       lastSniperSellAt: null,
       lastBurstBullishAt: null,
       lastBurstBearishAt: null,
+      directEvents: [],
+      lastDirectEvent: null,
+      shadow: {
+        evaluated: 0,
+        pass: 0,
+        block: 0,
+        lastDecision: null,
+      },
     },
     firstEntry: {
       pending: false,

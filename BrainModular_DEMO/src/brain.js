@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC
+ * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
@@ -30,6 +30,7 @@ export function parseInboundType(body) {
   if (src === "ray") return { family: "ray", name: event };
   if (src === "ray_probe" || src === "rayprobe") return { family: "ray_probe", name: event };
   if (src === "fvvo") return { family: "fvvo", name: event };
+  if (src === "fvvo_probe" || src === "fvvoprobe") return { family: "fvvo_probe", name: event };
   return { family: "unknown", name: event || "unknown" };
 }
 
@@ -171,6 +172,18 @@ export function getStatus() {
     ray: S.ray,
     fvvo: S.fvvo,
     fvvoScore: getFvvoScore(),
+    fvvoDirectEventConfig: {
+      shadowEnabled: CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED,
+      ttlSec: CONFIG.FVVO_DIRECT_EVENT_TTL_SEC,
+      acceptTf: CONFIG.FVVO_DIRECT_EVENT_ACCEPT_TF,
+      opbUpdateRealMemory: CONFIG.FVVO_OPB_UPDATE_REAL_MEMORY,
+      earlyShadowEnabled: CONFIG.EARLY_FVVO_ENTRY_SHADOW_ENABLED,
+      requireBullContext: CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_BULL_CONTEXT,
+      minRsi: CONFIG.EARLY_FVVO_ENTRY_SHADOW_MIN_RSI,
+      minAdx: CONFIG.EARLY_FVVO_ENTRY_SHADOW_MIN_ADX,
+      maxExt18Pct: CONFIG.EARLY_FVVO_ENTRY_SHADOW_MAX_EXT18_PCT,
+      maxChasePct: CONFIG.EARLY_FVVO_ENTRY_SHADOW_MAX_CHASE_PCT,
+    },
     barIndex: S.barIndex,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
     replayUseEventTimeForPositionClock: CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
@@ -199,8 +212,26 @@ function sanitizeWebhookForLog(body = {}) {
   return clean;
 }
 
+function configuredWebhookRxFamilies() {
+  return String(CONFIG.WEBHOOK_RX_LOG_FAMILIES || "")
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function webhookRxFamilyAllowed(family) {
+  const allowed = configuredWebhookRxFamilies();
+  if (!allowed.length || allowed.includes("all")) return true;
+  const f = String(family || "unknown").toLowerCase();
+  if (allowed.includes(f)) return true;
+  if (f === "feature" && allowed.includes("features")) return true;
+  if (f === "features" && allowed.includes("feature")) return true;
+  return false;
+}
+
 function logWebhookRx(body = {}, parsed = null, extra = {}) {
   if (!CONFIG.WEBHOOK_RX_LOG_ENABLED) return;
+  if (!webhookRxFamilyAllowed(parsed?.family || "unknown")) return;
   log("📩 WEBHOOK_RX", {
     ...sanitizeWebhookForLog(body),
     family: parsed?.family || null,
@@ -423,8 +454,14 @@ export function handleWebhook(body = {}) {
       return { status: 200, json: { ok: true, kind: "ray", event: parsed.name, bullContext: S.ray.bullContext, inPosition: S.inPosition } };
     }
 
+    if (parsed.family === "fvvo_probe") {
+      if (CONFIG.FVVO_PROBE_LOG_ENABLED) log("🧪 FVVO_PROBE_RX", sanitizeWebhookForLog(body));
+      handleFvvoEvent(body, { probe: true });
+      return { status: 200, json: { ok: true, kind: "fvvo_probe", event: parsed.name, fvvoScore: getFvvoScore() } };
+    }
+
     if (parsed.family === "fvvo") {
-      handleFvvoEvent(body);
+      handleFvvoEvent(body, { probe: false });
       return { status: 200, json: { ok: true, kind: "fvvo", event: parsed.name, fvvoScore: getFvvoScore() } };
     }
 

@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC
+ * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -1047,34 +1047,204 @@ export function handleRayEvent(body) {
   }
 }
 
-export function handleFvvoEvent(body) {
-  const name = String(body.event || "").trim();
-  const ts = pickFirst(body, ["time", "timestamp"], isoNow());
+function fvvoAcceptedTfs() {
+  return String(CONFIG.FVVO_DIRECT_EVENT_ACCEPT_TF || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+function fvvoTfAccepted(tf) {
+  const allowed = fvvoAcceptedTfs();
+  if (!allowed.length || allowed.includes("*")) return true;
+  return allowed.includes(String(tf || ""));
+}
+function classifyFvvoEvent(name = "") {
+  const x = String(name || "").toLowerCase();
+  if (x.includes("sniper") && x.includes("buy")) return "sniper_buy";
+  if (x.includes("sniper") && x.includes("sell")) return "sniper_sell";
+  if (x.includes("burst") && x.includes("bull")) return "burst_bullish";
+  if (x.includes("burst") && x.includes("bear")) return "burst_bearish";
+  return "unknown";
+}
+function fvvoEventMode(name = "", body = {}) {
+  const raw = String(body.mode || body.alert_mode || name || "").toLowerCase();
+  if (raw.includes("opb") || raw.includes("once per bar")) return "opb";
+  if (raw.includes("close") || raw.includes("bar close")) return "close";
+  return "alert";
+}
+function fvvoEventLabel(kind, mode, probe = false) {
+  const suffix = mode === "opb" ? "_OPB" : mode === "close" ? "_CLOSE" : "";
+  const prefix = probe ? "🧪" : "🧿";
+  if (kind === "sniper_buy") return `${prefix} FVVO_SNIPER_BUY${suffix}`;
+  if (kind === "sniper_sell") return `${prefix} FVVO_SNIPER_SELL${suffix}`;
+  if (kind === "burst_bullish") return `${prefix} FVVO_BURST_BULLISH${suffix}`;
+  if (kind === "burst_bearish") return `${prefix} FVVO_BURST_BEARISH${suffix}`;
+  return `${prefix} FVVO_UNKNOWN`;
+}
+function eventPriceFromBody(body = {}) {
+  return n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()), currentPrice());
+}
+function fvvoDirectEventTs(body = {}) {
+  return pickFirst(body, ["alert_time", "alertTime", "time", "timestamp"], isoNow());
+}
+function compactFvvoDirectEvent(body = {}, kind = "unknown", mode = "alert", probe = false) {
+  const ts = fvvoDirectEventTs(body);
+  return {
+    kind,
+    mode,
+    probe: Boolean(probe),
+    src: s(body.src, "fvvo"),
+    event: s(body.event || body.signal || body.alert || body.action, ""),
+    tf: s(body.tf || body.interval, ""),
+    symbol: normalizeSymbol(s(body.symbol, CONFIG.SYMBOL)),
+    price: round4(eventPriceFromBody(body)),
+    barTime: pickFirst(body, ["bar_time", "barTime", "candle_time", "candleTime"], null),
+    alertTime: ts,
+    serverTime: isoNow(),
+  };
+}
+function storeFvvoDirectEvent(ev) {
+  if (!CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED || !ev || ev.kind === "unknown") return;
+  S.fvvo.directEvents = Array.isArray(S.fvvo.directEvents) ? S.fvvo.directEvents : [];
+  const ttlSec = Math.max(1, n(CONFIG.FVVO_DIRECT_EVENT_TTL_SEC, 360));
+  const now = parseTsMs(ev.alertTime) || Date.now();
+  S.fvvo.directEvents = S.fvvo.directEvents
+    .filter((item) => {
+      const itemMs = parseTsMs(item?.alertTime);
+      return Number.isFinite(itemMs) && Math.abs(now - itemMs) <= ttlSec * 1000;
+    })
+    .slice(-50);
+  S.fvvo.directEvents.push(ev);
+  S.fvvo.lastDirectEvent = ev;
+  log("🧿 FVVO_DIRECT_EVENT_STORED", {
+    kind: ev.kind,
+    mode: ev.mode,
+    probe: ev.probe,
+    tf: ev.tf,
+    symbol: ev.symbol,
+    price: ev.price,
+    bar_time: ev.barTime,
+    alert_time: ev.alertTime,
+  });
+}
+function updateFvvoMemoryForRealEvent(kind, ts) {
+  if (kind === "sniper_buy") S.fvvo.lastSniperBuyAt = ts;
+  if (kind === "sniper_sell") S.fvvo.lastSniperSellAt = ts;
+  if (kind === "burst_bullish") S.fvvo.lastBurstBullishAt = ts;
+  if (kind === "burst_bearish") S.fvvo.lastBurstBearishAt = ts;
+}
+function bullishDirectFvvoKind(kind) {
+  return kind === "sniper_buy" || kind === "burst_bullish";
+}
+function shadowEarlyFvvoMetrics(ev, fv) {
+  const f = S.lastFeature;
+  const close = n(f?.close, NaN);
+  const ema8 = n(f?.ema8, NaN);
+  const ema18 = n(f?.ema18, NaN);
+  const rsi = n(f?.rsi, NaN);
+  const adx = n(f?.adx, NaN);
+  const eventPrice = n(ev?.price, NaN);
+  const ext18 = Number.isFinite(close) && Number.isFinite(ema18) ? pctDiff(ema18, close) : NaN;
+  const chasePct = Number.isFinite(close) && Number.isFinite(eventPrice) ? pctDiff(close, eventPrice) : NaN;
+  const emaSpreadPct = ema8Ema18SpreadPct(ema8, ema18);
+  return {
+    kind: ev.kind,
+    mode: ev.mode,
+    probe: ev.probe,
+    tf: ev.tf,
+    price: round4(eventPrice),
+    close: round4(close),
+    ema8: round4(ema8),
+    ema18: round4(ema18),
+    emaSpreadPct: round4(emaSpreadPct),
+    rsi: round4(rsi),
+    adx: round4(adx),
+    ext18: round4(ext18),
+    chasePct: round4(chasePct),
+    fvvo: fv,
+    bullContext: Boolean(S.ray.bullContext),
+    inPosition: Boolean(S.inPosition),
+    featureTime: f?.time || null,
+    bar_time: ev.barTime,
+    alert_time: ev.alertTime,
+    server_time: ev.serverTime,
+  };
+}
+function evaluateEarlyFvvoEntryShadow(ev) {
+  if (!CONFIG.EARLY_FVVO_ENTRY_SHADOW_ENABLED || !CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED) return;
+  if (!ev || ev.kind === "unknown") return;
+  if (!bullishDirectFvvoKind(ev.kind)) return;
+
+  const reasons = [];
+  const f = S.lastFeature;
+  const fv = getFvvoScore(ev.alertTime || null);
+  const tfOk = fvvoTfAccepted(ev.tf);
+  reasonPush(reasons, !tfOk, "tf_not_accepted");
+  reasonPush(reasons, normalizeSymbol(ev.symbol) !== CONFIG.SYMBOL, "symbol_mismatch");
+  reasonPush(reasons, Boolean(S.inPosition), "already_in_position");
+  reasonPush(reasons, CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_BULL_CONTEXT && !S.ray.bullContext, "no_bull_context");
+  reasonPush(reasons, !f, "no_feature");
+  reasonPush(reasons, f && !isFeatureFresh(), "stale_feature");
+
+  const close = n(f?.close, NaN);
+  const ema8 = n(f?.ema8, NaN);
+  const ema18 = n(f?.ema18, NaN);
+  const rsi = n(f?.rsi, NaN);
+  const adx = n(f?.adx, NaN);
+  const ext18 = Number.isFinite(close) && Number.isFinite(ema18) ? pctDiff(ema18, close) : NaN;
+  const eventPrice = n(ev?.price, NaN);
+  const chasePct = Number.isFinite(close) && Number.isFinite(eventPrice) ? pctDiff(close, eventPrice) : NaN;
+
+  reasonPush(reasons, CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_CLOSE_ABOVE_EMA8 && !(Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8), "close_below_ema8");
+  reasonPush(reasons, CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18 && !(Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18), "ema8_below_ema18");
+  reasonPush(reasons, Number.isFinite(rsi) && rsi < CONFIG.EARLY_FVVO_ENTRY_SHADOW_MIN_RSI, "rsi_too_low");
+  reasonPush(reasons, Number.isFinite(adx) && adx < CONFIG.EARLY_FVVO_ENTRY_SHADOW_MIN_ADX, "adx_too_low");
+  reasonPush(reasons, Number.isFinite(ext18) && ext18 > CONFIG.EARLY_FVVO_ENTRY_SHADOW_MAX_EXT18_PCT, "ext18_too_high");
+  reasonPush(reasons, Number.isFinite(chasePct) && chasePct > CONFIG.EARLY_FVVO_ENTRY_SHADOW_MAX_CHASE_PCT, "chase_too_high");
+  const staleBearishBlock = CONFIG.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO && fv.score < 0 && ev.kind === "sniper_buy";
+  reasonPush(reasons, staleBearishBlock, "bearish_fvvo_context");
+
+  const metrics = shadowEarlyFvvoMetrics(ev, fv);
+  S.fvvo.shadow = S.fvvo.shadow || { evaluated: 0, pass: 0, block: 0, lastDecision: null };
+  S.fvvo.shadow.evaluated = n(S.fvvo.shadow.evaluated, 0) + 1;
+  const decision = {
+    action: reasons.length ? "block" : "shadow_pass",
+    reason: reasons.length ? reasons[0] : "early_fvvo_shadow_ok",
+    reasons,
+    metrics,
+  };
+  if (reasons.length) {
+    S.fvvo.shadow.block = n(S.fvvo.shadow.block, 0) + 1;
+    S.fvvo.shadow.lastDecision = decision;
+    log("🧪 EARLY_FVVO_ENTRY_SHADOW_BLOCKED", decision);
+    return;
+  }
+  S.fvvo.shadow.pass = n(S.fvvo.shadow.pass, 0) + 1;
+  S.fvvo.shadow.lastDecision = decision;
+  log("🧪 EARLY_FVVO_ENTRY_SHADOW_PASS", decision);
+}
+
+export function handleFvvoEvent(body, options = {}) {
+  const name = String(body.event || body.signal || body.alert || body.action || "").trim();
+  const probe = Boolean(options?.probe);
+  const ts = fvvoDirectEventTs(body);
+  const kind = classifyFvvoEvent(name);
+  const mode = fvvoEventMode(name, body);
   if (!CONFIG.FVVO_ENABLED) {
-    log("🧿 FVVO_IGNORED_DISABLED", { name, ts });
+    log("🧿 FVVO_IGNORED_DISABLED", { name, ts, probe });
     return;
   }
-  if (/Sniper Buy Alert/i.test(name)) {
-    S.fvvo.lastSniperBuyAt = ts;
-    log("🧿 FVVO_SNIPER_BUY", { ts });
+  if (kind === "unknown") {
+    log(fvvoEventLabel(kind, mode, probe), { name, ts, probe });
     return;
   }
-  if (/Sniper Sell Alert/i.test(name)) {
-    S.fvvo.lastSniperSellAt = ts;
-    log("🧿 FVVO_SNIPER_SELL", { ts });
-    return;
-  }
-  if (/Burst Bullish Alert/i.test(name)) {
-    S.fvvo.lastBurstBullishAt = ts;
-    log("🧿 FVVO_BURST_BULLISH", { ts });
-    return;
-  }
-  if (/Burst Bearish Alert/i.test(name)) {
-    S.fvvo.lastBurstBearishAt = ts;
-    log("🧿 FVVO_BURST_BEARISH", { ts });
-    return;
-  }
-  log("🧿 FVVO_UNKNOWN", { name, ts });
+
+  const ev = compactFvvoDirectEvent(body, kind, mode, probe);
+  const updateRealMemory = !probe && (mode !== "opb" || CONFIG.FVVO_OPB_UPDATE_REAL_MEMORY);
+  if (updateRealMemory) updateFvvoMemoryForRealEvent(kind, ts);
+  log(fvvoEventLabel(kind, mode, probe), { ts, mode, tf: ev.tf, price: ev.price, bar_time: ev.barTime, probe, updateRealMemory });
+  storeFvvoDirectEvent(ev);
+  evaluateEarlyFvvoEntryShadow(ev);
 }
 
 // --------------------------------------------------
