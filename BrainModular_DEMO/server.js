@@ -41,6 +41,18 @@ app.listen(CONFIG.PORT, () => {
     enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
     replayAllowStaleData: CONFIG.REPLAY_ALLOW_STALE_DATA,
     replayUseEventTimeForPositionClock: CONFIG.REPLAY_USE_EVENT_TIME_FOR_POSITION_CLOCK,
+    webhookRxLog: {
+      enabled: CONFIG.WEBHOOK_RX_LOG_ENABLED,
+      logBody: CONFIG.WEBHOOK_RX_LOG_BODY,
+    },
+    rayFeatureSyncWait: {
+      enabled: CONFIG.RAY_FEATURE_SYNC_WAIT_ENABLED,
+      mode: CONFIG.RAY_FEATURE_SYNC_MODE,
+      waitMs: CONFIG.RAY_FEATURE_SYNC_WAIT_MS,
+      closeAlertGraceSec: CONFIG.RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC,
+      events: CONFIG.RAY_FEATURE_SYNC_EVENTS,
+      probeLogEnabled: CONFIG.RAY_PROBE_LOG_ENABLED,
+    },
     exitForwardRetry: {
       enabled: CONFIG.EXIT_FORWARD_RETRY_ENABLED,
       delaysMs: CONFIG.EXIT_FORWARD_RETRY_DELAYS_MS,
