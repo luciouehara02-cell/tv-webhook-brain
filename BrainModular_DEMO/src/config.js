@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE
+ * BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC
  * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
@@ -28,11 +28,26 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
   WEBHOOK_PATH: s(process.env.WEBHOOK_PATH, "/webhook"),
+
+  // v6.7d: sanitized webhook receive logging for timing verification.
+  WEBHOOK_RX_LOG_ENABLED: b(process.env.WEBHOOK_RX_LOG_ENABLED, true),
+  WEBHOOK_RX_LOG_BODY: b(process.env.WEBHOOK_RX_LOG_BODY, false),
+
+  // v6.7d: hold selected Ray close-bar events briefly when they arrive milliseconds
+  // before the matching closed 5m FEATURE alert. This fixes event ordering only;
+  // it does not loosen entries or change thresholds.
+  RAY_FEATURE_SYNC_WAIT_ENABLED: b(process.env.RAY_FEATURE_SYNC_WAIT_ENABLED, true),
+  // "shadow" logs the ordering issue without changing trades. "hold" actively waits and can change decisions.
+  RAY_FEATURE_SYNC_MODE: s(process.env.RAY_FEATURE_SYNC_MODE, "shadow").toLowerCase(),
+  RAY_FEATURE_SYNC_WAIT_MS: n(process.env.RAY_FEATURE_SYNC_WAIT_MS, 1500),
+  RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC: n(process.env.RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20),
+  RAY_FEATURE_SYNC_EVENTS: s(process.env.RAY_FEATURE_SYNC_EVENTS, "Bullish Trend Change"),
+  RAY_PROBE_LOG_ENABLED: b(process.env.RAY_PROBE_LOG_ENABLED, true),
 
   SYMBOL: normalizeSymbol(s(process.env.SYMBOL || "BINANCE:SOLUSDT")),
   ENTRY_TF: s(process.env.ENTRY_TF || "5"),

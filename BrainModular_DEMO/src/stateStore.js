@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
+ * BrainRAY_Continuation_v6.7d_WEBHOOK_SYNC
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -83,6 +83,14 @@ export function buildInitialRuntimeState() {
       armedBar: null,
       expiresBar: null,
       price: null,
+    },
+    rayFeatureSync: {
+      pending: [],
+      nextId: 1,
+      armedCount: 0,
+      releasedCount: 0,
+      lastArm: null,
+      lastRelease: null,
     },
     fvvo: {
       lastSniperBuyAt: null,
