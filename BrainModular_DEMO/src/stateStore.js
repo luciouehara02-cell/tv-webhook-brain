@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
+ * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -99,10 +99,22 @@ export function buildInitialRuntimeState() {
       lastBurstBearishAt: null,
       directEvents: [],
       lastDirectEvent: null,
+      featureSync: {
+        pending: [],
+        nextId: 1,
+        armedCount: 0,
+        releasedCount: 0,
+        timeoutCount: 0,
+        lastArm: null,
+        lastRelease: null,
+      },
       shadow: {
         evaluated: 0,
         pass: 0,
         block: 0,
+        syncEvaluated: 0,
+        syncPass: 0,
+        syncBlock: 0,
         lastDecision: null,
       },
     },

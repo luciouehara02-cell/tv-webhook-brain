@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
+ * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -1136,7 +1136,150 @@ function updateFvvoMemoryForRealEvent(kind, ts) {
 function bullishDirectFvvoKind(kind) {
   return kind === "sniper_buy" || kind === "burst_bullish";
 }
-function shadowEarlyFvvoMetrics(ev, fv) {
+
+const fvvoFeatureSyncTimers = new Map();
+
+function fvvoExpectedFeatureTime(ev = {}) {
+  const directBarTime = ev?.barTime || null;
+  if (directBarTime) {
+    const ms = parseTsMs(directBarTime);
+    if (Number.isFinite(ms)) return new Date(ms).toISOString();
+  }
+  const t = parseTsMs(ev?.alertTime || ev?.serverTime || isoNow());
+  if (!Number.isFinite(t)) return null;
+  const graceMs = Math.max(0, n(CONFIG.FVVO_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20)) * 1000;
+  return barTimeKey(new Date(t - graceMs).toISOString(), n(CONFIG.ENTRY_TF, 5));
+}
+
+function fvvoLatestFeatureIsAtOrAfter(expectedFeatureTime) {
+  if (!expectedFeatureTime || !S.lastFeatureTime) return false;
+  const expectedMs = parseTsMs(expectedFeatureTime);
+  const latestMs = parseTsMs(S.lastFeatureTime);
+  return Number.isFinite(expectedMs) && Number.isFinite(latestMs) && latestMs >= expectedMs;
+}
+
+function clearFvvoFeatureSyncTimer(id) {
+  const timer = fvvoFeatureSyncTimers.get(id);
+  if (timer) clearTimeout(timer);
+  fvvoFeatureSyncTimers.delete(id);
+}
+
+function removePendingFvvoFeatureSync(id) {
+  const pending = Array.isArray(S.fvvo?.featureSync?.pending) ? S.fvvo.featureSync.pending : [];
+  if (!S.fvvo) S.fvvo = {};
+  if (!S.fvvo.featureSync) S.fvvo.featureSync = { pending: [] };
+  S.fvvo.featureSync.pending = pending.filter((item) => item.id !== id);
+}
+
+function shouldArmFvvoFeatureSync(ev) {
+  if (!CONFIG.FVVO_FEATURE_SYNC_WAIT_ENABLED) return false;
+  if (!CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED || !CONFIG.EARLY_FVVO_ENTRY_SHADOW_ENABLED) return false;
+  if (!ev || ev.kind === "unknown" || !bullishDirectFvvoKind(ev.kind)) return false;
+  if (!fvvoTfAccepted(ev.tf)) return false;
+  if (normalizeSymbol(ev.symbol) !== CONFIG.SYMBOL) return false;
+  const waitMs = n(CONFIG.FVVO_FEATURE_SYNC_WAIT_MS, 0);
+  if (!(waitMs > 0)) return false;
+  const expectedFeatureTime = fvvoExpectedFeatureTime(ev);
+  if (!expectedFeatureTime) return false;
+  return !fvvoLatestFeatureIsAtOrAfter(expectedFeatureTime);
+}
+
+function processHeldFvvoFeatureSync(item, reason = "matching_feature_arrived") {
+  if (!item || item.processed) return;
+  item.processed = true;
+  clearFvvoFeatureSyncTimer(item.id);
+  removePendingFvvoFeatureSync(item.id);
+  if (!S.fvvo) S.fvvo = {};
+  if (!S.fvvo.featureSync) S.fvvo.featureSync = { pending: [] };
+  const isTimeout = reason === "timeout";
+  if (isTimeout) S.fvvo.featureSync.timeoutCount = n(S.fvvo.featureSync.timeoutCount, 0) + 1;
+  else S.fvvo.featureSync.releasedCount = n(S.fvvo.featureSync.releasedCount, 0) + 1;
+  S.fvvo.featureSync.lastRelease = {
+    id: item.id,
+    reason,
+    mode: item.mode,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    expectedFeatureTime: item.expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    releasedAt: isoNow(),
+  };
+  const label = isTimeout ? "🧪 FVVO_FEATURE_SYNC_SHADOW_TIMEOUT" : "🧪 FVVO_FEATURE_SYNC_SHADOW_RELEASED";
+  log(label, {
+    id: item.id,
+    mode: item.mode,
+    reason,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    fvvoTime: item.ev?.alertTime,
+    fvvoBarTime: item.expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    waitedMs: Math.max(0, Date.now() - n(item.armedAtMs, Date.now())),
+  });
+  if (!isTimeout) evaluateEarlyFvvoEntryShadow(item.ev, { phase: "sync_release", syncId: item.id, reason });
+}
+
+function armFvvoFeatureSyncWait(ev = {}) {
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.featureSync = S.fvvo.featureSync || { pending: [], nextId: 1 };
+  const expectedFeatureTime = fvvoExpectedFeatureTime(ev);
+  const id = n(S.fvvo.featureSync.nextId, 1);
+  S.fvvo.featureSync.nextId = id + 1;
+  const item = {
+    id,
+    ev: { ...ev },
+    expectedFeatureTime,
+    armedAt: isoNow(),
+    armedAtMs: Date.now(),
+    waitMs: n(CONFIG.FVVO_FEATURE_SYNC_WAIT_MS, 1500),
+    mode: "shadow",
+    processed: false,
+  };
+  S.fvvo.featureSync.pending = Array.isArray(S.fvvo.featureSync.pending) ? S.fvvo.featureSync.pending : [];
+  S.fvvo.featureSync.pending.push(item);
+  S.fvvo.featureSync.armedCount = n(S.fvvo.featureSync.armedCount, 0) + 1;
+  S.fvvo.featureSync.lastArm = {
+    id,
+    mode: item.mode,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    fvvoTime: item.ev?.alertTime,
+    expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    waitMs: item.waitMs,
+    armedAt: item.armedAt,
+  };
+  log("🧪 FVVO_FEATURE_SYNC_SHADOW_ARMED", {
+    id,
+    mode: item.mode,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    fvvoTime: item.ev?.alertTime,
+    fvvoBarTime: expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    waitMs: item.waitMs,
+  });
+  const timer = setTimeout(() => {
+    const stillPending = (S.fvvo?.featureSync?.pending || []).find((x) => x.id === id);
+    if (stillPending && !stillPending.processed) processHeldFvvoFeatureSync(stillPending, "timeout");
+  }, item.waitMs);
+  fvvoFeatureSyncTimers.set(id, timer);
+  return item;
+}
+
+export function releasePendingFvvoFeatureSync(reason = "matching_feature_arrived") {
+  const pending = Array.isArray(S.fvvo?.featureSync?.pending) ? [...S.fvvo.featureSync.pending] : [];
+  for (const item of pending) {
+    if (!item || item.processed) continue;
+    if (fvvoLatestFeatureIsAtOrAfter(item.expectedFeatureTime)) processHeldFvvoFeatureSync(item, reason);
+  }
+}
+
+export function clearFvvoFeatureSyncTimers() {
+  for (const id of fvvoFeatureSyncTimers.keys()) clearFvvoFeatureSyncTimer(id);
+}
+
+function shadowEarlyFvvoMetrics(ev, fv, options = {}) {
   const f = S.lastFeature;
   const close = n(f?.close, NaN);
   const ema8 = n(f?.ema8, NaN);
@@ -1168,9 +1311,11 @@ function shadowEarlyFvvoMetrics(ev, fv) {
     bar_time: ev.barTime,
     alert_time: ev.alertTime,
     server_time: ev.serverTime,
+    evalPhase: options.phase || "immediate",
+    syncId: options.syncId || null,
   };
 }
-function evaluateEarlyFvvoEntryShadow(ev) {
+function evaluateEarlyFvvoEntryShadow(ev, options = {}) {
   if (!CONFIG.EARLY_FVVO_ENTRY_SHADOW_ENABLED || !CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED) return;
   if (!ev || ev.kind === "unknown") return;
   if (!bullishDirectFvvoKind(ev.kind)) return;
@@ -1204,9 +1349,12 @@ function evaluateEarlyFvvoEntryShadow(ev) {
   const staleBearishBlock = CONFIG.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO && fv.score < 0 && ev.kind === "sniper_buy";
   reasonPush(reasons, staleBearishBlock, "bearish_fvvo_context");
 
-  const metrics = shadowEarlyFvvoMetrics(ev, fv);
-  S.fvvo.shadow = S.fvvo.shadow || { evaluated: 0, pass: 0, block: 0, lastDecision: null };
+  const phase = options.phase || "immediate";
+  const isSyncEval = phase === "sync_release";
+  const metrics = shadowEarlyFvvoMetrics(ev, fv, options);
+  S.fvvo.shadow = S.fvvo.shadow || { evaluated: 0, pass: 0, block: 0, syncEvaluated: 0, syncPass: 0, syncBlock: 0, lastDecision: null };
   S.fvvo.shadow.evaluated = n(S.fvvo.shadow.evaluated, 0) + 1;
+  if (isSyncEval) S.fvvo.shadow.syncEvaluated = n(S.fvvo.shadow.syncEvaluated, 0) + 1;
   const decision = {
     action: reasons.length ? "block" : "shadow_pass",
     reason: reasons.length ? reasons[0] : "early_fvvo_shadow_ok",
@@ -1215,13 +1363,15 @@ function evaluateEarlyFvvoEntryShadow(ev) {
   };
   if (reasons.length) {
     S.fvvo.shadow.block = n(S.fvvo.shadow.block, 0) + 1;
+    if (isSyncEval) S.fvvo.shadow.syncBlock = n(S.fvvo.shadow.syncBlock, 0) + 1;
     S.fvvo.shadow.lastDecision = decision;
-    log("🧪 EARLY_FVVO_ENTRY_SHADOW_BLOCKED", decision);
+    log(isSyncEval ? "🧪 EARLY_FVVO_ENTRY_SHADOW_SYNC_BLOCKED" : "🧪 EARLY_FVVO_ENTRY_SHADOW_BLOCKED", decision);
     return;
   }
   S.fvvo.shadow.pass = n(S.fvvo.shadow.pass, 0) + 1;
+  if (isSyncEval) S.fvvo.shadow.syncPass = n(S.fvvo.shadow.syncPass, 0) + 1;
   S.fvvo.shadow.lastDecision = decision;
-  log("🧪 EARLY_FVVO_ENTRY_SHADOW_PASS", decision);
+  log(isSyncEval ? "🧪 EARLY_FVVO_ENTRY_SHADOW_SYNC_PASS" : "🧪 EARLY_FVVO_ENTRY_SHADOW_PASS", decision);
 }
 
 export function handleFvvoEvent(body, options = {}) {
@@ -1244,6 +1394,7 @@ export function handleFvvoEvent(body, options = {}) {
   if (updateRealMemory) updateFvvoMemoryForRealEvent(kind, ts);
   log(fvvoEventLabel(kind, mode, probe), { ts, mode, tf: ev.tf, price: ev.price, bar_time: ev.barTime, probe, updateRealMemory });
   storeFvvoDirectEvent(ev);
+  if (shouldArmFvvoFeatureSync(ev)) armFvvoFeatureSyncWait(ev);
   evaluateEarlyFvvoEntryShadow(ev);
 }
 

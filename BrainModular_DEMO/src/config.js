@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
+ * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
  * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -52,12 +52,18 @@ export const CONFIG = {
   RAY_FEATURE_SYNC_EVENTS: s(process.env.RAY_FEATURE_SYNC_EVENTS, "Bullish Trend Change"),
   RAY_PROBE_LOG_ENABLED: b(process.env.RAY_PROBE_LOG_ENABLED, true),
 
-  // v6.7e: direct FVVO event timing/early-entry shadow diagnostics.
+  // v6.7f: direct FVVO event timing/early-entry shadow diagnostics.
   // These do not place trades. They only log what direct FVVO OPB/Close/Burst would have allowed/blocked.
   FVVO_PROBE_LOG_ENABLED: b(process.env.FVVO_PROBE_LOG_ENABLED, true),
   FVVO_DIRECT_EVENT_SHADOW_ENABLED: b(process.env.FVVO_DIRECT_EVENT_SHADOW_ENABLED, true),
   FVVO_DIRECT_EVENT_TTL_SEC: n(process.env.FVVO_DIRECT_EVENT_TTL_SEC, 360),
   FVVO_DIRECT_EVENT_ACCEPT_TF: s(process.env.FVVO_DIRECT_EVENT_ACCEPT_TF, "3,5"),
+  // v6.7f: FVVO can arrive a few hundred ms before matching closed FEATURE_5M.
+  // Shadow mode logs that race and re-evaluates early FVVO shadow once the matching feature arrives.
+  FVVO_FEATURE_SYNC_WAIT_ENABLED: b(process.env.FVVO_FEATURE_SYNC_WAIT_ENABLED, true),
+  FVVO_FEATURE_SYNC_MODE: s(process.env.FVVO_FEATURE_SYNC_MODE, "shadow").toLowerCase(),
+  FVVO_FEATURE_SYNC_WAIT_MS: n(process.env.FVVO_FEATURE_SYNC_WAIT_MS, 1500),
+  FVVO_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC: n(process.env.FVVO_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20),
   // Keep OPB direct FVVO as shadow by default. Close/Alert events still update normal FVVO memory.
   FVVO_OPB_UPDATE_REAL_MEMORY: b(process.env.FVVO_OPB_UPDATE_REAL_MEMORY, false),
   EARLY_FVVO_ENTRY_SHADOW_ENABLED: b(process.env.EARLY_FVVO_ENTRY_SHADOW_ENABLED, true),

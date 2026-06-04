@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7e_SHADOW_EARLY_FVVO
+ * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
@@ -20,6 +20,8 @@ import {
   handleRayEvent,
   handleFvvoEvent,
   getFvvoScore,
+  releasePendingFvvoFeatureSync,
+  clearFvvoFeatureSyncTimers,
 } from "./tradeEngine.js";
 
 export function parseInboundType(body) {
@@ -383,6 +385,7 @@ function releasePendingRayFeatureSync(reason = "matching_feature_arrived") {
 
 export function resetBrain(reason = "manual_reset") {
   for (const id of rayFeatureSyncTimers.keys()) clearRayFeatureSyncTimer(id);
+  clearFvvoFeatureSyncTimers();
   resetRuntimeState(reason);
   return { ok: true, reset: true, reason, brain: CONFIG.BRAIN_NAME, symbol: CONFIG.SYMBOL, tf: CONFIG.ENTRY_TF };
 }
@@ -409,6 +412,7 @@ export function handleWebhook(body = {}) {
     if (parsed.family === "feature") {
       handleFeature(body);
       releasePendingRayFeatureSync("matching_feature_arrived");
+      releasePendingFvvoFeatureSync("matching_feature_arrived");
       return { status: 200, json: { ok: true, kind: "feature", barIndex: S.barIndex, inPosition: S.inPosition, cycleState: S.cycleState } };
     }
 
