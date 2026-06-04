@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
+ * BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -1136,6 +1136,226 @@ function updateFvvoMemoryForRealEvent(kind, ts) {
 function bullishDirectFvvoKind(kind) {
   return kind === "sniper_buy" || kind === "burst_bullish";
 }
+function bearishDirectFvvoKind(kind) {
+  return kind === "sniper_sell" || kind === "burst_bearish";
+}
+function fvvoShadowSignalDirection(kind) {
+  if (bullishDirectFvvoKind(kind)) return "long";
+  if (bearishDirectFvvoKind(kind)) return "short";
+  return null;
+}
+function parsePctList(raw, fallback = [0.3, 0.5, 0.8]) {
+  const values = String(raw || "")
+    .split(",")
+    .map((x) => Number(String(x).trim()))
+    .filter((x) => Number.isFinite(x) && x > 0)
+    .sort((a, b2) => a - b2);
+  return values.length ? values : fallback;
+}
+function signedMovePct(entryPrice, price, direction = "long") {
+  const raw = pctDiff(entryPrice, price);
+  return direction === "short" ? -raw : raw;
+}
+function fvvoShadowFavorablePct(entryPrice, feature, direction = "long") {
+  if (!feature) return NaN;
+  return direction === "short" ? signedMovePct(entryPrice, feature.low, direction) : signedMovePct(entryPrice, feature.high, direction);
+}
+function fvvoShadowAdversePct(entryPrice, feature, direction = "long") {
+  if (!feature) return NaN;
+  return direction === "short" ? signedMovePct(entryPrice, feature.high, direction) : signedMovePct(entryPrice, feature.low, direction);
+}
+function openFvvoShadowScorecard(ev = {}) {
+  if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED) return;
+  if (!ev || ev.kind === "unknown") return;
+  if (ev.probe && !CONFIG.FVVO_SHADOW_SCORECARD_INCLUDE_PROBES) return;
+  if (!fvvoTfAccepted(ev.tf)) return;
+  if (normalizeSymbol(ev.symbol) !== CONFIG.SYMBOL) return;
+  const direction = fvvoShadowSignalDirection(ev.kind);
+  if (!direction) return;
+  const entryPrice = n(ev.price, NaN);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return;
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.scorecard = S.fvvo.scorecard || { nextId: 1, active: [], opened: 0, updated: 0, closed: 0 };
+  const id = n(S.fvvo.scorecard.nextId, 1);
+  S.fvvo.scorecard.nextId = id + 1;
+  const item = {
+    id,
+    kind: ev.kind,
+    mode: ev.mode,
+    probe: Boolean(ev.probe),
+    direction,
+    tf: ev.tf,
+    symbol: ev.symbol,
+    entryPrice: round4(entryPrice),
+    entryTime: ev.alertTime,
+    barTime: ev.barTime,
+    serverTime: ev.serverTime,
+    openBarIndex: S.barIndex,
+    barsSeen: 0,
+    lastFeatureTime: null,
+    currentPct: 0,
+    maxFavorablePct: 0,
+    maxAdversePct: 0,
+    targetsHit: [],
+    closed: false,
+  };
+  S.fvvo.scorecard.active = Array.isArray(S.fvvo.scorecard.active) ? S.fvvo.scorecard.active : [];
+  S.fvvo.scorecard.active.push(item);
+  const maxActive = Math.max(1, Math.floor(n(CONFIG.FVVO_SHADOW_SCORECARD_MAX_ACTIVE, 24)));
+  while (S.fvvo.scorecard.active.length > maxActive) S.fvvo.scorecard.active.shift();
+  S.fvvo.scorecard.opened = n(S.fvvo.scorecard.opened, 0) + 1;
+  S.fvvo.scorecard.lastOpen = { ...item };
+  log("🧪 FVVO_SHADOW_SIGNAL_OPEN", {
+    id,
+    kind: item.kind,
+    mode: item.mode,
+    probe: item.probe,
+    direction: item.direction,
+    tf: item.tf,
+    entryPrice: item.entryPrice,
+    bar_time: item.barTime,
+    alert_time: item.entryTime,
+    featureTimeAtOpen: S.lastFeatureTime,
+  });
+}
+function updateFvvoShadowScorecardOnFeature(feature) {
+  if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED || !feature) return;
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.scorecard = S.fvvo.scorecard || { nextId: 1, active: [], opened: 0, updated: 0, closed: 0 };
+  const active = Array.isArray(S.fvvo.scorecard.active) ? S.fvvo.scorecard.active : [];
+  if (!active.length) return;
+  const targets = parsePctList(CONFIG.FVVO_SHADOW_SCORECARD_TARGETS_PCT);
+  const maxBars = Math.max(1, Math.floor(n(CONFIG.FVVO_SHADOW_SCORECARD_MAX_BARS, 12)));
+  const keep = [];
+  for (const item of active) {
+    if (!item || item.closed) continue;
+    if (item.lastFeatureTime === feature.time) {
+      keep.push(item);
+      continue;
+    }
+    item.lastFeatureTime = feature.time;
+    item.barsSeen = n(item.barsSeen, 0) + 1;
+    const entryPrice = n(item.entryPrice, NaN);
+    const currentPct = signedMovePct(entryPrice, feature.close, item.direction);
+    const favPct = fvvoShadowFavorablePct(entryPrice, feature, item.direction);
+    const advPct = fvvoShadowAdversePct(entryPrice, feature, item.direction);
+    if (Number.isFinite(currentPct)) item.currentPct = round4(currentPct);
+    if (Number.isFinite(favPct)) item.maxFavorablePct = round4(Math.max(n(item.maxFavorablePct, 0), favPct));
+    if (Number.isFinite(advPct)) item.maxAdversePct = round4(Math.min(n(item.maxAdversePct, 0), advPct));
+    item.targetsHit = targets.filter((t) => n(item.maxFavorablePct, 0) >= t).map((x) => round4(x));
+    const update = {
+      id: item.id,
+      kind: item.kind,
+      mode: item.mode,
+      probe: item.probe,
+      direction: item.direction,
+      barsSeen: item.barsSeen,
+      entryPrice: item.entryPrice,
+      currentPrice: round4(feature.close),
+      currentPct: item.currentPct,
+      maxFavorablePct: item.maxFavorablePct,
+      maxAdversePct: item.maxAdversePct,
+      targetsHit: item.targetsHit,
+      featureTime: feature.time,
+    };
+    S.fvvo.scorecard.updated = n(S.fvvo.scorecard.updated, 0) + 1;
+    S.fvvo.scorecard.lastUpdate = update;
+    log("🧪 FVVO_SHADOW_SIGNAL_UPDATE", update);
+    if (item.barsSeen >= maxBars) {
+      item.closed = true;
+      const result = {
+        ...update,
+        result: n(item.maxFavorablePct, 0) >= Math.min(...targets) ? "target_hit" : n(item.currentPct, 0) > 0 ? "positive_no_target" : "failed_or_negative",
+        closeReason: "max_bars",
+        maxBars,
+      };
+      S.fvvo.scorecard.closed = n(S.fvvo.scorecard.closed, 0) + 1;
+      S.fvvo.scorecard.lastResult = result;
+      log("🧪 FVVO_SHADOW_SIGNAL_RESULT", result);
+    } else {
+      keep.push(item);
+    }
+  }
+  S.fvvo.scorecard.active = keep;
+}
+function featureFlowScore(f = {}) {
+  const oi = n(f.oiTrend, NaN);
+  const oid = n(f.oiDeltaBias, NaN);
+  const cvd = n(f.cvdTrend, NaN);
+  let score = 0;
+  if (Number.isFinite(oi)) score += oi > 0 ? 1 : oi < 0 ? -1 : 0;
+  if (Number.isFinite(oid)) score += oid > 0 ? 1 : oid < 0 ? -1 : 0;
+  if (Number.isFinite(cvd)) score += cvd > 0 ? 1 : cvd < 0 ? -1 : 0;
+  return score;
+}
+function latestBearishFvvoContext(featureTime = null) {
+  const events = Array.isArray(S.fvvo?.directEvents) ? S.fvvo.directEvents : [];
+  const refMs = parseTsMs(featureTime || isoNow()) || Date.now();
+  const recencyMs = Math.max(1, n(CONFIG.FVVO_BEARISH_INVALIDATION_RECENCY_SEC, 900)) * 1000;
+  let latest = null;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const ev = events[i];
+    if (!ev || !bearishDirectFvvoKind(ev.kind)) continue;
+    const evMs = parseTsMs(ev.alertTime || ev.serverTime || ev.barTime);
+    if (!Number.isFinite(evMs)) continue;
+    if (Math.abs(refMs - evMs) <= recencyMs) {
+      latest = ev;
+      break;
+    }
+  }
+  const fv = getFvvoScore(featureTime || null);
+  return { event: latest, fvvo: fv, bearish: Boolean(latest || fv?.score < 0 || fv?.snap?.sniperSell || fv?.snap?.burstBearish) };
+}
+function evaluateFvvoBearishInvalidationShadow(feature) {
+  if (!CONFIG.FVVO_BEARISH_INVALIDATION_SHADOW_ENABLED || !feature) return;
+  const ctx = latestBearishFvvoContext(feature.time);
+  if (!ctx.bearish) return;
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.bearishInvalidationShadow = S.fvvo.bearishInvalidationShadow || { evaluated: 0, pass: 0, block: 0, lastKey: null, lastDecision: null };
+  const bearishKey = `${feature.time}:${ctx.event?.kind || "fvvo_score"}:${ctx.event?.alertTime || "score"}`;
+  if (S.fvvo.bearishInvalidationShadow.lastKey === bearishKey) return;
+  const emaSpreadPct = ema8Ema18SpreadPct(feature.ema8, feature.ema18);
+  const prevSpreadPct = ema8Ema18SpreadPct(S.prevFeature?.ema8, S.prevFeature?.ema18);
+  const spreadImproving = Number.isFinite(emaSpreadPct) && Number.isFinite(prevSpreadPct) && emaSpreadPct > prevSpreadPct;
+  const closeAboveEma8 = Number.isFinite(feature.close) && Number.isFinite(feature.ema8) && feature.close >= feature.ema8;
+  const emaOk = Number.isFinite(feature.ema8) && Number.isFinite(feature.ema18) && (feature.ema8 >= feature.ema18 || spreadImproving);
+  const flowScore = featureFlowScore(feature);
+  const reasons = [];
+  reasonPush(reasons, CONFIG.FVVO_BEARISH_INVALIDATION_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8, "close_not_above_ema8");
+  reasonPush(reasons, CONFIG.FVVO_BEARISH_INVALIDATION_REQUIRE_EMA8_ABOVE_EMA18_OR_IMPROVING && !emaOk, "ema8_not_above_or_improving_vs_ema18");
+  reasonPush(reasons, Number.isFinite(feature.rsi) && feature.rsi < CONFIG.FVVO_BEARISH_INVALIDATION_MIN_RSI, "rsi_below_invalidation_min");
+  reasonPush(reasons, Number.isFinite(feature.adx) && feature.adx < CONFIG.FVVO_BEARISH_INVALIDATION_MIN_ADX, "adx_below_invalidation_min");
+  reasonPush(reasons, CONFIG.FVVO_BEARISH_INVALIDATION_REQUIRE_POSITIVE_FLOW && flowScore < CONFIG.FVVO_BEARISH_INVALIDATION_MIN_FLOW_SCORE, "flow_not_positive_enough");
+  const metrics = {
+    featureTime: feature.time,
+    close: round4(feature.close),
+    ema8: round4(feature.ema8),
+    ema18: round4(feature.ema18),
+    emaSpreadPct: round4(emaSpreadPct),
+    prevEmaSpreadPct: round4(prevSpreadPct),
+    spreadImproving,
+    rsi: round4(feature.rsi),
+    adx: round4(feature.adx),
+    oiTrend: Number.isFinite(n(feature.oiTrend, NaN)) ? n(feature.oiTrend, NaN) : null,
+    oiDeltaBias: Number.isFinite(n(feature.oiDeltaBias, NaN)) ? n(feature.oiDeltaBias, NaN) : null,
+    cvdTrend: Number.isFinite(n(feature.cvdTrend, NaN)) ? n(feature.cvdTrend, NaN) : null,
+    flowScore,
+    bearishEvent: ctx.event
+      ? { kind: ctx.event.kind, mode: ctx.event.mode, probe: ctx.event.probe, price: ctx.event.price, bar_time: ctx.event.barTime, alert_time: ctx.event.alertTime }
+      : null,
+    fvvo: ctx.fvvo,
+  };
+  const decision = { action: reasons.length ? "still_bearish_or_unconfirmed" : "bearish_fvvo_invalidated_shadow", reason: reasons[0] || "bullish_reclaim_invalidated_bearish_fvvo", reasons, metrics };
+  S.fvvo.bearishInvalidationShadow.evaluated = n(S.fvvo.bearishInvalidationShadow.evaluated, 0) + 1;
+  S.fvvo.bearishInvalidationShadow.lastKey = bearishKey;
+  S.fvvo.bearishInvalidationShadow.lastDecision = decision;
+  if (reasons.length) {
+    S.fvvo.bearishInvalidationShadow.block = n(S.fvvo.bearishInvalidationShadow.block, 0) + 1;
+    return;
+  }
+  S.fvvo.bearishInvalidationShadow.pass = n(S.fvvo.bearishInvalidationShadow.pass, 0) + 1;
+  log("🧪 FVVO_BEARISH_INVALIDATION_SHADOW", decision);
+}
 
 const fvvoFeatureSyncTimers = new Map();
 
@@ -1394,6 +1614,7 @@ export function handleFvvoEvent(body, options = {}) {
   if (updateRealMemory) updateFvvoMemoryForRealEvent(kind, ts);
   log(fvvoEventLabel(kind, mode, probe), { ts, mode, tf: ev.tf, price: ev.price, bar_time: ev.barTime, probe, updateRealMemory });
   storeFvvoDirectEvent(ev);
+  openFvvoShadowScorecard(ev);
   if (shouldArmFvvoFeatureSync(ev)) armFvvoFeatureSyncWait(ev);
   evaluateEarlyFvvoEntryShadow(ev);
 }
@@ -1446,6 +1667,12 @@ export function handleFeature(body) {
     atr: rawAtr,
     atrPct,
     atrReady,
+    oiTrend: Number.isFinite(n(body.oiTrend, NaN)) ? n(body.oiTrend, NaN) : null,
+    oiDeltaBias: Number.isFinite(n(body.oiDeltaBias, NaN)) ? n(body.oiDeltaBias, NaN) : null,
+    cvdTrend: Number.isFinite(n(body.cvdTrend, NaN)) ? n(body.cvdTrend, NaN) : null,
+    priceDropPct: n(body.priceDropPct, NaN),
+    patternAReady: Number.isFinite(n(body.patternAReady, NaN)) ? n(body.patternAReady, NaN) : null,
+    patternAWatch: Number.isFinite(n(body.patternAWatch, NaN)) ? n(body.patternAWatch, NaN) : null,
   };
   S.prevPrevFeature = S.prevFeature ? { ...S.prevFeature } : null;
   S.prevFeature = S.lastFeature ? { ...S.lastFeature } : null;
@@ -1479,6 +1706,8 @@ export function handleFeature(body) {
     barIndex: S.barIndex,
     fvvo: getFvvoScore(ts),
   });
+  updateFvvoShadowScorecardOnFeature(feature);
+  evaluateFvvoBearishInvalidationShadow(feature);
   const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
   if (featureSyncResult?.entered) return;
 

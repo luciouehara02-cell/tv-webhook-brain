@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
+ * BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW
  * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -52,13 +52,13 @@ export const CONFIG = {
   RAY_FEATURE_SYNC_EVENTS: s(process.env.RAY_FEATURE_SYNC_EVENTS, "Bullish Trend Change"),
   RAY_PROBE_LOG_ENABLED: b(process.env.RAY_PROBE_LOG_ENABLED, true),
 
-  // v6.7f: direct FVVO event timing/early-entry shadow diagnostics.
+  // v6.7g: direct FVVO event timing/early-entry shadow diagnostics.
   // These do not place trades. They only log what direct FVVO OPB/Close/Burst would have allowed/blocked.
   FVVO_PROBE_LOG_ENABLED: b(process.env.FVVO_PROBE_LOG_ENABLED, true),
   FVVO_DIRECT_EVENT_SHADOW_ENABLED: b(process.env.FVVO_DIRECT_EVENT_SHADOW_ENABLED, true),
   FVVO_DIRECT_EVENT_TTL_SEC: n(process.env.FVVO_DIRECT_EVENT_TTL_SEC, 360),
   FVVO_DIRECT_EVENT_ACCEPT_TF: s(process.env.FVVO_DIRECT_EVENT_ACCEPT_TF, "3,5"),
-  // v6.7f: FVVO can arrive a few hundred ms before matching closed FEATURE_5M.
+  // v6.7g keeps v6.7f behavior: FVVO can arrive a few hundred ms before matching closed FEATURE_5M.
   // Shadow mode logs that race and re-evaluates early FVVO shadow once the matching feature arrives.
   FVVO_FEATURE_SYNC_WAIT_ENABLED: b(process.env.FVVO_FEATURE_SYNC_WAIT_ENABLED, true),
   FVVO_FEATURE_SYNC_MODE: s(process.env.FVVO_FEATURE_SYNC_MODE, "shadow").toLowerCase(),
@@ -75,6 +75,22 @@ export const CONFIG = {
   EARLY_FVVO_ENTRY_SHADOW_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_CLOSE_ABOVE_EMA8, true),
   EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18, true),
   EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO: b(process.env.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO, true),
+
+  // v6.7g: FVVO shadow scorecard and bearish-FVVO invalidation diagnostics.
+  // These are measurement/logging only. They never place or block real trades directly.
+  FVVO_SHADOW_SCORECARD_ENABLED: b(process.env.FVVO_SHADOW_SCORECARD_ENABLED, true),
+  FVVO_SHADOW_SCORECARD_INCLUDE_PROBES: b(process.env.FVVO_SHADOW_SCORECARD_INCLUDE_PROBES, true),
+  FVVO_SHADOW_SCORECARD_MAX_ACTIVE: n(process.env.FVVO_SHADOW_SCORECARD_MAX_ACTIVE, 24),
+  FVVO_SHADOW_SCORECARD_MAX_BARS: n(process.env.FVVO_SHADOW_SCORECARD_MAX_BARS, 12),
+  FVVO_SHADOW_SCORECARD_TARGETS_PCT: s(process.env.FVVO_SHADOW_SCORECARD_TARGETS_PCT, "0.30,0.50,0.80"),
+  FVVO_BEARISH_INVALIDATION_SHADOW_ENABLED: b(process.env.FVVO_BEARISH_INVALIDATION_SHADOW_ENABLED, true),
+  FVVO_BEARISH_INVALIDATION_RECENCY_SEC: n(process.env.FVVO_BEARISH_INVALIDATION_RECENCY_SEC, 900),
+  FVVO_BEARISH_INVALIDATION_MIN_RSI: n(process.env.FVVO_BEARISH_INVALIDATION_MIN_RSI, 60),
+  FVVO_BEARISH_INVALIDATION_MIN_ADX: n(process.env.FVVO_BEARISH_INVALIDATION_MIN_ADX, 20),
+  FVVO_BEARISH_INVALIDATION_REQUIRE_CLOSE_ABOVE_EMA8: b(process.env.FVVO_BEARISH_INVALIDATION_REQUIRE_CLOSE_ABOVE_EMA8, true),
+  FVVO_BEARISH_INVALIDATION_REQUIRE_EMA8_ABOVE_EMA18_OR_IMPROVING: b(process.env.FVVO_BEARISH_INVALIDATION_REQUIRE_EMA8_ABOVE_EMA18_OR_IMPROVING, true),
+  FVVO_BEARISH_INVALIDATION_REQUIRE_POSITIVE_FLOW: b(process.env.FVVO_BEARISH_INVALIDATION_REQUIRE_POSITIVE_FLOW, true),
+  FVVO_BEARISH_INVALIDATION_MIN_FLOW_SCORE: n(process.env.FVVO_BEARISH_INVALIDATION_MIN_FLOW_SCORE, 2),
 
   SYMBOL: normalizeSymbol(s(process.env.SYMBOL || "BINANCE:SOLUSDT")),
   ENTRY_TF: s(process.env.ENTRY_TF || "5"),

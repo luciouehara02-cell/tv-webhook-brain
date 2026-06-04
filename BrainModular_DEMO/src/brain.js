@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7f_FVVO_FEATURE_SYNC_SHADOW
+ * BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.
