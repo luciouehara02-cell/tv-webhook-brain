@@ -1,0 +1,39 @@
+BrainModular v6.7f_FVVO_FEATURE_SYNC_SHADOW
+
+Purpose
+- Keep v6.7e Shadow Early FVVO behavior.
+- Add FVVO feature-sync shadow wait.
+- When a direct FVVO buy event arrives before the matching closed FEATURE_5M, log the race and re-evaluate the shadow decision once the matching feature arrives.
+- Keep real trading unchanged.
+- No real early FVVO entry is enabled in this version.
+
+Recommended DEMO variables
+- Apply BrainModular_v6.7f_FVVO_FEATURE_SYNC_SHADOW_delta_DEMO.env
+- Keep RAY_FEATURE_SYNC_MODE="shadow"
+- Keep FVVO_FEATURE_SYNC_MODE="shadow"
+- Keep FVVO_OPB_UPDATE_REAL_MEMORY="false"
+- Keep EARLY_FVVO_ENTRY_SHADOW_ENABLED="true"
+
+Important safety
+- FVVO OPB should use src="fvvo_probe" during timing tests.
+- Real FVVO Close/Alert can use src="fvvo".
+- OPB events do not update normal FVVO memory unless FVVO_OPB_UPDATE_REAL_MEMORY="true".
+- FVVO feature sync only re-evaluates shadow logs; it does not place trades.
+- This package is DEMO/TEST recommended first, not LIVE.
+
+Expected logs to search
+- FVVO_PROBE_RX
+- FVVO_DIRECT_EVENT_STORED
+- FVVO_FEATURE_SYNC_SHADOW_ARMED
+- FVVO_FEATURE_SYNC_SHADOW_RELEASED
+- FVVO_FEATURE_SYNC_SHADOW_TIMEOUT
+- EARLY_FVVO_ENTRY_SHADOW_PASS
+- EARLY_FVVO_ENTRY_SHADOW_BLOCKED
+- EARLY_FVVO_ENTRY_SHADOW_SYNC_PASS
+- EARLY_FVVO_ENTRY_SHADOW_SYNC_BLOCKED
+- RAY_FEATURE_SYNC_SHADOW_ARMED
+- RAY_FEATURE_SYNC_SHADOW_RELEASED
+
+Rollback
+- Redeploy v6.7e package or set FVVO_FEATURE_SYNC_WAIT_ENABLED="false".
+- To disable all FVVO shadow diagnostics, set EARLY_FVVO_ENTRY_SHADOW_ENABLED="false" and FVVO_DIRECT_EVENT_SHADOW_ENABLED="false".
