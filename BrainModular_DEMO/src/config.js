@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW
+ * BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD
  * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -46,13 +46,13 @@ export const CONFIG = {
   // it does not loosen entries or change thresholds.
   RAY_FEATURE_SYNC_WAIT_ENABLED: b(process.env.RAY_FEATURE_SYNC_WAIT_ENABLED, true),
   // "shadow" logs the ordering issue without changing trades. "hold" actively waits and can change decisions.
-  RAY_FEATURE_SYNC_MODE: s(process.env.RAY_FEATURE_SYNC_MODE, "shadow").toLowerCase(),
+  RAY_FEATURE_SYNC_MODE: s(process.env.RAY_FEATURE_SYNC_MODE, "hold").toLowerCase(),
   RAY_FEATURE_SYNC_WAIT_MS: n(process.env.RAY_FEATURE_SYNC_WAIT_MS, 1500),
   RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC: n(process.env.RAY_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20),
   RAY_FEATURE_SYNC_EVENTS: s(process.env.RAY_FEATURE_SYNC_EVENTS, "Bullish Trend Change"),
   RAY_PROBE_LOG_ENABLED: b(process.env.RAY_PROBE_LOG_ENABLED, true),
 
-  // v6.7g: direct FVVO event timing/early-entry shadow diagnostics.
+  // v6.7h: direct FVVO event timing/early-entry shadow diagnostics.
   // These do not place trades. They only log what direct FVVO OPB/Close/Burst would have allowed/blocked.
   FVVO_PROBE_LOG_ENABLED: b(process.env.FVVO_PROBE_LOG_ENABLED, true),
   FVVO_DIRECT_EVENT_SHADOW_ENABLED: b(process.env.FVVO_DIRECT_EVENT_SHADOW_ENABLED, true),
@@ -76,7 +76,7 @@ export const CONFIG = {
   EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18, true),
   EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO: b(process.env.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO, true),
 
-  // v6.7g: FVVO shadow scorecard and bearish-FVVO invalidation diagnostics.
+  // v6.7h: FVVO shadow scorecard and bearish-FVVO invalidation diagnostics.
   // These are measurement/logging only. They never place or block real trades directly.
   FVVO_SHADOW_SCORECARD_ENABLED: b(process.env.FVVO_SHADOW_SCORECARD_ENABLED, true),
   FVVO_SHADOW_SCORECARD_INCLUDE_PROBES: b(process.env.FVVO_SHADOW_SCORECARD_INCLUDE_PROBES, true),

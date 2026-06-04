@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7g_FVVO_SCORECARD_BEARISH_INVALIDATION_SHADOW
+ * BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
