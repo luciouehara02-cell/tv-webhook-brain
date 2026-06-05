@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD
+ * BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD
  * Source behavior: v6.7b fast-tick launch fix + deep-drop recovery first-entry override
  *
  * All environment variables and default thresholds.
@@ -28,7 +28,7 @@ function envMsList(key, fallback = [0, 2000, 5000, 15000]) {
 export const CONFIG = {
   PORT: n(process.env.PORT, 8080),
   DEBUG: b(process.env.DEBUG, true),
-  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD"),
+  BRAIN_NAME: s(process.env.BRAIN_NAME, "BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD"),
 
   WEBHOOK_SECRET: s(process.env.WEBHOOK_SECRET, ""),
   TICKROUTER_SECRET: s(process.env.TICKROUTER_SECRET, ""),
@@ -52,7 +52,7 @@ export const CONFIG = {
   RAY_FEATURE_SYNC_EVENTS: s(process.env.RAY_FEATURE_SYNC_EVENTS, "Bullish Trend Change"),
   RAY_PROBE_LOG_ENABLED: b(process.env.RAY_PROBE_LOG_ENABLED, true),
 
-  // v6.7h: direct FVVO event timing/early-entry shadow diagnostics.
+  // v6.7i: direct FVVO event timing/early-entry shadow diagnostics.
   // These do not place trades. They only log what direct FVVO OPB/Close/Burst would have allowed/blocked.
   FVVO_PROBE_LOG_ENABLED: b(process.env.FVVO_PROBE_LOG_ENABLED, true),
   FVVO_DIRECT_EVENT_SHADOW_ENABLED: b(process.env.FVVO_DIRECT_EVENT_SHADOW_ENABLED, true),
@@ -62,7 +62,7 @@ export const CONFIG = {
   // Shadow mode logs that race and re-evaluates early FVVO shadow once the matching feature arrives.
   FVVO_FEATURE_SYNC_WAIT_ENABLED: b(process.env.FVVO_FEATURE_SYNC_WAIT_ENABLED, true),
   FVVO_FEATURE_SYNC_MODE: s(process.env.FVVO_FEATURE_SYNC_MODE, "shadow").toLowerCase(),
-  FVVO_FEATURE_SYNC_WAIT_MS: n(process.env.FVVO_FEATURE_SYNC_WAIT_MS, 1500),
+  FVVO_FEATURE_SYNC_WAIT_MS: n(process.env.FVVO_FEATURE_SYNC_WAIT_MS, 5000),
   FVVO_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC: n(process.env.FVVO_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20),
   // Keep OPB direct FVVO as shadow by default. Close/Alert events still update normal FVVO memory.
   FVVO_OPB_UPDATE_REAL_MEMORY: b(process.env.FVVO_OPB_UPDATE_REAL_MEMORY, false),
@@ -76,13 +76,18 @@ export const CONFIG = {
   EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18: b(process.env.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18, true),
   EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO: b(process.env.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO, true),
 
-  // v6.7h: FVVO shadow scorecard and bearish-FVVO invalidation diagnostics.
+  // v6.7i: FVVO shadow scorecard and bearish-FVVO invalidation diagnostics.
   // These are measurement/logging only. They never place or block real trades directly.
   FVVO_SHADOW_SCORECARD_ENABLED: b(process.env.FVVO_SHADOW_SCORECARD_ENABLED, true),
   FVVO_SHADOW_SCORECARD_INCLUDE_PROBES: b(process.env.FVVO_SHADOW_SCORECARD_INCLUDE_PROBES, true),
   FVVO_SHADOW_SCORECARD_MAX_ACTIVE: n(process.env.FVVO_SHADOW_SCORECARD_MAX_ACTIVE, 24),
   FVVO_SHADOW_SCORECARD_MAX_BARS: n(process.env.FVVO_SHADOW_SCORECARD_MAX_BARS, 12),
   FVVO_SHADOW_SCORECARD_TARGETS_PCT: s(process.env.FVVO_SHADOW_SCORECARD_TARGETS_PCT, "0.30,0.50,0.80"),
+  // v6.7i: tick-enhanced shadow scorecard metrics for FVVO virtual signals.
+  // Still measurement only; this does not place trades.
+  FVVO_SHADOW_SCORECARD_TICK_ENABLED: b(process.env.FVVO_SHADOW_SCORECARD_TICK_ENABLED, true),
+  FVVO_SHADOW_SCORECARD_TICK_TARGET_PCT: n(process.env.FVVO_SHADOW_SCORECARD_TICK_TARGET_PCT, 0.30),
+  FVVO_SHADOW_SCORECARD_TICK_ADVERSE_PCT: n(process.env.FVVO_SHADOW_SCORECARD_TICK_ADVERSE_PCT, 0.50),
   FVVO_BEARISH_INVALIDATION_SHADOW_ENABLED: b(process.env.FVVO_BEARISH_INVALIDATION_SHADOW_ENABLED, true),
   FVVO_BEARISH_INVALIDATION_RECENCY_SEC: n(process.env.FVVO_BEARISH_INVALIDATION_RECENCY_SEC, 900),
   FVVO_BEARISH_INVALIDATION_MIN_RSI: n(process.env.FVVO_BEARISH_INVALIDATION_MIN_RSI, 60),
@@ -91,6 +96,16 @@ export const CONFIG = {
   FVVO_BEARISH_INVALIDATION_REQUIRE_EMA8_ABOVE_EMA18_OR_IMPROVING: b(process.env.FVVO_BEARISH_INVALIDATION_REQUIRE_EMA8_ABOVE_EMA18_OR_IMPROVING, true),
   FVVO_BEARISH_INVALIDATION_REQUIRE_POSITIVE_FLOW: b(process.env.FVVO_BEARISH_INVALIDATION_REQUIRE_POSITIVE_FLOW, true),
   FVVO_BEARISH_INVALIDATION_MIN_FLOW_SCORE: n(process.env.FVVO_BEARISH_INVALIDATION_MIN_FLOW_SCORE, 2),
+
+  // v6.7i: Ray first-entry blocked/deferred scorecard. Measurement only.
+  // It tracks what happened after a Ray first-entry block/defer using both FEATURES and ticks.
+  RAY_BLOCK_SCORECARD_ENABLED: b(process.env.RAY_BLOCK_SCORECARD_ENABLED, true),
+  RAY_BLOCK_SCORECARD_MAX_ACTIVE: n(process.env.RAY_BLOCK_SCORECARD_MAX_ACTIVE, 24),
+  RAY_BLOCK_SCORECARD_MAX_BARS: n(process.env.RAY_BLOCK_SCORECARD_MAX_BARS, 12),
+  RAY_BLOCK_SCORECARD_WINDOWS_MIN: s(process.env.RAY_BLOCK_SCORECARD_WINDOWS_MIN, "15,30,60"),
+  RAY_BLOCK_SCORECARD_TICK_ENABLED: b(process.env.RAY_BLOCK_SCORECARD_TICK_ENABLED, true),
+  RAY_BLOCK_SCORECARD_TICK_TARGET_PCT: n(process.env.RAY_BLOCK_SCORECARD_TICK_TARGET_PCT, 0.30),
+  RAY_BLOCK_SCORECARD_TICK_ADVERSE_PCT: n(process.env.RAY_BLOCK_SCORECARD_TICK_ADVERSE_PCT, 0.50),
 
   SYMBOL: normalizeSymbol(s(process.env.SYMBOL || "BINANCE:SOLUSDT")),
   ENTRY_TF: s(process.env.ENTRY_TF || "5"),

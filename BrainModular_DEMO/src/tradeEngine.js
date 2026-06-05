@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD
+ * BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -282,6 +282,7 @@ function evaluateFirstEntryFeatureSyncOnFeature(feature) {
   }
 
   log("🚫 FIRST_ENTRY_FEATURE_SYNC_BLOCKED", decision);
+  openRayBlockScorecard(rayPrice, rayTime, { ...decision, reason: `${decision.reason || "blocked_after_sync"}_feature_sync` }, "ray_bullish_trend_change_feature_sync_block");
   clearFirstEntryFeatureSync(decision.reason || "blocked_after_sync");
   return { handled: true };
 }
@@ -964,6 +965,7 @@ export function handleRayEvent(body) {
         return;
       }
       if (firstDecision.action === "defer") {
+        openRayBlockScorecard(price, ts, firstDecision, "ray_bullish_trend_change_defer");
         armFirstEntryLateExtWatch(price, ts, firstDecision);
         return;
       }
@@ -975,6 +977,7 @@ export function handleRayEvent(body) {
           return;
         }
         log("🚫 FIRST_ENTRY_BLOCKED", firstDecision);
+        openRayBlockScorecard(price, ts, firstDecision, "ray_bullish_trend_change_block");
         clearFirstEntry("blocked_weak_first_entry");
         clearFirstEntryFeatureSync("blocked_weak_first_entry");
         return;
@@ -1164,6 +1167,82 @@ function fvvoShadowAdversePct(entryPrice, feature, direction = "long") {
   if (!feature) return NaN;
   return direction === "short" ? signedMovePct(entryPrice, feature.high, direction) : signedMovePct(entryPrice, feature.low, direction);
 }
+
+function parseMinList(raw, fallback = [15, 30, 60]) {
+  const values = String(raw || "")
+    .split(",")
+    .map((x) => Number(String(x).trim()))
+    .filter((x) => Number.isFinite(x) && x > 0)
+    .sort((a, b2) => a - b2);
+  return values.length ? values : fallback;
+}
+function scorecardStartMs(item = {}) {
+  const candidates = [item.entryTime, item.rayTime, item.barTime, item.serverTime, item.openedAt].filter(Boolean);
+  for (const c of candidates) {
+    const ms = parseTsMs(c);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return NaN;
+}
+function scorecardElapsedSec(item = {}, eventIso = null) {
+  const startMs = scorecardStartMs(item);
+  const eventMs = parseTsMs(eventIso || isoNow());
+  if (!Number.isFinite(startMs) || !Number.isFinite(eventMs)) return null;
+  return Math.max(0, (eventMs - startMs) / 1000);
+}
+function maybeSetWindowResult(item = {}, windowMin = 15, price = NaN, pct = NaN, eventIso = null, source = "tick") {
+  const elapsedSec = scorecardElapsedSec(item, eventIso);
+  if (!Number.isFinite(elapsedSec) || elapsedSec < windowMin * 60) return false;
+  item.windowResults = item.windowResults || {};
+  const key = `${windowMin}m`;
+  if (item.windowResults[key]) return false;
+  item.windowResults[key] = {
+    source,
+    price: round4(price),
+    pct: round4(pct),
+    elapsedSec: Math.round(elapsedSec),
+    maxFavorablePct: round4(n(item.maxFavorablePct, 0)),
+    maxAdversePct: round4(n(item.maxAdversePct, 0)),
+    tickMaxFavorablePct: Number.isFinite(n(item.tickMaxFavorablePct, NaN)) ? round4(n(item.tickMaxFavorablePct, NaN)) : null,
+    tickMaxAdversePct: Number.isFinite(n(item.tickMaxAdversePct, NaN)) ? round4(n(item.tickMaxAdversePct, NaN)) : null,
+    time: eventIso,
+  };
+  return true;
+}
+function updateLongScorecardTickStats(item = {}, price = NaN, ts = null, targetPct = 0.3, adversePct = 0.5) {
+  const entryPrice = n(item.entryPrice, NaN);
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(price)) return null;
+  const pct = signedMovePct(entryPrice, price, item.direction || "long");
+  item.tickCurrentPct = round4(pct);
+  if (!Number.isFinite(n(item.tickMaxFavorablePct, NaN))) item.tickMaxFavorablePct = 0;
+  if (!Number.isFinite(n(item.tickMaxAdversePct, NaN))) item.tickMaxAdversePct = 0;
+  if (pct > n(item.tickMaxFavorablePct, 0)) item.tickMaxFavorablePct = round4(pct);
+  if (pct < n(item.tickMaxAdversePct, 0)) item.tickMaxAdversePct = round4(pct);
+  const elapsedSec = scorecardElapsedSec(item, ts);
+  const milestones = [];
+  if (!item.firstTickTargetAt && pct >= targetPct) {
+    item.firstTickTargetAt = ts;
+    item.firstTickTargetSec = Number.isFinite(elapsedSec) ? Math.round(elapsedSec) : null;
+    milestones.push("tick_target");
+  }
+  if (!item.firstTickAdverseAt && pct <= -Math.abs(adversePct)) {
+    item.firstTickAdverseAt = ts;
+    item.firstTickAdverseSec = Number.isFinite(elapsedSec) ? Math.round(elapsedSec) : null;
+    milestones.push("tick_adverse");
+  }
+  return { pct, milestones };
+}
+function tickMetricSnapshot(item = {}) {
+  return {
+    tickCurrentPct: Number.isFinite(n(item.tickCurrentPct, NaN)) ? round4(n(item.tickCurrentPct, NaN)) : null,
+    tickMaxFavorablePct: Number.isFinite(n(item.tickMaxFavorablePct, NaN)) ? round4(n(item.tickMaxFavorablePct, NaN)) : null,
+    tickMaxAdversePct: Number.isFinite(n(item.tickMaxAdversePct, NaN)) ? round4(n(item.tickMaxAdversePct, NaN)) : null,
+    firstTickTargetAt: item.firstTickTargetAt || null,
+    firstTickTargetSec: item.firstTickTargetSec ?? null,
+    firstTickAdverseAt: item.firstTickAdverseAt || null,
+    firstTickAdverseSec: item.firstTickAdverseSec ?? null,
+  };
+}
 function openFvvoShadowScorecard(ev = {}) {
   if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED) return;
   if (!ev || ev.kind === "unknown") return;
@@ -1196,6 +1275,13 @@ function openFvvoShadowScorecard(ev = {}) {
     currentPct: 0,
     maxFavorablePct: 0,
     maxAdversePct: 0,
+    tickCurrentPct: 0,
+    tickMaxFavorablePct: 0,
+    tickMaxAdversePct: 0,
+    firstTickTargetAt: null,
+    firstTickTargetSec: null,
+    firstTickAdverseAt: null,
+    firstTickAdverseSec: null,
     targetsHit: [],
     closed: false,
   };
@@ -1255,6 +1341,7 @@ function updateFvvoShadowScorecardOnFeature(feature) {
       currentPct: item.currentPct,
       maxFavorablePct: item.maxFavorablePct,
       maxAdversePct: item.maxAdversePct,
+      tick: tickMetricSnapshot(item),
       targetsHit: item.targetsHit,
       featureTime: feature.time,
     };
@@ -1277,6 +1364,197 @@ function updateFvvoShadowScorecardOnFeature(feature) {
     }
   }
   S.fvvo.scorecard.active = keep;
+}
+
+function updateFvvoShadowScorecardOnTick(price, ts) {
+  if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED || !CONFIG.FVVO_SHADOW_SCORECARD_TICK_ENABLED) return;
+  if (!S.fvvo) S.fvvo = {};
+  const active = Array.isArray(S.fvvo.scorecard?.active) ? S.fvvo.scorecard.active : [];
+  if (!active.length) return;
+  for (const item of active) {
+    if (!item || item.closed) continue;
+    const result = updateLongScorecardTickStats(
+      item,
+      price,
+      ts,
+      CONFIG.FVVO_SHADOW_SCORECARD_TICK_TARGET_PCT,
+      CONFIG.FVVO_SHADOW_SCORECARD_TICK_ADVERSE_PCT
+    );
+    if (!result || !Array.isArray(result.milestones) || !result.milestones.length) continue;
+    log("🧪 FVVO_SHADOW_SIGNAL_TICK_MILESTONE", {
+      id: item.id,
+      kind: item.kind,
+      mode: item.mode,
+      probe: item.probe,
+      direction: item.direction,
+      price: round4(price),
+      pct: round4(result.pct),
+      milestones: result.milestones,
+      tick: tickMetricSnapshot(item),
+      time: ts,
+    });
+  }
+}
+
+function rayBlockScorecardWindows() {
+  return parseMinList(CONFIG.RAY_BLOCK_SCORECARD_WINDOWS_MIN, [15, 30, 60]);
+}
+function ensureRayBlockScorecardState() {
+  S.rayBlockScorecard = S.rayBlockScorecard || { nextId: 1, active: [], opened: 0, updated: 0, closed: 0 };
+  S.rayBlockScorecard.active = Array.isArray(S.rayBlockScorecard.active) ? S.rayBlockScorecard.active : [];
+  return S.rayBlockScorecard;
+}
+function openRayBlockScorecard(rayPrice, rayTime, decision = {}, source = "ray_bullish_trend_change") {
+  if (!CONFIG.RAY_BLOCK_SCORECARD_ENABLED) return null;
+  if (S.inPosition) return null;
+  const entryPrice = n(rayPrice, NaN);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+  const sc = ensureRayBlockScorecardState();
+  const reason = decision.reason || "blocked_or_deferred_first_entry";
+  const featureTime = decision.metrics?.featureTime || S.lastFeatureTime || null;
+  const key = `${source}|${rayTime || ""}|${reason}|${featureTime || ""}`;
+  if (sc.active.some((x) => x && !x.closed && x.key === key)) return null;
+  const id = n(sc.nextId, 1);
+  sc.nextId = id + 1;
+  const item = {
+    id,
+    key,
+    source,
+    reason,
+    action: decision.action || "block",
+    direction: "long",
+    entryPrice: round4(entryPrice),
+    rayTime,
+    entryTime: rayTime,
+    featureTimeAtOpen: featureTime,
+    openedAt: isoNow(),
+    openBarIndex: S.barIndex,
+    barsSeen: 0,
+    lastFeatureTime: null,
+    currentPct: 0,
+    maxFavorablePct: 0,
+    maxAdversePct: 0,
+    tickCurrentPct: 0,
+    tickMaxFavorablePct: 0,
+    tickMaxAdversePct: 0,
+    firstTickTargetAt: null,
+    firstTickTargetSec: null,
+    firstTickAdverseAt: null,
+    firstTickAdverseSec: null,
+    windowResults: {},
+    redFlags: Array.isArray(decision.redFlags) ? [...decision.redFlags] : [],
+    metrics: decision.metrics || null,
+    closed: false,
+  };
+  sc.active.push(item);
+  const maxActive = Math.max(1, Math.floor(n(CONFIG.RAY_BLOCK_SCORECARD_MAX_ACTIVE, 24)));
+  while (sc.active.length > maxActive) sc.active.shift();
+  sc.opened = n(sc.opened, 0) + 1;
+  sc.lastOpen = { ...item };
+  log("🧪 RAY_BLOCK_SCORECARD_OPEN", {
+    id,
+    source,
+    action: item.action,
+    reason: item.reason,
+    rayPrice: item.entryPrice,
+    rayTime,
+    featureTimeAtOpen: item.featureTimeAtOpen,
+    redFlags: item.redFlags,
+    metrics: item.metrics,
+  });
+  return item;
+}
+function updateRayBlockScorecardOnTick(price, ts) {
+  if (!CONFIG.RAY_BLOCK_SCORECARD_ENABLED || !CONFIG.RAY_BLOCK_SCORECARD_TICK_ENABLED) return;
+  const sc = ensureRayBlockScorecardState();
+  if (!sc.active.length) return;
+  const windows = rayBlockScorecardWindows();
+  for (const item of sc.active) {
+    if (!item || item.closed) continue;
+    const result = updateLongScorecardTickStats(
+      item,
+      price,
+      ts,
+      CONFIG.RAY_BLOCK_SCORECARD_TICK_TARGET_PCT,
+      CONFIG.RAY_BLOCK_SCORECARD_TICK_ADVERSE_PCT
+    );
+    if (!result) continue;
+    for (const w of windows) maybeSetWindowResult(item, w, price, result.pct, ts, "tick");
+    if (Array.isArray(result.milestones) && result.milestones.length) {
+      log("🧪 RAY_BLOCK_SCORECARD_TICK_MILESTONE", {
+        id: item.id,
+        source: item.source,
+        reason: item.reason,
+        price: round4(price),
+        pct: round4(result.pct),
+        milestones: result.milestones,
+        tick: tickMetricSnapshot(item),
+        windowResults: item.windowResults || {},
+        time: ts,
+      });
+    }
+  }
+}
+function updateRayBlockScorecardOnFeature(feature) {
+  if (!CONFIG.RAY_BLOCK_SCORECARD_ENABLED || !feature) return;
+  const sc = ensureRayBlockScorecardState();
+  if (!sc.active.length) return;
+  const maxBars = Math.max(1, Math.floor(n(CONFIG.RAY_BLOCK_SCORECARD_MAX_BARS, 12)));
+  const windows = rayBlockScorecardWindows();
+  const keep = [];
+  for (const item of sc.active) {
+    if (!item || item.closed) continue;
+    if (item.lastFeatureTime === feature.time) {
+      keep.push(item);
+      continue;
+    }
+    item.lastFeatureTime = feature.time;
+    item.barsSeen = n(item.barsSeen, 0) + 1;
+    const entryPrice = n(item.entryPrice, NaN);
+    const currentPct = signedMovePct(entryPrice, feature.close, "long");
+    const favPct = fvvoShadowFavorablePct(entryPrice, feature, "long");
+    const advPct = fvvoShadowAdversePct(entryPrice, feature, "long");
+    if (Number.isFinite(currentPct)) item.currentPct = round4(currentPct);
+    if (Number.isFinite(favPct)) item.maxFavorablePct = round4(Math.max(n(item.maxFavorablePct, 0), favPct));
+    if (Number.isFinite(advPct)) item.maxAdversePct = round4(Math.min(n(item.maxAdversePct, 0), advPct));
+    for (const w of windows) maybeSetWindowResult(item, w, feature.close, currentPct, feature.time, "feature");
+    const update = {
+      id: item.id,
+      source: item.source,
+      action: item.action,
+      reason: item.reason,
+      barsSeen: item.barsSeen,
+      rayPrice: item.entryPrice,
+      currentPrice: round4(feature.close),
+      currentPct: item.currentPct,
+      maxFavorablePct: item.maxFavorablePct,
+      maxAdversePct: item.maxAdversePct,
+      tick: tickMetricSnapshot(item),
+      windowResults: item.windowResults || {},
+      redFlags: item.redFlags,
+      featureTime: feature.time,
+    };
+    sc.updated = n(sc.updated, 0) + 1;
+    sc.lastUpdate = update;
+    log("🧪 RAY_BLOCK_SCORECARD_UPDATE", update);
+    if (item.barsSeen >= maxBars) {
+      item.closed = true;
+      const result = {
+        ...update,
+        result: n(item.maxFavorablePct, 0) >= CONFIG.RAY_BLOCK_SCORECARD_TICK_TARGET_PCT
+          ? "would_have_reached_target"
+          : n(item.currentPct, 0) > 0 ? "positive_no_target" : "block_saved_or_negative",
+        closeReason: "max_bars",
+        maxBars,
+      };
+      sc.closed = n(sc.closed, 0) + 1;
+      sc.lastResult = result;
+      log("🧪 RAY_BLOCK_SCORECARD_RESULT", result);
+    } else {
+      keep.push(item);
+    }
+  }
+  sc.active = keep;
 }
 function featureFlowScore(f = {}) {
   const oi = n(f.oiTrend, NaN);
@@ -1707,6 +1985,7 @@ export function handleFeature(body) {
     fvvo: getFvvoScore(ts),
   });
   updateFvvoShadowScorecardOnFeature(feature);
+  updateRayBlockScorecardOnFeature(feature);
   evaluateFvvoBearishInvalidationShadow(feature);
   const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
   if (featureSyncResult?.entered) return;
@@ -3947,6 +4226,9 @@ export function handleTick(body) {
   S.tickCount += 1;
   S.lastTickPrice = px;
   S.lastTickTime = ts;
+
+  updateFvvoShadowScorecardOnTick(px, ts);
+  updateRayBlockScorecardOnTick(px, ts);
 
   if (S.firstEntry.pending && !S.inPosition) {
     invalidateFirstEntryConfirm();

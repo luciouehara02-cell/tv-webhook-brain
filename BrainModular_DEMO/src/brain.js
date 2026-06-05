@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD
+ * BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Main event coordinator. Express stays in server.js; trading logic stays in tradeEngine.js.

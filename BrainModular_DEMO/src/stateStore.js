@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7h_RAY_ACTIVE_SYNC_HOLD
+ * BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -91,6 +91,16 @@ export function buildInitialRuntimeState() {
       releasedCount: 0,
       lastArm: null,
       lastRelease: null,
+    },
+    rayBlockScorecard: {
+      nextId: 1,
+      active: [],
+      opened: 0,
+      updated: 0,
+      closed: 0,
+      lastOpen: null,
+      lastUpdate: null,
+      lastResult: null,
     },
     fvvo: {
       lastSniperBuyAt: null,
