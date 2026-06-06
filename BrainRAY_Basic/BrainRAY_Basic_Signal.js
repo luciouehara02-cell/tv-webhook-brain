@@ -1,2251 +1,1029 @@
-/**
- * BrainRAY_Basic_Signal_v2.0
- *
- * Rebuilt entry logic:
- *
- * - RayAlgo Bullish Trend Change is treated as the primary trusted trigger.
- * - Brain no longer requires one strict DCA/Momentum filter.
- * - Brain classifies the market using a scoring engine.
- * - Only clearly dangerous setups are hard-blocked.
- * - Weak but not dangerous Bullish Trend Change can arm pending confirmation.
- *
- * Recommended live setup:
- * - RayAlgo signal: 5m
- * - Feature Publisher: 3m
- * - Brain evaluation: latest 3m feature, fallback to 5m
- */
+// ============================================================
+// BrainFVVO_v1_SHADOW
+// Standalone FVVO shadow brain
+// ------------------------------------------------------------
+// Purpose:
+// - Receive FVVO raw 5m feature JSON from TradingView
+// - Simulate FVVO-only long entries/exits
+// - Log shadow results and scorecards
+// - No real 3Commas forwarding in v1
+//
+// Main Ray brain remains separate:
+// BrainRAY_Continuation_v6.7j_FVVO_SYNC_10S_SHADOW_DEMO
+// ============================================================
 
-import express from "express";
+const express = require("express");
 
-const app = express();
-app.use(express.json({ limit: "1mb" }));
+// ============================================================
+// ENV HELPERS
+// ============================================================
 
-// --------------------------------------------------
-// Helpers
-// --------------------------------------------------
-function strEnv(name, def = "") {
+function envStr(name, fallback = "") {
   const v = process.env[name];
-  if (v === undefined || v === null || String(v).trim() === "") return def;
+  if (v === undefined || v === null || String(v).trim() === "") return fallback;
   return String(v).trim();
 }
 
-function numEnv(name, def = 0) {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) ? n : def;
+function envNum(name, fallback) {
+  const v = process.env[name];
+  if (v === undefined || v === null || String(v).trim() === "") return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function boolEnv(name, def = false) {
-  const raw = process.env[name];
-  if (raw === undefined || raw === null || String(raw).trim() === "") return def;
-  const v = String(raw).trim().toLowerCase();
-  return ["1", "true", "yes", "y", "on"].includes(v);
+function envBool(name, fallback = false) {
+  const v = process.env[name];
+  if (v === undefined || v === null || String(v).trim() === "") return fallback;
+  const s = String(v).trim().toLowerCase();
+  return ["1", "true", "yes", "y", "on"].includes(s);
 }
 
-function nowMs() {
-  return Date.now();
+// ============================================================
+// CONFIG
+// ============================================================
+
+const CFG = {
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1_SHADOW"),
+  PORT: envNum("PORT", 8080),
+  WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
+  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "CHANGE_ME_TO_RANDOM_SECRET"),
+  DEBUG: envBool("DEBUG", true),
+
+  SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
+  ENTRY_TF: envStr("ENTRY_TF", "5"),
+
+  SHADOW_ONLY: envBool("SHADOW_ONLY", true),
+  ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", false),
+
+  FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
+  FVVO_SHORT_ENABLED: envBool("FVVO_SHORT_ENABLED", false),
+
+  // Entry rules
+  FVVO_ENTRY_MIN_RSI: envNum("FVVO_ENTRY_MIN_RSI", 52),
+  FVVO_ENTRY_MIN_ADX: envNum("FVVO_ENTRY_MIN_ADX", 0),
+  FVVO_ENTRY_MIN_SLOPE: envNum("FVVO_ENTRY_MIN_SLOPE", 0.0),
+  FVVO_ENTRY_MAX_EXT_EMA8_PCT: envNum("FVVO_ENTRY_MAX_EXT_EMA8_PCT", 0.45),
+  FVVO_ENTRY_MAX_EXT_EMA18_PCT: envNum("FVVO_ENTRY_MAX_EXT_EMA18_PCT", 0.85),
+  FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT: envNum("FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT", 0.10),
+
+  // Exit rules
+  FVVO_GIVEBACK_ARM1_PCT: envNum("FVVO_GIVEBACK_ARM1_PCT", 0.30),
+  FVVO_GIVEBACK_ARM1_DROP_PCT: envNum("FVVO_GIVEBACK_ARM1_DROP_PCT", 0.15),
+
+  FVVO_GIVEBACK_ARM2_PCT: envNum("FVVO_GIVEBACK_ARM2_PCT", 0.50),
+  FVVO_GIVEBACK_ARM2_DROP_PCT: envNum("FVVO_GIVEBACK_ARM2_DROP_PCT", 0.22),
+
+  FVVO_HARD_DOWN_SLOPE: envNum("FVVO_HARD_DOWN_SLOPE", -0.08),
+  FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT: envNum("FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT", 0.05),
+
+  FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.45),
+  FVVO_MAX_HOLD_BARS: envNum("FVVO_MAX_HOLD_BARS", 36),
+
+  // Safety / duplicate handling
+  BAR_DEDUP_ENABLED: envBool("BAR_DEDUP_ENABLED", true)
+};
+
+// Hard safety for v1.
+if (!CFG.SHADOW_ONLY || CFG.ENABLE_HTTP_FORWARD) {
+  console.log("⚠️ SAFETY: BrainFVVO_v1_SHADOW is designed for SHADOW ONLY.");
+  console.log("⚠️ SAFETY: Forcing SHADOW_ONLY=true and ENABLE_HTTP_FORWARD=false.");
+  CFG.SHADOW_ONLY = true;
+  CFG.ENABLE_HTTP_FORWARD = false;
 }
 
-function isoNow() {
+// ============================================================
+// EXPRESS SETUP
+// ============================================================
+
+const app = express();
+
+app.use(
+  express.json({
+    limit: "2mb",
+    type: ["application/json", "text/plain", "*/*"]
+  })
+);
+
+// ============================================================
+// STATE
+// ============================================================
+
+const state = {
+  startedAt: new Date().toISOString(),
+
+  // symbol -> open virtual position
+  positions: new Map(),
+
+  // symbol -> last FVVO bar data
+  lastFeature: new Map(),
+
+  // symbol|tf|time -> seen
+  seenBars: new Set(),
+
+  stats: {
+    received: 0,
+    accepted: 0,
+    duplicates: 0,
+    rejected: 0,
+    virtualLongOpens: 0,
+    virtualLongExits: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    totalPnlPct: 0,
+    bestPnlPct: null,
+    worstPnlPct: null,
+    bestRunupPct: null,
+    redDotExits: 0,
+    backupExits: 0,
+    maxLossExits: 0,
+    maxHoldExits: 0
+  }
+};
+
+// ============================================================
+// FORMAT HELPERS
+// ============================================================
+
+function nowIso() {
   return new Date().toISOString();
 }
 
-function safeNumber(v, def = null) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : def;
+function n(v, d = 4) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "na";
+  return x.toFixed(d);
 }
 
-function safeBool(v, def = false) {
-  if (typeof v === "boolean") return v;
-  if (v === undefined || v === null || String(v).trim() === "") return def;
+function pct(v, d = 3) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "na";
+  const sign = x > 0 ? "+" : "";
+  return `${sign}${x.toFixed(d)}%`;
+}
 
+function boolStr(v) {
+  return v ? "true" : "false";
+}
+
+function safeNum(v, fallback = null) {
+  if (v === undefined || v === null || v === "") return fallback;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : fallback;
+}
+
+function safeBool(v, fallback = false) {
+  if (v === undefined || v === null) return fallback;
+  if (typeof v === "boolean") return v;
   const s = String(v).trim().toLowerCase();
   if (["1", "true", "yes", "y", "on"].includes(s)) return true;
   if (["0", "false", "no", "n", "off"].includes(s)) return false;
-
-  return def;
+  return fallback;
 }
 
-function normalizeSymbol(symbol) {
-  return String(symbol || "").trim().toUpperCase();
+function calcPct(a, b) {
+  const x = Number(a);
+  const y = Number(b);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || y === 0) return null;
+  return ((x - y) / y) * 100;
 }
 
-function normalizeSignal(signal) {
-  return String(signal || "").trim();
-}
-
-function normalizeSrc(src) {
-  return String(src || "unknown").trim().toLowerCase();
-}
-
-function normalizeTf(tf) {
-  return String(tf || "").trim();
-}
-
-function ageSec(tsMs) {
-  if (!tsMs) return null;
-  return Math.max(0, Math.round((nowMs() - tsMs) / 1000));
-}
-
-function withinTtlMin(tsMs, ttlMin) {
-  if (!tsMs) return false;
-  return nowMs() - tsMs <= ttlMin * 60 * 1000;
-}
-
-function pctChange(from, to) {
-  const a = Number(from);
-  const b = Number(to);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a === 0) return null;
-  return ((b - a) / a) * 100;
-}
-
-function compactObject(value) {
-  if (Array.isArray(value)) return value.map(compactObject);
-
-  if (value && typeof value === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (v !== undefined) out[k] = compactObject(v);
-    }
-    return out;
-  }
-
-  return value;
-}
-
-function oneLine(payload = {}) {
-  try {
-    return JSON.stringify(compactObject(payload));
-  } catch (e) {
-    return JSON.stringify({ logError: String(e?.message || e) });
+function logLine(type, msg, obj = null) {
+  const prefix = `${nowIso()} | ${CFG.BRAIN_NAME} | ${type}`;
+  if (obj && CFG.DEBUG) {
+    console.log(`${prefix} | ${msg} | ${JSON.stringify(obj)}`);
+  } else {
+    console.log(`${prefix} | ${msg}`);
   }
 }
 
-function logEvent(tag, payload = {}) {
-  if (!CONFIG.DEBUG) return;
-  console.log(`${isoNow()} ${tag} | ${oneLine(payload)}`);
-}
+// ============================================================
+// PAYLOAD NORMALIZATION
+// ============================================================
 
-function warnEvent(tag, payload = {}) {
-  console.warn(`${isoNow()} ${tag} | ${oneLine(payload)}`);
-}
+function normalizePayload(body) {
+  const p = body || {};
 
-function errorEvent(tag, payload = {}) {
-  console.error(`${isoNow()} ${tag} | ${oneLine(payload)}`);
-}
+  const symbol = envStrFromPayload(p.symbol, CFG.SYMBOL);
+  const tf = envStrFromPayload(p.tf, CFG.ENTRY_TF);
+  const event = envStrFromPayload(p.event, "");
 
-function parseSymbolBotMap(raw) {
-  try {
-    const parsed = JSON.parse(raw || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return parsed;
-  } catch (e) {
-    console.error(
-      `${isoNow()} ❌ INVALID_SYMBOL_BOT_MAP | ${oneLine({
-        error: String(e?.message || e),
-        rawPresent: Boolean(raw),
-      })}`
-    );
-    return {};
+  const close = safeNum(p.close, safeNum(p.price, null));
+  const price = safeNum(p.price, close);
+  const open = safeNum(p.open, null);
+  const high = safeNum(p.high, close);
+  const low = safeNum(p.low, close);
+
+  const ema8 = safeNum(p.ema8, null);
+  const ema18 = safeNum(p.ema18, null);
+  const ema50 = safeNum(p.ema50, null);
+  const rsi = safeNum(p.rsi, null);
+  const adx = safeNum(p.adx, null);
+  const atrPct = safeNum(p.atrPct, null);
+
+  const fvvoValue = safeNum(p.fvvoValue, null);
+  const fvvoSignal = safeNum(p.fvvoSignal, null);
+
+  const last = state.lastFeature.get(symbol);
+  const prevFvvoValue = last ? last.fvvoValue : null;
+
+  let fvvoSlope = safeNum(p.fvvoSlope, null);
+  if (fvvoSlope === null && fvvoValue !== null && prevFvvoValue !== null) {
+    fvvoSlope = fvvoValue - prevFvvoValue;
   }
-}
 
-function responseOk(res, payload = {}) {
-  return res.status(200).json({
-    ok: true,
-    brain: CONFIG.BRAIN_NAME,
-    time: isoNow(),
-    ...payload,
-  });
-}
+  let fvvoAboveZero = safeBool(p.fvvoAboveZero, false);
+  if (fvvoValue !== null) {
+    fvvoAboveZero = fvvoValue > 0;
+  }
 
-function responseFail(res, status, payload = {}) {
-  return res.status(status).json({
-    ok: false,
-    brain: CONFIG.BRAIN_NAME,
-    time: isoNow(),
-    ...payload,
-  });
-}
+  let fvvoCrossUp = safeBool(p.fvvoCrossUp, false);
+  let fvvoCrossDown = safeBool(p.fvvoCrossDown, false);
 
-// --------------------------------------------------
-// Config
-// --------------------------------------------------
-const CONFIG = {
-  BRAIN_NAME: strEnv("BRAIN_NAME", "BrainRAY_Basic_Signal_v2.0"),
-  PORT: numEnv("PORT", 8080),
-  DEBUG: boolEnv("DEBUG", true),
-  WEBHOOK_PATH: strEnv("WEBHOOK_PATH", "/webhook"),
-
-  WEBHOOK_SECRET: strEnv("WEBHOOK_SECRET", ""),
-
-  SYMBOL: normalizeSymbol(strEnv("SYMBOL", "BINANCE:SOLUSDT")),
-  SYMBOL_BOT_MAP: parseSymbolBotMap(strEnv("SYMBOL_BOT_MAP", "{}")),
-
-  ENABLE_HTTP_FORWARD: boolEnv("ENABLE_HTTP_FORWARD", true),
-  C3_SIGNAL_URL: strEnv("C3_SIGNAL_URL", "https://api.3commas.io/signal_bots/webhooks"),
-  C3_SIGNAL_SECRET: strEnv("C3_SIGNAL_SECRET", ""),
-  C3_TIMEOUT_MS: numEnv("C3_TIMEOUT_MS", 8000),
-  MAX_LAG_SEC: numEnv("MAX_LAG_SEC", 300),
-
-  ENTRY_MODE: strEnv("ENTRY_MODE", "SCORE_ENGINE_V2"),
-
-  PRIMARY_FEATURE_TF: normalizeTf(strEnv("PRIMARY_FEATURE_TF", "3")),
-  FALLBACK_FEATURE_TF: normalizeTf(strEnv("FALLBACK_FEATURE_TF", "5")),
-  PRIMARY_FEATURE_MAX_AGE_SEC: numEnv("PRIMARY_FEATURE_MAX_AGE_SEC", 240),
-  FALLBACK_FEATURE_MAX_AGE_SEC: numEnv("FALLBACK_FEATURE_MAX_AGE_SEC", 420),
-
-  ALLOW_TREND_CHANGE_ENTRY: boolEnv("ALLOW_TREND_CHANGE_ENTRY", true),
-  ALLOW_BOS_ENTRY: boolEnv("ALLOW_BOS_ENTRY", true),
-  ALLOW_TREND_CONTINUATION_ENTRY: boolEnv("ALLOW_TREND_CONTINUATION_ENTRY", false),
-
-  TREND_CHANGE_MIN_SCORE: numEnv("TREND_CHANGE_MIN_SCORE", 5),
-  BOS_MIN_SCORE: numEnv("BOS_MIN_SCORE", 6),
-  PENDING_MIN_SCORE: numEnv("PENDING_MIN_SCORE", 4),
-
-  PENDING_TREND_CHANGE_ENTRY: boolEnv("PENDING_TREND_CHANGE_ENTRY", true),
-  PENDING_TREND_CHANGE_TTL_MIN: numEnv("PENDING_TREND_CHANGE_TTL_MIN", 12),
-
-  SCORE_MEMORY_ENABLED: boolEnv("SCORE_MEMORY_ENABLED", true),
-  SCORE_MEMORY_TTL_MIN: numEnv("SCORE_MEMORY_TTL_MIN", 10),
-  SCORE_MEMORY_MIN_SCORE: numEnv("SCORE_MEMORY_MIN_SCORE", 5),
-
-  HARD_BLOCKS_ENABLED: boolEnv("HARD_BLOCKS_ENABLED", true),
-
-  CHASE_PUMP_LOOKBACK_BARS: numEnv("CHASE_PUMP_LOOKBACK_BARS", 3),
-  CHASE_PUMP_BLOCK_PCT: numEnv("CHASE_PUMP_BLOCK_PCT", 1.2),
-  CHASE_EXT_EMA11_BLOCK_PCT: numEnv("CHASE_EXT_EMA11_BLOCK_PCT", 0.7),
-  CHASE_RSI_BLOCK: numEnv("CHASE_RSI_BLOCK", 72),
-
-  RECENT_BEARISH_BLOCK_MIN: numEnv("RECENT_BEARISH_BLOCK_MIN", 10),
-
-  ENTER_DEDUP_SEC: numEnv("ENTER_DEDUP_SEC", 25),
-  ENTRY_COOLDOWN_SEC: numEnv("ENTRY_COOLDOWN_SEC", 300),
-  LOCK_AFTER_ENTER: boolEnv("LOCK_AFTER_ENTER", true),
-
-  EXIT_ON_BEARISH_TREND_CHANGE: boolEnv("EXIT_ON_BEARISH_TREND_CHANGE", true),
-  EXIT_ON_BEARISH_BOS: boolEnv("EXIT_ON_BEARISH_BOS", true),
-  EXIT_ON_BEARISH_TREND_CONTINUATION: boolEnv(
-    "EXIT_ON_BEARISH_TREND_CONTINUATION",
-    false
-  ),
-
-  EXIT_DEDUP_SEC: numEnv("EXIT_DEDUP_SEC", 20),
-  EXIT_COOLDOWN_SEC: numEnv("EXIT_COOLDOWN_SEC", 60),
-
-  REQUIRE_KNOWN_SIGNAL: boolEnv("REQUIRE_KNOWN_SIGNAL", true),
-};
-
-// --------------------------------------------------
-// Signals
-// --------------------------------------------------
-const SIGNALS = {
-  BULLISH_TREND_CHANGE: "Bullish Trend Change",
-  BULLISH_BOS: "Bullish BOS",
-  BULLISH_TREND_CONTINUATION: "Bullish Trend Continuation",
-
-  BEARISH_TREND_CHANGE: "Bearish Trend Change",
-  BEARISH_BOS: "Bearish BOS",
-  BEARISH_TREND_CONTINUATION: "Bearish Trend Continuation",
-};
-
-const KNOWN_SIGNALS = new Set(Object.values(SIGNALS));
-
-function isBearishSignal(signal) {
-  return (
-    signal === SIGNALS.BEARISH_TREND_CHANGE ||
-    signal === SIGNALS.BEARISH_BOS ||
-    signal === SIGNALS.BEARISH_TREND_CONTINUATION
-  );
-}
-
-function raySignalTag(signal) {
-  if (signal === SIGNALS.BULLISH_TREND_CHANGE) return "🟩 RAY_BULLISH_TREND_CHANGE";
-  if (signal === SIGNALS.BULLISH_BOS) return "🟩 RAY_BULLISH_BOS";
-  if (signal === SIGNALS.BULLISH_TREND_CONTINUATION) return "🟩 RAY_BULLISH_TREND_CONTINUATION";
-
-  if (signal === SIGNALS.BEARISH_TREND_CHANGE) return "🟥 RAY_BEARISH_TREND_CHANGE";
-  if (signal === SIGNALS.BEARISH_BOS) return "🟥 RAY_BEARISH_BOS";
-  if (signal === SIGNALS.BEARISH_TREND_CONTINUATION) return "🟥 RAY_BEARISH_TREND_CONTINUATION";
-
-  return "⚪ RAY_UNKNOWN_SIGNAL";
-}
-
-// --------------------------------------------------
-// State
-// --------------------------------------------------
-const state = {
-  startedAt: isoNow(),
-  lastPayload: null,
-
-  position: {
-    inLong: false,
-    entryPrice: null,
-    entrySignal: null,
-    entryReason: null,
-    entryScore: null,
-    entryTime: null,
-    entryTsMs: null,
-
-    exitPrice: null,
-    exitSignal: null,
-    exitReason: null,
-    exitTime: null,
-    exitTsMs: null,
-  },
-
-  featuresByTf: {},
-
-  bullishBias: {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  },
-
-  bosBias: {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  },
-
-  lastBearishSignal: {
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  },
-
-  pendingTrendChange: {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-    originalScoreCheck: null,
-  },
-
-  scoreMemory: {
-    active: false,
-    pass: false,
-    score: null,
-    setupType: null,
-    time: null,
-    tsMs: null,
-    price: null,
-    tf: null,
-    scoreCheck: null,
-  },
-
-  lastEnterLong: {
-    tsMs: null,
-    price: null,
-    signal: null,
-    reason: null,
-  },
-
-  lastExitLong: {
-    tsMs: null,
-    price: null,
-    signal: null,
-    reason: null,
-  },
-
-  counters: {
-    received: 0,
-    featureReceived: 0,
-    unauthorized: 0,
-    wrongSymbol: 0,
-    unknownSignal: 0,
-
-    scoreMemorySaved: 0,
-
-    biasSaved: 0,
-    biasCancelled: 0,
-
-    pendingTrendArmed: 0,
-    pendingTrendExpired: 0,
-    pendingTrendTriggered: 0,
-    pendingTrendCancelled: 0,
-
-    enterAllowed: 0,
-    enterBlocked: 0,
-    exitAllowed: 0,
-    exitBlocked: 0,
-
-    confirmationOnly: 0,
-
-    forwardedOk: 0,
-    forwardedFail: 0,
-  },
-};
-
-// --------------------------------------------------
-// Feature handling
-// --------------------------------------------------
-function isFeaturePayload(body) {
-  const src = normalizeSrc(body?.src);
-  return (
-    src === "features" ||
-    src === "feature" ||
-    src === "feature_3m" ||
-    src === "feature_5m" ||
-    src === "raybasic_features" ||
-    src === "dca_features" ||
-    body?.kind === "features" ||
-    body?.type === "features"
-  );
-}
-
-function extractFeature(body) {
-  const symbol = normalizeSymbol(body.symbol || body.ticker || body.tickerid || CONFIG.SYMBOL);
-  const tf = normalizeTf(body.tf || body.timeframe || body.interval || CONFIG.PRIMARY_FEATURE_TF);
+  if (fvvoValue !== null && prevFvvoValue !== null) {
+    fvvoCrossUp = prevFvvoValue <= 0 && fvvoValue > 0;
+    fvvoCrossDown = prevFvvoValue >= 0 && fvvoValue < 0;
+  }
 
   return {
+    raw: p,
+
+    secret: envStrFromPayload(p.secret, ""),
+    src: envStrFromPayload(p.src, ""),
+    brain: envStrFromPayload(p.brain, ""),
+    version: envStrFromPayload(p.version, ""),
     symbol,
     tf,
-    time: String(body.time || body.timestamp || isoNow()).trim(),
+    event,
 
-    close: safeNumber(body.close ?? body.price, null),
+    price,
+    time: envStrFromPayload(p.time, nowIso()),
 
-    macdLine: safeNumber(body.macdLine ?? body.macd ?? body.macd_line, null),
-    macdSignal: safeNumber(body.macdSignal ?? body.macd_signal ?? body.signalLine, null),
-    macdHist: safeNumber(body.macdHist ?? body.macd_hist ?? body.histogram, null),
-    macdCrossUpBelowZero: safeBool(body.macdCrossUpBelowZero, false),
+    open,
+    high,
+    low,
+    close,
 
-    ema11: safeNumber(body.ema11 ?? body.ema_11, null),
-    ema33: safeNumber(body.ema33 ?? body.ema_33, null),
+    ema8,
+    ema18,
+    ema50,
+    rsi,
+    adx,
+    atrPct,
 
-    rsi12: safeNumber(body.rsi12 ?? body.rsi_12, null),
-    adx14: safeNumber(body.adx14 ?? body.adx ?? body.adx_14, null),
-    mfi12: safeNumber(body.mfi12 ?? body.mfi ?? body.mfi_12, null),
+    fvvoValue,
+    fvvoSignal,
+    fvvoAboveZero,
+    fvvoSlope,
+    fvvoCrossUp,
+    fvvoCrossDown,
 
-    dcaFilterPass: safeBool(body.dcaFilterPass, false),
+    fvvoRedDot: safeBool(p.fvvoRedDot, false),
+    fvvoBullishColor: safeBool(p.fvvoBullishColor, false),
+    fvvoBearishColor: safeBool(p.fvvoBearishColor, false),
+
+    sniperBuy: safeBool(p.sniperBuy, false),
+    sniperSell: safeBool(p.sniperSell, false),
+    burstBullish: safeBool(p.burstBullish, false),
+    burstBearish: safeBool(p.burstBearish, false)
   };
 }
 
-function ensureFeatureSlot(tf) {
-  const key = normalizeTf(tf);
-  if (!state.featuresByTf[key]) {
-    state.featuresByTf[key] = {
-      current: null,
-      previous: null,
-      history: [],
-      updatedAtMs: null,
-    };
+function envStrFromPayload(v, fallback = "") {
+  if (v === undefined || v === null) return fallback;
+  const s = String(v).trim();
+  return s === "" ? fallback : s;
+}
+
+// ============================================================
+// VALIDATION
+// ============================================================
+
+function validatePayload(p) {
+  if (!p) return { ok: false, reason: "EMPTY_PAYLOAD" };
+
+  if (CFG.WEBHOOK_SECRET && CFG.WEBHOOK_SECRET !== "CHANGE_ME_TO_RANDOM_SECRET") {
+    if (p.secret !== CFG.WEBHOOK_SECRET) {
+      return { ok: false, reason: "BAD_SECRET" };
+    }
   }
-  return state.featuresByTf[key];
+
+  if (p.symbol !== CFG.SYMBOL) {
+    return { ok: false, reason: `SYMBOL_MISMATCH:${p.symbol}` };
+  }
+
+  if (p.tf !== CFG.ENTRY_TF) {
+    return { ok: false, reason: `TF_MISMATCH:${p.tf}` };
+  }
+
+  if (p.event !== "FEATURE_5M_FVVO") {
+    return { ok: false, reason: `UNSUPPORTED_EVENT:${p.event}` };
+  }
+
+  if (!Number.isFinite(p.close) || p.close <= 0) {
+    return { ok: false, reason: "BAD_CLOSE" };
+  }
+
+  if (!Number.isFinite(p.ema8) || !Number.isFinite(p.ema18)) {
+    return { ok: false, reason: "MISSING_EMA8_OR_EMA18" };
+  }
+
+  if (!Number.isFinite(p.rsi)) {
+    return { ok: false, reason: "MISSING_RSI" };
+  }
+
+  if (!Number.isFinite(p.fvvoValue)) {
+    return { ok: false, reason: "MISSING_FVVO_VALUE" };
+  }
+
+  return { ok: true, reason: "OK" };
 }
 
-function featureAgeSec(tf) {
-  const slot = state.featuresByTf[normalizeTf(tf)];
-  if (!slot) return null;
-  return ageSec(slot.updatedAtMs);
+function isDuplicateBar(p) {
+  if (!CFG.BAR_DEDUP_ENABLED) return false;
+
+  const key = `${p.symbol}|${p.tf}|${p.time}`;
+  if (state.seenBars.has(key)) return true;
+
+  state.seenBars.add(key);
+
+  // Keep memory bounded
+  if (state.seenBars.size > 5000) {
+    const arr = Array.from(state.seenBars);
+    state.seenBars = new Set(arr.slice(arr.length - 2500));
+  }
+
+  return false;
 }
 
-function maxAgeForTf(tf) {
-  const key = normalizeTf(tf);
-  if (key === CONFIG.PRIMARY_FEATURE_TF) return CONFIG.PRIMARY_FEATURE_MAX_AGE_SEC;
-  return CONFIG.FALLBACK_FEATURE_MAX_AGE_SEC;
-}
+// ============================================================
+// ENTRY LOGIC
+// ============================================================
 
-function hasFreshFeature(tf) {
-  const age = featureAgeSec(tf);
-  return age !== null && age <= maxAgeForTf(tf);
-}
-
-function getFeatureContext() {
-  const primary = state.featuresByTf[CONFIG.PRIMARY_FEATURE_TF];
-  if (primary?.current && hasFreshFeature(CONFIG.PRIMARY_FEATURE_TF)) {
+function evaluateLongEntry(p) {
+  if (!CFG.FVVO_LONG_ENABLED) {
     return {
-      tf: CONFIG.PRIMARY_FEATURE_TF,
-      source: "primary",
-      slot: primary,
-      feature: primary.current,
-      previous: primary.previous,
-      history: primary.history,
-      ageSec: featureAgeSec(CONFIG.PRIMARY_FEATURE_TF),
-      maxAgeSec: CONFIG.PRIMARY_FEATURE_MAX_AGE_SEC,
+      ok: false,
+      reason: "FVVO_LONG_DISABLED"
     };
   }
 
-  const fallback = state.featuresByTf[CONFIG.FALLBACK_FEATURE_TF];
-  if (fallback?.current && hasFreshFeature(CONFIG.FALLBACK_FEATURE_TF)) {
-    return {
-      tf: CONFIG.FALLBACK_FEATURE_TF,
-      source: "fallback",
-      slot: fallback,
-      feature: fallback.current,
-      previous: fallback.previous,
-      history: fallback.history,
-      ageSec: featureAgeSec(CONFIG.FALLBACK_FEATURE_TF),
-      maxAgeSec: CONFIG.FALLBACK_FEATURE_MAX_AGE_SEC,
-    };
+  const fvvoCrossEntry = p.fvvoCrossUp && p.fvvoValue > 0;
+  const fvvoAboveZeroRising =
+    p.fvvoAboveZero &&
+    Number.isFinite(p.fvvoSlope) &&
+    p.fvvoSlope >= CFG.FVVO_ENTRY_MIN_SLOPE;
+
+  const fvvoBullish = fvvoCrossEntry || fvvoAboveZeroRising;
+
+  const priceAboveEma8 = p.close > p.ema8;
+
+  const ema8BelowEma18Pct = p.ema8 < p.ema18 ? calcPct(p.ema18, p.ema8) : 0;
+  const emaStructureOk =
+    p.ema8 >= p.ema18 ||
+    (Number.isFinite(ema8BelowEma18Pct) &&
+      ema8BelowEma18Pct <= CFG.FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT);
+
+  const rsiOk = p.rsi >= CFG.FVVO_ENTRY_MIN_RSI;
+
+  const adxOk =
+    !Number.isFinite(CFG.FVVO_ENTRY_MIN_ADX) ||
+    CFG.FVVO_ENTRY_MIN_ADX <= 0 ||
+    (Number.isFinite(p.adx) && p.adx >= CFG.FVVO_ENTRY_MIN_ADX);
+
+  const extEma8Pct = calcPct(p.close, p.ema8);
+  const extEma18Pct = calcPct(p.close, p.ema18);
+
+  const notTooExtendedFromEma8 =
+    Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_ENTRY_MAX_EXT_EMA8_PCT;
+
+  const notTooExtendedFromEma18 =
+    Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_ENTRY_MAX_EXT_EMA18_PCT;
+
+  const noBearishConflict =
+    !p.fvvoBearishColor || p.fvvoCrossUp || p.burstBullish;
+
+  const checks = {
+    fvvoCrossEntry,
+    fvvoAboveZeroRising,
+    fvvoBullish,
+    priceAboveEma8,
+    emaStructureOk,
+    rsiOk,
+    adxOk,
+    notTooExtendedFromEma8,
+    notTooExtendedFromEma18,
+    noBearishConflict,
+    extEma8Pct,
+    extEma18Pct,
+    ema8BelowEma18Pct
+  };
+
+  const ok =
+    fvvoBullish &&
+    priceAboveEma8 &&
+    emaStructureOk &&
+    rsiOk &&
+    adxOk &&
+    notTooExtendedFromEma8 &&
+    notTooExtendedFromEma18 &&
+    noBearishConflict;
+
+  let reason = "NO_ENTRY";
+
+  if (ok) {
+    if (fvvoCrossEntry) reason = "FVVO_CROSS_UP_ABOVE_ZERO";
+    else if (fvvoAboveZeroRising) reason = "FVVO_ABOVE_ZERO_RISING";
+    else reason = "FVVO_BULLISH";
+  } else {
+    const failed = [];
+    if (!fvvoBullish) failed.push("FVVO_NOT_BULLISH");
+    if (!priceAboveEma8) failed.push("PRICE_NOT_ABOVE_EMA8");
+    if (!emaStructureOk) failed.push("EMA8_TOO_FAR_BELOW_EMA18");
+    if (!rsiOk) failed.push("RSI_TOO_LOW");
+    if (!adxOk) failed.push("ADX_TOO_LOW");
+    if (!notTooExtendedFromEma8) failed.push("TOO_EXTENDED_EMA8");
+    if (!notTooExtendedFromEma18) failed.push("TOO_EXTENDED_EMA18");
+    if (!noBearishConflict) failed.push("FVVO_BEARISH_CONFLICT");
+    reason = failed.join("+") || "NO_ENTRY";
   }
 
   return {
-    tf: null,
-    source: "missing",
-    slot: null,
-    feature: null,
-    previous: null,
-    history: [],
-    ageSec: null,
-    maxAgeSec: null,
+    ok,
+    reason,
+    checks
   };
 }
 
-function recentPumpPctFromHistory(history, lookbackBars) {
-  if (!Array.isArray(history) || history.length < 2) return null;
+// ============================================================
+// POSITION MANAGEMENT
+// ============================================================
 
-  const lookback = Math.max(1, Number(lookbackBars || 1));
-  const end = history[history.length - 1];
-  const startIndex = Math.max(0, history.length - 1 - lookback);
-  const start = history[startIndex];
+function openVirtualLong(p, entryDecision) {
+  const position = {
+    side: "LONG",
+    symbol: p.symbol,
+    tf: p.tf,
 
-  if (!start || !end) return null;
-  return pctChange(start.close, end.close);
-}
+    entryPrice: p.close,
+    entryTime: p.time,
+    entryReceivedAt: nowIso(),
+    entryReason: entryDecision.reason,
 
-function calcExtensionPct(close, ema) {
-  const c = Number(close);
-  const e = Number(ema);
-  if (!Number.isFinite(c) || !Number.isFinite(e) || e === 0) return null;
-  return ((c - e) / e) * 100;
-}
+    entryFvvoValue: p.fvvoValue,
+    entryFvvoSignal: p.fvvoSignal,
+    entryFvvoSlope: p.fvvoSlope,
+    entryRsi: p.rsi,
+    entryAdx: p.adx,
+    entryEma8: p.ema8,
+    entryEma18: p.ema18,
 
-function evaluateScore(minScore = CONFIG.TREND_CHANGE_MIN_SCORE) {
-  const ctx = getFeatureContext();
-  const f = ctx.feature;
-  const prev = ctx.previous;
+    barsHeld: 0,
+    maxPrice: p.close,
+    minPrice: p.close,
+    peakPnlPct: 0,
+    maxDrawdownPct: 0,
 
-  const points = [];
-  const warnings = [];
-  const hardBlocks = [];
-  const values = {
-    tf: ctx.tf,
-    featureSource: ctx.source,
-    featureAgeSec: ctx.ageSec,
-    featureMaxAgeSec: ctx.maxAgeSec,
+    redDotSeen: false,
+    backupUsed: false,
+    exitSignals: []
   };
 
-  if (!f) {
-    return {
-      pass: false,
-      score: 0,
-      minScore,
-      setupType: "missing_feature",
-      hardBlocked: true,
-      hardBlocks: ["missing_fresh_feature"],
-      points,
-      warnings,
-      values,
-      tf: ctx.tf,
-      source: ctx.source,
-    };
-  }
+  state.positions.set(p.symbol, position);
+  state.stats.virtualLongOpens += 1;
 
-  values.close = f.close;
-  values.ema11 = f.ema11;
-  values.ema33 = f.ema33;
-  values.rsi12 = f.rsi12;
-  values.adx14 = f.adx14;
-  values.mfi12 = f.mfi12;
-  values.macdLine = f.macdLine;
-  values.macdSignal = f.macdSignal;
-  values.macdHist = f.macdHist;
-
-  const macdLineGtSignal =
-    f.macdLine !== null && f.macdSignal !== null && f.macdLine > f.macdSignal;
-
-  const ema11GtEma33 = f.ema11 !== null && f.ema33 !== null && f.ema11 > f.ema33;
-  const closeGtEma11 = f.close !== null && f.ema11 !== null && f.close > f.ema11;
-  const closeGtEma33 = f.close !== null && f.ema33 !== null && f.close > f.ema33;
-
-  const rsiRising =
-    !!prev && prev.rsi12 !== null && f.rsi12 !== null && f.rsi12 > prev.rsi12;
-
-  const adxRising =
-    !!prev && prev.adx14 !== null && f.adx14 !== null && f.adx14 > prev.adx14;
-
-  const macdHistImproving =
-    !!prev &&
-    prev.macdHist !== null &&
-    f.macdHist !== null &&
-    f.macdHist > prev.macdHist;
-
-  const macdLineImproving =
-    !!prev &&
-    prev.macdLine !== null &&
-    f.macdLine !== null &&
-    f.macdLine > prev.macdLine;
-
-  const reclaimedEma11 =
-    !!prev &&
-    prev.close !== null &&
-    prev.ema11 !== null &&
-    f.close !== null &&
-    f.ema11 !== null &&
-    prev.close <= prev.ema11 &&
-    f.close > f.ema11;
-
-  const extensionEma11Pct = calcExtensionPct(f.close, f.ema11);
-  const extensionEma33Pct = calcExtensionPct(f.close, f.ema33);
-  const recentPumpPct = recentPumpPctFromHistory(
-    ctx.history,
-    CONFIG.CHASE_PUMP_LOOKBACK_BARS
-  );
-
-  values.macdLineGtSignal = macdLineGtSignal;
-  values.ema11GtEma33 = ema11GtEma33;
-  values.closeGtEma11 = closeGtEma11;
-  values.closeGtEma33 = closeGtEma33;
-  values.rsiRising = rsiRising;
-  values.adxRising = adxRising;
-  values.macdHistImproving = macdHistImproving;
-  values.macdLineImproving = macdLineImproving;
-  values.reclaimedEma11 = reclaimedEma11;
-  values.extensionEma11Pct = extensionEma11Pct;
-  values.extensionEma33Pct = extensionEma33Pct;
-  values.recentPumpPct = recentPumpPct;
-
-  let score = 0;
-
-  function add(scoreValue, reason) {
-    score += scoreValue;
-    points.push({ points: scoreValue, reason });
-  }
-
-  if (macdLineGtSignal) add(2, "macd_line_gt_signal");
-  if (macdHistImproving) add(1, "macd_hist_improving");
-  if (macdLineImproving) add(1, "macd_line_improving");
-
-  if (ema11GtEma33) add(2, "ema11_gt_ema33");
-  if (closeGtEma11) add(1, "close_gt_ema11");
-  if (closeGtEma33) add(1, "close_gt_ema33");
-  if (reclaimedEma11) add(2, "ema11_reclaim");
-
-  if (f.rsi12 !== null && f.rsi12 >= 52) add(2, "rsi12_above_52");
-  else if (f.rsi12 !== null && f.rsi12 >= 48) add(1, "rsi12_recovery_zone");
-
-  if (rsiRising) add(1, "rsi12_rising");
-
-  if (f.mfi12 !== null && f.mfi12 >= 50) add(2, "mfi12_above_50");
-  else if (f.mfi12 !== null && f.mfi12 >= 45) add(1, "mfi12_recovery_zone");
-
-  if (f.adx14 !== null && f.adx14 >= 18) add(1, "adx14_above_18");
-  if (f.adx14 !== null && f.adx14 >= 25) add(1, "adx14_above_25");
-  if (adxRising) add(1, "adx14_rising");
-
-  if (extensionEma11Pct !== null && extensionEma11Pct <= 0.8) {
-    add(1, "not_overextended_from_ema11");
-  }
-
-  // --------------------------------------------------
-  // Hard danger blocks
-  // --------------------------------------------------
-  if (CONFIG.HARD_BLOCKS_ENABLED) {
-    if (
-      recentPumpPct !== null &&
-      extensionEma11Pct !== null &&
-      f.rsi12 !== null &&
-      recentPumpPct >= CONFIG.CHASE_PUMP_BLOCK_PCT &&
-      extensionEma11Pct >= CONFIG.CHASE_EXT_EMA11_BLOCK_PCT &&
-      f.rsi12 >= CONFIG.CHASE_RSI_BLOCK
-    ) {
-      hardBlocks.push("chase_after_vertical_pump");
-    }
-
-    if (
-      f.macdLine !== null &&
-      f.macdSignal !== null &&
-      f.rsi12 !== null &&
-      f.mfi12 !== null &&
-      f.macdLine < f.macdSignal &&
-      f.rsi12 < 48 &&
-      f.mfi12 < 45
-    ) {
-      hardBlocks.push("bearish_momentum_stack");
-    }
-
-    if (
-      f.close !== null &&
-      f.ema11 !== null &&
-      f.ema33 !== null &&
-      f.macdLine !== null &&
-      f.macdSignal !== null &&
-      f.rsi12 !== null &&
-      f.close < f.ema11 &&
-      f.close < f.ema33 &&
-      f.macdLine < f.macdSignal &&
-      f.rsi12 < 50
-    ) {
-      hardBlocks.push("below_ema_stack_no_reclaim");
-    }
-
-    const recentBearish =
-      state.lastBearishSignal.tsMs &&
-      withinTtlMin(state.lastBearishSignal.tsMs, CONFIG.RECENT_BEARISH_BLOCK_MIN);
-
-    if (
-      recentBearish &&
-      f.close !== null &&
-      f.ema11 !== null &&
-      f.close < f.ema11 &&
-      !macdLineGtSignal
-    ) {
-      hardBlocks.push("recent_bearish_signal_no_reclaim");
-    }
-  }
-
-  if (!macdLineGtSignal) warnings.push("macd_not_supportive");
-  if (!ema11GtEma33) warnings.push("ema11_not_above_ema33");
-  if (!closeGtEma11) warnings.push("close_not_above_ema11");
-  if (f.rsi12 === null || f.rsi12 < 48) warnings.push("rsi_weak");
-  if (f.mfi12 === null || f.mfi12 < 45) warnings.push("mfi_weak");
-
-  let setupType = "weak";
-  if (score >= 8 && ema11GtEma33 && macdLineGtSignal) setupType = "strong_momentum";
-  else if (score >= 6 && reclaimedEma11) setupType = "recovery_reclaim";
-  else if (score >= 6 && ema11GtEma33) setupType = "healthy_trend_change";
-  else if (score >= 4) setupType = "weak_pending";
-
-  return {
-    pass: hardBlocks.length === 0 && score >= minScore,
-    score,
-    minScore,
-    setupType,
-    hardBlocked: hardBlocks.length > 0,
-    hardBlocks,
-    points,
-    warnings,
-    values,
-    tf: ctx.tf,
-    source: ctx.source,
-  };
-}
-
-function hasRecentScoreMemory() {
-  if (!CONFIG.SCORE_MEMORY_ENABLED) return false;
-  if (!state.scoreMemory.active || !state.scoreMemory.pass || !state.scoreMemory.tsMs) {
-    return false;
-  }
-
-  return withinTtlMin(state.scoreMemory.tsMs, CONFIG.SCORE_MEMORY_TTL_MIN);
-}
-
-function getScoreMemoryStatus() {
-  return {
-    active: hasRecentScoreMemory(),
-    rawActive: state.scoreMemory.active,
-    pass: state.scoreMemory.pass,
-    score: state.scoreMemory.score,
-    setupType: state.scoreMemory.setupType,
-    price: state.scoreMemory.price,
-    tf: state.scoreMemory.tf,
-    time: state.scoreMemory.time,
-    ageSec: ageSec(state.scoreMemory.tsMs),
-    ttlMin: CONFIG.SCORE_MEMORY_TTL_MIN,
-  };
-}
-
-function updateScoreMemory(scoreCheck) {
-  if (!CONFIG.SCORE_MEMORY_ENABLED) return;
-  if (!scoreCheck?.pass) return;
-  if (scoreCheck.score < CONFIG.SCORE_MEMORY_MIN_SCORE) return;
-
-  const ctx = getFeatureContext();
-  const f = ctx.feature;
-
-  state.scoreMemory = {
-    active: true,
-    pass: true,
-    score: scoreCheck.score,
-    setupType: scoreCheck.setupType,
-    time: f?.time || isoNow(),
-    tsMs: nowMs(),
-    price: f?.close ?? null,
-    tf: ctx.tf,
-    scoreCheck,
-  };
-
-  state.counters.scoreMemorySaved += 1;
-
-  logEvent("🧠 SCORE_MEMORY_SAVED", {
-    ttlMin: CONFIG.SCORE_MEMORY_TTL_MIN,
-    score: scoreCheck.score,
-    setupType: scoreCheck.setupType,
-    tf: ctx.tf,
-    price: state.scoreMemory.price,
-    scorePoints: scoreCheck.points,
-    hardBlocks: scoreCheck.hardBlocks,
-  });
-}
-
-async function updateFeature(body) {
-  const f = extractFeature(body);
-
-  if (f.symbol !== CONFIG.SYMBOL) {
-    state.counters.wrongSymbol += 1;
-    warnEvent("⚠️ FEATURE_WRONG_SYMBOL", {
-      received: f.symbol,
-      expected: CONFIG.SYMBOL,
-      tf: f.tf,
-    });
-
-    return { ok: false, reason: "wrong_symbol", feature: f };
-  }
-
-  const slot = ensureFeatureSlot(f.tf);
-
-  slot.previous = slot.current;
-  slot.current = f;
-  slot.updatedAtMs = nowMs();
-  slot.history.push(f);
-  if (slot.history.length > 50) slot.history.shift();
-
-  state.counters.featureReceived += 1;
-
-  const scoreCheck = evaluateScore(CONFIG.TREND_CHANGE_MIN_SCORE);
-  updateScoreMemory(scoreCheck);
-
-  logEvent("📊 FEATURE_UPDATE", {
-    symbol: f.symbol,
-    tf: f.tf,
-    close: f.close,
-    selectedTf: scoreCheck.tf,
-    featureSource: scoreCheck.source,
-    score: scoreCheck.score,
-    minScore: scoreCheck.minScore,
-    pass: scoreCheck.pass,
-    setupType: scoreCheck.setupType,
-    hardBlocked: scoreCheck.hardBlocked,
-    hardBlocks: scoreCheck.hardBlocks,
-    warnings: scoreCheck.warnings,
-    values: scoreCheck.values,
-    scoreMemory: getScoreMemoryStatus(),
-    pendingTrend: getPendingTrendStatus(),
-  });
-
-  const pendingResult = await maybeTriggerPendingTrendChangeFromFeature(scoreCheck);
-
-  return {
-    ok: true,
-    reason: "feature_updated",
-    feature: f,
-    scoreCheck,
-    pendingResult,
-  };
-}
-
-// --------------------------------------------------
-// Status helpers
-// --------------------------------------------------
-function getPositionStatus() {
-  return {
-    inLong: state.position.inLong,
-    entryPrice: state.position.entryPrice,
-    entrySignal: state.position.entrySignal,
-    entryReason: state.position.entryReason,
-    entryScore: state.position.entryScore,
-    entryTime: state.position.entryTime,
-    entryAgeSec: ageSec(state.position.entryTsMs),
-
-    exitPrice: state.position.exitPrice,
-    exitSignal: state.position.exitSignal,
-    exitReason: state.position.exitReason,
-    exitTime: state.position.exitTime,
-    exitAgeSec: ageSec(state.position.exitTsMs),
-  };
-}
-
-function getPendingTrendStatus() {
-  return {
-    active: hasRecentPendingTrendChange(),
-    rawActive: state.pendingTrendChange.active,
-    signal: state.pendingTrendChange.signal,
-    price: state.pendingTrendChange.price,
-    time: state.pendingTrendChange.time,
-    ageSec: ageSec(state.pendingTrendChange.tsMs),
-    ttlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
-  };
-}
-
-function hasRecentPendingTrendChange() {
-  if (!CONFIG.PENDING_TREND_CHANGE_ENTRY) return false;
-  if (!state.pendingTrendChange.active || !state.pendingTrendChange.tsMs) return false;
-
-  return withinTtlMin(
-    state.pendingTrendChange.tsMs,
-    CONFIG.PENDING_TREND_CHANGE_TTL_MIN
+  logLine(
+    "FVVO_RAW_LONG_OPEN",
+    [
+      `🟢 symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `reason=${entryDecision.reason}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `signal=${n(p.fvvoSignal, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`,
+      `aboveZero=${boolStr(p.fvvoAboveZero)}`,
+      `crossUp=${boolStr(p.fvvoCrossUp)}`,
+      `burstBullish=${boolStr(p.burstBullish)}`,
+      `sniperBuy=${boolStr(p.sniperBuy)}`
+    ].join(" | "),
+    entryDecision.checks
   );
 }
 
-function expirePendingTrendIfNeeded() {
-  if (!state.pendingTrendChange.active) return false;
-  if (hasRecentPendingTrendChange()) return false;
+function updatePositionStats(pos, p) {
+  pos.barsHeld += 1;
 
-  const old = { ...state.pendingTrendChange };
+  if (p.high && p.high > pos.maxPrice) pos.maxPrice = p.high;
+  if (p.low && p.low < pos.minPrice) pos.minPrice = p.low;
 
-  clearPendingTrendChange("pending_trend_expired", {
-    oldSignal: old.signal,
-    oldPrice: old.price,
-    oldAgeSec: ageSec(old.tsMs),
-  });
+  const currentPnlPct = calcPct(p.close, pos.entryPrice) || 0;
+  const peakPnlPct = calcPct(pos.maxPrice, pos.entryPrice) || 0;
+  const drawdownPct = calcPct(pos.minPrice, pos.entryPrice) || 0;
 
-  state.counters.pendingTrendExpired += 1;
-  return true;
-}
+  pos.peakPnlPct = Math.max(pos.peakPnlPct, peakPnlPct);
+  pos.maxDrawdownPct = Math.min(pos.maxDrawdownPct, drawdownPct);
 
-function getBiasStatus() {
-  return {
-    bullishBiasActive: state.bullishBias.active,
-    bullishBiasSignal: state.bullishBias.signal,
-    bullishBiasPrice: state.bullishBias.price,
-    bullishBiasAgeSec: ageSec(state.bullishBias.tsMs),
-
-    bosBiasActive: state.bosBias.active,
-    bosBiasSignal: state.bosBias.signal,
-    bosBiasPrice: state.bosBias.price,
-    bosBiasAgeSec: ageSec(state.bosBias.tsMs),
-
-    lastBearishSignal: state.lastBearishSignal.signal,
-    lastBearishPrice: state.lastBearishSignal.price,
-    lastBearishAgeSec: ageSec(state.lastBearishSignal.tsMs),
-  };
-}
-
-function featureStatus() {
-  const scoreCheck = evaluateScore(CONFIG.TREND_CHANGE_MIN_SCORE);
+  if (p.fvvoRedDot) {
+    pos.redDotSeen = true;
+  }
 
   return {
-    primaryTf: CONFIG.PRIMARY_FEATURE_TF,
-    fallbackTf: CONFIG.FALLBACK_FEATURE_TF,
-    selectedTf: scoreCheck.tf,
-    selectedSource: scoreCheck.source,
-    featuresByTf: state.featuresByTf,
-    scoreCheck,
-    scoreMemory: getScoreMemoryStatus(),
-    pendingTrend: getPendingTrendStatus(),
+    currentPnlPct,
+    peakPnlPct: pos.peakPnlPct,
+    givebackPct: pos.peakPnlPct - currentPnlPct,
+    drawdownPct: pos.maxDrawdownPct
   };
 }
 
-// --------------------------------------------------
-// Bias / pending
-// --------------------------------------------------
-function saveBullishBias({ signal, price, time }) {
-  state.bullishBias = {
-    active: true,
-    signal,
-    price,
-    time,
-    tsMs: nowMs(),
-  };
+function evaluateLongExit(pos, p, perf) {
+  const currentPnlPct = perf.currentPnlPct;
+  const peakPnlPct = perf.peakPnlPct;
+  const givebackPct = perf.givebackPct;
 
-  state.counters.biasSaved += 1;
+  const closeLostEma8 = p.close < p.ema8;
 
-  logEvent("🟢 BIAS_SAVED", {
-    signal,
-    price,
-    ts: time,
-  });
-}
+  const hardDownSlope =
+    Number.isFinite(p.fvvoSlope) &&
+    p.fvvoSlope <= CFG.FVVO_HARD_DOWN_SLOPE;
 
-function saveBosBias({ signal, price, time }) {
-  state.bosBias = {
-    active: true,
-    signal,
-    price,
-    time,
-    tsMs: nowMs(),
-  };
+  const maxLossHit =
+    currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
 
-  logEvent("🟢 BOS_BIAS_SAVED", {
-    signal,
-    price,
-    ts: time,
-  });
-}
+  const givebackArm2 =
+    peakPnlPct >= CFG.FVVO_GIVEBACK_ARM2_PCT &&
+    givebackPct >= CFG.FVVO_GIVEBACK_ARM2_DROP_PCT;
 
-function cancelBullishBias(reason, payload = {}) {
-  const hadBias = state.bullishBias.active || state.bosBias.active;
+  const givebackArm1 =
+    peakPnlPct >= CFG.FVVO_GIVEBACK_ARM1_PCT &&
+    givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-  state.bullishBias = {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  };
+  const backupNoRedDot =
+    !pos.redDotSeen &&
+    !p.fvvoAboveZero &&
+    closeLostEma8 &&
+    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT &&
+    givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-  state.bosBias = {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  };
+  const crossDownExit =
+    p.fvvoCrossDown &&
+    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
 
-  if (hadBias) state.counters.biasCancelled += 1;
+  const hardSlopeExit =
+    hardDownSlope &&
+    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
 
-  logEvent("🔴 BIAS_CANCELLED", {
-    reason,
-    hadBias,
-    ...payload,
-  });
-}
+  const ema8LossProfitExit =
+    closeLostEma8 &&
+    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT &&
+    givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-function saveBearishSignal({ signal, price, time }) {
-  state.lastBearishSignal = {
-    signal,
-    price,
-    time,
-    tsMs: nowMs(),
-  };
-}
+  const maxHoldExit =
+    CFG.FVVO_MAX_HOLD_BARS > 0 &&
+    pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
 
-function armPendingTrendChange({ signal, price, time, scoreCheck }) {
-  if (!CONFIG.PENDING_TREND_CHANGE_ENTRY) return;
-
-  state.pendingTrendChange = {
-    active: true,
-    signal,
-    price,
-    time,
-    tsMs: nowMs(),
-    originalScoreCheck: scoreCheck,
-  };
-
-  state.counters.pendingTrendArmed += 1;
-
-  logEvent("🟡 PENDING_TREND_ARMED", {
-    signal,
-    price,
-    ts: time,
-    ttlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
-    score: scoreCheck?.score,
-    setupType: scoreCheck?.setupType,
-    hardBlocks: scoreCheck?.hardBlocks,
-    warnings: scoreCheck?.warnings,
-  });
-}
-
-function clearPendingTrendChange(reason, payload = {}) {
-  const hadPending = state.pendingTrendChange.active;
-
-  state.pendingTrendChange = {
-    active: false,
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-    originalScoreCheck: null,
-  };
-
-  if (hadPending) {
-    state.counters.pendingTrendCancelled += 1;
-    logEvent("⚪ PENDING_TREND_CLEARED", { reason, ...payload });
-  }
-}
-
-// --------------------------------------------------
-// Position and protection
-// --------------------------------------------------
-function isEnterDedupBlocked(signal) {
-  if (!state.lastEnterLong.tsMs) return false;
-  const diffSec = (nowMs() - state.lastEnterLong.tsMs) / 1000;
-  return diffSec < CONFIG.ENTER_DEDUP_SEC && state.lastEnterLong.signal === signal;
-}
-
-function isEntryCooldownBlocked() {
-  if (!state.lastEnterLong.tsMs) return false;
-  const diffSec = (nowMs() - state.lastEnterLong.tsMs) / 1000;
-  return diffSec < CONFIG.ENTRY_COOLDOWN_SEC;
-}
-
-function isExitDedupBlocked(signal) {
-  if (!state.lastExitLong.tsMs) return false;
-  const diffSec = (nowMs() - state.lastExitLong.tsMs) / 1000;
-  return diffSec < CONFIG.EXIT_DEDUP_SEC && state.lastExitLong.signal === signal;
-}
-
-function isExitCooldownBlocked() {
-  if (!state.lastExitLong.tsMs) return false;
-  const diffSec = (nowMs() - state.lastExitLong.tsMs) / 1000;
-  return diffSec < CONFIG.EXIT_COOLDOWN_SEC;
-}
-
-function markEnterLong({ signal, price, time, reason, scoreCheck }) {
-  state.lastEnterLong = {
-    tsMs: nowMs(),
-    price,
-    signal,
-    reason,
-  };
-
-  state.position.inLong = true;
-  state.position.entryPrice = price;
-  state.position.entrySignal = signal;
-  state.position.entryReason = reason;
-  state.position.entryScore = scoreCheck?.score ?? null;
-  state.position.entryTime = time || isoNow();
-  state.position.entryTsMs = nowMs();
-
-  clearPendingTrendChange("entry_filled", {
-    entrySignal: signal,
-    entryPrice: price,
-  });
-}
-
-function markExitLong({ signal, price, time, reason }) {
-  state.lastExitLong = {
-    tsMs: nowMs(),
-    price,
-    signal,
-    reason,
-  };
-
-  state.position.inLong = false;
-  state.position.exitPrice = price;
-  state.position.exitSignal = signal;
-  state.position.exitReason = reason;
-  state.position.exitTime = time || isoNow();
-  state.position.exitTsMs = nowMs();
-
-  clearPendingTrendChange("exit_signal_received", {
-    exitSignal: signal,
-    exitPrice: price,
-  });
-}
-
-function applyTradeProtection({ decision, signal, price, time }) {
-  if (!decision.allowed) return decision;
-
-  if (decision.action === "enter_long") {
-    if (CONFIG.LOCK_AFTER_ENTER && state.position.inLong) {
-      state.counters.enterBlocked += 1;
-
-      return {
-        ...decision,
-        allowed: false,
-        action: "blocked",
-        reason: "already_in_long_lock_after_enter",
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (isEnterDedupBlocked(signal)) {
-      state.counters.enterBlocked += 1;
-
-      return {
-        ...decision,
-        allowed: false,
-        action: "blocked",
-        reason: "enter_dedup_blocked",
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (isEntryCooldownBlocked()) {
-      state.counters.enterBlocked += 1;
-
-      return {
-        ...decision,
-        allowed: false,
-        action: "blocked",
-        reason: "entry_cooldown_blocked",
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    markEnterLong({
-      signal,
-      price,
-      time,
-      reason: decision.reason,
-      scoreCheck: decision.scoreCheck,
-    });
-
-    state.counters.enterAllowed += 1;
-
+  // Exit priority.
+  if (p.fvvoRedDot) {
     return {
-      ...decision,
-      positionStatus: getPositionStatus(),
+      exit: true,
+      reason: "FVVO_RED_DOT",
+      backupUsed: false
     };
   }
 
-  if (decision.action === "exit_long") {
-    if (CONFIG.LOCK_AFTER_ENTER && !state.position.inLong) {
-      state.counters.exitBlocked += 1;
-
-      return {
-        ...decision,
-        allowed: false,
-        action: "blocked",
-        reason: "not_in_long_exit_blocked",
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (isExitDedupBlocked(signal)) {
-      state.counters.exitBlocked += 1;
-
-      return {
-        ...decision,
-        allowed: false,
-        action: "blocked",
-        reason: "exit_dedup_blocked",
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (isExitCooldownBlocked()) {
-      state.counters.exitBlocked += 1;
-
-      return {
-        ...decision,
-        allowed: false,
-        action: "blocked",
-        reason: "exit_cooldown_blocked",
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    markExitLong({
-      signal,
-      price,
-      time,
-      reason: decision.reason,
-    });
-
-    state.counters.exitAllowed += 1;
-
+  if (maxLossHit) {
     return {
-      ...decision,
-      positionStatus: getPositionStatus(),
+      exit: true,
+      reason: "FVVO_MAX_LOSS_EXIT",
+      backupUsed: true
     };
   }
 
-  return decision;
-}
-
-// --------------------------------------------------
-// Decision engine
-// --------------------------------------------------
-function entryDecisionFromScore({
-  signal,
-  price,
-  time,
-  minScore,
-  reasonPrefix,
-  allowMemory = true,
-  allowPending = false,
-}) {
-  const scoreCheck = evaluateScore(minScore);
-
-  if (scoreCheck.pass) {
+  if (givebackArm2) {
     return {
-      action: "enter_long",
-      allowed: true,
-      reason: `${reasonPrefix}_${scoreCheck.setupType}`,
-      scoreCheck,
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
-      scoreMemory: getScoreMemoryStatus(),
+      exit: true,
+      reason: "FVVO_GIVEBACK_ARM2",
+      backupUsed: true
     };
   }
 
-  if (
-    allowMemory &&
-    hasRecentScoreMemory() &&
-    state.scoreMemory.score >= minScore &&
-    !state.scoreMemory.scoreCheck?.hardBlocked
-  ) {
+  if (givebackArm1) {
     return {
-      action: "enter_long",
-      allowed: true,
-      reason: `${reasonPrefix}_recent_score_memory_${state.scoreMemory.setupType}`,
-      scoreCheck: state.scoreMemory.scoreCheck,
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
-      scoreMemory: getScoreMemoryStatus(),
+      exit: true,
+      reason: "FVVO_GIVEBACK_ARM1",
+      backupUsed: true
     };
   }
 
-  if (
-    allowPending &&
-    CONFIG.PENDING_TREND_CHANGE_ENTRY &&
-    !scoreCheck.hardBlocked &&
-    scoreCheck.score >= CONFIG.PENDING_MIN_SCORE
-  ) {
-    armPendingTrendChange({
-      signal,
-      price,
-      time,
-      scoreCheck,
-    });
-
+  if (backupNoRedDot) {
     return {
-      action: "blocked",
-      allowed: false,
-      reason: "trend_change_pending_confirmation",
-      scoreCheck,
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
-      scoreMemory: getScoreMemoryStatus(),
+      exit: true,
+      reason: "FVVO_NO_RED_DOT_BACKUP_ZERO_LOSS_EMA8_GIVEBACK",
+      backupUsed: true
+    };
+  }
+
+  if (crossDownExit) {
+    return {
+      exit: true,
+      reason: "FVVO_CROSS_DOWN_BACKUP",
+      backupUsed: true
+    };
+  }
+
+  if (hardSlopeExit) {
+    return {
+      exit: true,
+      reason: "FVVO_HARD_DOWN_SLOPE_BACKUP",
+      backupUsed: true
+    };
+  }
+
+  if (ema8LossProfitExit) {
+    return {
+      exit: true,
+      reason: "FVVO_EMA8_LOSS_PROFIT_BACKUP",
+      backupUsed: true
+    };
+  }
+
+  if (maxHoldExit) {
+    return {
+      exit: true,
+      reason: "FVVO_MAX_HOLD_BARS_EXIT",
+      backupUsed: true
     };
   }
 
   return {
-    action: "blocked",
-    allowed: false,
-    reason: scoreCheck.hardBlocked
-      ? `entry_hard_blocked_${scoreCheck.hardBlocks.join("+")}`
-      : "entry_score_too_low",
-    scoreCheck,
-    biasStatus: getBiasStatus(),
-    positionStatus: getPositionStatus(),
-    scoreMemory: getScoreMemoryStatus(),
+    exit: false,
+    reason: "HOLD",
+    backupUsed: false
   };
 }
 
-function decideRayAlgoSignal({ signal, price, time }) {
-  expirePendingTrendIfNeeded();
+function closeVirtualLong(pos, p, perf, exitDecision) {
+  const pnlPct = perf.currentPnlPct;
+  const maxRunupPct = perf.peakPnlPct;
+  const givebackPct = perf.givebackPct;
 
-  if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
-    return {
-      action: "ignore",
-      allowed: false,
-      reason: "unknown_signal",
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
-    };
+  pos.exitPrice = p.close;
+  pos.exitTime = p.time;
+  pos.exitReceivedAt = nowIso();
+  pos.exitReason = exitDecision.reason;
+  pos.backupUsed = exitDecision.backupUsed;
+
+  state.positions.delete(pos.symbol);
+  state.stats.virtualLongExits += 1;
+  state.stats.totalPnlPct += pnlPct;
+
+  if (pnlPct > 0.03) state.stats.wins += 1;
+  else if (pnlPct < -0.03) state.stats.losses += 1;
+  else state.stats.flats += 1;
+
+  if (state.stats.bestPnlPct === null || pnlPct > state.stats.bestPnlPct) {
+    state.stats.bestPnlPct = pnlPct;
   }
 
-  if (isBearishSignal(signal)) {
-    saveBearishSignal({ signal, price, time });
-    cancelBullishBias("bearish_signal_received", { signal, price, ts: time });
-    clearPendingTrendChange("bearish_signal_received", { signal, price, ts: time });
-
-    if (
-      signal === SIGNALS.BEARISH_TREND_CHANGE &&
-      CONFIG.EXIT_ON_BEARISH_TREND_CHANGE
-    ) {
-      return {
-        action: "exit_long",
-        allowed: true,
-        reason: "bearish_trend_change_exit",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (signal === SIGNALS.BEARISH_BOS && CONFIG.EXIT_ON_BEARISH_BOS) {
-      return {
-        action: "exit_long",
-        allowed: true,
-        reason: "bearish_bos_exit",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    if (
-      signal === SIGNALS.BEARISH_TREND_CONTINUATION &&
-      CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION
-    ) {
-      return {
-        action: "exit_long",
-        allowed: true,
-        reason: "bearish_trend_continuation_exit",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return {
-      action: "ignore",
-      allowed: false,
-      reason: "bearish_signal_exit_disabled",
-      biasStatus: getBiasStatus(),
-      positionStatus: getPositionStatus(),
-    };
+  if (state.stats.worstPnlPct === null || pnlPct < state.stats.worstPnlPct) {
+    state.stats.worstPnlPct = pnlPct;
   }
 
-  if (signal === SIGNALS.BULLISH_TREND_CHANGE) {
-    saveBullishBias({ signal, price, time });
-
-    if (!CONFIG.ALLOW_TREND_CHANGE_ENTRY) {
-      return {
-        action: "bias_only",
-        allowed: false,
-        reason: "bullish_trend_change_saved_bias_only",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return entryDecisionFromScore({
-      signal,
-      price,
-      time,
-      minScore: CONFIG.TREND_CHANGE_MIN_SCORE,
-      reasonPrefix: "bullish_trend_change_score_entry",
-      allowMemory: true,
-      allowPending: true,
-    });
+  if (state.stats.bestRunupPct === null || maxRunupPct > state.stats.bestRunupPct) {
+    state.stats.bestRunupPct = maxRunupPct;
   }
 
-  if (signal === SIGNALS.BULLISH_BOS) {
-    saveBosBias({ signal, price, time });
-
-    if (!CONFIG.ALLOW_BOS_ENTRY) {
-      state.counters.confirmationOnly += 1;
-
-      return {
-        action: "confirmation_only",
-        allowed: false,
-        reason: "bullish_bos_confirmation_only",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return entryDecisionFromScore({
-      signal,
-      price,
-      time,
-      minScore: CONFIG.BOS_MIN_SCORE,
-      reasonPrefix: "bullish_bos_score_entry",
-      allowMemory: true,
-      allowPending: false,
-    });
+  if (exitDecision.reason === "FVVO_RED_DOT") {
+    state.stats.redDotExits += 1;
   }
 
-  if (signal === SIGNALS.BULLISH_TREND_CONTINUATION) {
-    if (!CONFIG.ALLOW_TREND_CONTINUATION_ENTRY) {
-      return {
-        action: "ignore",
-        allowed: false,
-        reason: "trend_continuation_entry_disabled",
-        biasStatus: getBiasStatus(),
-        positionStatus: getPositionStatus(),
-      };
-    }
-
-    return entryDecisionFromScore({
-      signal,
-      price,
-      time,
-      minScore: CONFIG.BOS_MIN_SCORE,
-      reasonPrefix: "bullish_trend_continuation_score_entry",
-      allowMemory: true,
-      allowPending: false,
-    });
+  if (exitDecision.backupUsed) {
+    state.stats.backupExits += 1;
   }
 
-  return {
-    action: "ignore",
-    allowed: false,
-    reason: "no_matching_rule",
-    biasStatus: getBiasStatus(),
-    positionStatus: getPositionStatus(),
-  };
+  if (exitDecision.reason === "FVVO_MAX_LOSS_EXIT") {
+    state.stats.maxLossExits += 1;
+  }
+
+  if (exitDecision.reason === "FVVO_MAX_HOLD_BARS_EXIT") {
+    state.stats.maxHoldExits += 1;
+  }
+
+  const result =
+    pnlPct > 0.03 ? "WIN" :
+    pnlPct < -0.03 ? "LOSS" :
+    "FLAT";
+
+  logLine(
+    "FVVO_RAW_LONG_EXIT_SIGNAL",
+    [
+      `🔴 symbol=${p.symbol}`,
+      `exitPrice=${n(p.close, 4)}`,
+      `pnl=${pct(pnlPct)}`,
+      `peak=${pct(maxRunupPct)}`,
+      `giveback=${pct(givebackPct)}`,
+      `barsHeld=${pos.barsHeld}`,
+      `reason=${exitDecision.reason}`,
+      `redDotSeen=${boolStr(pos.redDotSeen)}`,
+      `backupUsed=${boolStr(exitDecision.backupUsed)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`,
+      `aboveZero=${boolStr(p.fvvoAboveZero)}`,
+      `crossDown=${boolStr(p.fvvoCrossDown)}`
+    ].join(" | ")
+  );
+
+  logLine(
+    "FVVO_RAW_LONG_RESULT",
+    [
+      `📊 result=${result}`,
+      `symbol=${p.symbol}`,
+      `entry=${n(pos.entryPrice, 4)}`,
+      `exit=${n(p.close, 4)}`,
+      `pnl=${pct(pnlPct)}`,
+      `maxRunup=${pct(maxRunupPct)}`,
+      `maxDrawdown=${pct(pos.maxDrawdownPct)}`,
+      `entryReason=${pos.entryReason}`,
+      `exitReason=${exitDecision.reason}`,
+      `redDotSeen=${boolStr(pos.redDotSeen)}`,
+      `backupUsed=${boolStr(exitDecision.backupUsed)}`,
+      `barsHeld=${pos.barsHeld}`
+    ].join(" | ")
+  );
+
+  logScorecard();
 }
 
-// --------------------------------------------------
-// Pending entry from feature update
-// --------------------------------------------------
-async function maybeTriggerPendingTrendChangeFromFeature(scoreCheckFromUpdate) {
-  expirePendingTrendIfNeeded();
+// ============================================================
+// SHORT SIGNAL OBSERVATION ONLY
+// ============================================================
 
-  if (!CONFIG.PENDING_TREND_CHANGE_ENTRY) {
-    return { triggered: false, reason: "pending_disabled" };
-  }
+function observeShortSignal(p) {
+  if (!CFG.FVVO_SHORT_ENABLED) {
+    const shortSignal =
+      p.fvvoCrossDown ||
+      p.fvvoRedDot ||
+      p.burstBearish ||
+      p.sniperSell ||
+      p.fvvoBearishColor;
 
-  if (!hasRecentPendingTrendChange()) {
-    return { triggered: false, reason: "no_recent_pending_trend" };
-  }
+    if (!shortSignal) return;
 
-  if (state.position.inLong && CONFIG.LOCK_AFTER_ENTER) {
-    return { triggered: false, reason: "already_in_long" };
-  }
-
-  const scoreCheck = evaluateScore(CONFIG.TREND_CHANGE_MIN_SCORE);
-
-  if (!scoreCheck.pass) {
-    return {
-      triggered: false,
-      reason: scoreCheck.hardBlocked ? "hard_blocked" : "score_not_confirmed",
-      scoreCheck,
-    };
-  }
-
-  const pending = { ...state.pendingTrendChange };
-  const ctx = getFeatureContext();
-  const feature = ctx.feature;
-
-  let decision = {
-    action: "enter_long",
-    allowed: true,
-    reason: `pending_bullish_trend_change_confirmed_${scoreCheck.setupType}`,
-    signalSource: "feature_trigger_after_pending_trend_change",
-    scoreCheck,
-    biasStatus: getBiasStatus(),
-    positionStatus: getPositionStatus(),
-    scoreMemory: getScoreMemoryStatus(),
-  };
-
-  decision = applyTradeProtection({
-    decision,
-    signal: pending.signal || SIGNALS.BULLISH_TREND_CHANGE,
-    price: feature?.close ?? pending.price ?? 0,
-    time: feature?.time || isoNow(),
-  });
-
-  logFinalDecision({
-    signal: pending.signal || SIGNALS.BULLISH_TREND_CHANGE,
-    symbol: CONFIG.SYMBOL,
-    price: feature?.close ?? pending.price ?? 0,
-    decision,
-  });
-
-  if (!decision.allowed || decision.action !== "enter_long") {
-    return {
-      triggered: false,
-      reason: decision.reason,
-      decision,
-    };
-  }
-
-  state.counters.pendingTrendTriggered += 1;
-
-  const forwardResult = await forwardTo3Commas({
-    symbol: CONFIG.SYMBOL,
-    action: "enter_long",
-    price: feature?.close ?? pending.price ?? 0,
-    time: feature?.time || isoNow(),
-    signal: pending.signal || SIGNALS.BULLISH_TREND_CHANGE,
-    reason: decision.reason,
-  });
-
-  return {
-    triggered: Boolean(forwardResult.ok && !forwardResult.skipped),
-    reason: decision.reason,
-    decision,
-    forwardResult,
-  };
-}
-
-// --------------------------------------------------
-// Logging
-// --------------------------------------------------
-function logFinalDecision({ signal, symbol, price, decision }) {
-  const scoreCheck = decision.scoreCheck || null;
-
-  const base = {
-    signal,
-    symbol,
-    price,
-    action: decision.action,
-    allowed: decision.allowed,
-    reason: decision.reason,
-
-    score: scoreCheck?.score,
-    minScore: scoreCheck?.minScore,
-    setupType: scoreCheck?.setupType,
-    hardBlocked: scoreCheck?.hardBlocked,
-    hardBlocks: scoreCheck?.hardBlocks,
-    scorePoints: scoreCheck?.points,
-    warnings: scoreCheck?.warnings,
-    scoreValues: scoreCheck?.values,
-    featureTf: scoreCheck?.tf,
-    featureSource: scoreCheck?.source,
-
-    scoreMemory: getScoreMemoryStatus(),
-    pendingTrend: getPendingTrendStatus(),
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-  };
-
-  if (decision.action === "enter_long" && decision.allowed) {
-    logEvent("🟢 ENTRY_ALLOWED", base);
-    return;
-  }
-
-  if (decision.action === "exit_long" && decision.allowed) {
-    logEvent("🔴 EXIT_ALLOWED", base);
-    return;
-  }
-
-  if (decision.action === "bias_only") {
-    logEvent("🧠 BIAS_ONLY", base);
-    return;
-  }
-
-  if (decision.action === "confirmation_only") {
-    logEvent("🧠 CONFIRMATION_ONLY", base);
-    return;
-  }
-
-  if (decision.action === "blocked") {
-    if (
-      String(decision.reason || "").includes("exit") ||
-      String(decision.reason || "").includes("not_in_long")
-    ) {
-      logEvent("🟠 EXIT_BLOCKED", base);
-      return;
-    }
-
-    logEvent("⛔ ENTRY_BLOCKED", base);
-    return;
-  }
-
-  if (isBearishSignal(signal) && !decision.allowed) {
-    logEvent("🟠 EXIT_BLOCKED", base);
-    return;
-  }
-
-  logEvent("⚪ SIGNAL_IGNORED", base);
-}
-
-// --------------------------------------------------
-// 3Commas forwarding
-// --------------------------------------------------
-function resolveBotUuid(symbol) {
-  const botUuid = CONFIG.SYMBOL_BOT_MAP[symbol];
-  if (botUuid) return String(botUuid);
-
-  const fallback = CONFIG.SYMBOL_BOT_MAP[CONFIG.SYMBOL];
-  if (fallback) return String(fallback);
-
-  return "";
-}
-
-function splitTvSymbol(symbol) {
-  const s = normalizeSymbol(symbol);
-
-  if (s.includes(":")) {
-    const [exchange, instrument] = s.split(":");
-    return {
-      tv_exchange: exchange || "BINANCE",
-      tv_instrument: instrument || s,
-    };
-  }
-
-  return {
-    tv_exchange: "BINANCE",
-    tv_instrument: s,
-  };
-}
-
-function build3CommasSignal({ symbol, action, price, time }) {
-  const botUuid = resolveBotUuid(symbol);
-  const { tv_exchange, tv_instrument } = splitTvSymbol(symbol);
-
-  return {
-    secret: CONFIG.C3_SIGNAL_SECRET,
-    max_lag: String(CONFIG.MAX_LAG_SEC),
-    timestamp: time || isoNow(),
-    trigger_price: String(price),
-    tv_exchange,
-    tv_instrument,
-    action,
-    bot_uuid: botUuid,
-  };
-}
-
-async function postJsonWithTimeout(url, body, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    const text = await res.text().catch(() => "");
-
-    return {
-      ok: res.ok,
-      status: res.status,
-      statusText: res.statusText,
-      bodyText: text,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function forwardTo3Commas({ symbol, action, price, time, signal, reason }) {
-  if (!CONFIG.ENABLE_HTTP_FORWARD) {
-    logEvent("⚪ FORWARD_SKIP", {
-      reason: "http_forward_disabled",
-      symbol,
-      action,
-      price,
-      signal,
-    });
-
-    return {
-      skipped: true,
-      ok: true,
-      reason: "http_forward_disabled",
-    };
-  }
-
-  if (!CONFIG.C3_SIGNAL_SECRET) {
-    errorEvent("❌ FORWARD_FAIL", {
-      reason: "missing_c3_signal_secret",
-      symbol,
-      action,
-      signal,
-    });
-
-    return {
-      ok: false,
-      skipped: false,
-      reason: "missing_c3_signal_secret",
-    };
-  }
-
-  const botUuid = resolveBotUuid(symbol);
-
-  if (!botUuid) {
-    errorEvent("❌ FORWARD_FAIL", {
-      reason: "missing_bot_uuid_for_symbol",
-      symbol,
-      action,
-      signal,
-    });
-
-    return {
-      ok: false,
-      skipped: false,
-      reason: "missing_bot_uuid_for_symbol",
-    };
-  }
-
-  const payload = build3CommasSignal({
-    symbol,
-    action,
-    price,
-    time,
-  });
-
-  logEvent("📤 FORWARD_3COMMAS", {
-    symbol,
-    action,
-    signal,
-    reason,
-    trigger_price: payload.trigger_price,
-    tv_exchange: payload.tv_exchange,
-    tv_instrument: payload.tv_instrument,
-    bot_uuid: payload.bot_uuid,
-    timestamp: payload.timestamp,
-    max_lag: payload.max_lag,
-  });
-
-  try {
-    const result = await postJsonWithTimeout(
-      CONFIG.C3_SIGNAL_URL,
-      payload,
-      CONFIG.C3_TIMEOUT_MS
+    logLine(
+      "FVVO_RAW_SHORT_SIGNAL",
+      [
+        `⚠️ observationOnly=true`,
+        `symbol=${p.symbol}`,
+        `price=${n(p.close, 4)}`,
+        `redDot=${boolStr(p.fvvoRedDot)}`,
+        `crossDown=${boolStr(p.fvvoCrossDown)}`,
+        `bearishColor=${boolStr(p.fvvoBearishColor)}`,
+        `sniperSell=${boolStr(p.sniperSell)}`,
+        `burstBearish=${boolStr(p.burstBearish)}`,
+        `fvvo=${n(p.fvvoValue, 6)}`,
+        `slope=${n(p.fvvoSlope, 6)}`
+      ].join(" | ")
     );
-
-    if (result.ok) {
-      state.counters.forwardedOk += 1;
-
-      logEvent("✅ FORWARD_OK", {
-        action,
-        signal,
-        status: result.status,
-        body: result.bodyText,
-      });
-    } else {
-      state.counters.forwardedFail += 1;
-
-      errorEvent("❌ FORWARD_FAIL", {
-        action,
-        signal,
-        status: result.status,
-        statusText: result.statusText,
-        body: result.bodyText,
-      });
-    }
-
-    return result;
-  } catch (e) {
-    state.counters.forwardedFail += 1;
-
-    errorEvent("❌ FORWARD_FAIL", {
-      action,
-      signal,
-      reason: "forward_exception",
-      error: String(e?.message || e),
-    });
-
-    return {
-      ok: false,
-      skipped: false,
-      reason: "forward_exception",
-      error: e?.message || String(e),
-    };
   }
 }
 
-// --------------------------------------------------
-// Routes
-// --------------------------------------------------
-function publicConfig() {
-  return {
-    brainName: CONFIG.BRAIN_NAME,
-    symbol: CONFIG.SYMBOL,
-    webhookPath: CONFIG.WEBHOOK_PATH,
-    entryMode: CONFIG.ENTRY_MODE,
+// ============================================================
+// SCORECARD
+// ============================================================
 
-    primaryFeatureTf: CONFIG.PRIMARY_FEATURE_TF,
-    fallbackFeatureTf: CONFIG.FALLBACK_FEATURE_TF,
-    primaryFeatureMaxAgeSec: CONFIG.PRIMARY_FEATURE_MAX_AGE_SEC,
-    fallbackFeatureMaxAgeSec: CONFIG.FALLBACK_FEATURE_MAX_AGE_SEC,
+function logScorecard() {
+  const exits = state.stats.virtualLongExits;
+  const avgPnl = exits > 0 ? state.stats.totalPnlPct / exits : 0;
+  const winRate = exits > 0 ? (state.stats.wins / exits) * 100 : 0;
 
-    allowTrendChangeEntry: CONFIG.ALLOW_TREND_CHANGE_ENTRY,
-    allowBosEntry: CONFIG.ALLOW_BOS_ENTRY,
-    allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
-
-    trendChangeMinScore: CONFIG.TREND_CHANGE_MIN_SCORE,
-    bosMinScore: CONFIG.BOS_MIN_SCORE,
-    pendingMinScore: CONFIG.PENDING_MIN_SCORE,
-
-    pendingTrendChangeEntry: CONFIG.PENDING_TREND_CHANGE_ENTRY,
-    pendingTrendChangeTtlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
-
-    scoreMemoryEnabled: CONFIG.SCORE_MEMORY_ENABLED,
-    scoreMemoryTtlMin: CONFIG.SCORE_MEMORY_TTL_MIN,
-    scoreMemoryMinScore: CONFIG.SCORE_MEMORY_MIN_SCORE,
-
-    hardBlocksEnabled: CONFIG.HARD_BLOCKS_ENABLED,
-    chasePumpLookbackBars: CONFIG.CHASE_PUMP_LOOKBACK_BARS,
-    chasePumpBlockPct: CONFIG.CHASE_PUMP_BLOCK_PCT,
-    chaseExtEma11BlockPct: CONFIG.CHASE_EXT_EMA11_BLOCK_PCT,
-    chaseRsiBlock: CONFIG.CHASE_RSI_BLOCK,
-
-    recentBearishBlockMin: CONFIG.RECENT_BEARISH_BLOCK_MIN,
-
-    entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
-    lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
-
-    exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
-    exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
-    exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
-
-    requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
-  };
+  logLine(
+    "FVVO_RAW_SCORECARD_RESULT",
+    [
+      `📈 trades=${exits}`,
+      `wins=${state.stats.wins}`,
+      `losses=${state.stats.losses}`,
+      `flats=${state.stats.flats}`,
+      `winRate=${pct(winRate, 1)}`,
+      `avgPnl=${pct(avgPnl)}`,
+      `totalPnl=${pct(state.stats.totalPnlPct)}`,
+      `best=${state.stats.bestPnlPct === null ? "na" : pct(state.stats.bestPnlPct)}`,
+      `worst=${state.stats.worstPnlPct === null ? "na" : pct(state.stats.worstPnlPct)}`,
+      `bestRunup=${state.stats.bestRunupPct === null ? "na" : pct(state.stats.bestRunupPct)}`,
+      `redDotExits=${state.stats.redDotExits}`,
+      `backupExits=${state.stats.backupExits}`,
+      `maxLossExits=${state.stats.maxLossExits}`,
+      `maxHoldExits=${state.stats.maxHoldExits}`
+    ].join(" | ")
+  );
 }
+
+// ============================================================
+// MAIN FEATURE HANDLER
+// ============================================================
+
+function handleFeature(p) {
+  state.stats.accepted += 1;
+
+  const openPos = state.positions.get(p.symbol);
+
+  if (CFG.DEBUG) {
+    logLine(
+      "FEATURE_5M_FVVO",
+      [
+        `symbol=${p.symbol}`,
+        `close=${n(p.close, 4)}`,
+        `ema8=${n(p.ema8, 4)}`,
+        `ema18=${n(p.ema18, 4)}`,
+        `rsi=${n(p.rsi, 2)}`,
+        `adx=${n(p.adx, 2)}`,
+        `fvvo=${n(p.fvvoValue, 6)}`,
+        `signal=${n(p.fvvoSignal, 6)}`,
+        `slope=${n(p.fvvoSlope, 6)}`,
+        `aboveZero=${boolStr(p.fvvoAboveZero)}`,
+        `crossUp=${boolStr(p.fvvoCrossUp)}`,
+        `crossDown=${boolStr(p.fvvoCrossDown)}`,
+        `redDot=${boolStr(p.fvvoRedDot)}`
+      ].join(" | ")
+    );
+  }
+
+  observeShortSignal(p);
+
+  if (openPos) {
+    const perf = updatePositionStats(openPos, p);
+    const exitDecision = evaluateLongExit(openPos, p, perf);
+
+    if (exitDecision.exit) {
+      closeVirtualLong(openPos, p, perf, exitDecision);
+    } else if (CFG.DEBUG) {
+      logLine(
+        "FVVO_RAW_LONG_HOLD",
+        [
+          `🟡 symbol=${p.symbol}`,
+          `price=${n(p.close, 4)}`,
+          `pnl=${pct(perf.currentPnlPct)}`,
+          `peak=${pct(perf.peakPnlPct)}`,
+          `giveback=${pct(perf.givebackPct)}`,
+          `barsHeld=${openPos.barsHeld}`,
+          `fvvo=${n(p.fvvoValue, 6)}`,
+          `slope=${n(p.fvvoSlope, 6)}`,
+          `redDot=${boolStr(p.fvvoRedDot)}`
+        ].join(" | ")
+      );
+    }
+
+    state.lastFeature.set(p.symbol, p);
+    return;
+  }
+
+  const entryDecision = evaluateLongEntry(p);
+
+  if (entryDecision.ok) {
+    openVirtualLong(p, entryDecision);
+  } else if (CFG.DEBUG) {
+    logLine(
+      "FVVO_RAW_LONG_NO_ENTRY",
+      [
+        `symbol=${p.symbol}`,
+        `price=${n(p.close, 4)}`,
+        `reason=${entryDecision.reason}`,
+        `rsi=${n(p.rsi, 2)}`,
+        `fvvo=${n(p.fvvoValue, 6)}`,
+        `slope=${n(p.fvvoSlope, 6)}`,
+        `aboveZero=${boolStr(p.fvvoAboveZero)}`,
+        `crossUp=${boolStr(p.fvvoCrossUp)}`
+      ].join(" | ")
+    );
+  }
+
+  state.lastFeature.set(p.symbol, p);
+}
+
+// ============================================================
+// ROUTES
+// ============================================================
 
 app.get("/", (req, res) => {
-  return responseOk(res, {
-    message: "Brain is running",
+  res.json({
+    ok: true,
+    brain: CFG.BRAIN_NAME,
+    mode: "SHADOW_ONLY",
     startedAt: state.startedAt,
-    webhookPath: CONFIG.WEBHOOK_PATH,
-    symbol: CONFIG.SYMBOL,
-    config: publicConfig(),
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: featureStatus(),
-    counters: state.counters,
+    symbol: CFG.SYMBOL,
+    tf: CFG.ENTRY_TF
   });
 });
 
 app.get("/health", (req, res) => {
-  return responseOk(res, {
-    status: "healthy",
+  res.json({
+    ok: true,
+    brain: CFG.BRAIN_NAME,
     startedAt: state.startedAt,
-    symbol: CONFIG.SYMBOL,
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: featureStatus(),
-    counters: state.counters,
+    now: nowIso(),
+    stats: state.stats,
+    openPositions: Array.from(state.positions.values()).map((p) => ({
+      symbol: p.symbol,
+      side: p.side,
+      entryPrice: p.entryPrice,
+      entryTime: p.entryTime,
+      entryReason: p.entryReason,
+      barsHeld: p.barsHeld,
+      peakPnlPct: p.peakPnlPct,
+      redDotSeen: p.redDotSeen
+    }))
   });
 });
 
-app.get("/state", (req, res) => {
-  return responseOk(res, {
-    state,
-    config: publicConfig(),
-    feature: featureStatus(),
+app.post(CFG.WEBHOOK_PATH, (req, res) => {
+  state.stats.received += 1;
+
+  let payload;
+
+  try {
+    payload = normalizePayload(req.body);
+  } catch (err) {
+    state.stats.rejected += 1;
+    logLine("REJECT", `NORMALIZE_ERROR | ${err.message}`);
+    return res.status(400).json({
+      ok: false,
+      reason: "NORMALIZE_ERROR"
+    });
+  }
+
+  const valid = validatePayload(payload);
+
+  if (!valid.ok) {
+    state.stats.rejected += 1;
+    logLine("REJECT", `${valid.reason}`);
+    return res.status(400).json({
+      ok: false,
+      reason: valid.reason
+    });
+  }
+
+  if (isDuplicateBar(payload)) {
+    state.stats.duplicates += 1;
+    logLine(
+      "DUPLICATE",
+      `ignored duplicate bar | symbol=${payload.symbol} | tf=${payload.tf} | time=${payload.time}`
+    );
+    return res.json({
+      ok: true,
+      duplicate: true,
+      brain: CFG.BRAIN_NAME
+    });
+  }
+
+  try {
+    handleFeature(payload);
+  } catch (err) {
+    state.stats.rejected += 1;
+    logLine("ERROR", `HANDLE_FEATURE_ERROR | ${err.stack || err.message}`);
+    return res.status(500).json({
+      ok: false,
+      reason: "HANDLE_FEATURE_ERROR"
+    });
+  }
+
+  return res.json({
+    ok: true,
+    brain: CFG.BRAIN_NAME,
+    shadowOnly: true
   });
 });
 
-app.post(CONFIG.WEBHOOK_PATH, async (req, res) => {
-  state.counters.received += 1;
+// ============================================================
+// STARTUP
+// ============================================================
 
-  const body = req.body || {};
-  state.lastPayload = body;
-
-  const receivedSecret = String(body.secret || body.tv_secret || "").trim();
-
-  if (!CONFIG.WEBHOOK_SECRET) {
-    errorEvent("❌ WEBHOOK_SECRET_MISSING", {});
-    return responseFail(res, 500, {
-      reason: "server_missing_webhook_secret",
-    });
-  }
-
-  if (receivedSecret !== CONFIG.WEBHOOK_SECRET) {
-    state.counters.unauthorized += 1;
-
-    warnEvent("🚫 UNAUTHORIZED", {
-      receivedSecretPresent: Boolean(receivedSecret),
-    });
-
-    return responseFail(res, 401, {
-      reason: "unauthorized",
-    });
-  }
-
-  if (isFeaturePayload(body)) {
-    const result = await updateFeature(body);
-
-    return responseOk(res, {
-      accepted: result.ok,
-      type: "features",
-      reason: result.reason,
-      feature: result.feature,
-      scoreCheck: result.scoreCheck,
-      scoreMemory: getScoreMemoryStatus(),
-      pendingTrend: getPendingTrendStatus(),
-      pendingResult: result.pendingResult,
-      counters: state.counters,
-    });
-  }
-
-  const src = normalizeSrc(body.src);
-  const symbol = normalizeSymbol(body.symbol || body.ticker || body.tickerid || CONFIG.SYMBOL);
-  const signal = normalizeSignal(body.signal || body.alert || body.condition);
-  const price = safeNumber(body.price ?? body.close ?? body.trigger_price, null);
-  const time = String(body.time || body.timestamp || isoNow()).trim();
-
-  if (symbol !== CONFIG.SYMBOL) {
-    state.counters.wrongSymbol += 1;
-
-    warnEvent("⚠️ WRONG_SYMBOL", {
-      received: symbol,
-      expected: CONFIG.SYMBOL,
-      signal,
-      price,
-    });
-
-    return responseOk(res, {
-      accepted: false,
-      reason: "wrong_symbol",
-      receivedSymbol: symbol,
-      expectedSymbol: CONFIG.SYMBOL,
-    });
-  }
-
-  if (!signal) {
-    state.counters.unknownSignal += 1;
-
-    warnEvent("⚠️ UNKNOWN_SIGNAL", {
-      reason: "missing_signal",
-      src,
-      symbol,
-      price,
-    });
-
-    return responseOk(res, {
-      accepted: false,
-      reason: "missing_signal",
-    });
-  }
-
-  if (CONFIG.REQUIRE_KNOWN_SIGNAL && !KNOWN_SIGNALS.has(signal)) {
-    state.counters.unknownSignal += 1;
-
-    warnEvent("⚠️ UNKNOWN_SIGNAL", {
-      signal,
-      src,
-      symbol,
-      price,
-      knownSignals: Array.from(KNOWN_SIGNALS),
-    });
-
-    return responseOk(res, {
-      accepted: false,
-      reason: "unknown_signal",
-      signal,
-      knownSignals: Array.from(KNOWN_SIGNALS),
-    });
-  }
-
-  const cleanPrice = price ?? 0;
-
-  logEvent(raySignalTag(signal), {
-    price: cleanPrice,
-    ts: time,
-    src,
-    symbol,
-    feature: {
-      selected: getFeatureContext().tf,
-      ageSec: getFeatureContext().ageSec,
-      source: getFeatureContext().source,
-    },
-    scoreMemory: getScoreMemoryStatus(),
-    pendingTrend: getPendingTrendStatus(),
-  });
-
-  let decision = decideRayAlgoSignal({
-    signal,
-    price: cleanPrice,
-    time,
-  });
-
-  decision = applyTradeProtection({
-    decision,
-    signal,
-    price: cleanPrice,
-    time,
-  });
-
-  logFinalDecision({
-    signal,
-    symbol,
-    price: cleanPrice,
-    decision,
-  });
-
-  if (!decision.allowed || !["enter_long", "exit_long"].includes(decision.action)) {
-    return responseOk(res, {
-      accepted: true,
-      forwarded: false,
-      src,
-      symbol,
-      signal,
-      price: cleanPrice,
-      decision,
-      position: getPositionStatus(),
-      feature: featureStatus(),
-      counters: state.counters,
-    });
-  }
-
-  const forwardResult = await forwardTo3Commas({
-    symbol,
-    action: decision.action,
-    price: cleanPrice,
-    time,
-    signal,
-    reason: decision.reason,
-  });
-
-  return responseOk(res, {
-    accepted: true,
-    forwarded: Boolean(forwardResult.ok && !forwardResult.skipped),
-    src,
-    symbol,
-    signal,
-    price: cleanPrice,
-    action: decision.action,
-    decision,
-    forwardResult,
-    position: getPositionStatus(),
-    feature: featureStatus(),
-    counters: state.counters,
-  });
-});
-
-app.post("/reset", (req, res) => {
-  cancelBullishBias("manual_reset");
-  clearPendingTrendChange("manual_reset");
-
-  state.lastEnterLong = {
-    tsMs: null,
-    price: null,
-    signal: null,
-    reason: null,
-  };
-
-  state.lastExitLong = {
-    tsMs: null,
-    price: null,
-    signal: null,
-    reason: null,
-  };
-
-  state.position = {
-    inLong: false,
-    entryPrice: null,
-    entrySignal: null,
-    entryReason: null,
-    entryScore: null,
-    entryTime: null,
-    entryTsMs: null,
-
-    exitPrice: null,
-    exitSignal: null,
-    exitReason: null,
-    exitTime: null,
-    exitTsMs: null,
-  };
-
-  logEvent("♻️ STATE_RESET", {
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    scoreMemory: getScoreMemoryStatus(),
-    pendingTrend: getPendingTrendStatus(),
-  });
-
-  return responseOk(res, {
-    message: "state reset",
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: featureStatus(),
-  });
-});
-
-app.post("/reset-all", (req, res) => {
-  state.featuresByTf = {};
-
-  state.scoreMemory = {
-    active: false,
-    pass: false,
-    score: null,
-    setupType: null,
-    time: null,
-    tsMs: null,
-    price: null,
-    tf: null,
-    scoreCheck: null,
-  };
-
-  state.lastBearishSignal = {
-    signal: null,
-    price: null,
-    time: null,
-    tsMs: null,
-  };
-
-  cancelBullishBias("manual_reset_all");
-  clearPendingTrendChange("manual_reset_all");
-
-  state.lastEnterLong = {
-    tsMs: null,
-    price: null,
-    signal: null,
-    reason: null,
-  };
-
-  state.lastExitLong = {
-    tsMs: null,
-    price: null,
-    signal: null,
-    reason: null,
-  };
-
-  state.position = {
-    inLong: false,
-    entryPrice: null,
-    entrySignal: null,
-    entryReason: null,
-    entryScore: null,
-    entryTime: null,
-    entryTsMs: null,
-
-    exitPrice: null,
-    exitSignal: null,
-    exitReason: null,
-    exitTime: null,
-    exitTsMs: null,
-  };
-
-  logEvent("♻️ STATE_RESET_ALL", {
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: null,
-    scoreMemory: getScoreMemoryStatus(),
-    pendingTrend: getPendingTrendStatus(),
-  });
-
-  return responseOk(res, {
-    message: "state and features reset",
-    position: getPositionStatus(),
-    bias: getBiasStatus(),
-    feature: featureStatus(),
-  });
-});
-
-// --------------------------------------------------
-// Start
-// --------------------------------------------------
-app.listen(CONFIG.PORT, () => {
-  console.log(
-    `${isoNow()} ✅ START_OK | ${oneLine({
-      brain: CONFIG.BRAIN_NAME,
-      port: CONFIG.PORT,
-      symbol: CONFIG.SYMBOL,
-      webhookPath: CONFIG.WEBHOOK_PATH,
-    })}`
-  );
-
-  console.log(
-    `${isoNow()} 🧠 CONFIG_SNAPSHOT | ${oneLine({
-      webhookPath: CONFIG.WEBHOOK_PATH,
-      symbol: CONFIG.SYMBOL,
-      debug: CONFIG.DEBUG,
-      entryMode: CONFIG.ENTRY_MODE,
-      enableHttpForward: CONFIG.ENABLE_HTTP_FORWARD,
-      c3Url: CONFIG.C3_SIGNAL_URL,
-      hasWebhookSecret: Boolean(CONFIG.WEBHOOK_SECRET),
-      hasC3SignalSecret: Boolean(CONFIG.C3_SIGNAL_SECRET),
-      symbolBotMapKeys: Object.keys(CONFIG.SYMBOL_BOT_MAP),
-
-      primaryFeatureTf: CONFIG.PRIMARY_FEATURE_TF,
-      fallbackFeatureTf: CONFIG.FALLBACK_FEATURE_TF,
-      primaryFeatureMaxAgeSec: CONFIG.PRIMARY_FEATURE_MAX_AGE_SEC,
-      fallbackFeatureMaxAgeSec: CONFIG.FALLBACK_FEATURE_MAX_AGE_SEC,
-
-      allowTrendChangeEntry: CONFIG.ALLOW_TREND_CHANGE_ENTRY,
-      allowBosEntry: CONFIG.ALLOW_BOS_ENTRY,
-      allowTrendContinuationEntry: CONFIG.ALLOW_TREND_CONTINUATION_ENTRY,
-
-      trendChangeMinScore: CONFIG.TREND_CHANGE_MIN_SCORE,
-      bosMinScore: CONFIG.BOS_MIN_SCORE,
-      pendingMinScore: CONFIG.PENDING_MIN_SCORE,
-
-      pendingTrendChangeEntry: CONFIG.PENDING_TREND_CHANGE_ENTRY,
-      pendingTrendChangeTtlMin: CONFIG.PENDING_TREND_CHANGE_TTL_MIN,
-
-      scoreMemoryEnabled: CONFIG.SCORE_MEMORY_ENABLED,
-      scoreMemoryTtlMin: CONFIG.SCORE_MEMORY_TTL_MIN,
-      scoreMemoryMinScore: CONFIG.SCORE_MEMORY_MIN_SCORE,
-
-      hardBlocksEnabled: CONFIG.HARD_BLOCKS_ENABLED,
-      chasePumpLookbackBars: CONFIG.CHASE_PUMP_LOOKBACK_BARS,
-      chasePumpBlockPct: CONFIG.CHASE_PUMP_BLOCK_PCT,
-      chaseExtEma11BlockPct: CONFIG.CHASE_EXT_EMA11_BLOCK_PCT,
-      chaseRsiBlock: CONFIG.CHASE_RSI_BLOCK,
-
-      recentBearishBlockMin: CONFIG.RECENT_BEARISH_BLOCK_MIN,
-
-      enterDedupSec: CONFIG.ENTER_DEDUP_SEC,
-      entryCooldownSec: CONFIG.ENTRY_COOLDOWN_SEC,
-      lockAfterEnter: CONFIG.LOCK_AFTER_ENTER,
-
-      exitOnBearishTrendChange: CONFIG.EXIT_ON_BEARISH_TREND_CHANGE,
-      exitOnBearishBos: CONFIG.EXIT_ON_BEARISH_BOS,
-      exitOnBearishTrendContinuation: CONFIG.EXIT_ON_BEARISH_TREND_CONTINUATION,
-
-      exitDedupSec: CONFIG.EXIT_DEDUP_SEC,
-      exitCooldownSec: CONFIG.EXIT_COOLDOWN_SEC,
-      requireKnownSignal: CONFIG.REQUIRE_KNOWN_SIGNAL,
-    })}`
-  );
+app.listen(CFG.PORT, () => {
+  console.log("============================================================");
+  console.log(`${CFG.BRAIN_NAME} started`);
+  console.log("============================================================");
+  console.log(`PORT=${CFG.PORT}`);
+  console.log(`WEBHOOK_PATH=${CFG.WEBHOOK_PATH}`);
+  console.log(`SYMBOL=${CFG.SYMBOL}`);
+  console.log(`ENTRY_TF=${CFG.ENTRY_TF}`);
+  console.log(`SHADOW_ONLY=${CFG.SHADOW_ONLY}`);
+  console.log(`ENABLE_HTTP_FORWARD=${CFG.ENABLE_HTTP_FORWARD}`);
+  console.log(`FVVO_LONG_ENABLED=${CFG.FVVO_LONG_ENABLED}`);
+  console.log(`FVVO_SHORT_ENABLED=${CFG.FVVO_SHORT_ENABLED}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_ENTRY_MIN_RSI=${CFG.FVVO_ENTRY_MIN_RSI}`);
+  console.log(`FVVO_ENTRY_MIN_ADX=${CFG.FVVO_ENTRY_MIN_ADX}`);
+  console.log(`FVVO_ENTRY_MIN_SLOPE=${CFG.FVVO_ENTRY_MIN_SLOPE}`);
+  console.log(`FVVO_ENTRY_MAX_EXT_EMA8_PCT=${CFG.FVVO_ENTRY_MAX_EXT_EMA8_PCT}`);
+  console.log(`FVVO_ENTRY_MAX_EXT_EMA18_PCT=${CFG.FVVO_ENTRY_MAX_EXT_EMA18_PCT}`);
+  console.log(`FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT=${CFG.FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_GIVEBACK_ARM1_PCT=${CFG.FVVO_GIVEBACK_ARM1_PCT}`);
+  console.log(`FVVO_GIVEBACK_ARM1_DROP_PCT=${CFG.FVVO_GIVEBACK_ARM1_DROP_PCT}`);
+  console.log(`FVVO_GIVEBACK_ARM2_PCT=${CFG.FVVO_GIVEBACK_ARM2_PCT}`);
+  console.log(`FVVO_GIVEBACK_ARM2_DROP_PCT=${CFG.FVVO_GIVEBACK_ARM2_DROP_PCT}`);
+  console.log(`FVVO_HARD_DOWN_SLOPE=${CFG.FVVO_HARD_DOWN_SLOPE}`);
+  console.log(`FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT=${CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT}`);
+  console.log(`FVVO_MAX_LOSS_EXIT_PCT=${CFG.FVVO_MAX_LOSS_EXIT_PCT}`);
+  console.log(`FVVO_MAX_HOLD_BARS=${CFG.FVVO_MAX_HOLD_BARS}`);
+  console.log("============================================================");
 });
