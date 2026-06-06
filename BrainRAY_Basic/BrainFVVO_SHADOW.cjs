@@ -1,12 +1,13 @@
 // ============================================================
-// BrainFVVO_v1_SHADOW
+// BrainFVVO_v1a_SHADOW
 // Standalone FVVO shadow brain
 // ------------------------------------------------------------
 // Purpose:
 // - Receive FVVO raw 5m feature JSON from TradingView
-// - Simulate FVVO-only long entries/exits
-// - Log shadow results and scorecards
-// - No real 3Commas forwarding in v1
+// - Simulate FVVO-only shadow long entries/exits
+// - Compare continuation vs deep reversal setups
+// - Add low-based intrabar hard-stop simulation
+// - No real 3Commas forwarding in v1a
 //
 // Main Ray brain remains separate:
 // BrainRAY_Continuation_v6.7j_FVVO_SYNC_10S_SHADOW_DEMO
@@ -43,7 +44,7 @@ function envBool(name, fallback = false) {
 // ============================================================
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1a_SHADOW"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "CHANGE_ME_TO_RANDOM_SECRET"),
@@ -58,13 +59,26 @@ const CFG = {
   FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
   FVVO_SHORT_ENABLED: envBool("FVVO_SHORT_ENABLED", false),
 
-  // Entry rules
+  // Continuation entry rules
+  FVVO_CONTINUATION_ENABLED: envBool("FVVO_CONTINUATION_ENABLED", true),
   FVVO_ENTRY_MIN_RSI: envNum("FVVO_ENTRY_MIN_RSI", 52),
   FVVO_ENTRY_MIN_ADX: envNum("FVVO_ENTRY_MIN_ADX", 0),
-  FVVO_ENTRY_MIN_SLOPE: envNum("FVVO_ENTRY_MIN_SLOPE", 0.0),
-  FVVO_ENTRY_MAX_EXT_EMA8_PCT: envNum("FVVO_ENTRY_MAX_EXT_EMA8_PCT", 0.45),
+  FVVO_ENTRY_MIN_SLOPE: envNum("FVVO_ENTRY_MIN_SLOPE", 0.30),
+  FVVO_ENTRY_MAX_EXT_EMA8_PCT: envNum("FVVO_ENTRY_MAX_EXT_EMA8_PCT", 0.40),
   FVVO_ENTRY_MAX_EXT_EMA18_PCT: envNum("FVVO_ENTRY_MAX_EXT_EMA18_PCT", 0.85),
   FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT: envNum("FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT", 0.10),
+
+  // Deep reversal setup
+  FVVO_REVERSAL_ENABLED: envBool("FVVO_REVERSAL_ENABLED", true),
+  FVVO_REVERSAL_LOOKBACK_BARS: envNum("FVVO_REVERSAL_LOOKBACK_BARS", 8),
+  FVVO_REVERSAL_RSI_WASHOUT_MAX: envNum("FVVO_REVERSAL_RSI_WASHOUT_MAX", 30),
+  FVVO_REVERSAL_RSI_RECOVER_MIN: envNum("FVVO_REVERSAL_RSI_RECOVER_MIN", 34),
+  FVVO_REVERSAL_MIN_DEEP_NEGATIVE: envNum("FVVO_REVERSAL_MIN_DEEP_NEGATIVE", -3.0),
+  FVVO_REVERSAL_MIN_SLOPE: envNum("FVVO_REVERSAL_MIN_SLOPE", 0.50),
+  FVVO_REVERSAL_MAX_BELOW_EMA8_PCT: envNum("FVVO_REVERSAL_MAX_BELOW_EMA8_PCT", 0.35),
+  FVVO_REVERSAL_REQUIRE_PRICE_CONFIRM: envBool("FVVO_REVERSAL_REQUIRE_PRICE_CONFIRM", true),
+  FVVO_REVERSAL_ALLOW_BULLISH_COLOR: envBool("FVVO_REVERSAL_ALLOW_BULLISH_COLOR", true),
+  FVVO_REVERSAL_BLOCK_FRESH_LOW: envBool("FVVO_REVERSAL_BLOCK_FRESH_LOW", true),
 
   // Exit rules
   FVVO_GIVEBACK_ARM1_PCT: envNum("FVVO_GIVEBACK_ARM1_PCT", 0.30),
@@ -76,16 +90,20 @@ const CFG = {
   FVVO_HARD_DOWN_SLOPE: envNum("FVVO_HARD_DOWN_SLOPE", -0.08),
   FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT: envNum("FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT", 0.05),
 
+  FVVO_INTRABAR_HARD_STOP_ENABLED: envBool("FVVO_INTRABAR_HARD_STOP_ENABLED", true),
   FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.45),
   FVVO_MAX_HOLD_BARS: envNum("FVVO_MAX_HOLD_BARS", 36),
 
   // Safety / duplicate handling
-  BAR_DEDUP_ENABLED: envBool("BAR_DEDUP_ENABLED", true)
+  BAR_DEDUP_ENABLED: envBool("BAR_DEDUP_ENABLED", true),
+
+  // Internal memory
+  HISTORY_MAX_BARS: envNum("HISTORY_MAX_BARS", 80)
 };
 
-// Hard safety for v1.
+// Hard safety for v1a.
 if (!CFG.SHADOW_ONLY || CFG.ENABLE_HTTP_FORWARD) {
-  console.log("⚠️ SAFETY: BrainFVVO_v1_SHADOW is designed for SHADOW ONLY.");
+  console.log("⚠️ SAFETY: BrainFVVO_v1a_SHADOW is designed for SHADOW ONLY.");
   console.log("⚠️ SAFETY: Forcing SHADOW_ONLY=true and ENABLE_HTTP_FORWARD=false.");
   CFG.SHADOW_ONLY = true;
   CFG.ENABLE_HTTP_FORWARD = false;
@@ -117,6 +135,9 @@ const state = {
   // symbol -> last FVVO bar data
   lastFeature: new Map(),
 
+  // symbol -> feature history array
+  history: new Map(),
+
   // symbol|tf|time -> seen
   seenBars: new Set(),
 
@@ -125,8 +146,19 @@ const state = {
     accepted: 0,
     duplicates: 0,
     rejected: 0,
+
     virtualLongOpens: 0,
     virtualLongExits: 0,
+
+    continuationOpens: 0,
+    continuationExits: 0,
+    continuationPnlPct: 0,
+
+    reversalSignals: 0,
+    reversalOpens: 0,
+    reversalExits: 0,
+    reversalPnlPct: 0,
+
     wins: 0,
     losses: 0,
     flats: 0,
@@ -134,8 +166,10 @@ const state = {
     bestPnlPct: null,
     worstPnlPct: null,
     bestRunupPct: null,
+
     redDotExits: 0,
     backupExits: 0,
+    intrabarHardStopExits: 0,
     maxLossExits: 0,
     maxHoldExits: 0
   }
@@ -188,6 +222,14 @@ function calcPct(a, b) {
   return ((x - y) / y) * 100;
 }
 
+function calcBelowPct(reference, value) {
+  const r = Number(reference);
+  const v = Number(value);
+  if (!Number.isFinite(r) || !Number.isFinite(v) || r === 0) return null;
+  if (v >= r) return 0;
+  return ((r - v) / r) * 100;
+}
+
 function logLine(type, msg, obj = null) {
   const prefix = `${nowIso()} | ${CFG.BRAIN_NAME} | ${type}`;
   if (obj && CFG.DEBUG) {
@@ -197,6 +239,47 @@ function logLine(type, msg, obj = null) {
   }
 }
 
+function getHistory(symbol) {
+  return state.history.get(symbol) || [];
+}
+
+function pushHistory(p) {
+  const arr = state.history.get(p.symbol) || [];
+  arr.push(p);
+  while (arr.length > CFG.HISTORY_MAX_BARS) arr.shift();
+  state.history.set(p.symbol, arr);
+}
+
+function recentBarsIncludingCurrent(p, lookback) {
+  const prev = getHistory(p.symbol);
+  const combined = prev.concat([p]);
+  const nBars = Math.max(1, Number(lookback) || 1);
+  return combined.slice(-nBars);
+}
+
+function minOf(arr, key) {
+  const vals = arr.map((x) => safeNum(x[key], null)).filter((x) => Number.isFinite(x));
+  if (!vals.length) return null;
+  return Math.min(...vals);
+}
+
+function maxOf(arr, key) {
+  const vals = arr.map((x) => safeNum(x[key], null)).filter((x) => Number.isFinite(x));
+  if (!vals.length) return null;
+  return Math.max(...vals);
+}
+
+function risingTwoBars(symbol, key) {
+  const arr = getHistory(symbol);
+  if (arr.length < 2) return false;
+  const a = arr[arr.length - 2];
+  const b = arr[arr.length - 1];
+  const av = safeNum(a[key], null);
+  const bv = safeNum(b[key], null);
+  if (!Number.isFinite(av) || !Number.isFinite(bv)) return false;
+  return bv > av;
+}
+
 // ============================================================
 // PAYLOAD NORMALIZATION
 // ============================================================
@@ -204,13 +287,13 @@ function logLine(type, msg, obj = null) {
 function normalizePayload(body) {
   const p = body || {};
 
-  const symbol = envStrFromPayload(p.symbol, CFG.SYMBOL);
-  const tf = envStrFromPayload(p.tf, CFG.ENTRY_TF);
-  const event = envStrFromPayload(p.event, "");
+  const symbol = strFromPayload(p.symbol, CFG.SYMBOL);
+  const tf = strFromPayload(p.tf, CFG.ENTRY_TF);
+  const event = strFromPayload(p.event, "");
 
   const close = safeNum(p.close, safeNum(p.price, null));
   const price = safeNum(p.price, close);
-  const open = safeNum(p.open, null);
+  const open = safeNum(p.open, close);
   const high = safeNum(p.high, close);
   const low = safeNum(p.low, close);
 
@@ -248,16 +331,16 @@ function normalizePayload(body) {
   return {
     raw: p,
 
-    secret: envStrFromPayload(p.secret, ""),
-    src: envStrFromPayload(p.src, ""),
-    brain: envStrFromPayload(p.brain, ""),
-    version: envStrFromPayload(p.version, ""),
+    secret: strFromPayload(p.secret, ""),
+    src: strFromPayload(p.src, ""),
+    brain: strFromPayload(p.brain, ""),
+    version: strFromPayload(p.version, ""),
     symbol,
     tf,
     event,
 
     price,
-    time: envStrFromPayload(p.time, nowIso()),
+    time: strFromPayload(p.time, nowIso()),
 
     open,
     high,
@@ -289,7 +372,7 @@ function normalizePayload(body) {
   };
 }
 
-function envStrFromPayload(v, fallback = "") {
+function strFromPayload(v, fallback = "") {
   if (v === undefined || v === null) return fallback;
   const s = String(v).trim();
   return s === "" ? fallback : s;
@@ -347,7 +430,6 @@ function isDuplicateBar(p) {
 
   state.seenBars.add(key);
 
-  // Keep memory bounded
   if (state.seenBars.size > 5000) {
     const arr = Array.from(state.seenBars);
     state.seenBars = new Set(arr.slice(arr.length - 2500));
@@ -357,18 +439,32 @@ function isDuplicateBar(p) {
 }
 
 // ============================================================
-// ENTRY LOGIC
+// ENTRY LOGIC: CONTINUATION
 // ============================================================
 
-function evaluateLongEntry(p) {
+function evaluateContinuationEntry(p) {
   if (!CFG.FVVO_LONG_ENABLED) {
     return {
       ok: false,
+      setup: "CONTINUATION",
       reason: "FVVO_LONG_DISABLED"
     };
   }
 
-  const fvvoCrossEntry = p.fvvoCrossUp && p.fvvoValue > 0;
+  if (!CFG.FVVO_CONTINUATION_ENABLED) {
+    return {
+      ok: false,
+      setup: "CONTINUATION",
+      reason: "FVVO_CONTINUATION_DISABLED"
+    };
+  }
+
+  const fvvoCrossEntry =
+    p.fvvoCrossUp &&
+    p.fvvoValue > 0 &&
+    Number.isFinite(p.fvvoSlope) &&
+    p.fvvoSlope >= CFG.FVVO_ENTRY_MIN_SLOPE;
+
   const fvvoAboveZeroRising =
     p.fvvoAboveZero &&
     Number.isFinite(p.fvvoSlope) &&
@@ -404,6 +500,7 @@ function evaluateLongEntry(p) {
     !p.fvvoBearishColor || p.fvvoCrossUp || p.burstBullish;
 
   const checks = {
+    setup: "CONTINUATION",
     fvvoCrossEntry,
     fvvoAboveZeroRising,
     fvvoBullish,
@@ -450,6 +547,153 @@ function evaluateLongEntry(p) {
 
   return {
     ok,
+    setup: "CONTINUATION",
+    reason,
+    checks
+  };
+}
+
+// ============================================================
+// ENTRY LOGIC: DEEP REVERSAL
+// ============================================================
+
+function evaluateDeepReversalEntry(p) {
+  if (!CFG.FVVO_LONG_ENABLED) {
+    return {
+      ok: false,
+      setup: "DEEP_REVERSAL",
+      reason: "FVVO_LONG_DISABLED"
+    };
+  }
+
+  if (!CFG.FVVO_REVERSAL_ENABLED) {
+    return {
+      ok: false,
+      setup: "DEEP_REVERSAL",
+      reason: "FVVO_REVERSAL_DISABLED"
+    };
+  }
+
+  const bars = recentBarsIncludingCurrent(p, CFG.FVVO_REVERSAL_LOOKBACK_BARS);
+  const recentRsiLow = minOf(bars, "rsi");
+  const recentFvvoLow = minOf(bars, "fvvoValue");
+  const recentLow = minOf(bars, "low");
+
+  const prev = getHistory(p.symbol).slice(-1)[0] || null;
+  const prevRsi = prev ? safeNum(prev.rsi, null) : null;
+  const prevFvvo = prev ? safeNum(prev.fvvoValue, null) : null;
+  const prevHigh = prev ? safeNum(prev.high, null) : null;
+
+  const rsiWasWashedOut =
+    Number.isFinite(recentRsiLow) &&
+    recentRsiLow <= CFG.FVVO_REVERSAL_RSI_WASHOUT_MAX;
+
+  const rsiRecovering =
+    Number.isFinite(p.rsi) &&
+    p.rsi >= CFG.FVVO_REVERSAL_RSI_RECOVER_MIN &&
+    (!Number.isFinite(prevRsi) || p.rsi >= prevRsi);
+
+  const fvvoWasDeep =
+    Number.isFinite(recentFvvoLow) &&
+    recentFvvoLow <= CFG.FVVO_REVERSAL_MIN_DEEP_NEGATIVE;
+
+  const fvvoSlopeStrong =
+    Number.isFinite(p.fvvoSlope) &&
+    p.fvvoSlope >= CFG.FVVO_REVERSAL_MIN_SLOPE;
+
+  const fvvoRisingVsPrev =
+    Number.isFinite(prevFvvo) &&
+    Number.isFinite(p.fvvoValue) &&
+    p.fvvoValue > prevFvvo;
+
+  const fvvoRecovery =
+    fvvoSlopeStrong ||
+    fvvoRisingVsPrev ||
+    (CFG.FVVO_REVERSAL_ALLOW_BULLISH_COLOR && p.fvvoBullishColor);
+
+  const closeBelowEma8Pct = calcBelowPct(p.ema8, p.close);
+
+  const notTooFarBelowEma8 =
+    Number.isFinite(closeBelowEma8Pct) &&
+    closeBelowEma8Pct <= CFG.FVVO_REVERSAL_MAX_BELOW_EMA8_PCT;
+
+  const bullishCandle = Number.isFinite(p.open) && p.close > p.open;
+  const closeAbovePrevHigh = Number.isFinite(prevHigh) && p.close > prevHigh;
+  const closeReclaimEma8 = p.close >= p.ema8;
+
+  const priceConfirm =
+    !CFG.FVVO_REVERSAL_REQUIRE_PRICE_CONFIRM ||
+    bullishCandle ||
+    closeAbovePrevHigh ||
+    closeReclaimEma8;
+
+  const freshBreakdownLow =
+    CFG.FVVO_REVERSAL_BLOCK_FRESH_LOW &&
+    Number.isFinite(recentLow) &&
+    Number.isFinite(p.low) &&
+    p.low <= recentLow &&
+    !bullishCandle &&
+    !closeReclaimEma8;
+
+  const noBearishConflict =
+    !p.fvvoBearishColor || p.fvvoBullishColor || fvvoSlopeStrong;
+
+  const ok =
+    rsiWasWashedOut &&
+    rsiRecovering &&
+    fvvoWasDeep &&
+    fvvoRecovery &&
+    notTooFarBelowEma8 &&
+    priceConfirm &&
+    !freshBreakdownLow &&
+    noBearishConflict;
+
+  const checks = {
+    setup: "DEEP_REVERSAL",
+    rsiWasWashedOut,
+    rsiRecovering,
+    fvvoWasDeep,
+    fvvoSlopeStrong,
+    fvvoRisingVsPrev,
+    fvvoBullishColor: p.fvvoBullishColor,
+    fvvoRecovery,
+    closeBelowEma8Pct,
+    notTooFarBelowEma8,
+    bullishCandle,
+    closeAbovePrevHigh,
+    closeReclaimEma8,
+    priceConfirm,
+    freshBreakdownLow,
+    noBearishConflict,
+    recentRsiLow,
+    recentFvvoLow,
+    recentLow,
+    prevRsi,
+    prevFvvo
+  };
+
+  let reason = "NO_REVERSAL_ENTRY";
+
+  if (ok) {
+    if (p.fvvoBullishColor) reason = "FVVO_DEEP_REVERSAL_GREEN";
+    else if (fvvoSlopeStrong) reason = "FVVO_DEEP_REVERSAL_SLOPE";
+    else reason = "FVVO_DEEP_REVERSAL_RISING";
+  } else {
+    const failed = [];
+    if (!rsiWasWashedOut) failed.push("NO_RECENT_RSI_WASHOUT");
+    if (!rsiRecovering) failed.push("RSI_NOT_RECOVERING");
+    if (!fvvoWasDeep) failed.push("FVVO_NOT_DEEP_NEGATIVE");
+    if (!fvvoRecovery) failed.push("FVVO_NOT_RECOVERING");
+    if (!notTooFarBelowEma8) failed.push("PRICE_TOO_FAR_BELOW_EMA8");
+    if (!priceConfirm) failed.push("NO_PRICE_CONFIRM");
+    if (freshBreakdownLow) failed.push("FRESH_BREAKDOWN_LOW");
+    if (!noBearishConflict) failed.push("FVVO_BEARISH_CONFLICT");
+    reason = failed.join("+") || "NO_REVERSAL_ENTRY";
+  }
+
+  return {
+    ok,
+    setup: "DEEP_REVERSAL",
     reason,
     checks
   };
@@ -462,6 +706,7 @@ function evaluateLongEntry(p) {
 function openVirtualLong(p, entryDecision) {
   const position = {
     side: "LONG",
+    setup: entryDecision.setup,
     symbol: p.symbol,
     tf: p.tf,
 
@@ -484,6 +729,11 @@ function openVirtualLong(p, entryDecision) {
     peakPnlPct: 0,
     maxDrawdownPct: 0,
 
+    stopPrice:
+      CFG.FVVO_MAX_LOSS_EXIT_PCT > 0
+        ? p.close * (1 - Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT) / 100)
+        : null,
+
     redDotSeen: false,
     backupUsed: false,
     exitSignals: []
@@ -492,11 +742,26 @@ function openVirtualLong(p, entryDecision) {
   state.positions.set(p.symbol, position);
   state.stats.virtualLongOpens += 1;
 
+  if (entryDecision.setup === "CONTINUATION") {
+    state.stats.continuationOpens += 1;
+  }
+
+  if (entryDecision.setup === "DEEP_REVERSAL") {
+    state.stats.reversalOpens += 1;
+  }
+
+  const logType =
+    entryDecision.setup === "DEEP_REVERSAL"
+      ? "FVVO_REVERSAL_LONG_OPEN"
+      : "FVVO_RAW_LONG_OPEN";
+
   logLine(
-    "FVVO_RAW_LONG_OPEN",
+    logType,
     [
-      `🟢 symbol=${p.symbol}`,
+      `🟢 setup=${entryDecision.setup}`,
+      `symbol=${p.symbol}`,
       `price=${n(p.close, 4)}`,
+      `stop=${position.stopPrice === null ? "na" : n(position.stopPrice, 4)}`,
       `reason=${entryDecision.reason}`,
       `rsi=${n(p.rsi, 2)}`,
       `adx=${n(p.adx, 2)}`,
@@ -505,6 +770,7 @@ function openVirtualLong(p, entryDecision) {
       `slope=${n(p.fvvoSlope, 6)}`,
       `aboveZero=${boolStr(p.fvvoAboveZero)}`,
       `crossUp=${boolStr(p.fvvoCrossUp)}`,
+      `bullishColor=${boolStr(p.fvvoBullishColor)}`,
       `burstBullish=${boolStr(p.burstBullish)}`,
       `sniperBuy=${boolStr(p.sniperBuy)}`
     ].join(" | "),
@@ -515,8 +781,8 @@ function openVirtualLong(p, entryDecision) {
 function updatePositionStats(pos, p) {
   pos.barsHeld += 1;
 
-  if (p.high && p.high > pos.maxPrice) pos.maxPrice = p.high;
-  if (p.low && p.low < pos.minPrice) pos.minPrice = p.low;
+  if (Number.isFinite(p.high) && p.high > pos.maxPrice) pos.maxPrice = p.high;
+  if (Number.isFinite(p.low) && p.low < pos.minPrice) pos.minPrice = p.low;
 
   const currentPnlPct = calcPct(p.close, pos.entryPrice) || 0;
   const peakPnlPct = calcPct(pos.maxPrice, pos.entryPrice) || 0;
@@ -548,7 +814,13 @@ function evaluateLongExit(pos, p, perf) {
     Number.isFinite(p.fvvoSlope) &&
     p.fvvoSlope <= CFG.FVVO_HARD_DOWN_SLOPE;
 
-  const maxLossHit =
+  const intrabarHardStopHit =
+    CFG.FVVO_INTRABAR_HARD_STOP_ENABLED &&
+    Number.isFinite(pos.stopPrice) &&
+    Number.isFinite(p.low) &&
+    p.low <= pos.stopPrice;
+
+  const closeMaxLossHit =
     currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
 
   const givebackArm2 =
@@ -584,19 +856,31 @@ function evaluateLongExit(pos, p, perf) {
     pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
 
   // Exit priority.
+  // v1a important change: low-based intrabar stop is highest priority.
+  if (intrabarHardStopHit) {
+    return {
+      exit: true,
+      reason: "FVVO_INTRABAR_HARD_STOP",
+      backupUsed: true,
+      exitPrice: pos.stopPrice
+    };
+  }
+
   if (p.fvvoRedDot) {
     return {
       exit: true,
       reason: "FVVO_RED_DOT",
-      backupUsed: false
+      backupUsed: false,
+      exitPrice: p.close
     };
   }
 
-  if (maxLossHit) {
+  if (closeMaxLossHit) {
     return {
       exit: true,
-      reason: "FVVO_MAX_LOSS_EXIT",
-      backupUsed: true
+      reason: "FVVO_CLOSE_MAX_LOSS_EXIT",
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -604,7 +888,8 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_GIVEBACK_ARM2",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -612,7 +897,8 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_GIVEBACK_ARM1",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -620,7 +906,8 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_NO_RED_DOT_BACKUP_ZERO_LOSS_EMA8_GIVEBACK",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -628,7 +915,8 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_CROSS_DOWN_BACKUP",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -636,7 +924,8 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_HARD_DOWN_SLOPE_BACKUP",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -644,7 +933,8 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_EMA8_LOSS_PROFIT_BACKUP",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
@@ -652,23 +942,30 @@ function evaluateLongExit(pos, p, perf) {
     return {
       exit: true,
       reason: "FVVO_MAX_HOLD_BARS_EXIT",
-      backupUsed: true
+      backupUsed: true,
+      exitPrice: p.close
     };
   }
 
   return {
     exit: false,
     reason: "HOLD",
-    backupUsed: false
+    backupUsed: false,
+    exitPrice: null
   };
 }
 
 function closeVirtualLong(pos, p, perf, exitDecision) {
-  const pnlPct = perf.currentPnlPct;
-  const maxRunupPct = perf.peakPnlPct;
-  const givebackPct = perf.givebackPct;
+  const exitPrice =
+    Number.isFinite(exitDecision.exitPrice) && exitDecision.exitPrice > 0
+      ? exitDecision.exitPrice
+      : p.close;
 
-  pos.exitPrice = p.close;
+  const pnlPct = calcPct(exitPrice, pos.entryPrice) || 0;
+  const maxRunupPct = perf.peakPnlPct;
+  const givebackPct = maxRunupPct - pnlPct;
+
+  pos.exitPrice = exitPrice;
   pos.exitTime = p.time;
   pos.exitReceivedAt = nowIso();
   pos.exitReason = exitDecision.reason;
@@ -677,6 +974,16 @@ function closeVirtualLong(pos, p, perf, exitDecision) {
   state.positions.delete(pos.symbol);
   state.stats.virtualLongExits += 1;
   state.stats.totalPnlPct += pnlPct;
+
+  if (pos.setup === "CONTINUATION") {
+    state.stats.continuationExits += 1;
+    state.stats.continuationPnlPct += pnlPct;
+  }
+
+  if (pos.setup === "DEEP_REVERSAL") {
+    state.stats.reversalExits += 1;
+    state.stats.reversalPnlPct += pnlPct;
+  }
 
   if (pnlPct > 0.03) state.stats.wins += 1;
   else if (pnlPct < -0.03) state.stats.losses += 1;
@@ -702,7 +1009,11 @@ function closeVirtualLong(pos, p, perf, exitDecision) {
     state.stats.backupExits += 1;
   }
 
-  if (exitDecision.reason === "FVVO_MAX_LOSS_EXIT") {
+  if (exitDecision.reason === "FVVO_INTRABAR_HARD_STOP") {
+    state.stats.intrabarHardStopExits += 1;
+  }
+
+  if (exitDecision.reason === "FVVO_CLOSE_MAX_LOSS_EXIT") {
     state.stats.maxLossExits += 1;
   }
 
@@ -715,11 +1026,25 @@ function closeVirtualLong(pos, p, perf, exitDecision) {
     pnlPct < -0.03 ? "LOSS" :
     "FLAT";
 
+  const exitLogType =
+    pos.setup === "DEEP_REVERSAL"
+      ? "FVVO_REVERSAL_LONG_EXIT_SIGNAL"
+      : "FVVO_RAW_LONG_EXIT_SIGNAL";
+
+  const resultLogType =
+    pos.setup === "DEEP_REVERSAL"
+      ? "FVVO_REVERSAL_LONG_RESULT"
+      : "FVVO_RAW_LONG_RESULT";
+
   logLine(
-    "FVVO_RAW_LONG_EXIT_SIGNAL",
+    exitLogType,
     [
-      `🔴 symbol=${p.symbol}`,
-      `exitPrice=${n(p.close, 4)}`,
+      `🔴 setup=${pos.setup}`,
+      `symbol=${p.symbol}`,
+      `exitPrice=${n(exitPrice, 4)}`,
+      `close=${n(p.close, 4)}`,
+      `low=${n(p.low, 4)}`,
+      `stop=${pos.stopPrice === null ? "na" : n(pos.stopPrice, 4)}`,
       `pnl=${pct(pnlPct)}`,
       `peak=${pct(maxRunupPct)}`,
       `giveback=${pct(givebackPct)}`,
@@ -735,12 +1060,13 @@ function closeVirtualLong(pos, p, perf, exitDecision) {
   );
 
   logLine(
-    "FVVO_RAW_LONG_RESULT",
+    resultLogType,
     [
       `📊 result=${result}`,
+      `setup=${pos.setup}`,
       `symbol=${p.symbol}`,
       `entry=${n(pos.entryPrice, 4)}`,
-      `exit=${n(p.close, 4)}`,
+      `exit=${n(exitPrice, 4)}`,
       `pnl=${pct(pnlPct)}`,
       `maxRunup=${pct(maxRunupPct)}`,
       `maxDrawdown=${pct(pos.maxDrawdownPct)}`,
@@ -797,6 +1123,16 @@ function logScorecard() {
   const avgPnl = exits > 0 ? state.stats.totalPnlPct / exits : 0;
   const winRate = exits > 0 ? (state.stats.wins / exits) * 100 : 0;
 
+  const contAvg =
+    state.stats.continuationExits > 0
+      ? state.stats.continuationPnlPct / state.stats.continuationExits
+      : 0;
+
+  const revAvg =
+    state.stats.reversalExits > 0
+      ? state.stats.reversalPnlPct / state.stats.reversalExits
+      : 0;
+
   logLine(
     "FVVO_RAW_SCORECARD_RESULT",
     [
@@ -812,8 +1148,15 @@ function logScorecard() {
       `bestRunup=${state.stats.bestRunupPct === null ? "na" : pct(state.stats.bestRunupPct)}`,
       `redDotExits=${state.stats.redDotExits}`,
       `backupExits=${state.stats.backupExits}`,
-      `maxLossExits=${state.stats.maxLossExits}`,
-      `maxHoldExits=${state.stats.maxHoldExits}`
+      `intrabarHardStops=${state.stats.intrabarHardStopExits}`,
+      `closeMaxLossExits=${state.stats.maxLossExits}`,
+      `maxHoldExits=${state.stats.maxHoldExits}`,
+      `continuationTrades=${state.stats.continuationExits}`,
+      `continuationAvg=${pct(contAvg)}`,
+      `continuationTotal=${pct(state.stats.continuationPnlPct)}`,
+      `reversalTrades=${state.stats.reversalExits}`,
+      `reversalAvg=${pct(revAvg)}`,
+      `reversalTotal=${pct(state.stats.reversalPnlPct)}`
     ].join(" | ")
   );
 }
@@ -843,7 +1186,8 @@ function handleFeature(p) {
         `aboveZero=${boolStr(p.fvvoAboveZero)}`,
         `crossUp=${boolStr(p.fvvoCrossUp)}`,
         `crossDown=${boolStr(p.fvvoCrossDown)}`,
-        `redDot=${boolStr(p.fvvoRedDot)}`
+        `redDot=${boolStr(p.fvvoRedDot)}`,
+        `bullishColor=${boolStr(p.fvvoBullishColor)}`
       ].join(" | ")
     );
   }
@@ -857,11 +1201,19 @@ function handleFeature(p) {
     if (exitDecision.exit) {
       closeVirtualLong(openPos, p, perf, exitDecision);
     } else if (CFG.DEBUG) {
+      const holdType =
+        openPos.setup === "DEEP_REVERSAL"
+          ? "FVVO_REVERSAL_LONG_HOLD"
+          : "FVVO_RAW_LONG_HOLD";
+
       logLine(
-        "FVVO_RAW_LONG_HOLD",
+        holdType,
         [
-          `🟡 symbol=${p.symbol}`,
+          `🟡 setup=${openPos.setup}`,
+          `symbol=${p.symbol}`,
           `price=${n(p.close, 4)}`,
+          `low=${n(p.low, 4)}`,
+          `stop=${openPos.stopPrice === null ? "na" : n(openPos.stopPrice, 4)}`,
           `pnl=${pct(perf.currentPnlPct)}`,
           `peak=${pct(perf.peakPnlPct)}`,
           `giveback=${pct(perf.givebackPct)}`,
@@ -874,30 +1226,64 @@ function handleFeature(p) {
     }
 
     state.lastFeature.set(p.symbol, p);
+    pushHistory(p);
     return;
   }
 
-  const entryDecision = evaluateLongEntry(p);
+  const continuationDecision = evaluateContinuationEntry(p);
+  const reversalDecision = evaluateDeepReversalEntry(p);
 
-  if (entryDecision.ok) {
-    openVirtualLong(p, entryDecision);
+  if (reversalDecision.ok) {
+    state.stats.reversalSignals += 1;
+    logLine(
+      "FVVO_REVERSAL_LONG_SIGNAL",
+      [
+        `🧪 symbol=${p.symbol}`,
+        `price=${n(p.close, 4)}`,
+        `reason=${reversalDecision.reason}`,
+        `rsi=${n(p.rsi, 2)}`,
+        `fvvo=${n(p.fvvoValue, 6)}`,
+        `slope=${n(p.fvvoSlope, 6)}`,
+        `aboveZero=${boolStr(p.fvvoAboveZero)}`,
+        `bullishColor=${boolStr(p.fvvoBullishColor)}`
+      ].join(" | "),
+      reversalDecision.checks
+    );
+  }
+
+  // Entry priority:
+  // 1) Deep reversal opens first because it catches earlier bounce.
+  // 2) Continuation opens if no reversal.
+  let chosenDecision = null;
+
+  if (reversalDecision.ok) {
+    chosenDecision = reversalDecision;
+  } else if (continuationDecision.ok) {
+    chosenDecision = continuationDecision;
+  }
+
+  if (chosenDecision) {
+    openVirtualLong(p, chosenDecision);
   } else if (CFG.DEBUG) {
     logLine(
       "FVVO_RAW_LONG_NO_ENTRY",
       [
         `symbol=${p.symbol}`,
         `price=${n(p.close, 4)}`,
-        `reason=${entryDecision.reason}`,
+        `continuation=${continuationDecision.reason}`,
+        `reversal=${reversalDecision.reason}`,
         `rsi=${n(p.rsi, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
         `aboveZero=${boolStr(p.fvvoAboveZero)}`,
-        `crossUp=${boolStr(p.fvvoCrossUp)}`
+        `crossUp=${boolStr(p.fvvoCrossUp)}`,
+        `bullishColor=${boolStr(p.fvvoBullishColor)}`
       ].join(" | ")
     );
   }
 
   state.lastFeature.set(p.symbol, p);
+  pushHistory(p);
 }
 
 // ============================================================
@@ -925,7 +1311,9 @@ app.get("/health", (req, res) => {
     openPositions: Array.from(state.positions.values()).map((p) => ({
       symbol: p.symbol,
       side: p.side,
+      setup: p.setup,
       entryPrice: p.entryPrice,
+      stopPrice: p.stopPrice,
       entryTime: p.entryTime,
       entryReason: p.entryReason,
       barsHeld: p.barsHeld,
@@ -1010,6 +1398,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_LONG_ENABLED=${CFG.FVVO_LONG_ENABLED}`);
   console.log(`FVVO_SHORT_ENABLED=${CFG.FVVO_SHORT_ENABLED}`);
   console.log("------------------------------------------------------------");
+  console.log(`FVVO_CONTINUATION_ENABLED=${CFG.FVVO_CONTINUATION_ENABLED}`);
   console.log(`FVVO_ENTRY_MIN_RSI=${CFG.FVVO_ENTRY_MIN_RSI}`);
   console.log(`FVVO_ENTRY_MIN_ADX=${CFG.FVVO_ENTRY_MIN_ADX}`);
   console.log(`FVVO_ENTRY_MIN_SLOPE=${CFG.FVVO_ENTRY_MIN_SLOPE}`);
@@ -1017,12 +1406,24 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_ENTRY_MAX_EXT_EMA18_PCT=${CFG.FVVO_ENTRY_MAX_EXT_EMA18_PCT}`);
   console.log(`FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT=${CFG.FVVO_ENTRY_ALLOW_EMA8_BELOW_EMA18_PCT}`);
   console.log("------------------------------------------------------------");
+  console.log(`FVVO_REVERSAL_ENABLED=${CFG.FVVO_REVERSAL_ENABLED}`);
+  console.log(`FVVO_REVERSAL_LOOKBACK_BARS=${CFG.FVVO_REVERSAL_LOOKBACK_BARS}`);
+  console.log(`FVVO_REVERSAL_RSI_WASHOUT_MAX=${CFG.FVVO_REVERSAL_RSI_WASHOUT_MAX}`);
+  console.log(`FVVO_REVERSAL_RSI_RECOVER_MIN=${CFG.FVVO_REVERSAL_RSI_RECOVER_MIN}`);
+  console.log(`FVVO_REVERSAL_MIN_DEEP_NEGATIVE=${CFG.FVVO_REVERSAL_MIN_DEEP_NEGATIVE}`);
+  console.log(`FVVO_REVERSAL_MIN_SLOPE=${CFG.FVVO_REVERSAL_MIN_SLOPE}`);
+  console.log(`FVVO_REVERSAL_MAX_BELOW_EMA8_PCT=${CFG.FVVO_REVERSAL_MAX_BELOW_EMA8_PCT}`);
+  console.log(`FVVO_REVERSAL_REQUIRE_PRICE_CONFIRM=${CFG.FVVO_REVERSAL_REQUIRE_PRICE_CONFIRM}`);
+  console.log(`FVVO_REVERSAL_ALLOW_BULLISH_COLOR=${CFG.FVVO_REVERSAL_ALLOW_BULLISH_COLOR}`);
+  console.log(`FVVO_REVERSAL_BLOCK_FRESH_LOW=${CFG.FVVO_REVERSAL_BLOCK_FRESH_LOW}`);
+  console.log("------------------------------------------------------------");
   console.log(`FVVO_GIVEBACK_ARM1_PCT=${CFG.FVVO_GIVEBACK_ARM1_PCT}`);
   console.log(`FVVO_GIVEBACK_ARM1_DROP_PCT=${CFG.FVVO_GIVEBACK_ARM1_DROP_PCT}`);
   console.log(`FVVO_GIVEBACK_ARM2_PCT=${CFG.FVVO_GIVEBACK_ARM2_PCT}`);
   console.log(`FVVO_GIVEBACK_ARM2_DROP_PCT=${CFG.FVVO_GIVEBACK_ARM2_DROP_PCT}`);
   console.log(`FVVO_HARD_DOWN_SLOPE=${CFG.FVVO_HARD_DOWN_SLOPE}`);
   console.log(`FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT=${CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT}`);
+  console.log(`FVVO_INTRABAR_HARD_STOP_ENABLED=${CFG.FVVO_INTRABAR_HARD_STOP_ENABLED}`);
   console.log(`FVVO_MAX_LOSS_EXIT_PCT=${CFG.FVVO_MAX_LOSS_EXIT_PCT}`);
   console.log(`FVVO_MAX_HOLD_BARS=${CFG.FVVO_MAX_HOLD_BARS}`);
   console.log("============================================================");
