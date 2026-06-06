@@ -1,11 +1,12 @@
 // ============================================================
-// BrainFVVO_v1b_SHADOW
+// BrainFVVO_v1b_GREEN_SHADOW
 // Standalone FVVO shadow brain
 // ------------------------------------------------------------
 // Purpose:
 // - SHADOW-only FVVO brain for SOLUSDT
 // - Primary setup: FVVO washout reversal
 // - Secondary setup: strict FVVO zero-line cross-up confirmation
+// - Uses explicit fvvoGreenDot from Pine JSON
 // - Weak above-zero-rising continuation is disabled by default
 // - Does not use Ray Bullish Trend Change as an entry trigger
 // - Tick data is not required for the entry logic
@@ -42,10 +43,10 @@ function envBool(name, fallback = false) {
 // ============================================================
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1b_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1b_GREEN_SHADOW"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
-  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "CHANGE_ME_TO_RANDOM_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
+  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
   DEBUG: envBool("DEBUG", true),
 
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
@@ -57,7 +58,6 @@ const CFG = {
   FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
   FVVO_SHORT_ENABLED: envBool("FVVO_SHORT_ENABLED", false),
 
-  // General entry safety
   FVVO_ENTRY_COOLDOWN_BARS: envNum("FVVO_ENTRY_COOLDOWN_BARS", 2),
 
   // Primary setup: washout reversal
@@ -67,6 +67,7 @@ const CFG = {
   FVVO_WASHOUT_RSI_RECOVER_MIN: envNum("FVVO_WASHOUT_RSI_RECOVER_MIN", 38),
   FVVO_WASHOUT_MIN_DEEP_NEGATIVE: envNum("FVVO_WASHOUT_MIN_DEEP_NEGATIVE", -2.0),
   FVVO_WASHOUT_MIN_SLOPE: envNum("FVVO_WASHOUT_MIN_SLOPE", 0.50),
+  FVVO_WASHOUT_ALLOW_GREEN_DOT: envBool("FVVO_WASHOUT_ALLOW_GREEN_DOT", true),
   FVVO_WASHOUT_MAX_CURRENT_FVVO: envNum("FVVO_WASHOUT_MAX_CURRENT_FVVO", 0.75),
   FVVO_WASHOUT_MAX_BELOW_EMA8_PCT: envNum("FVVO_WASHOUT_MAX_BELOW_EMA8_PCT", 0.45),
   FVVO_WASHOUT_MAX_EXT_EMA8_PCT: envNum("FVVO_WASHOUT_MAX_EXT_EMA8_PCT", 0.55),
@@ -83,7 +84,7 @@ const CFG = {
   FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT: envNum("FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT", 0.10),
   FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS: envNum("FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS", 2),
 
-  // Optional strict above-zero rising continuation. Disabled by default because replay showed weak entries.
+  // Optional strict above-zero rising continuation
   FVVO_RISING_CONT_ENABLED: envBool("FVVO_RISING_CONT_ENABLED", false),
   FVVO_RISING_MIN_RSI: envNum("FVVO_RISING_MIN_RSI", 55),
   FVVO_RISING_MIN_SLOPE: envNum("FVVO_RISING_MIN_SLOPE", 0.80),
@@ -110,7 +111,7 @@ const CFG = {
 
 // Hard safety.
 if (!CFG.SHADOW_ONLY || CFG.ENABLE_HTTP_FORWARD) {
-  console.log("⚠️ SAFETY: BrainFVVO_v1b_SHADOW is SHADOW ONLY.");
+  console.log("⚠️ SAFETY: BrainFVVO_v1b_GREEN_SHADOW is SHADOW ONLY.");
   console.log("⚠️ SAFETY: Forcing SHADOW_ONLY=true and ENABLE_HTTP_FORWARD=false.");
   CFG.SHADOW_ONLY = true;
   CFG.ENABLE_HTTP_FORWARD = false;
@@ -367,6 +368,9 @@ function normalizePayload(body) {
     fvvoCrossDown = prevFvvoValue >= 0 && fvvoValue < 0;
   }
 
+  const fvvoGreenDot = safeBool(raw.fvvoGreenDot, false);
+  const fvvoBullishColor = safeBool(raw.fvvoBullishColor, false) || fvvoGreenDot;
+
   return {
     raw,
     secret: strFromPayload(raw.secret, ""),
@@ -399,7 +403,8 @@ function normalizePayload(body) {
     fvvoCrossDown,
 
     fvvoRedDot: safeBool(raw.fvvoRedDot, false),
-    fvvoBullishColor: safeBool(raw.fvvoBullishColor, false),
+    fvvoGreenDot,
+    fvvoBullishColor,
     fvvoBearishColor: safeBool(raw.fvvoBearishColor, false),
 
     sniperBuy: safeBool(raw.sniperBuy, false),
@@ -467,26 +472,59 @@ function evaluateWashoutEntry(p) {
   const prevRsi = prev ? safeNum(prev.rsi, null) : null;
   const prevHigh = prev ? safeNum(prev.high, null) : null;
 
-  const rsiWasWashedOut = Number.isFinite(recentRsiLow) && recentRsiLow <= CFG.FVVO_WASHOUT_RSI_MAX;
+  const rsiWasWashedOut =
+    Number.isFinite(recentRsiLow) &&
+    recentRsiLow <= CFG.FVVO_WASHOUT_RSI_MAX;
+
   const rsiRecovering =
     Number.isFinite(p.rsi) &&
     p.rsi >= CFG.FVVO_WASHOUT_RSI_RECOVER_MIN &&
     (!Number.isFinite(prevRsi) || p.rsi >= prevRsi);
 
-  const fvvoWasDeep = Number.isFinite(recentFvvoLow) && recentFvvoLow <= CFG.FVVO_WASHOUT_MIN_DEEP_NEGATIVE;
-  const currentFvvoNotLate = Number.isFinite(p.fvvoValue) && p.fvvoValue <= CFG.FVVO_WASHOUT_MAX_CURRENT_FVVO;
+  const fvvoWasDeep =
+    Number.isFinite(recentFvvoLow) &&
+    recentFvvoLow <= CFG.FVVO_WASHOUT_MIN_DEEP_NEGATIVE;
 
-  const fvvoSlopeStrong = Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_WASHOUT_MIN_SLOPE;
-  const fvvoRising = risingVsPrevious(p, "fvvoValue") || twoBarRisingIncludingCurrent(p, "fvvoValue");
-  const fvvoRecovery = fvvoSlopeStrong || fvvoRising || p.fvvoBullishColor;
+  const currentFvvoNotLate =
+    Number.isFinite(p.fvvoValue) &&
+    p.fvvoValue <= CFG.FVVO_WASHOUT_MAX_CURRENT_FVVO;
+
+  const greenDotOk =
+    CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT &&
+    p.fvvoGreenDot === true;
+
+  const bullishColorOk =
+    p.fvvoBullishColor === true;
+
+  const fvvoSlopeStrong =
+    Number.isFinite(p.fvvoSlope) &&
+    p.fvvoSlope >= CFG.FVVO_WASHOUT_MIN_SLOPE;
+
+  const fvvoRising =
+    risingVsPrevious(p, "fvvoValue") ||
+    twoBarRisingIncludingCurrent(p, "fvvoValue");
+
+  const fvvoRecovery =
+    greenDotOk ||
+    bullishColorOk ||
+    fvvoSlopeStrong ||
+    fvvoRising;
 
   const closeBelowEma8Pct = calcBelowPct(p.ema8, p.close);
   const extEma8Pct = calcPct(p.close, p.ema8);
   const extEma18Pct = calcPct(p.close, p.ema18);
 
-  const notTooFarBelowEma8 = Number.isFinite(closeBelowEma8Pct) && closeBelowEma8Pct <= CFG.FVVO_WASHOUT_MAX_BELOW_EMA8_PCT;
-  const notTooExtendedFromEma8 = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA8_PCT;
-  const notTooExtendedFromEma18 = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA18_PCT;
+  const notTooFarBelowEma8 =
+    Number.isFinite(closeBelowEma8Pct) &&
+    closeBelowEma8Pct <= CFG.FVVO_WASHOUT_MAX_BELOW_EMA8_PCT;
+
+  const notTooExtendedFromEma8 =
+    Number.isFinite(extEma8Pct) &&
+    extEma8Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA8_PCT;
+
+  const notTooExtendedFromEma18 =
+    Number.isFinite(extEma18Pct) &&
+    extEma18Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA18_PCT;
 
   const bullishCandle = Number.isFinite(p.open) && p.close > p.open;
   const closeAbovePrevHigh = Number.isFinite(prevHigh) && p.close > prevHigh;
@@ -506,7 +544,11 @@ function evaluateWashoutEntry(p) {
     !bullishCandle &&
     !closeReclaimEma8;
 
-  const noBearishConflict = !p.fvvoBearishColor || p.fvvoBullishColor || fvvoSlopeStrong;
+  const noBearishConflict =
+    !p.fvvoBearishColor ||
+    greenDotOk ||
+    bullishColorOk ||
+    fvvoSlopeStrong;
 
   const ok =
     rsiWasWashedOut &&
@@ -527,9 +569,10 @@ function evaluateWashoutEntry(p) {
     rsiRecovering,
     fvvoWasDeep,
     currentFvvoNotLate,
+    greenDotOk,
+    bullishColorOk,
     fvvoSlopeStrong,
     fvvoRising,
-    fvvoBullishColor: p.fvvoBullishColor,
     fvvoRecovery,
     closeBelowEma8Pct,
     extEma8Pct,
@@ -552,7 +595,8 @@ function evaluateWashoutEntry(p) {
   let reason = "NO_WASHOUT_ENTRY";
 
   if (ok) {
-    if (p.fvvoBullishColor) reason = "FVVO_WASHOUT_GREEN";
+    if (greenDotOk) reason = "FVVO_WASHOUT_GREEN_DOT";
+    else if (bullishColorOk) reason = "FVVO_WASHOUT_BULLISH_COLOR";
     else if (fvvoSlopeStrong) reason = "FVVO_WASHOUT_SLOPE_RECOVERY";
     else reason = "FVVO_WASHOUT_RISING";
   } else {
@@ -590,21 +634,32 @@ function evaluateCrossEntry(p) {
   const priceAboveEma8 = p.close > p.ema8;
 
   const ema8BelowEma18Pct = p.ema8 < p.ema18 ? calcPct(p.ema18, p.ema8) : 0;
+
   const emaStructureOk =
     p.ema8 >= p.ema18 ||
-    (Number.isFinite(ema8BelowEma18Pct) && ema8BelowEma18Pct <= CFG.FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT);
+    (Number.isFinite(ema8BelowEma18Pct) &&
+      ema8BelowEma18Pct <= CFG.FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT);
 
   const extEma8Pct = calcPct(p.close, p.ema8);
   const extEma18Pct = calcPct(p.close, p.ema18);
 
-  const notTooExtendedFromEma8 = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA8_PCT;
-  const notTooExtendedFromEma18 = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA18_PCT;
+  const notTooExtendedFromEma8 =
+    Number.isFinite(extEma8Pct) &&
+    extEma8Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA8_PCT;
+
+  const notTooExtendedFromEma18 =
+    Number.isFinite(extEma18Pct) &&
+    extEma18Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA18_PCT;
 
   const recentRedDotBlocked =
     CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS > 0 &&
     recentRedDot(p, CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS);
 
-  const noBearishConflict = !p.fvvoBearishColor || p.fvvoCrossUp || p.burstBullish;
+  const noBearishConflict =
+    !p.fvvoBearishColor ||
+    p.fvvoCrossUp ||
+    p.burstBullish ||
+    p.fvvoGreenDot;
 
   const ok =
     fvvoCrossOk &&
@@ -655,7 +710,7 @@ function evaluateCrossEntry(p) {
 }
 
 // ============================================================
-// ENTRY: OPTIONAL STRICT ABOVE-ZERO RISING CONTINUATION
+// ENTRY: OPTIONAL STRICT RISING CONTINUATION
 // ============================================================
 
 function evaluateRisingContinuationEntry(p) {
@@ -676,10 +731,21 @@ function evaluateRisingContinuationEntry(p) {
   const extEma8Pct = calcPct(p.close, p.ema8);
   const extEma18Pct = calcPct(p.close, p.ema18);
 
-  const notTooExtendedFromEma8 = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_RISING_MAX_EXT_EMA8_PCT;
-  const notTooExtendedFromEma18 = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_RISING_MAX_EXT_EMA18_PCT;
-  const noRecentRedDot = !recentRedDot(p, CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS);
-  const noBearishConflict = !p.fvvoBearishColor || p.burstBullish;
+  const notTooExtendedFromEma8 =
+    Number.isFinite(extEma8Pct) &&
+    extEma8Pct <= CFG.FVVO_RISING_MAX_EXT_EMA8_PCT;
+
+  const notTooExtendedFromEma18 =
+    Number.isFinite(extEma18Pct) &&
+    extEma18Pct <= CFG.FVVO_RISING_MAX_EXT_EMA18_PCT;
+
+  const noRecentRedDot =
+    !recentRedDot(p, CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS);
+
+  const noBearishConflict =
+    !p.fvvoBearishColor ||
+    p.burstBullish ||
+    p.fvvoGreenDot;
 
   const ok =
     fvvoOk &&
@@ -765,6 +831,7 @@ function openVirtualLong(p, decision, barNo) {
         : null,
 
     redDotSeen: false,
+    greenDotAtEntry: p.fvvoGreenDot,
     backupUsed: false
   };
 
@@ -791,6 +858,7 @@ function openVirtualLong(p, decision, barNo) {
       `aboveZero=${boolStr(p.fvvoAboveZero)}`,
       `crossUp=${boolStr(p.fvvoCrossUp)}`,
       `redDot=${boolStr(p.fvvoRedDot)}`,
+      `greenDot=${boolStr(p.fvvoGreenDot)}`,
       `bullishColor=${boolStr(p.fvvoBullishColor)}`,
       `burstBullish=${boolStr(p.burstBullish)}`,
       `sniperBuy=${boolStr(p.sniperBuy)}`
@@ -838,8 +906,13 @@ function evaluateLongExit(pos, p, perf) {
 
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
 
-  const givebackArm2 = peakPnlPct >= CFG.FVVO_GIVEBACK_ARM2_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM2_DROP_PCT;
-  const givebackArm1 = peakPnlPct >= CFG.FVVO_GIVEBACK_ARM1_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
+  const givebackArm2 =
+    peakPnlPct >= CFG.FVVO_GIVEBACK_ARM2_PCT &&
+    givebackPct >= CFG.FVVO_GIVEBACK_ARM2_DROP_PCT;
+
+  const givebackArm1 =
+    peakPnlPct >= CFG.FVVO_GIVEBACK_ARM1_PCT &&
+    givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
   const backupNoRedDot =
     !pos.redDotSeen &&
@@ -848,15 +921,22 @@ function evaluateLongExit(pos, p, perf) {
     currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT &&
     givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-  const crossDownExit = p.fvvoCrossDown && currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
-  const hardSlopeExit = hardDownSlope && currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
+  const crossDownExit =
+    p.fvvoCrossDown &&
+    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
+
+  const hardSlopeExit =
+    hardDownSlope &&
+    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
 
   const ema8LossProfitExit =
     closeLostEma8 &&
     currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT &&
     givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-  const maxHoldExit = CFG.FVVO_MAX_HOLD_BARS > 0 && pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
+  const maxHoldExit =
+    CFG.FVVO_MAX_HOLD_BARS > 0 &&
+    pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
 
   if (intrabarHardStopHit) {
     return { exit: true, reason: "FVVO_INTRABAR_HARD_STOP", backupUsed: true, exitPrice: pos.stopPrice };
@@ -964,6 +1044,7 @@ function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
       `barsHeld=${pos.barsHeld}`,
       `reason=${exitDecision.reason}`,
       `redDotSeen=${boolStr(pos.redDotSeen)}`,
+      `greenDotAtEntry=${boolStr(pos.greenDotAtEntry)}`,
       `backupUsed=${boolStr(exitDecision.backupUsed)}`,
       `fvvo=${n(p.fvvoValue, 6)}`,
       `slope=${n(p.fvvoSlope, 6)}`,
@@ -986,6 +1067,7 @@ function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
       `entryReason=${pos.entryReason}`,
       `exitReason=${exitDecision.reason}`,
       `redDotSeen=${boolStr(pos.redDotSeen)}`,
+      `greenDotAtEntry=${boolStr(pos.greenDotAtEntry)}`,
       `backupUsed=${boolStr(exitDecision.backupUsed)}`,
       `barsHeld=${pos.barsHeld}`
     ].join(" | ")
@@ -1017,6 +1099,7 @@ function observeShortSignal(p) {
       `symbol=${p.symbol}`,
       `price=${n(p.close, 4)}`,
       `redDot=${boolStr(p.fvvoRedDot)}`,
+      `greenDot=${boolStr(p.fvvoGreenDot)}`,
       `crossDown=${boolStr(p.fvvoCrossDown)}`,
       `bearishColor=${boolStr(p.fvvoBearishColor)}`,
       `sniperSell=${boolStr(p.sniperSell)}`,
@@ -1103,6 +1186,7 @@ function handleFeature(p) {
         `crossUp=${boolStr(p.fvvoCrossUp)}`,
         `crossDown=${boolStr(p.fvvoCrossDown)}`,
         `redDot=${boolStr(p.fvvoRedDot)}`,
+        `greenDot=${boolStr(p.fvvoGreenDot)}`,
         `bullishColor=${boolStr(p.fvvoBullishColor)}`
       ].join(" | ")
     );
@@ -1133,7 +1217,8 @@ function handleFeature(p) {
           `barsHeld=${openPos.barsHeld}`,
           `fvvo=${n(p.fvvoValue, 6)}`,
           `slope=${n(p.fvvoSlope, 6)}`,
-          `redDot=${boolStr(p.fvvoRedDot)}`
+          `redDot=${boolStr(p.fvvoRedDot)}`,
+          `greenDot=${boolStr(p.fvvoGreenDot)}`
         ].join(" | ")
       );
     }
@@ -1156,6 +1241,7 @@ function handleFeature(p) {
           `rsi=${n(p.rsi, 2)}`,
           `fvvo=${n(p.fvvoValue, 6)}`,
           `slope=${n(p.fvvoSlope, 6)}`,
+          `greenDot=${boolStr(p.fvvoGreenDot)}`,
           `aboveZero=${boolStr(p.fvvoAboveZero)}`,
           `crossUp=${boolStr(p.fvvoCrossUp)}`
         ].join(" | ")
@@ -1182,6 +1268,7 @@ function handleFeature(p) {
         `rsi=${n(p.rsi, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
+        `greenDot=${boolStr(p.fvvoGreenDot)}`,
         `aboveZero=${boolStr(p.fvvoAboveZero)}`,
         `bullishColor=${boolStr(p.fvvoBullishColor)}`
       ].join(" | "),
@@ -1200,6 +1287,7 @@ function handleFeature(p) {
         `rsi=${n(p.rsi, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
+        `greenDot=${boolStr(p.fvvoGreenDot)}`,
         `crossUp=${boolStr(p.fvvoCrossUp)}`
       ].join(" | "),
       crossDecision.checks
@@ -1216,16 +1304,13 @@ function handleFeature(p) {
         `reason=${risingDecision.reason}`,
         `rsi=${n(p.rsi, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
-        `slope=${n(p.fvvoSlope, 6)}`
+        `slope=${n(p.fvvoSlope, 6)}`,
+        `greenDot=${boolStr(p.fvvoGreenDot)}`
       ].join(" | "),
       risingDecision.checks
     );
   }
 
-  // Priority:
-  // 1. Washout reversal catches earlier bounce from RSI/FVVO washout.
-  // 2. Strict cross-up confirmation catches confirmed zero-line reclaim.
-  // 3. Strict rising continuation only if explicitly enabled.
   let chosenDecision = null;
 
   if (washoutDecision.ok) chosenDecision = washoutDecision;
@@ -1246,6 +1331,7 @@ function handleFeature(p) {
         `rsi=${n(p.rsi, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
+        `greenDot=${boolStr(p.fvvoGreenDot)}`,
         `aboveZero=${boolStr(p.fvvoAboveZero)}`,
         `crossUp=${boolStr(p.fvvoCrossUp)}`,
         `redDot=${boolStr(p.fvvoRedDot)}`,
@@ -1290,7 +1376,8 @@ app.get("/health", (req, res) => {
       entryReason: p.entryReason,
       barsHeld: p.barsHeld,
       peakPnlPct: p.peakPnlPct,
-      redDotSeen: p.redDotSeen
+      redDotSeen: p.redDotSeen,
+      greenDotAtEntry: p.greenDotAtEntry
     }))
   });
 });
@@ -1357,6 +1444,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_WASHOUT_RSI_RECOVER_MIN=${CFG.FVVO_WASHOUT_RSI_RECOVER_MIN}`);
   console.log(`FVVO_WASHOUT_MIN_DEEP_NEGATIVE=${CFG.FVVO_WASHOUT_MIN_DEEP_NEGATIVE}`);
   console.log(`FVVO_WASHOUT_MIN_SLOPE=${CFG.FVVO_WASHOUT_MIN_SLOPE}`);
+  console.log(`FVVO_WASHOUT_ALLOW_GREEN_DOT=${CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT}`);
   console.log(`FVVO_WASHOUT_MAX_CURRENT_FVVO=${CFG.FVVO_WASHOUT_MAX_CURRENT_FVVO}`);
   console.log(`FVVO_WASHOUT_MAX_BELOW_EMA8_PCT=${CFG.FVVO_WASHOUT_MAX_BELOW_EMA8_PCT}`);
   console.log(`FVVO_WASHOUT_MAX_EXT_EMA8_PCT=${CFG.FVVO_WASHOUT_MAX_EXT_EMA8_PCT}`);
