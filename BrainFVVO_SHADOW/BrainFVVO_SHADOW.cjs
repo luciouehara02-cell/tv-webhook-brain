@@ -1,14 +1,16 @@
 // ============================================================
-// BrainFVVO_v1d_DEMO_FORWARD
+// BrainFVVO_v1e_PULSE_TEST_DEMO_FORWARD
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
-// v1d optimized after replay on June07 v1c log:
+// v1e pulse test build based on v1d optimized logic:
 // - DEMO-only forwarding safety.
 // - Forwards CROSS_UP_CONFIRM only by default.
 // - Adds strict high-momentum override for FVVO zero-line cross-up.
 // - Keeps washout/rising/green-dot entries disabled by default.
 // - Adds stronger shadow strong-trend hold to avoid early giveback exits.
 // - Keeps exit forwarding disabled by default.
+// - Adds FVVO red/green pulse fields for testing.
+// - Dot pulses are observation-only by default and do not affect entry/exit logic unless FVVO_DOT_PULSE_USE_IN_LOGIC=true.
 // ============================================================
 
 const express = require("express");
@@ -45,7 +47,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1d_DEMO_FORWARD"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1e_PULSE_TEST_DEMO_FORWARD"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -76,6 +78,12 @@ const CFG = {
   FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
   FVVO_SHORT_ENABLED: envBool("FVVO_SHORT_ENABLED", false),
   FVVO_ENTRY_COOLDOWN_BARS: envNum("FVVO_ENTRY_COOLDOWN_BARS", 2),
+
+  // v1e: pulse-dot test controls. Default is observation-only so dot pulses cannot
+  // close the virtual position, block entries, or affect forwarding.
+  FVVO_DOT_PULSE_TEST_MODE: envBool("FVVO_DOT_PULSE_TEST_MODE", true),
+  FVVO_DOT_PULSE_USE_IN_LOGIC: envBool("FVVO_DOT_PULSE_USE_IN_LOGIC", false),
+
 
   FVVO_WASHOUT_ENABLED: envBool("FVVO_WASHOUT_ENABLED", false),
   FVVO_WASHOUT_LOOKBACK_BARS: envNum("FVVO_WASHOUT_LOOKBACK_BARS", 12),
@@ -522,7 +530,18 @@ function normalizePayload(body) {
     fvvoCrossDown = prevFvvoValue >= 0 && fvvoValue < 0;
   }
 
-  const fvvoGreenDot = safeBool(raw.fvvoGreenDot, false);
+  // v1e: publisher can send raw active state and one-candle pulse state.
+  // By default, pulses are observation-only; legacy fvvoRedDot/fvvoGreenDot are ignored
+  // for trade logic unless FVVO_DOT_PULSE_USE_IN_LOGIC=true.
+  const fvvoRedActive = safeBool(raw.fvvoRedActive, safeBool(raw.fvvoRedDotActive, false));
+  const fvvoGreenActive = safeBool(raw.fvvoGreenActive, safeBool(raw.fvvoGreenDotActive, false));
+  const fvvoRedPulse = safeBool(raw.fvvoRedPulse, safeBool(raw.fvvoRedDotPulse, false));
+  const fvvoGreenPulse = safeBool(raw.fvvoGreenPulse, safeBool(raw.fvvoGreenDotPulse, false));
+  const fvvoRedDotLegacy = safeBool(raw.fvvoRedDot, false);
+  const fvvoGreenDotLegacy = safeBool(raw.fvvoGreenDot, false);
+
+  const fvvoRedDot = CFG.FVVO_DOT_PULSE_USE_IN_LOGIC ? fvvoRedPulse : false;
+  const fvvoGreenDot = CFG.FVVO_DOT_PULSE_USE_IN_LOGIC ? fvvoGreenPulse : false;
   const fvvoBullishColor = safeBool(raw.fvvoBullishColor, false) || (CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT && fvvoGreenDot);
 
   return {
@@ -552,8 +571,14 @@ function normalizePayload(body) {
     fvvoSlope,
     fvvoCrossUp,
     fvvoCrossDown,
-    fvvoRedDot: safeBool(raw.fvvoRedDot, false),
+    fvvoRedDot,
     fvvoGreenDot,
+    fvvoRedActive,
+    fvvoGreenActive,
+    fvvoRedPulse,
+    fvvoGreenPulse,
+    fvvoRedDotLegacy,
+    fvvoGreenDotLegacy,
     fvvoBullishColor,
     fvvoBearishColor: safeBool(raw.fvvoBearishColor, false),
     sniperBuy: safeBool(raw.sniperBuy, false),
@@ -813,6 +838,10 @@ async function openVirtualLong(p, decision, barNo) {
     `crossUp=${boolStr(p.fvvoCrossUp)}`,
     `redDot=${boolStr(p.fvvoRedDot)}`,
     `greenDot=${boolStr(p.fvvoGreenDot)}`,
+    `redActive=${boolStr(p.fvvoRedActive)}`,
+    `greenActive=${boolStr(p.fvvoGreenActive)}`,
+    `redPulse=${boolStr(p.fvvoRedPulse)}`,
+    `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
     `bullishColor=${boolStr(p.fvvoBullishColor)}`,
     `forwardEligible=${boolStr(shouldForwardSetup(decision.setup))}`,
     `shadowOnly=${boolStr(CFG.SHADOW_ONLY)}`
@@ -988,7 +1017,13 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
 
 function observeShortSignal(p) {
   if (CFG.FVVO_SHORT_ENABLED) return;
-  const shortSignal = p.fvvoCrossDown || p.fvvoRedDot || p.burstBearish || p.sniperSell || p.fvvoBearishColor;
+  const shortSignal =
+    p.fvvoCrossDown ||
+    p.fvvoRedDot ||
+    p.fvvoRedPulse ||
+    p.burstBearish ||
+    p.sniperSell ||
+    p.fvvoBearishColor;
   if (!shortSignal) return;
   logLine("FVVO_RAW_SHORT_SIGNAL", [
     `⚠️ observationOnly=true`,
@@ -996,6 +1031,10 @@ function observeShortSignal(p) {
     `price=${n(p.close, 4)}`,
     `redDot=${boolStr(p.fvvoRedDot)}`,
     `greenDot=${boolStr(p.fvvoGreenDot)}`,
+    `redActive=${boolStr(p.fvvoRedActive)}`,
+    `greenActive=${boolStr(p.fvvoGreenActive)}`,
+    `redPulse=${boolStr(p.fvvoRedPulse)}`,
+    `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
     `crossDown=${boolStr(p.fvvoCrossDown)}`,
     `bearishColor=${boolStr(p.fvvoBearishColor)}`,
     `sniperSell=${boolStr(p.sniperSell)}`,
@@ -1078,6 +1117,13 @@ async function handleFeature(p) {
       `crossDown=${boolStr(p.fvvoCrossDown)}`,
       `redDot=${boolStr(p.fvvoRedDot)}`,
       `greenDot=${boolStr(p.fvvoGreenDot)}`,
+      `redActive=${boolStr(p.fvvoRedActive)}`,
+      `greenActive=${boolStr(p.fvvoGreenActive)}`,
+      `redPulse=${boolStr(p.fvvoRedPulse)}`,
+      `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
+      `redLegacy=${boolStr(p.fvvoRedDotLegacy)}`,
+      `greenLegacy=${boolStr(p.fvvoGreenDotLegacy)}`,
+      `dotLogic=${boolStr(CFG.FVVO_DOT_PULSE_USE_IN_LOGIC)}`,
       `bullishColor=${boolStr(p.fvvoBullishColor)}`
     ].join(" | "));
   }
@@ -1154,6 +1200,8 @@ async function handleFeature(p) {
       `fvvo=${n(p.fvvoValue, 6)}`,
       `slope=${n(p.fvvoSlope, 6)}`,
       `greenDot=${boolStr(p.fvvoGreenDot)}`,
+      `redPulse=${boolStr(p.fvvoRedPulse)}`,
+      `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
       `aboveZero=${boolStr(p.fvvoAboveZero)}`,
       `bullishColor=${boolStr(p.fvvoBullishColor)}`,
       `forwardEligible=${boolStr(shouldForwardSetup(washoutDecision.setup))}`
@@ -1211,6 +1259,8 @@ async function handleFeature(p) {
       `fvvo=${n(p.fvvoValue, 6)}`,
       `slope=${n(p.fvvoSlope, 6)}`,
       `greenDot=${boolStr(p.fvvoGreenDot)}`,
+      `redPulse=${boolStr(p.fvvoRedPulse)}`,
+      `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
       `aboveZero=${boolStr(p.fvvoAboveZero)}`,
       `crossUp=${boolStr(p.fvvoCrossUp)}`,
       `redDot=${boolStr(p.fvvoRedDot)}`,
@@ -1271,6 +1321,10 @@ app.get("/health", (req, res) => {
       minAdx: CFG.FVVO_STRONG_TREND_HOLD_MIN_ADX,
       minFvvo: CFG.FVVO_STRONG_TREND_HOLD_MIN_FVVO,
       maxNegativeSlope: CFG.FVVO_STRONG_TREND_HOLD_MAX_NEG_SLOPE
+    },
+    dotPulseTest: {
+      enabled: CFG.FVVO_DOT_PULSE_TEST_MODE,
+      useInLogic: CFG.FVVO_DOT_PULSE_USE_IN_LOGIC
     },
     stats: state.stats,
     openPositions: Array.from(state.positions.values()).map((p) => ({
@@ -1357,6 +1411,8 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_LONG_ENABLED=${CFG.FVVO_LONG_ENABLED}`);
   console.log(`FVVO_SHORT_ENABLED=${CFG.FVVO_SHORT_ENABLED}`);
   console.log(`FVVO_ENTRY_COOLDOWN_BARS=${CFG.FVVO_ENTRY_COOLDOWN_BARS}`);
+  console.log(`FVVO_DOT_PULSE_TEST_MODE=${CFG.FVVO_DOT_PULSE_TEST_MODE}`);
+  console.log(`FVVO_DOT_PULSE_USE_IN_LOGIC=${CFG.FVVO_DOT_PULSE_USE_IN_LOGIC}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_WASHOUT_ENABLED=${CFG.FVVO_WASHOUT_ENABLED}`);
   console.log(`FVVO_WASHOUT_ALLOW_GREEN_DOT=${CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT}`);
