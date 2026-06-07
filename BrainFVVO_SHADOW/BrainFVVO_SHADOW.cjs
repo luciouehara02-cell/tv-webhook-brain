@@ -1,15 +1,14 @@
 // ============================================================
-// BrainFVVO_v1b_GREEN_SHADOW
-// Standalone FVVO shadow brain
+// BrainFVVO_v1c_DEMO_FORWARD
+// Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // Purpose:
-// - SHADOW-only FVVO brain for SOLUSDT
-// - Primary setup: FVVO washout reversal
-// - Secondary setup: strict FVVO zero-line cross-up confirmation
-// - Uses explicit fvvoGreenDot from Pine JSON
-// - Weak above-zero-rising continuation is disabled by default
-// - Does not use Ray Bullish Trend Change as an entry trigger
-// - Tick data is not required for the entry logic
+// - DEMO-only 3Commas Signal Bot forwarding
+// - Keeps full shadow scorecard
+// - First real DEMO forward: CROSS_UP_CONFIRM only by default
+// - Washout and rising continuation remain shadow-only by default
+// - Green/red dot can be received, but green dot is ignored by default
+// - No LIVE forwarding allowed unless explicitly changed in env and code
 // ============================================================
 
 const express = require("express");
@@ -38,36 +37,66 @@ function envBool(name, fallback = false) {
   return ["1", "true", "yes", "y", "on"].includes(s);
 }
 
+function parseJsonEnv(name, fallback) {
+  const raw = envStr(name, "");
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.log(`${new Date().toISOString()} | CONFIG_ERROR | ${name} is not valid JSON: ${err.message}`);
+    return fallback;
+  }
+}
+
 // ============================================================
 // CONFIG
 // ============================================================
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1b_GREEN_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1c_DEMO_FORWARD"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
-  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
+  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
   DEBUG: envBool("DEBUG", true),
 
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
 
+  // Forwarding safety.
   SHADOW_ONLY: envBool("SHADOW_ONLY", true),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", false),
+  DEMO_FORWARD_ALLOWED: envBool("DEMO_FORWARD_ALLOWED", false),
+  LIVE_FORWARD_ALLOWED: envBool("LIVE_FORWARD_ALLOWED", false),
+  C3_DRY_RUN: envBool("C3_DRY_RUN", false),
+
+  C3_SIGNAL_URL: envStr("C3_SIGNAL_URL", "https://api.3commas.io/signal_bots/webhooks"),
+  C3_SIGNAL_SECRET: envStr("C3_SIGNAL_SECRET", ""),
+  C3_MAX_LAG_SEC: envNum("C3_MAX_LAG_SEC", 300),
+  C3_ORDER_AMOUNT_QUOTE: envNum("C3_ORDER_AMOUNT_QUOTE", 0),
+  C3_REQUEST_TIMEOUT_MS: envNum("C3_REQUEST_TIMEOUT_MS", 10000),
+  C3_FORWARD_DEDUP_MS: envNum("C3_FORWARD_DEDUP_MS", 60000),
+  SYMBOL_BOT_MAP: parseJsonEnv("SYMBOL_BOT_MAP", {}),
+
+  // Forward switches. First demo only forwards CROSS_UP_CONFIRM.
+  FVVO_FORWARD_CROSS_ENABLED: envBool("FVVO_FORWARD_CROSS_ENABLED", true),
+  FVVO_FORWARD_WASHOUT_ENABLED: envBool("FVVO_FORWARD_WASHOUT_ENABLED", false),
+  FVVO_FORWARD_RISING_ENABLED: envBool("FVVO_FORWARD_RISING_ENABLED", false),
+  FVVO_FORWARD_EXIT_ENABLED: envBool("FVVO_FORWARD_EXIT_ENABLED", false),
 
   FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
   FVVO_SHORT_ENABLED: envBool("FVVO_SHORT_ENABLED", false),
 
   FVVO_ENTRY_COOLDOWN_BARS: envNum("FVVO_ENTRY_COOLDOWN_BARS", 2),
 
-  // Primary setup: washout reversal
+  // Primary setup: washout reversal. Kept shadow-only by default.
   FVVO_WASHOUT_ENABLED: envBool("FVVO_WASHOUT_ENABLED", true),
   FVVO_WASHOUT_LOOKBACK_BARS: envNum("FVVO_WASHOUT_LOOKBACK_BARS", 12),
   FVVO_WASHOUT_RSI_MAX: envNum("FVVO_WASHOUT_RSI_MAX", 35),
   FVVO_WASHOUT_RSI_RECOVER_MIN: envNum("FVVO_WASHOUT_RSI_RECOVER_MIN", 38),
   FVVO_WASHOUT_MIN_DEEP_NEGATIVE: envNum("FVVO_WASHOUT_MIN_DEEP_NEGATIVE", -2.0),
   FVVO_WASHOUT_MIN_SLOPE: envNum("FVVO_WASHOUT_MIN_SLOPE", 0.50),
-  FVVO_WASHOUT_ALLOW_GREEN_DOT: envBool("FVVO_WASHOUT_ALLOW_GREEN_DOT", true),
+  // Default false because recent green-dot mapping was not reliable yet.
+  FVVO_WASHOUT_ALLOW_GREEN_DOT: envBool("FVVO_WASHOUT_ALLOW_GREEN_DOT", false),
   FVVO_WASHOUT_MAX_CURRENT_FVVO: envNum("FVVO_WASHOUT_MAX_CURRENT_FVVO", 0.75),
   FVVO_WASHOUT_MAX_BELOW_EMA8_PCT: envNum("FVVO_WASHOUT_MAX_BELOW_EMA8_PCT", 0.45),
   FVVO_WASHOUT_MAX_EXT_EMA8_PCT: envNum("FVVO_WASHOUT_MAX_EXT_EMA8_PCT", 0.55),
@@ -75,7 +104,7 @@ const CFG = {
   FVVO_WASHOUT_BLOCK_FRESH_LOW: envBool("FVVO_WASHOUT_BLOCK_FRESH_LOW", true),
   FVVO_WASHOUT_REQUIRE_PRICE_CONFIRM: envBool("FVVO_WASHOUT_REQUIRE_PRICE_CONFIRM", true),
 
-  // Secondary setup: strict cross-up confirmation
+  // Secondary setup: strict cross-up confirmation. This is the only forwarded entry by default.
   FVVO_CROSS_ENABLED: envBool("FVVO_CROSS_ENABLED", true),
   FVVO_CROSS_MIN_RSI: envNum("FVVO_CROSS_MIN_RSI", 52),
   FVVO_CROSS_MIN_SLOPE: envNum("FVVO_CROSS_MIN_SLOPE", 0.60),
@@ -84,14 +113,14 @@ const CFG = {
   FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT: envNum("FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT", 0.10),
   FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS: envNum("FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS", 2),
 
-  // Optional strict above-zero rising continuation
+  // Optional strict above-zero rising continuation. Disabled by default.
   FVVO_RISING_CONT_ENABLED: envBool("FVVO_RISING_CONT_ENABLED", false),
   FVVO_RISING_MIN_RSI: envNum("FVVO_RISING_MIN_RSI", 55),
   FVVO_RISING_MIN_SLOPE: envNum("FVVO_RISING_MIN_SLOPE", 0.80),
   FVVO_RISING_MAX_EXT_EMA8_PCT: envNum("FVVO_RISING_MAX_EXT_EMA8_PCT", 0.25),
   FVVO_RISING_MAX_EXT_EMA18_PCT: envNum("FVVO_RISING_MAX_EXT_EMA18_PCT", 0.55),
 
-  // Exits
+  // Shadow exits.
   FVVO_INTRABAR_HARD_STOP_ENABLED: envBool("FVVO_INTRABAR_HARD_STOP_ENABLED", true),
   FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.45),
 
@@ -109,12 +138,24 @@ const CFG = {
   HISTORY_MAX_BARS: envNum("HISTORY_MAX_BARS", 120)
 };
 
-// Hard safety.
-if (!CFG.SHADOW_ONLY || CFG.ENABLE_HTTP_FORWARD) {
-  console.log("⚠️ SAFETY: BrainFVVO_v1b_GREEN_SHADOW is SHADOW ONLY.");
-  console.log("⚠️ SAFETY: Forcing SHADOW_ONLY=true and ENABLE_HTTP_FORWARD=false.");
-  CFG.SHADOW_ONLY = true;
+// Hard forwarding safety.
+// v1c is allowed to forward only when all demo-forward switches are explicit.
+if (CFG.LIVE_FORWARD_ALLOWED) {
+  console.log("⚠️ SAFETY: LIVE_FORWARD_ALLOWED=true is not supported in v1c. Forcing false.");
+  CFG.LIVE_FORWARD_ALLOWED = false;
+}
+
+if (CFG.ENABLE_HTTP_FORWARD && !CFG.DEMO_FORWARD_ALLOWED) {
+  console.log("⚠️ SAFETY: ENABLE_HTTP_FORWARD=true but DEMO_FORWARD_ALLOWED is not true. Forwarding disabled.");
   CFG.ENABLE_HTTP_FORWARD = false;
+}
+
+if (!CFG.ENABLE_HTTP_FORWARD) {
+  CFG.SHADOW_ONLY = true;
+}
+
+if (CFG.ENABLE_HTTP_FORWARD && CFG.DEMO_FORWARD_ALLOWED) {
+  CFG.SHADOW_ONLY = false;
 }
 
 // ============================================================
@@ -143,6 +184,7 @@ const state = {
   seenBars: new Set(),
   barIndex: new Map(),
   lastExitBar: new Map(),
+  lastForward: new Map(),
 
   stats: {
     received: 0,
@@ -180,7 +222,15 @@ const state = {
     backupExits: 0,
     intrabarHardStopExits: 0,
     closeMaxLossExits: 0,
-    maxHoldExits: 0
+    maxHoldExits: 0,
+
+    forwardAttempts: 0,
+    forwardSuccess: 0,
+    forwardErrors: 0,
+    forwardSkipped: 0,
+    forwardDryRuns: 0,
+    forwardEntries: 0,
+    forwardExits: 0
   }
 };
 
@@ -322,12 +372,194 @@ function isEntryCooldownActive(symbol, barNo) {
   return barNo - lastExit <= CFG.FVVO_ENTRY_COOLDOWN_BARS;
 }
 
+function splitTvSymbol(symbol) {
+  const raw = String(symbol || CFG.SYMBOL);
+  const parts = raw.split(":");
+  if (parts.length >= 2) {
+    return { tv_exchange: parts[0], tv_instrument: parts.slice(1).join(":") };
+  }
+  return { tv_exchange: envStr("C3_TV_EXCHANGE", "BINANCE"), tv_instrument: raw };
+}
+
+function truncText(s, max = 600) {
+  const str = String(s || "");
+  return str.length > max ? `${str.slice(0, max)}...` : str;
+}
+
+function getBotUuid(symbol) {
+  const direct = CFG.SYMBOL_BOT_MAP[symbol];
+  if (direct) return String(direct);
+  const fallback = CFG.SYMBOL_BOT_MAP[CFG.SYMBOL];
+  return fallback ? String(fallback) : "";
+}
+
+function shouldForwardSetup(setup) {
+  if (setup === "CROSS_UP_CONFIRM") return CFG.FVVO_FORWARD_CROSS_ENABLED;
+  if (setup === "WASHOUT_REVERSAL") return CFG.FVVO_FORWARD_WASHOUT_ENABLED;
+  if (setup === "RISING_CONTINUATION") return CFG.FVVO_FORWARD_RISING_ENABLED;
+  return false;
+}
+
+function isForwardDuplicate(key) {
+  const now = Date.now();
+  const last = state.lastForward.get(key) || 0;
+  if (now - last < CFG.C3_FORWARD_DEDUP_MS) return true;
+  state.lastForward.set(key, now);
+  return false;
+}
+
+// ============================================================
+// 3COMMAS FORWARDING
+// ============================================================
+
+function build3CommasPayload(action, p, extra = {}) {
+  const { tv_exchange, tv_instrument } = splitTvSymbol(p.symbol);
+  const payload = {
+    secret: CFG.C3_SIGNAL_SECRET,
+    max_lag: String(CFG.C3_MAX_LAG_SEC),
+    timestamp: nowIso(),
+    trigger_price: String(p.close),
+    tv_exchange,
+    tv_instrument,
+    action,
+    bot_uuid: getBotUuid(p.symbol)
+  };
+
+  if (CFG.C3_ORDER_AMOUNT_QUOTE > 0) {
+    payload.order = {
+      amount: CFG.C3_ORDER_AMOUNT_QUOTE,
+      currency_type: "quote"
+    };
+  }
+
+  payload.brain_note = {
+    brain: CFG.BRAIN_NAME,
+    setup: extra.setup || "",
+    reason: extra.reason || "",
+    symbol: p.symbol,
+    tf: p.tf
+  };
+
+  return payload;
+}
+
+async function forwardTo3Commas(action, p, extra = {}) {
+  const setup = extra.setup || "UNKNOWN";
+  const reason = extra.reason || "UNKNOWN";
+  const botUuid = getBotUuid(p.symbol);
+  const dedupKey = `${action}|${p.symbol}|${p.time}|${setup}`;
+
+  if (!CFG.ENABLE_HTTP_FORWARD || CFG.SHADOW_ONLY) {
+    state.stats.forwardSkipped += 1;
+    logLine(
+      "C3_FORWARD_SKIP",
+      `reason=FORWARD_DISABLED | action=${action} | setup=${setup} | symbol=${p.symbol} | shadowOnly=${CFG.SHADOW_ONLY} | enableForward=${CFG.ENABLE_HTTP_FORWARD}`
+    );
+    return { ok: false, skipped: true, reason: "FORWARD_DISABLED" };
+  }
+
+  if (!CFG.DEMO_FORWARD_ALLOWED || CFG.LIVE_FORWARD_ALLOWED) {
+    state.stats.forwardSkipped += 1;
+    logLine(
+      "C3_FORWARD_SKIP",
+      `reason=SAFETY_GATE_BLOCK | action=${action} | setup=${setup} | demoAllowed=${CFG.DEMO_FORWARD_ALLOWED} | liveAllowed=${CFG.LIVE_FORWARD_ALLOWED}`
+    );
+    return { ok: false, skipped: true, reason: "SAFETY_GATE_BLOCK" };
+  }
+
+  if (!CFG.C3_SIGNAL_SECRET) {
+    state.stats.forwardErrors += 1;
+    logLine("C3_FORWARD_ERROR", `reason=MISSING_C3_SIGNAL_SECRET | action=${action} | setup=${setup}`);
+    return { ok: false, error: "MISSING_C3_SIGNAL_SECRET" };
+  }
+
+  if (!botUuid) {
+    state.stats.forwardErrors += 1;
+    logLine("C3_FORWARD_ERROR", `reason=MISSING_BOT_UUID | action=${action} | setup=${setup} | symbol=${p.symbol}`);
+    return { ok: false, error: "MISSING_BOT_UUID" };
+  }
+
+  if (isForwardDuplicate(dedupKey)) {
+    state.stats.forwardSkipped += 1;
+    logLine("C3_FORWARD_SKIP", `reason=FORWARD_DEDUP | action=${action} | setup=${setup} | symbol=${p.symbol} | time=${p.time}`);
+    return { ok: false, skipped: true, reason: "FORWARD_DEDUP" };
+  }
+
+  const payload = build3CommasPayload(action, p, { setup, reason });
+  const safePayload = { ...payload, secret: "***", bot_uuid: "***" };
+
+  state.stats.forwardAttempts += 1;
+
+  if (CFG.C3_DRY_RUN) {
+    state.stats.forwardDryRuns += 1;
+    logLine(
+      "C3_FORWARD_DRY_RUN",
+      `action=${action} | setup=${setup} | reason=${reason} | symbol=${p.symbol} | price=${n(p.close, 4)} | payload=${JSON.stringify(safePayload)}`
+    );
+    return { ok: true, dryRun: true };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CFG.C3_REQUEST_TIMEOUT_MS);
+
+  try {
+    logLine(
+      "C3_FORWARD_SEND",
+      `action=${action} | setup=${setup} | reason=${reason} | symbol=${p.symbol} | price=${n(p.close, 4)} | botUuid=${botUuid.slice(0, 8)}...`
+    );
+
+    const response = await fetch(CFG.C3_SIGNAL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+
+    if (!response.ok) {
+      state.stats.forwardErrors += 1;
+      logLine(
+        "C3_FORWARD_ERROR",
+        `status=${response.status} | action=${action} | setup=${setup} | response=${truncText(text)}`
+      );
+      return { ok: false, status: response.status, body: text };
+    }
+
+    state.stats.forwardSuccess += 1;
+    if (action === "enter_long") state.stats.forwardEntries += 1;
+    if (action === "exit_long") state.stats.forwardExits += 1;
+
+    logLine(
+      "C3_FORWARD_SUCCESS",
+      `status=${response.status} | action=${action} | setup=${setup} | symbol=${p.symbol} | price=${n(p.close, 4)} | response=${truncText(text)}`
+    );
+
+    return { ok: true, status: response.status, body: text };
+  } catch (err) {
+    state.stats.forwardErrors += 1;
+    logLine(
+      "C3_FORWARD_ERROR",
+      `action=${action} | setup=${setup} | error=${err.name || "ERROR"}:${err.message}`
+    );
+    return { ok: false, error: err.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ============================================================
 // PAYLOAD NORMALIZATION
 // ============================================================
 
 function normalizePayload(body) {
-  const raw = body || {};
+  let raw = body || {};
+
+  if (typeof raw === "string") {
+    raw = raw.trim();
+    if (!raw) raw = {};
+    else raw = JSON.parse(raw);
+  }
 
   const symbol = strFromPayload(raw.symbol, CFG.SYMBOL);
   const tf = strFromPayload(raw.tf, CFG.ENTRY_TF);
@@ -369,7 +601,7 @@ function normalizePayload(body) {
   }
 
   const fvvoGreenDot = safeBool(raw.fvvoGreenDot, false);
-  const fvvoBullishColor = safeBool(raw.fvvoBullishColor, false) || fvvoGreenDot;
+  const fvvoBullishColor = safeBool(raw.fvvoBullishColor, false) || (CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT && fvvoGreenDot);
 
   return {
     raw,
@@ -472,59 +704,28 @@ function evaluateWashoutEntry(p) {
   const prevRsi = prev ? safeNum(prev.rsi, null) : null;
   const prevHigh = prev ? safeNum(prev.high, null) : null;
 
-  const rsiWasWashedOut =
-    Number.isFinite(recentRsiLow) &&
-    recentRsiLow <= CFG.FVVO_WASHOUT_RSI_MAX;
-
+  const rsiWasWashedOut = Number.isFinite(recentRsiLow) && recentRsiLow <= CFG.FVVO_WASHOUT_RSI_MAX;
   const rsiRecovering =
     Number.isFinite(p.rsi) &&
     p.rsi >= CFG.FVVO_WASHOUT_RSI_RECOVER_MIN &&
     (!Number.isFinite(prevRsi) || p.rsi >= prevRsi);
 
-  const fvvoWasDeep =
-    Number.isFinite(recentFvvoLow) &&
-    recentFvvoLow <= CFG.FVVO_WASHOUT_MIN_DEEP_NEGATIVE;
+  const fvvoWasDeep = Number.isFinite(recentFvvoLow) && recentFvvoLow <= CFG.FVVO_WASHOUT_MIN_DEEP_NEGATIVE;
+  const currentFvvoNotLate = Number.isFinite(p.fvvoValue) && p.fvvoValue <= CFG.FVVO_WASHOUT_MAX_CURRENT_FVVO;
 
-  const currentFvvoNotLate =
-    Number.isFinite(p.fvvoValue) &&
-    p.fvvoValue <= CFG.FVVO_WASHOUT_MAX_CURRENT_FVVO;
-
-  const greenDotOk =
-    CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT &&
-    p.fvvoGreenDot === true;
-
-  const bullishColorOk =
-    p.fvvoBullishColor === true;
-
-  const fvvoSlopeStrong =
-    Number.isFinite(p.fvvoSlope) &&
-    p.fvvoSlope >= CFG.FVVO_WASHOUT_MIN_SLOPE;
-
-  const fvvoRising =
-    risingVsPrevious(p, "fvvoValue") ||
-    twoBarRisingIncludingCurrent(p, "fvvoValue");
-
-  const fvvoRecovery =
-    greenDotOk ||
-    bullishColorOk ||
-    fvvoSlopeStrong ||
-    fvvoRising;
+  const greenDotOk = CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT && p.fvvoGreenDot === true;
+  const bullishColorOk = CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT && p.fvvoBullishColor === true;
+  const fvvoSlopeStrong = Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_WASHOUT_MIN_SLOPE;
+  const fvvoRising = risingVsPrevious(p, "fvvoValue") || twoBarRisingIncludingCurrent(p, "fvvoValue");
+  const fvvoRecovery = greenDotOk || bullishColorOk || fvvoSlopeStrong || fvvoRising;
 
   const closeBelowEma8Pct = calcBelowPct(p.ema8, p.close);
   const extEma8Pct = calcPct(p.close, p.ema8);
   const extEma18Pct = calcPct(p.close, p.ema18);
 
-  const notTooFarBelowEma8 =
-    Number.isFinite(closeBelowEma8Pct) &&
-    closeBelowEma8Pct <= CFG.FVVO_WASHOUT_MAX_BELOW_EMA8_PCT;
-
-  const notTooExtendedFromEma8 =
-    Number.isFinite(extEma8Pct) &&
-    extEma8Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA8_PCT;
-
-  const notTooExtendedFromEma18 =
-    Number.isFinite(extEma18Pct) &&
-    extEma18Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA18_PCT;
+  const notTooFarBelowEma8 = Number.isFinite(closeBelowEma8Pct) && closeBelowEma8Pct <= CFG.FVVO_WASHOUT_MAX_BELOW_EMA8_PCT;
+  const notTooExtendedFromEma8 = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA8_PCT;
+  const notTooExtendedFromEma18 = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_WASHOUT_MAX_EXT_EMA18_PCT;
 
   const bullishCandle = Number.isFinite(p.open) && p.close > p.open;
   const closeAbovePrevHigh = Number.isFinite(prevHigh) && p.close > prevHigh;
@@ -544,11 +745,7 @@ function evaluateWashoutEntry(p) {
     !bullishCandle &&
     !closeReclaimEma8;
 
-  const noBearishConflict =
-    !p.fvvoBearishColor ||
-    greenDotOk ||
-    bullishColorOk ||
-    fvvoSlopeStrong;
+  const noBearishConflict = !p.fvvoBearishColor || greenDotOk || bullishColorOk || fvvoSlopeStrong;
 
   const ok =
     rsiWasWashedOut &&
@@ -634,32 +831,21 @@ function evaluateCrossEntry(p) {
   const priceAboveEma8 = p.close > p.ema8;
 
   const ema8BelowEma18Pct = p.ema8 < p.ema18 ? calcPct(p.ema18, p.ema8) : 0;
-
   const emaStructureOk =
     p.ema8 >= p.ema18 ||
-    (Number.isFinite(ema8BelowEma18Pct) &&
-      ema8BelowEma18Pct <= CFG.FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT);
+    (Number.isFinite(ema8BelowEma18Pct) && ema8BelowEma18Pct <= CFG.FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT);
 
   const extEma8Pct = calcPct(p.close, p.ema8);
   const extEma18Pct = calcPct(p.close, p.ema18);
 
-  const notTooExtendedFromEma8 =
-    Number.isFinite(extEma8Pct) &&
-    extEma8Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA8_PCT;
-
-  const notTooExtendedFromEma18 =
-    Number.isFinite(extEma18Pct) &&
-    extEma18Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA18_PCT;
+  const notTooExtendedFromEma8 = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA8_PCT;
+  const notTooExtendedFromEma18 = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_CROSS_MAX_EXT_EMA18_PCT;
 
   const recentRedDotBlocked =
     CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS > 0 &&
     recentRedDot(p, CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS);
 
-  const noBearishConflict =
-    !p.fvvoBearishColor ||
-    p.fvvoCrossUp ||
-    p.burstBullish ||
-    p.fvvoGreenDot;
+  const noBearishConflict = !p.fvvoBearishColor || p.fvvoCrossUp || p.burstBullish;
 
   const ok =
     fvvoCrossOk &&
@@ -731,21 +917,10 @@ function evaluateRisingContinuationEntry(p) {
   const extEma8Pct = calcPct(p.close, p.ema8);
   const extEma18Pct = calcPct(p.close, p.ema18);
 
-  const notTooExtendedFromEma8 =
-    Number.isFinite(extEma8Pct) &&
-    extEma8Pct <= CFG.FVVO_RISING_MAX_EXT_EMA8_PCT;
-
-  const notTooExtendedFromEma18 =
-    Number.isFinite(extEma18Pct) &&
-    extEma18Pct <= CFG.FVVO_RISING_MAX_EXT_EMA18_PCT;
-
-  const noRecentRedDot =
-    !recentRedDot(p, CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS);
-
-  const noBearishConflict =
-    !p.fvvoBearishColor ||
-    p.burstBullish ||
-    p.fvvoGreenDot;
+  const notTooExtendedFromEma8 = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_RISING_MAX_EXT_EMA8_PCT;
+  const notTooExtendedFromEma18 = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_RISING_MAX_EXT_EMA18_PCT;
+  const noRecentRedDot = !recentRedDot(p, CFG.FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS);
+  const noBearishConflict = !p.fvvoBearishColor || p.burstBullish;
 
   const ok =
     fvvoOk &&
@@ -798,7 +973,7 @@ function setupPrefix(setup) {
   return "FVVO_RISING";
 }
 
-function openVirtualLong(p, decision, barNo) {
+async function openVirtualLong(p, decision, barNo) {
   const position = {
     side: "LONG",
     setup: decision.setup,
@@ -832,6 +1007,8 @@ function openVirtualLong(p, decision, barNo) {
 
     redDotSeen: false,
     greenDotAtEntry: p.fvvoGreenDot,
+    forwardedEntry: false,
+    forwardEntryStatus: "NOT_FORWARDED",
     backupUsed: false
   };
 
@@ -860,11 +1037,27 @@ function openVirtualLong(p, decision, barNo) {
       `redDot=${boolStr(p.fvvoRedDot)}`,
       `greenDot=${boolStr(p.fvvoGreenDot)}`,
       `bullishColor=${boolStr(p.fvvoBullishColor)}`,
-      `burstBullish=${boolStr(p.burstBullish)}`,
-      `sniperBuy=${boolStr(p.sniperBuy)}`
+      `forwardEligible=${boolStr(shouldForwardSetup(decision.setup))}`,
+      `shadowOnly=${boolStr(CFG.SHADOW_ONLY)}`
     ].join(" | "),
     decision.checks
   );
+
+  if (shouldForwardSetup(decision.setup)) {
+    const result = await forwardTo3Commas("enter_long", p, {
+      setup: decision.setup,
+      reason: decision.reason
+    });
+    position.forwardedEntry = result.ok === true && !result.dryRun;
+    position.forwardEntryStatus = result.ok ? (result.dryRun ? "DRY_RUN" : "FORWARDED") : (result.skipped ? "SKIPPED" : "ERROR");
+  } else {
+    state.stats.forwardSkipped += 1;
+    position.forwardEntryStatus = "SETUP_NOT_FORWARD_ENABLED";
+    logLine(
+      "C3_FORWARD_SKIP",
+      `reason=SETUP_NOT_FORWARD_ENABLED | setup=${decision.setup} | symbol=${p.symbol} | entryReason=${decision.reason}`
+    );
+  }
 }
 
 function updatePositionStats(pos, p) {
@@ -906,13 +1099,8 @@ function evaluateLongExit(pos, p, perf) {
 
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
 
-  const givebackArm2 =
-    peakPnlPct >= CFG.FVVO_GIVEBACK_ARM2_PCT &&
-    givebackPct >= CFG.FVVO_GIVEBACK_ARM2_DROP_PCT;
-
-  const givebackArm1 =
-    peakPnlPct >= CFG.FVVO_GIVEBACK_ARM1_PCT &&
-    givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
+  const givebackArm2 = peakPnlPct >= CFG.FVVO_GIVEBACK_ARM2_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM2_DROP_PCT;
+  const givebackArm1 = peakPnlPct >= CFG.FVVO_GIVEBACK_ARM1_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
   const backupNoRedDot =
     !pos.redDotSeen &&
@@ -921,22 +1109,15 @@ function evaluateLongExit(pos, p, perf) {
     currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT &&
     givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-  const crossDownExit =
-    p.fvvoCrossDown &&
-    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
-
-  const hardSlopeExit =
-    hardDownSlope &&
-    currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
+  const crossDownExit = p.fvvoCrossDown && currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
+  const hardSlopeExit = hardDownSlope && currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT;
 
   const ema8LossProfitExit =
     closeLostEma8 &&
     currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT &&
     givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
 
-  const maxHoldExit =
-    CFG.FVVO_MAX_HOLD_BARS > 0 &&
-    pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
+  const maxHoldExit = CFG.FVVO_MAX_HOLD_BARS > 0 && pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
 
   if (intrabarHardStopHit) {
     return { exit: true, reason: "FVVO_INTRABAR_HARD_STOP", backupUsed: true, exitPrice: pos.stopPrice };
@@ -981,7 +1162,7 @@ function evaluateLongExit(pos, p, perf) {
   return { exit: false, reason: "HOLD", backupUsed: false, exitPrice: null };
 }
 
-function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
+async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
   const exitPrice =
     Number.isFinite(exitDecision.exitPrice) && exitDecision.exitPrice > 0
       ? exitDecision.exitPrice
@@ -1045,6 +1226,8 @@ function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
       `reason=${exitDecision.reason}`,
       `redDotSeen=${boolStr(pos.redDotSeen)}`,
       `greenDotAtEntry=${boolStr(pos.greenDotAtEntry)}`,
+      `forwardedEntry=${boolStr(pos.forwardedEntry)}`,
+      `forwardEntryStatus=${pos.forwardEntryStatus}`,
       `backupUsed=${boolStr(exitDecision.backupUsed)}`,
       `fvvo=${n(p.fvvoValue, 6)}`,
       `slope=${n(p.fvvoSlope, 6)}`,
@@ -1052,6 +1235,14 @@ function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
       `crossDown=${boolStr(p.fvvoCrossDown)}`
     ].join(" | ")
   );
+
+  // Exit forwarding is disabled by default for first demo because 3Commas TP/SL should manage the real trade.
+  if (CFG.FVVO_FORWARD_EXIT_ENABLED && pos.forwardedEntry) {
+    await forwardTo3Commas("exit_long", { ...p, close: exitPrice }, {
+      setup: pos.setup,
+      reason: exitDecision.reason
+    });
+  }
 
   logLine(
     `${prefix}_LONG_RESULT`,
@@ -1068,6 +1259,8 @@ function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
       `exitReason=${exitDecision.reason}`,
       `redDotSeen=${boolStr(pos.redDotSeen)}`,
       `greenDotAtEntry=${boolStr(pos.greenDotAtEntry)}`,
+      `forwardedEntry=${boolStr(pos.forwardedEntry)}`,
+      `forwardEntryStatus=${pos.forwardEntryStatus}`,
       `backupUsed=${boolStr(exitDecision.backupUsed)}`,
       `barsHeld=${pos.barsHeld}`
     ].join(" | ")
@@ -1153,7 +1346,14 @@ function logScorecard() {
       `crossTotal=${pct(state.stats.crossPnlPct)}`,
       `risingTrades=${state.stats.risingExits}`,
       `risingAvg=${pct(risingAvg)}`,
-      `risingTotal=${pct(state.stats.risingPnlPct)}`
+      `risingTotal=${pct(state.stats.risingPnlPct)}`,
+      `forwardAttempts=${state.stats.forwardAttempts}`,
+      `forwardSuccess=${state.stats.forwardSuccess}`,
+      `forwardErrors=${state.stats.forwardErrors}`,
+      `forwardSkipped=${state.stats.forwardSkipped}`,
+      `forwardDryRuns=${state.stats.forwardDryRuns}`,
+      `forwardEntries=${state.stats.forwardEntries}`,
+      `forwardExits=${state.stats.forwardExits}`
     ].join(" | ")
   );
 }
@@ -1162,7 +1362,7 @@ function logScorecard() {
 // MAIN HANDLER
 // ============================================================
 
-function handleFeature(p) {
+async function handleFeature(p) {
   state.stats.accepted += 1;
   const barNo = nextBarNumber(p.symbol);
 
@@ -1201,7 +1401,7 @@ function handleFeature(p) {
     const exitDecision = evaluateLongExit(openPos, p, perf);
 
     if (exitDecision.exit) {
-      closeVirtualLong(openPos, p, perf, exitDecision, barNo);
+      await closeVirtualLong(openPos, p, perf, exitDecision, barNo);
     } else if (CFG.DEBUG) {
       logLine(
         `${setupPrefix(openPos.setup)}_LONG_HOLD`,
@@ -1215,6 +1415,8 @@ function handleFeature(p) {
           `peak=${pct(perf.peakPnlPct)}`,
           `giveback=${pct(perf.givebackPct)}`,
           `barsHeld=${openPos.barsHeld}`,
+          `forwardedEntry=${boolStr(openPos.forwardedEntry)}`,
+          `forwardEntryStatus=${openPos.forwardEntryStatus}`,
           `fvvo=${n(p.fvvoValue, 6)}`,
           `slope=${n(p.fvvoSlope, 6)}`,
           `redDot=${boolStr(p.fvvoRedDot)}`,
@@ -1270,7 +1472,8 @@ function handleFeature(p) {
         `slope=${n(p.fvvoSlope, 6)}`,
         `greenDot=${boolStr(p.fvvoGreenDot)}`,
         `aboveZero=${boolStr(p.fvvoAboveZero)}`,
-        `bullishColor=${boolStr(p.fvvoBullishColor)}`
+        `bullishColor=${boolStr(p.fvvoBullishColor)}`,
+        `forwardEligible=${boolStr(shouldForwardSetup(washoutDecision.setup))}`
       ].join(" | "),
       washoutDecision.checks
     );
@@ -1288,7 +1491,8 @@ function handleFeature(p) {
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
         `greenDot=${boolStr(p.fvvoGreenDot)}`,
-        `crossUp=${boolStr(p.fvvoCrossUp)}`
+        `crossUp=${boolStr(p.fvvoCrossUp)}`,
+        `forwardEligible=${boolStr(shouldForwardSetup(crossDecision.setup))}`
       ].join(" | "),
       crossDecision.checks
     );
@@ -1305,7 +1509,8 @@ function handleFeature(p) {
         `rsi=${n(p.rsi, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
-        `greenDot=${boolStr(p.fvvoGreenDot)}`
+        `greenDot=${boolStr(p.fvvoGreenDot)}`,
+        `forwardEligible=${boolStr(shouldForwardSetup(risingDecision.setup))}`
       ].join(" | "),
       risingDecision.checks
     );
@@ -1313,12 +1518,14 @@ function handleFeature(p) {
 
   let chosenDecision = null;
 
+  // Priority: washout catches early bounce, cross catches confirmed zero-line reclaim, rising is optional.
+  // Forwarding is separately controlled by setup-specific forward switches.
   if (washoutDecision.ok) chosenDecision = washoutDecision;
   else if (crossDecision.ok) chosenDecision = crossDecision;
   else if (risingDecision.ok) chosenDecision = risingDecision;
 
   if (chosenDecision) {
-    openVirtualLong(p, chosenDecision, barNo);
+    await openVirtualLong(p, chosenDecision, barNo);
   } else if (CFG.DEBUG) {
     logLine(
       "FVVO_RAW_LONG_NO_ENTRY",
@@ -1352,10 +1559,13 @@ app.get("/", (req, res) => {
   res.json({
     ok: true,
     brain: CFG.BRAIN_NAME,
-    mode: "SHADOW_ONLY",
+    mode: CFG.SHADOW_ONLY ? "SHADOW_ONLY" : "DEMO_FORWARD",
     startedAt: state.startedAt,
     symbol: CFG.SYMBOL,
-    tf: CFG.ENTRY_TF
+    tf: CFG.ENTRY_TF,
+    enableForward: CFG.ENABLE_HTTP_FORWARD,
+    demoForwardAllowed: CFG.DEMO_FORWARD_ALLOWED,
+    dryRun: CFG.C3_DRY_RUN
   });
 });
 
@@ -1365,6 +1575,19 @@ app.get("/health", (req, res) => {
     brain: CFG.BRAIN_NAME,
     startedAt: state.startedAt,
     now: nowIso(),
+    mode: CFG.SHADOW_ONLY ? "SHADOW_ONLY" : "DEMO_FORWARD",
+    forwarding: {
+      enableHttpForward: CFG.ENABLE_HTTP_FORWARD,
+      demoForwardAllowed: CFG.DEMO_FORWARD_ALLOWED,
+      liveForwardAllowed: CFG.LIVE_FORWARD_ALLOWED,
+      dryRun: CFG.C3_DRY_RUN,
+      forwardCross: CFG.FVVO_FORWARD_CROSS_ENABLED,
+      forwardWashout: CFG.FVVO_FORWARD_WASHOUT_ENABLED,
+      forwardRising: CFG.FVVO_FORWARD_RISING_ENABLED,
+      forwardExit: CFG.FVVO_FORWARD_EXIT_ENABLED,
+      has3CommasSecret: Boolean(CFG.C3_SIGNAL_SECRET),
+      botMapSymbols: Object.keys(CFG.SYMBOL_BOT_MAP)
+    },
     stats: state.stats,
     openPositions: Array.from(state.positions.values()).map((p) => ({
       symbol: p.symbol,
@@ -1377,12 +1600,14 @@ app.get("/health", (req, res) => {
       barsHeld: p.barsHeld,
       peakPnlPct: p.peakPnlPct,
       redDotSeen: p.redDotSeen,
-      greenDotAtEntry: p.greenDotAtEntry
+      greenDotAtEntry: p.greenDotAtEntry,
+      forwardedEntry: p.forwardedEntry,
+      forwardEntryStatus: p.forwardEntryStatus
     }))
   });
 });
 
-app.post(CFG.WEBHOOK_PATH, (req, res) => {
+app.post(CFG.WEBHOOK_PATH, async (req, res) => {
   state.stats.received += 1;
 
   let payload;
@@ -1410,14 +1635,19 @@ app.post(CFG.WEBHOOK_PATH, (req, res) => {
   }
 
   try {
-    handleFeature(payload);
+    await handleFeature(payload);
   } catch (err) {
     state.stats.rejected += 1;
     logLine("ERROR", `HANDLE_FEATURE_ERROR | ${err.stack || err.message}`);
     return res.status(500).json({ ok: false, reason: "HANDLE_FEATURE_ERROR" });
   }
 
-  return res.json({ ok: true, brain: CFG.BRAIN_NAME, shadowOnly: true });
+  return res.json({
+    ok: true,
+    brain: CFG.BRAIN_NAME,
+    shadowOnly: CFG.SHADOW_ONLY,
+    demoForward: CFG.ENABLE_HTTP_FORWARD && CFG.DEMO_FORWARD_ALLOWED && !CFG.SHADOW_ONLY
+  });
 });
 
 // ============================================================
@@ -1434,6 +1664,18 @@ app.listen(CFG.PORT, () => {
   console.log(`ENTRY_TF=${CFG.ENTRY_TF}`);
   console.log(`SHADOW_ONLY=${CFG.SHADOW_ONLY}`);
   console.log(`ENABLE_HTTP_FORWARD=${CFG.ENABLE_HTTP_FORWARD}`);
+  console.log(`DEMO_FORWARD_ALLOWED=${CFG.DEMO_FORWARD_ALLOWED}`);
+  console.log(`LIVE_FORWARD_ALLOWED=${CFG.LIVE_FORWARD_ALLOWED}`);
+  console.log(`C3_DRY_RUN=${CFG.C3_DRY_RUN}`);
+  console.log(`C3_SIGNAL_URL=${CFG.C3_SIGNAL_URL}`);
+  console.log(`C3_SIGNAL_SECRET_SET=${Boolean(CFG.C3_SIGNAL_SECRET)}`);
+  console.log(`SYMBOL_BOT_MAP_SYMBOLS=${Object.keys(CFG.SYMBOL_BOT_MAP).join(",") || "none"}`);
+  console.log(`C3_ORDER_AMOUNT_QUOTE=${CFG.C3_ORDER_AMOUNT_QUOTE}`);
+  console.log(`FVVO_FORWARD_CROSS_ENABLED=${CFG.FVVO_FORWARD_CROSS_ENABLED}`);
+  console.log(`FVVO_FORWARD_WASHOUT_ENABLED=${CFG.FVVO_FORWARD_WASHOUT_ENABLED}`);
+  console.log(`FVVO_FORWARD_RISING_ENABLED=${CFG.FVVO_FORWARD_RISING_ENABLED}`);
+  console.log(`FVVO_FORWARD_EXIT_ENABLED=${CFG.FVVO_FORWARD_EXIT_ENABLED}`);
+  console.log("------------------------------------------------------------");
   console.log(`FVVO_LONG_ENABLED=${CFG.FVVO_LONG_ENABLED}`);
   console.log(`FVVO_SHORT_ENABLED=${CFG.FVVO_SHORT_ENABLED}`);
   console.log(`FVVO_ENTRY_COOLDOWN_BARS=${CFG.FVVO_ENTRY_COOLDOWN_BARS}`);
