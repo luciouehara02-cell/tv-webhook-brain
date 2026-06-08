@@ -1,0 +1,15 @@
+{
+  "name": "brainfvvo-v1g-exit-managed",
+  "version": "1.0.0",
+  "description": "BrainFVVO_v1g_EXIT_MANAGED_DEMO_FORWARD - FVVO pulse logic with fee-aware exit forwarding",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
