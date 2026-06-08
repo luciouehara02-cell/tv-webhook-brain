@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-v1g-exit-managed",
+  "name": "brainfvvo-v1h-fast-exit-demo-forward",
   "version": "1.0.0",
-  "description": "BrainFVVO_v1g_EXIT_MANAGED_DEMO_FORWARD - FVVO pulse logic with fee-aware exit forwarding",
+  "description": "BrainFVVO_v1h_FAST_EXIT_DEMO_FORWARD - FVVO cross-up demo brain with exit-managed and tick/fast-exit feed",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
