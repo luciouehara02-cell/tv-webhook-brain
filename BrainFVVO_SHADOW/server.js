@@ -316,6 +316,51 @@ function calcPct(a, b) {
   return ((x - y) / y) * 100;
 }
 
+
+function calcLongPerformance(pos, p) {
+  const entry = Number(pos && pos.entryPrice);
+  const close = Number(p && p.close);
+  const high = Number(p && p.high);
+  const low = Number(p && p.low);
+
+  if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(close) || close <= 0) {
+    return {
+      currentPnlPct: 0,
+      peakPnlPct: Number.isFinite(pos && pos.peakPnlPct) ? pos.peakPnlPct : 0,
+      givebackPct: 0,
+      drawdownPct: Number.isFinite(pos && pos.maxDrawdownPct) ? pos.maxDrawdownPct : 0
+    };
+  }
+
+  // For 5m candles, p.high/p.low are the bar extremes.
+  // For fast ticks, p.high/p.low are normally equal to the tick price.
+  const observedHigh = Number.isFinite(high) && high > 0 ? high : close;
+  const observedLow = Number.isFinite(low) && low > 0 ? low : close;
+
+  if (!Number.isFinite(pos.maxPrice) || pos.maxPrice <= 0) pos.maxPrice = entry;
+  if (!Number.isFinite(pos.minPrice) || pos.minPrice <= 0) pos.minPrice = entry;
+
+  if (observedHigh > pos.maxPrice) pos.maxPrice = observedHigh;
+  if (observedLow < pos.minPrice) pos.minPrice = observedLow;
+
+  const currentPnlPct = calcPct(close, entry) || 0;
+  const peakPnlPct = calcPct(pos.maxPrice, entry) || 0;
+  const drawdownPct = calcPct(pos.minPrice, entry) || 0;
+
+  if (!Number.isFinite(pos.peakPnlPct)) pos.peakPnlPct = 0;
+  if (!Number.isFinite(pos.maxDrawdownPct)) pos.maxDrawdownPct = 0;
+
+  pos.peakPnlPct = Math.max(pos.peakPnlPct, peakPnlPct);
+  pos.maxDrawdownPct = Math.min(pos.maxDrawdownPct, drawdownPct);
+
+  return {
+    currentPnlPct,
+    peakPnlPct: pos.peakPnlPct,
+    givebackPct: pos.peakPnlPct - currentPnlPct,
+    drawdownPct: pos.maxDrawdownPct
+  };
+}
+
 function timeToMs(v) {
   if (v === undefined || v === null || v === "") return Date.now();
   const n = Number(v);
