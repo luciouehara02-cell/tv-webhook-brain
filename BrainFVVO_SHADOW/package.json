@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-v1f-pulse-logic",
+  "name": "brainfvvo-v1g-exit-managed",
   "version": "1.0.0",
-  "description": "BrainFVVO_v1f_PULSE_LOGIC_DEMO_FORWARD - FVVO pulse-assisted demo-forward brain",
+  "description": "BrainFVVO_v1g_EXIT_MANAGED_DEMO_FORWARD - FVVO pulse logic with fee-aware exit forwarding",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
