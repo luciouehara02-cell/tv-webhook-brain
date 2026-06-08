@@ -98,7 +98,7 @@ function secretFor(url) {
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOLONG" };
   }
 
-  if (u.includes("braindemoshort-production")) {
+  if (u.includes("brainfvvoshadwlive-production")) {
     const s = secretFromEnv("BRAIN_SECRET_DEMOSHORT");
     if (s) return { secret: s, source: "ENV:BRAIN_SECRET_DEMOSHORT" };
     return { secret: "", source: "MISSING_ENV:BRAIN_SECRET_DEMOSHORT" };
