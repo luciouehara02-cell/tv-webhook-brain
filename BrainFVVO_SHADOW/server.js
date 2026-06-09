@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1i_TICK_WASHOUT_SHADOW
+// BrainFVVO_v1j_LOG_COMPACT
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -45,7 +45,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1i_TICK_WASHOUT_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1j_LOG_COMPACT"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -120,7 +120,17 @@ const CFG = {
   // This never forwards entries by default and never blocks the existing CROSS_UP real entry logic.
   FVVO_TICK_WASHOUT_ENABLED: envBool("FVVO_TICK_WASHOUT_ENABLED", true),
   FVVO_TICK_WASHOUT_SHADOW_ONLY: envBool("FVVO_TICK_WASHOUT_SHADOW_ONLY", true),
+
+  // v1j: logging-only cleanup. Keeps compact raw tick tape for replay,
+  // while throttling noisy FVVO_TICK_WASHOUT_NO_ENTRY decision logs.
+  FVVO_TICK_TAPE_LOG_ENABLED: envBool("FVVO_TICK_TAPE_LOG_ENABLED", true),
   FVVO_TICK_WASHOUT_LOG_EVERY_TICK: envBool("FVVO_TICK_WASHOUT_LOG_EVERY_TICK", false),
+  FVVO_TICK_WASHOUT_LOG_CLOSE_ONLY: envBool("FVVO_TICK_WASHOUT_LOG_CLOSE_ONLY", true),
+  FVVO_TICK_WASHOUT_LOG_CLOSE_DROP_PCT: envNum("FVVO_TICK_WASHOUT_LOG_CLOSE_DROP_PCT", 0.45),
+  FVVO_TICK_WASHOUT_LOG_CLOSE_BOUNCE_PCT: envNum("FVVO_TICK_WASHOUT_LOG_CLOSE_BOUNCE_PCT", 0.15),
+  FVVO_TICK_WASHOUT_LOG_CLOSE_RECOVERY_OF_DROP_PCT: envNum("FVVO_TICK_WASHOUT_LOG_CLOSE_RECOVERY_OF_DROP_PCT", 20),
+  FVVO_TICK_WASHOUT_SUMMARY_INTERVAL_SEC: envNum("FVVO_TICK_WASHOUT_SUMMARY_INTERVAL_SEC", 300),
+
   FVVO_TICK_WASHOUT_WINDOW_MIN: envNum("FVVO_TICK_WASHOUT_WINDOW_MIN", 20),
   FVVO_TICK_WASHOUT_MIN_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MIN_DROP_PCT", 0.60),
   FVVO_TICK_WASHOUT_MAX_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MAX_DROP_PCT", 2.50),
@@ -239,6 +249,7 @@ const state = {
   tickBuffers: new Map(),
   tickWashoutShadow: new Map(),
   lastTickWashoutCloseMs: new Map(),
+  tickWashoutSummary: new Map(),
   stats: {
     received: 0,
     accepted: 0,
@@ -1725,6 +1736,129 @@ function compareTickWashoutToZeroCross(p) {
   ].join(" | "));
 }
 
+
+function logCompactTickTape(tick) {
+  if (!CFG.FVVO_TICK_TAPE_LOG_ENABLED) return;
+
+  logLine("FVVO_TICK_TAPE", [
+    `symbol=${tick.symbol}`,
+    `price=${n(tick.close, 4)}`,
+    `time=${tick.time}`
+  ].join(" | "));
+}
+
+function getTickWashoutSummary(symbol) {
+  const key = String(symbol || "");
+  const existing = state.tickWashoutSummary.get(key);
+  if (existing) return existing;
+
+  const s = {
+    lastSummaryMs: 0,
+    ticks: 0,
+    closeNoEntryLogs: 0,
+    pinkRejects: 0,
+    dealBlocks: 0,
+    noContextTicks: 0,
+    bestDropPct: null,
+    bestBouncePct: null,
+    bestRecoveryOfDropPct: null,
+    lastReason: ""
+  };
+  state.tickWashoutSummary.set(key, s);
+  return s;
+}
+
+function updateTickWashoutSummary(tick, decision) {
+  if (!CFG.FVVO_TICK_WASHOUT_ENABLED) return;
+
+  const s = getTickWashoutSummary(tick.symbol);
+  s.ticks += 1;
+
+  const reason = String(decision && decision.reason ? decision.reason : "");
+  s.lastReason = reason;
+
+  if (reason === "NO_5M_FEATURE_CONTEXT") s.noContextTicks += 1;
+  if (reason.includes("PINK_FILTER")) s.pinkRejects += 1;
+  if (reason.includes("OPEN_REAL_DEAL_BLOCK")) s.dealBlocks += 1;
+
+  const structure = decision && decision.checks && decision.checks.structure;
+  if (structure) {
+    const drop = Number(structure.dropPct);
+    const bounce = Number(structure.bounceFromBottomPct);
+    const recovery = Number(structure.recoveryOfDropPct);
+
+    if (Number.isFinite(drop)) s.bestDropPct = s.bestDropPct === null ? drop : Math.max(s.bestDropPct, drop);
+    if (Number.isFinite(bounce)) s.bestBouncePct = s.bestBouncePct === null ? bounce : Math.max(s.bestBouncePct, bounce);
+    if (Number.isFinite(recovery)) s.bestRecoveryOfDropPct = s.bestRecoveryOfDropPct === null ? recovery : Math.max(s.bestRecoveryOfDropPct, recovery);
+  }
+}
+
+function maybeLogTickWashoutSummary(tick) {
+  const intervalSec = Number(CFG.FVVO_TICK_WASHOUT_SUMMARY_INTERVAL_SEC);
+  if (!Number.isFinite(intervalSec) || intervalSec <= 0) return;
+
+  const s = getTickWashoutSummary(tick.symbol);
+  const nowMs = timeToMs(tick.time);
+
+  if (!Number.isFinite(nowMs)) return;
+  if (s.lastSummaryMs && nowMs - s.lastSummaryMs < intervalSec * 1000) return;
+
+  // Avoid printing a summary immediately on the first tick after startup.
+  if (!s.lastSummaryMs) {
+    s.lastSummaryMs = nowMs;
+    return;
+  }
+
+  logLine("FVVO_TICK_WASHOUT_SUMMARY", [
+    `symbol=${tick.symbol}`,
+    `ticks=${s.ticks}`,
+    `bestDrop=${s.bestDropPct === null ? "na" : pct(s.bestDropPct)}`,
+    `bestBounce=${s.bestBouncePct === null ? "na" : pct(s.bestBouncePct)}`,
+    `bestRecoverOfDrop=${s.bestRecoveryOfDropPct === null ? "na" : n(s.bestRecoveryOfDropPct, 1) + "%"}`,
+    `pinkRejects=${s.pinkRejects}`,
+    `dealBlocks=${s.dealBlocks}`,
+    `noContextTicks=${s.noContextTicks}`,
+    `closeNoEntryLogs=${s.closeNoEntryLogs}`,
+    `lastReason=${s.lastReason || "na"}`
+  ].join(" | "));
+
+  s.lastSummaryMs = nowMs;
+  s.ticks = 0;
+  s.closeNoEntryLogs = 0;
+  s.pinkRejects = 0;
+  s.dealBlocks = 0;
+  s.noContextTicks = 0;
+  s.bestDropPct = null;
+  s.bestBouncePct = null;
+  s.bestRecoveryOfDropPct = null;
+  s.lastReason = "";
+}
+
+function shouldLogTickWashoutNoEntry(decision) {
+  if (CFG.FVVO_TICK_WASHOUT_LOG_EVERY_TICK) return true;
+  if (!CFG.FVVO_TICK_WASHOUT_LOG_CLOSE_ONLY) return false;
+
+  const reason = String(decision && decision.reason ? decision.reason : "");
+
+  // Always keep important blocked near-miss cases for analysis.
+  if (reason.includes("PINK_FILTER")) return true;
+  if (reason.includes("OPEN_REAL_DEAL_BLOCK")) return true;
+  if (reason.includes("RECENT_RED_PULSE_BLOCK")) return true;
+
+  const structure = decision && decision.checks && decision.checks.structure;
+  if (!structure) return false;
+
+  const drop = Number(structure.dropPct);
+  const bounce = Number(structure.bounceFromBottomPct);
+  const recovery = Number(structure.recoveryOfDropPct);
+
+  return (
+    (Number.isFinite(drop) && drop >= CFG.FVVO_TICK_WASHOUT_LOG_CLOSE_DROP_PCT) ||
+    (Number.isFinite(bounce) && bounce >= CFG.FVVO_TICK_WASHOUT_LOG_CLOSE_BOUNCE_PCT) ||
+    (Number.isFinite(recovery) && recovery >= CFG.FVVO_TICK_WASHOUT_LOG_CLOSE_RECOVERY_OF_DROP_PCT)
+  );
+}
+
 function handleTickWashoutShadow(tick) {
   if (!CFG.FVVO_TICK_WASHOUT_ENABLED) return;
   state.stats.tickWashoutTicks += 1;
@@ -1735,16 +1869,22 @@ function handleTickWashoutShadow(tick) {
   if (state.tickWashoutShadow.has(tick.symbol)) return;
 
   const decision = evaluateTickWashoutCandidate(tick);
+  updateTickWashoutSummary(tick, decision);
+
   if (decision.ok) {
     state.stats.tickWashoutCandidates += 1;
     openTickWashoutShadow(tick, decision);
+    maybeLogTickWashoutSummary(tick);
     return;
   }
 
   if (decision.reason && decision.reason.includes("PINK_FILTER")) state.stats.tickWashoutPinkRejects += 1;
   if (decision.reason && decision.reason.includes("OPEN_REAL_DEAL_BLOCK")) state.stats.tickWashoutDealBlocks += 1;
 
-  if (CFG.FVVO_TICK_WASHOUT_LOG_EVERY_TICK) {
+  if (shouldLogTickWashoutNoEntry(decision)) {
+    const s = getTickWashoutSummary(tick.symbol);
+    s.closeNoEntryLogs += 1;
+
     logLine("FVVO_TICK_WASHOUT_NO_ENTRY", [
       `symbol=${tick.symbol}`,
       `price=${n(tick.close, 4)}`,
@@ -1756,13 +1896,20 @@ function handleTickWashoutShadow(tick) {
       `slope=${decision.checks ? n(decision.checks.slope, 6) : "na"}`,
       `rsi=${decision.checks ? n(decision.checks.rsi, 2) : "na"}`,
       `adx=${decision.checks ? n(decision.checks.adx, 2) : "na"}`,
-      `belowEma8=${decision.checks ? pct(decision.checks.belowEma8Pct) : "na"}`
+      `belowEma8=${decision.checks ? pct(decision.checks.belowEma8Pct) : "na"}`,
+      `logMode=${CFG.FVVO_TICK_WASHOUT_LOG_EVERY_TICK ? "every_tick" : "close_only"}`
     ].join(" | "), decision.checks || {});
   }
+
+  maybeLogTickWashoutSummary(tick);
 }
 
 async function handleFastTick(tick) {
   state.stats.fastTicksReceived += 1;
+
+  // v1j: compact raw tick tape is preserved for replay.
+  // Trading decisions below are unchanged from v1i.
+  logCompactTickTape(tick);
 
   // v1i: tick washout is shadow-only and should still work even when no real FVVO deal is open.
   handleTickWashoutShadow(tick);
@@ -2234,6 +2381,10 @@ app.listen(CFG.PORT, () => {
   console.log("------------------------------------------------------------");
   console.log(`FVVO_TICK_WASHOUT_ENABLED=${CFG.FVVO_TICK_WASHOUT_ENABLED}`);
   console.log(`FVVO_TICK_WASHOUT_SHADOW_ONLY=${CFG.FVVO_TICK_WASHOUT_SHADOW_ONLY}`);
+  console.log(`FVVO_TICK_TAPE_LOG_ENABLED=${CFG.FVVO_TICK_TAPE_LOG_ENABLED}`);
+  console.log(`FVVO_TICK_WASHOUT_LOG_EVERY_TICK=${CFG.FVVO_TICK_WASHOUT_LOG_EVERY_TICK}`);
+  console.log(`FVVO_TICK_WASHOUT_LOG_CLOSE_ONLY=${CFG.FVVO_TICK_WASHOUT_LOG_CLOSE_ONLY}`);
+  console.log(`FVVO_TICK_WASHOUT_SUMMARY_INTERVAL_SEC=${CFG.FVVO_TICK_WASHOUT_SUMMARY_INTERVAL_SEC}`);
   console.log(`FVVO_TICK_WASHOUT_WINDOW_MIN=${CFG.FVVO_TICK_WASHOUT_WINDOW_MIN}`);
   console.log(`FVVO_TICK_WASHOUT_MIN_DROP_PCT=${CFG.FVVO_TICK_WASHOUT_MIN_DROP_PCT}`);
   console.log(`FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT=${CFG.FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT}`);
