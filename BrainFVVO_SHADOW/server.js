@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1h_FAST_EXIT_DEMO_FORWARD
+// BrainFVVO_v1i_TICK_WASHOUT_SHADOW
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -45,7 +45,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1h_FAST_EXIT_DEMO_FORWARD"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1i_TICK_WASHOUT_SHADOW"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -115,6 +115,35 @@ const CFG = {
   FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT: envNum("FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT", 0.12),
   FVVO_FAST_EXIT_SOFT_MIN_PROFIT_PCT: envNum("FVVO_FAST_EXIT_SOFT_MIN_PROFIT_PCT", 0.25),
   FVVO_FAST_EXIT_LOG_HOLDS: envBool("FVVO_FAST_EXIT_LOG_HOLDS", false),
+
+  // v1i: shadow-only tick washout bottom/recovery detector.
+  // This never forwards entries by default and never blocks the existing CROSS_UP real entry logic.
+  FVVO_TICK_WASHOUT_ENABLED: envBool("FVVO_TICK_WASHOUT_ENABLED", true),
+  FVVO_TICK_WASHOUT_SHADOW_ONLY: envBool("FVVO_TICK_WASHOUT_SHADOW_ONLY", true),
+  FVVO_TICK_WASHOUT_LOG_EVERY_TICK: envBool("FVVO_TICK_WASHOUT_LOG_EVERY_TICK", false),
+  FVVO_TICK_WASHOUT_WINDOW_MIN: envNum("FVVO_TICK_WASHOUT_WINDOW_MIN", 20),
+  FVVO_TICK_WASHOUT_MIN_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MIN_DROP_PCT", 0.60),
+  FVVO_TICK_WASHOUT_MAX_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MAX_DROP_PCT", 2.50),
+  FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT: envNum("FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT", 0.25),
+  FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT", 25),
+  FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC: envNum("FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC", 60),
+  FVVO_TICK_WASHOUT_MIN_HIGHER_LOW_COUNT: envNum("FVVO_TICK_WASHOUT_MIN_HIGHER_LOW_COUNT", 2),
+  FVVO_TICK_WASHOUT_MIN_FVVO: envNum("FVVO_TICK_WASHOUT_MIN_FVVO", -4.50),
+  FVVO_TICK_WASHOUT_MAX_FVVO: envNum("FVVO_TICK_WASHOUT_MAX_FVVO", 0),
+  FVVO_TICK_WASHOUT_MIN_SLOPE: envNum("FVVO_TICK_WASHOUT_MIN_SLOPE", 0.50),
+  FVVO_TICK_WASHOUT_MIN_RSI: envNum("FVVO_TICK_WASHOUT_MIN_RSI", 42),
+  FVVO_TICK_WASHOUT_REQUIRE_RSI_RISING: envBool("FVVO_TICK_WASHOUT_REQUIRE_RSI_RISING", true),
+  FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT: envNum("FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT", 0.15),
+  FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR: envBool("FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR", true),
+  FVVO_TICK_WASHOUT_REJECT_ADX_MIN: envNum("FVVO_TICK_WASHOUT_REJECT_ADX_MIN", 22),
+  FVVO_TICK_WASHOUT_REJECT_IF_OPEN_DEAL: envBool("FVVO_TICK_WASHOUT_REJECT_IF_OPEN_DEAL", true),
+  FVVO_TICK_WASHOUT_COOLDOWN_SEC: envNum("FVVO_TICK_WASHOUT_COOLDOWN_SEC", 300),
+  FVVO_TICK_WASHOUT_SHADOW_TP_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_TP_PCT", 0.50),
+  FVVO_TICK_WASHOUT_SHADOW_MAX_HOLD_MIN: envNum("FVVO_TICK_WASHOUT_SHADOW_MAX_HOLD_MIN", 20),
+  FVVO_TICK_WASHOUT_SHADOW_STOP_BUFFER_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_STOP_BUFFER_PCT", 0.08),
+  FVVO_TICK_WASHOUT_SHADOW_MAX_LOSS_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_MAX_LOSS_PCT", 0.45),
+  FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT", 0.45),
+  FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT", 0.18),
 
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
@@ -207,6 +236,9 @@ const state = {
   lastForward: new Map(),
   externalDeals: new Map(),
   lastFastTickAt: new Map(),
+  tickBuffers: new Map(),
+  tickWashoutShadow: new Map(),
+  lastTickWashoutCloseMs: new Map(),
   stats: {
     received: 0,
     accepted: 0,
@@ -263,7 +295,18 @@ const state = {
     fastExitSignals: 0,
     fastExitHardStops: 0,
     fastExitQuickTpExits: 0,
-    fastExitTrailExits: 0
+    fastExitTrailExits: 0,
+    tickWashoutTicks: 0,
+    tickWashoutCandidates: 0,
+    tickWashoutSignals: 0,
+    tickWashoutShadowOpens: 0,
+    tickWashoutShadowExits: 0,
+    tickWashoutShadowWins: 0,
+    tickWashoutShadowLosses: 0,
+    tickWashoutShadowPnlPct: 0,
+    tickWashoutPinkRejects: 0,
+    tickWashoutDealBlocks: 0,
+    tickWashoutZeroCrossCompares: 0
   }
 };
 
@@ -1353,8 +1396,377 @@ function evaluateFastExit(pos, p, perf) {
   return { exit: false, reason: "FAST_TICK_HOLD", backupUsed: false, exitPrice: null, strongTrendHold: false, elapsedSec };
 }
 
+
+function updateTickBuffer(tick) {
+  const symbol = tick.symbol;
+  const price = Number(tick.close);
+  const ms = timeToMs(tick.time);
+  if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ms)) return [];
+
+  const arr = state.tickBuffers.get(symbol) || [];
+  arr.push({ ms, price, time: tick.time });
+
+  const windowMs = Math.max(1, CFG.FVVO_TICK_WASHOUT_WINDOW_MIN) * 60 * 1000;
+  const cutoff = ms - windowMs;
+  while (arr.length && arr[0].ms < cutoff) arr.shift();
+  while (arr.length > 2000) arr.shift();
+
+  state.tickBuffers.set(symbol, arr);
+  return arr;
+}
+
+function calcTickStructure(symbol) {
+  const arr = state.tickBuffers.get(symbol) || [];
+  if (arr.length < 4) return { ok: false, reason: "NOT_ENOUGH_TICKS", tickCount: arr.length };
+
+  const current = arr[arr.length - 1];
+  let highIdx = 0;
+  for (let i = 1; i < arr.length; i += 1) {
+    if (arr[i].price > arr[highIdx].price) highIdx = i;
+  }
+
+  let lowIdx = highIdx;
+  for (let i = highIdx; i < arr.length; i += 1) {
+    if (arr[i].price < arr[lowIdx].price) lowIdx = i;
+  }
+
+  const recentHigh = arr[highIdx];
+  const bottomLow = arr[lowIdx];
+  const dropAbs = recentHigh.price - bottomLow.price;
+  const dropPct = calcPct(recentHigh.price, bottomLow.price) || 0; // high vs low as positive pct from low base
+  const dropPctFromHigh = recentHigh.price > 0 ? ((recentHigh.price - bottomLow.price) / recentHigh.price) * 100 : 0;
+  const bounceFromBottomPct = calcPct(current.price, bottomLow.price) || 0;
+  const recoveryOfDropPct = dropAbs > 0 ? ((current.price - bottomLow.price) / dropAbs) * 100 : 0;
+  const noFreshLowSec = Math.max(0, (current.ms - bottomLow.ms) / 1000);
+  const ticksSinceLow = Math.max(0, arr.length - 1 - lowIdx);
+
+  let higherLowCount = 0;
+  const tinyStep = bottomLow.price * 0.0001; // 0.01% above B, enough to avoid counting exact flat ticks.
+  for (let i = lowIdx + 1; i < arr.length; i += 1) {
+    if (arr[i].price >= bottomLow.price + tinyStep) higherLowCount += 1;
+  }
+
+  return {
+    ok: true,
+    tickCount: arr.length,
+    currentPrice: current.price,
+    currentTime: current.time,
+    recentHigh: recentHigh.price,
+    recentHighTime: recentHigh.time,
+    bottomLow: bottomLow.price,
+    bottomLowTime: bottomLow.time,
+    highIdx,
+    lowIdx,
+    ticksSinceLow,
+    dropPct: dropPctFromHigh,
+    bounceFromBottomPct,
+    recoveryOfDropPct,
+    noFreshLowSec,
+    higherLowCount
+  };
+}
+
+function getLatestFeatureForTick(symbol) {
+  return state.lastFeature.get(symbol) || null;
+}
+
+function evaluateTickWashoutCandidate(tick) {
+  const setup = "TICK_WASHOUT_RECOVERY";
+  if (!CFG.FVVO_TICK_WASHOUT_ENABLED) return { ok: false, setup, reason: "TICK_WASHOUT_DISABLED", checks: {} };
+
+  const last = getLatestFeatureForTick(tick.symbol);
+  if (!last) return { ok: false, setup, reason: "NO_5M_FEATURE_CONTEXT", checks: {} };
+
+  const structure = calcTickStructure(tick.symbol);
+  if (!structure.ok) return { ok: false, setup, reason: structure.reason, checks: { structure } };
+
+  const prev = previousBar(tick.symbol);
+  const prevRsi = prev ? safeNum(prev.rsi, null) : null;
+  const prevAdx = prev ? safeNum(prev.adx, null) : null;
+
+  const price = structure.currentPrice;
+  const fvvo = safeNum(last.fvvoValue, null);
+  const slope = safeNum(last.fvvoSlope, null);
+  const rsi = safeNum(last.rsi, null);
+  const adx = safeNum(last.adx, null);
+  const ema8 = safeNum(last.ema8, null);
+  const ema18 = safeNum(last.ema18, null);
+
+  const dropOk = structure.dropPct >= CFG.FVVO_TICK_WASHOUT_MIN_DROP_PCT && structure.dropPct <= CFG.FVVO_TICK_WASHOUT_MAX_DROP_PCT;
+  const bounceOk = structure.bounceFromBottomPct >= CFG.FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT;
+  const recoveryOk = structure.recoveryOfDropPct >= CFG.FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT;
+  const noFreshLowOk = structure.noFreshLowSec >= CFG.FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC;
+  const higherLowOk = structure.higherLowCount >= CFG.FVVO_TICK_WASHOUT_MIN_HIGHER_LOW_COUNT;
+
+  const fvvoRangeOk = Number.isFinite(fvvo) && fvvo >= CFG.FVVO_TICK_WASHOUT_MIN_FVVO && fvvo <= CFG.FVVO_TICK_WASHOUT_MAX_FVVO;
+  const slopeOk = Number.isFinite(slope) && slope >= CFG.FVVO_TICK_WASHOUT_MIN_SLOPE;
+  const rsiOk = Number.isFinite(rsi) && rsi >= CFG.FVVO_TICK_WASHOUT_MIN_RSI;
+  const rsiRising = !CFG.FVVO_TICK_WASHOUT_REQUIRE_RSI_RISING || !Number.isFinite(prevRsi) || rsi >= prevRsi;
+
+  const belowEma8Pct = calcBelowPct(ema8, price);
+  const priceNearEma8Ok = Number.isFinite(belowEma8Pct) && belowEma8Pct <= CFG.FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT;
+
+  const adxRising = Number.isFinite(adx) && Number.isFinite(prevAdx) && adx > prevAdx;
+  const emaBearStructure = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 < ema18;
+  const priceBelowEma8 = Number.isFinite(ema8) && price < ema8;
+  const adxRisingBearReject = CFG.FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR &&
+    Number.isFinite(adx) &&
+    adx >= CFG.FVVO_TICK_WASHOUT_REJECT_ADX_MIN &&
+    adxRising &&
+    emaBearStructure &&
+    priceBelowEma8;
+
+  const recentRedPulseBlocked = last ? recentRedPulse(last, CFG.FVVO_RED_PULSE_BLOCK_BARS) : false;
+  const openRealPosition = state.positions.has(tick.symbol);
+  const openExternalDeal = state.externalDeals.has(tick.symbol);
+  const dealBlock = CFG.FVVO_TICK_WASHOUT_REJECT_IF_OPEN_DEAL && (openRealPosition || openExternalDeal);
+
+  const lastCloseMs = state.lastTickWashoutCloseMs.get(tick.symbol) || 0;
+  const cooldownOk = CFG.FVVO_TICK_WASHOUT_COOLDOWN_SEC <= 0 || (timeToMs(tick.time) - lastCloseMs) / 1000 >= CFG.FVVO_TICK_WASHOUT_COOLDOWN_SEC;
+
+  const ok = dropOk && bounceOk && recoveryOk && noFreshLowOk && higherLowOk &&
+    fvvoRangeOk && slopeOk && rsiOk && rsiRising && priceNearEma8Ok &&
+    !adxRisingBearReject && !recentRedPulseBlocked && !dealBlock && cooldownOk;
+
+  const checks = {
+    setup,
+    structure,
+    dropOk,
+    bounceOk,
+    recoveryOk,
+    noFreshLowOk,
+    higherLowOk,
+    fvvoRangeOk,
+    slopeOk,
+    rsiOk,
+    rsiRising,
+    belowEma8Pct,
+    priceNearEma8Ok,
+    adxRising,
+    emaBearStructure,
+    priceBelowEma8,
+    adxRisingBearReject,
+    recentRedPulseBlocked,
+    openRealPosition,
+    openExternalDeal,
+    dealBlock,
+    cooldownOk,
+    fvvo,
+    slope,
+    rsi,
+    prevRsi,
+    adx,
+    prevAdx,
+    ema8,
+    ema18
+  };
+
+  let reason = "NO_TICK_WASHOUT";
+  if (ok) reason = "FVVO_TICK_WASHOUT_RECOVERY_C";
+  else {
+    const failed = [];
+    if (!dropOk) failed.push("DROP_NOT_IN_RANGE");
+    if (!bounceOk) failed.push("BOUNCE_TOO_SMALL");
+    if (!recoveryOk) failed.push("RECOVERY_OF_DROP_TOO_SMALL");
+    if (!noFreshLowOk) failed.push("FRESH_LOW_TOO_RECENT");
+    if (!higherLowOk) failed.push("NOT_ENOUGH_HIGHER_TICKS");
+    if (!fvvoRangeOk) failed.push("FVVO_NOT_IN_PRE_CROSS_RANGE");
+    if (!slopeOk) failed.push("FVVO_SLOPE_TOO_WEAK");
+    if (!rsiOk) failed.push("RSI_TOO_LOW_PINK_FILTER");
+    if (!rsiRising) failed.push("RSI_NOT_RISING");
+    if (!priceNearEma8Ok) failed.push("PRICE_TOO_FAR_BELOW_EMA8_PINK_FILTER");
+    if (adxRisingBearReject) failed.push("ADX_RISING_BEAR_PINK_FILTER");
+    if (recentRedPulseBlocked) failed.push("RECENT_RED_PULSE_BLOCK");
+    if (dealBlock) failed.push("OPEN_REAL_DEAL_BLOCK");
+    if (!cooldownOk) failed.push("TICK_WASHOUT_COOLDOWN");
+    reason = failed.join("+") || "NO_TICK_WASHOUT";
+  }
+
+  return { ok, setup, reason, checks };
+}
+
+function openTickWashoutShadow(tick, decision) {
+  const s = decision.checks.structure;
+  const entryPrice = s.currentPrice;
+  const structureStop = s.bottomLow * (1 - Math.abs(CFG.FVVO_TICK_WASHOUT_SHADOW_STOP_BUFFER_PCT) / 100);
+  const maxLossStop = entryPrice * (1 - Math.abs(CFG.FVVO_TICK_WASHOUT_SHADOW_MAX_LOSS_PCT) / 100);
+  const stopPrice = Math.max(structureStop, maxLossStop);
+
+  const shadow = {
+    setup: decision.setup,
+    symbol: tick.symbol,
+    entryPrice,
+    entryTime: tick.time,
+    entryMs: timeToMs(tick.time),
+    entryReason: decision.reason,
+    recentHigh: s.recentHigh,
+    bottomLow: s.bottomLow,
+    bottomLowTime: s.bottomLowTime,
+    dropPct: s.dropPct,
+    bounceFromBottomPct: s.bounceFromBottomPct,
+    recoveryOfDropPct: s.recoveryOfDropPct,
+    stopPrice,
+    maxPrice: entryPrice,
+    minPrice: entryPrice,
+    peakPnlPct: 0,
+    maxDrawdownPct: 0,
+    zeroCrossCompared: false,
+    entryChecks: decision.checks
+  };
+
+  state.tickWashoutShadow.set(tick.symbol, shadow);
+  state.stats.tickWashoutSignals += 1;
+  state.stats.tickWashoutShadowOpens += 1;
+
+  logLine("FVVO_TICK_WASHOUT_SHADOW_OPEN", [
+    `🧪 setup=${decision.setup}`,
+    `symbol=${tick.symbol}`,
+    `entry=${n(entryPrice, 4)}`,
+    `stop=${n(stopPrice, 4)}`,
+    `A=${n(s.recentHigh, 4)}`,
+    `B=${n(s.bottomLow, 4)}`,
+    `drop=${pct(s.dropPct)}`,
+    `bounce=${pct(s.bounceFromBottomPct)}`,
+    `recoverOfDrop=${n(s.recoveryOfDropPct, 1)}%`,
+    `noFreshLowSec=${n(s.noFreshLowSec, 0)}`,
+    `higherLowCount=${s.higherLowCount}`,
+    `fvvo=${n(decision.checks.fvvo, 6)}`,
+    `slope=${n(decision.checks.slope, 6)}`,
+    `rsi=${n(decision.checks.rsi, 2)}`,
+    `adx=${n(decision.checks.adx, 2)}`,
+    `belowEma8=${pct(decision.checks.belowEma8Pct)}`,
+    `reason=${decision.reason}`,
+    `forward=false`,
+    `shadowOnly=${boolStr(CFG.FVVO_TICK_WASHOUT_SHADOW_ONLY)}`
+  ].join(" | "), decision.checks);
+}
+
+function updateTickWashoutShadow(tick) {
+  const shadow = state.tickWashoutShadow.get(tick.symbol);
+  if (!shadow) return;
+
+  const price = Number(tick.close);
+  if (!Number.isFinite(price) || price <= 0) return;
+
+  if (price > shadow.maxPrice) shadow.maxPrice = price;
+  if (price < shadow.minPrice) shadow.minPrice = price;
+
+  const currentPnlPct = calcPct(price, shadow.entryPrice) || 0;
+  const peakPnlPct = calcPct(shadow.maxPrice, shadow.entryPrice) || 0;
+  const drawdownPct = calcPct(shadow.minPrice, shadow.entryPrice) || 0;
+  shadow.peakPnlPct = Math.max(shadow.peakPnlPct, peakPnlPct);
+  shadow.maxDrawdownPct = Math.min(shadow.maxDrawdownPct, drawdownPct);
+  const givebackPct = shadow.peakPnlPct - currentPnlPct;
+  const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
+
+  const stopHit = price <= shadow.stopPrice;
+  const tpHit = currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
+  const trailHit = shadow.peakPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT && givebackPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT;
+  const maxHoldHit = elapsedSec >= CFG.FVVO_TICK_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
+
+  let reason = "";
+  if (stopHit) reason = "TICK_WASHOUT_STRUCTURE_STOP";
+  else if (tpHit) reason = "TICK_WASHOUT_SHADOW_TP";
+  else if (trailHit) reason = "TICK_WASHOUT_SHADOW_TRAIL";
+  else if (maxHoldHit) reason = "TICK_WASHOUT_MAX_HOLD";
+
+  if (!reason) return;
+
+  state.tickWashoutShadow.delete(tick.symbol);
+  state.lastTickWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
+  state.stats.tickWashoutShadowExits += 1;
+  state.stats.tickWashoutShadowPnlPct += currentPnlPct;
+  if (currentPnlPct > 0.02) state.stats.tickWashoutShadowWins += 1;
+  else if (currentPnlPct < -0.02) state.stats.tickWashoutShadowLosses += 1;
+
+  logLine("FVVO_TICK_WASHOUT_SHADOW_RESULT", [
+    `symbol=${tick.symbol}`,
+    `entry=${n(shadow.entryPrice, 4)}`,
+    `exit=${n(price, 4)}`,
+    `pnl=${pct(currentPnlPct)}`,
+    `netAfterFee=${pct(currentPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
+    `peak=${pct(shadow.peakPnlPct)}`,
+    `drawdown=${pct(shadow.maxDrawdownPct)}`,
+    `giveback=${pct(givebackPct)}`,
+    `elapsedSec=${n(elapsedSec, 0)}`,
+    `reason=${reason}`,
+    `A=${n(shadow.recentHigh, 4)}`,
+    `B=${n(shadow.bottomLow, 4)}`,
+    `drop=${pct(shadow.dropPct)}`,
+    `entryBounce=${pct(shadow.bounceFromBottomPct)}`,
+    `entryRecoverOfDrop=${n(shadow.recoveryOfDropPct, 1)}%`
+  ].join(" | "));
+}
+
+function compareTickWashoutToZeroCross(p) {
+  const shadow = state.tickWashoutShadow.get(p.symbol);
+  if (!shadow || shadow.zeroCrossCompared) return;
+  if (!p.fvvoCrossUp && !p.fvvoAboveZero) return;
+
+  const dPrice = Number.isFinite(p.close) ? p.close : null;
+  if (!Number.isFinite(dPrice) || dPrice <= 0) return;
+
+  const savedMovePct = calcPct(dPrice, shadow.entryPrice) || 0;
+  shadow.zeroCrossCompared = true;
+  state.stats.tickWashoutZeroCrossCompares += 1;
+
+  logLine("FVVO_TICK_WASHOUT_ZERO_CROSS_COMPARE", [
+    `symbol=${p.symbol}`,
+    `C_entry=${n(shadow.entryPrice, 4)}`,
+    `D_zeroCross=${n(dPrice, 4)}`,
+    `savedMove=${pct(savedMovePct)}`,
+    `A=${n(shadow.recentHigh, 4)}`,
+    `B=${n(shadow.bottomLow, 4)}`,
+    `drop=${pct(shadow.dropPct)}`,
+    `entryBounce=${pct(shadow.bounceFromBottomPct)}`,
+    `fvvo=${n(p.fvvoValue, 6)}`,
+    `slope=${n(p.fvvoSlope, 6)}`,
+    `rsi=${n(p.rsi, 2)}`
+  ].join(" | "));
+}
+
+function handleTickWashoutShadow(tick) {
+  if (!CFG.FVVO_TICK_WASHOUT_ENABLED) return;
+  state.stats.tickWashoutTicks += 1;
+
+  updateTickBuffer(tick);
+  updateTickWashoutShadow(tick);
+
+  if (state.tickWashoutShadow.has(tick.symbol)) return;
+
+  const decision = evaluateTickWashoutCandidate(tick);
+  if (decision.ok) {
+    state.stats.tickWashoutCandidates += 1;
+    openTickWashoutShadow(tick, decision);
+    return;
+  }
+
+  if (decision.reason && decision.reason.includes("PINK_FILTER")) state.stats.tickWashoutPinkRejects += 1;
+  if (decision.reason && decision.reason.includes("OPEN_REAL_DEAL_BLOCK")) state.stats.tickWashoutDealBlocks += 1;
+
+  if (CFG.FVVO_TICK_WASHOUT_LOG_EVERY_TICK) {
+    logLine("FVVO_TICK_WASHOUT_NO_ENTRY", [
+      `symbol=${tick.symbol}`,
+      `price=${n(tick.close, 4)}`,
+      `reason=${decision.reason}`,
+      `drop=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.dropPct) : "na"}`,
+      `bounce=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.bounceFromBottomPct) : "na"}`,
+      `recoverOfDrop=${decision.checks && decision.checks.structure ? n(decision.checks.structure.recoveryOfDropPct, 1) + "%" : "na"}`,
+      `fvvo=${decision.checks ? n(decision.checks.fvvo, 6) : "na"}`,
+      `slope=${decision.checks ? n(decision.checks.slope, 6) : "na"}`,
+      `rsi=${decision.checks ? n(decision.checks.rsi, 2) : "na"}`,
+      `adx=${decision.checks ? n(decision.checks.adx, 2) : "na"}`,
+      `belowEma8=${decision.checks ? pct(decision.checks.belowEma8Pct) : "na"}`
+    ].join(" | "), decision.checks || {});
+  }
+}
+
 async function handleFastTick(tick) {
   state.stats.fastTicksReceived += 1;
+
+  // v1i: tick washout is shadow-only and should still work even when no real FVVO deal is open.
+  handleTickWashoutShadow(tick);
+
 
   if (!CFG.FVVO_FAST_EXIT_ENABLED) {
     state.stats.fastTicksSkipped += 1;
@@ -1456,6 +1868,8 @@ async function handleFeature(p) {
       `bullishColor=${boolStr(p.fvvoBullishColor)}`
     ].join(" | "));
   }
+
+  compareTickWashoutToZeroCross(p);
 
   observeShortSignal(p);
   const openPos = state.positions.get(p.symbol);
@@ -1817,6 +2231,17 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FAST_EXIT_TRAIL_ENABLED=${CFG.FVVO_FAST_EXIT_TRAIL_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ARM_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_TICK_WASHOUT_ENABLED=${CFG.FVVO_TICK_WASHOUT_ENABLED}`);
+  console.log(`FVVO_TICK_WASHOUT_SHADOW_ONLY=${CFG.FVVO_TICK_WASHOUT_SHADOW_ONLY}`);
+  console.log(`FVVO_TICK_WASHOUT_WINDOW_MIN=${CFG.FVVO_TICK_WASHOUT_WINDOW_MIN}`);
+  console.log(`FVVO_TICK_WASHOUT_MIN_DROP_PCT=${CFG.FVVO_TICK_WASHOUT_MIN_DROP_PCT}`);
+  console.log(`FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT=${CFG.FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT}`);
+  console.log(`FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT=${CFG.FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT}`);
+  console.log(`FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC=${CFG.FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC}`);
+  console.log(`FVVO_TICK_WASHOUT_MIN_RSI=${CFG.FVVO_TICK_WASHOUT_MIN_RSI}`);
+  console.log(`FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT=${CFG.FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT}`);
+  console.log(`FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR=${CFG.FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_WASHOUT_ENABLED=${CFG.FVVO_WASHOUT_ENABLED}`);
   console.log(`FVVO_WASHOUT_ALLOW_GREEN_DOT=${CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT}`);

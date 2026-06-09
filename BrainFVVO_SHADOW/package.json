@@ -1,7 +1,6 @@
 {
-  "name": "brainfvvo-v1h-fast-exit-demo-forward",
+  "name": "brainfvvo-v1i-tick-washout-shadow",
   "version": "1.0.0",
-  "description": "BrainFVVO_v1h_FAST_EXIT_DEMO_FORWARD - FVVO cross-up demo brain with exit-managed and tick/fast-exit feed",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
