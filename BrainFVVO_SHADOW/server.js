@@ -1,10 +1,10 @@
 // ============================================================
-// BrainFVVO_v1k_DEEP_WASHOUT_SLOW_RECOVERY_SHADOW
+// BrainFVVO_v1m_ALL_LEGS_FORWARD_OPTIMIZED
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
 // - DEMO-only forwarding safety.
-// - Forwards CROSS_UP_CONFIRM only by default.
+// - Forwards all enabled DEMO entry legs by default: CROSS_UP, POST_CROSS_RECLAIM, TICK_WASHOUT_RECOVERY, and DEEP_WASHOUT_SLOW_RECOVERY.
 // - Uses one-candle FVVO red/green pulses; raw active states are logged only.
 // - Red pulse blocks new longs briefly and can act as profit-only exit warning.
 // - Green pulse creates recovery memory for cross-up confirmation.
@@ -45,7 +45,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1k_DEEP_WASHOUT_SLOW_RECOVERY_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1m_ALL_LEGS_FORWARD_OPTIMIZED"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -69,8 +69,9 @@ const CFG = {
   SYMBOL_BOT_MAP: parseJsonEnv("SYMBOL_BOT_MAP", {}),
 
   FVVO_FORWARD_CROSS_ENABLED: envBool("FVVO_FORWARD_CROSS_ENABLED", true),
-  FVVO_FORWARD_WASHOUT_ENABLED: envBool("FVVO_FORWARD_WASHOUT_ENABLED", false),
-  FVVO_FORWARD_RISING_ENABLED: envBool("FVVO_FORWARD_RISING_ENABLED", false),
+  FVVO_FORWARD_WASHOUT_ENABLED: envBool("FVVO_FORWARD_WASHOUT_ENABLED", true),
+  FVVO_FORWARD_RISING_ENABLED: envBool("FVVO_FORWARD_RISING_ENABLED", true),
+  FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED: envBool("FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED", true),
   FVVO_FORWARD_EXIT_ENABLED: envBool("FVVO_FORWARD_EXIT_ENABLED", true),
 
   FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
@@ -119,7 +120,7 @@ const CFG = {
   // v1i: shadow-only tick washout bottom/recovery detector.
   // This never forwards entries by default and never blocks the existing CROSS_UP real entry logic.
   FVVO_TICK_WASHOUT_ENABLED: envBool("FVVO_TICK_WASHOUT_ENABLED", true),
-  FVVO_TICK_WASHOUT_SHADOW_ONLY: envBool("FVVO_TICK_WASHOUT_SHADOW_ONLY", true),
+  FVVO_TICK_WASHOUT_SHADOW_ONLY: envBool("FVVO_TICK_WASHOUT_SHADOW_ONLY", false),
 
   // v1j: logging-only cleanup. Keeps compact raw tick tape for replay,
   // while throttling noisy FVVO_TICK_WASHOUT_NO_ENTRY decision logs.
@@ -134,16 +135,16 @@ const CFG = {
   FVVO_TICK_WASHOUT_WINDOW_MIN: envNum("FVVO_TICK_WASHOUT_WINDOW_MIN", 20),
   FVVO_TICK_WASHOUT_MIN_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MIN_DROP_PCT", 0.60),
   FVVO_TICK_WASHOUT_MAX_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MAX_DROP_PCT", 2.50),
-  FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT: envNum("FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT", 0.25),
-  FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT", 25),
+  FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT: envNum("FVVO_TICK_WASHOUT_MIN_BOUNCE_PCT", 0.60),
+  FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT: envNum("FVVO_TICK_WASHOUT_MIN_RECOVERY_OF_DROP_PCT", 50),
   FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC: envNum("FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC", 60),
   FVVO_TICK_WASHOUT_MIN_HIGHER_LOW_COUNT: envNum("FVVO_TICK_WASHOUT_MIN_HIGHER_LOW_COUNT", 2),
-  FVVO_TICK_WASHOUT_MIN_FVVO: envNum("FVVO_TICK_WASHOUT_MIN_FVVO", -4.50),
+  FVVO_TICK_WASHOUT_MIN_FVVO: envNum("FVVO_TICK_WASHOUT_MIN_FVVO", -1.00),
   FVVO_TICK_WASHOUT_MAX_FVVO: envNum("FVVO_TICK_WASHOUT_MAX_FVVO", 0),
-  FVVO_TICK_WASHOUT_MIN_SLOPE: envNum("FVVO_TICK_WASHOUT_MIN_SLOPE", 0.50),
-  FVVO_TICK_WASHOUT_MIN_RSI: envNum("FVVO_TICK_WASHOUT_MIN_RSI", 42),
+  FVVO_TICK_WASHOUT_MIN_SLOPE: envNum("FVVO_TICK_WASHOUT_MIN_SLOPE", 0.10),
+  FVVO_TICK_WASHOUT_MIN_RSI: envNum("FVVO_TICK_WASHOUT_MIN_RSI", 52),
   FVVO_TICK_WASHOUT_REQUIRE_RSI_RISING: envBool("FVVO_TICK_WASHOUT_REQUIRE_RSI_RISING", true),
-  FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT: envNum("FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT", 0.15),
+  FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT: envNum("FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT", 0.05),
   FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR: envBool("FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR", true),
   FVVO_TICK_WASHOUT_REJECT_ADX_MIN: envNum("FVVO_TICK_WASHOUT_REJECT_ADX_MIN", 22),
   FVVO_TICK_WASHOUT_REJECT_IF_OPEN_DEAL: envBool("FVVO_TICK_WASHOUT_REJECT_IF_OPEN_DEAL", true),
@@ -159,8 +160,8 @@ const CFG = {
   // It watches for a larger 2.5%+ selloff and then a slower +1.0% recovery from the bottom.
   // It never forwards entries while FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED=false.
   FVVO_DEEP_WASHOUT_RECOVERY_ENABLED: envBool("FVVO_DEEP_WASHOUT_RECOVERY_ENABLED", true),
-  FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY: envBool("FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY", true),
-  FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED: envBool("FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED", false),
+  FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY: envBool("FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY", false),
+  FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED: envBool("FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED", true),
   FVVO_DEEP_WASHOUT_LOOKBACK_MIN: envNum("FVVO_DEEP_WASHOUT_LOOKBACK_MIN", 360),
   FVVO_DEEP_WASHOUT_MIN_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_MIN_DROP_PCT", 2.50),
   FVVO_DEEP_WASHOUT_MAX_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_DROP_PCT", 3.25),
@@ -184,6 +185,30 @@ const CFG = {
   FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT: envNum("FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT", 0.08),
   FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT: envNum("FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT", 0.60),
   FVVO_DEEP_WASHOUT_LOG_NO_ENTRY: envBool("FVVO_DEEP_WASHOUT_LOG_NO_ENTRY", false),
+
+  // v1l: post-cross reclaim leg. This catches slow recoveries where the first FVVO
+  // zero-cross was blocked by early RSI/structure but price later confirms recovery.
+  // Defaults are shadow-only; use FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED=true and
+  // FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY=false only for DEMO/paper testing.
+  FVVO_POST_CROSS_RECLAIM_ENABLED: envBool("FVVO_POST_CROSS_RECLAIM_ENABLED", true),
+  FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY: envBool("FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY", false),
+  FVVO_POST_CROSS_MEMORY_BARS: envNum("FVVO_POST_CROSS_MEMORY_BARS", 8),
+  FVVO_POST_CROSS_MIN_AGE_BARS: envNum("FVVO_POST_CROSS_MIN_AGE_BARS", 1),
+  FVVO_POST_CROSS_SOURCE_MIN_RSI: envNum("FVVO_POST_CROSS_SOURCE_MIN_RSI", 45),
+  FVVO_POST_CROSS_SOURCE_MAX_RSI: envNum("FVVO_POST_CROSS_SOURCE_MAX_RSI", 64),
+  FVVO_POST_CROSS_SOURCE_MIN_ADX: envNum("FVVO_POST_CROSS_SOURCE_MIN_ADX", 14),
+  FVVO_POST_CROSS_SOURCE_MIN_SLOPE: envNum("FVVO_POST_CROSS_SOURCE_MIN_SLOPE", 0.10),
+  FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA8_PCT: envNum("FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA8_PCT", 0.45),
+  FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA18_PCT: envNum("FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA18_PCT", 0.75),
+  FVVO_POST_CROSS_MIN_RSI: envNum("FVVO_POST_CROSS_MIN_RSI", 52),
+  FVVO_POST_CROSS_MIN_ADX: envNum("FVVO_POST_CROSS_MIN_ADX", 0),
+  FVVO_POST_CROSS_MIN_SLOPE: envNum("FVVO_POST_CROSS_MIN_SLOPE", -0.20),
+  FVVO_POST_CROSS_MIN_FVVO: envNum("FVVO_POST_CROSS_MIN_FVVO", 0),
+  FVVO_POST_CROSS_REQUIRE_ABOVE_EMA8: envBool("FVVO_POST_CROSS_REQUIRE_ABOVE_EMA8", true),
+  FVVO_POST_CROSS_MAX_EXT_EMA8_PCT: envNum("FVVO_POST_CROSS_MAX_EXT_EMA8_PCT", 0.35),
+  FVVO_POST_CROSS_MAX_EXT_EMA18_PCT: envNum("FVVO_POST_CROSS_MAX_EXT_EMA18_PCT", 0.70),
+  FVVO_POST_CROSS_RED_BLOCK_BARS: envNum("FVVO_POST_CROSS_RED_BLOCK_BARS", 2),
+  FVVO_POST_CROSS_LOG_NO_ENTRY: envBool("FVVO_POST_CROSS_LOG_NO_ENTRY", false),
 
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
@@ -230,7 +255,7 @@ const CFG = {
   FVVO_RISING_MAX_EXT_EMA18_PCT: envNum("FVVO_RISING_MAX_EXT_EMA18_PCT", 0.55),
 
   FVVO_INTRABAR_HARD_STOP_ENABLED: envBool("FVVO_INTRABAR_HARD_STOP_ENABLED", true),
-  FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.45),
+  FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.30),
   FVVO_GIVEBACK_ARM1_PCT: envNum("FVVO_GIVEBACK_ARM1_PCT", 0.30),
   FVVO_GIVEBACK_ARM1_DROP_PCT: envNum("FVVO_GIVEBACK_ARM1_DROP_PCT", 0.15),
   FVVO_GIVEBACK_ARM2_PCT: envNum("FVVO_GIVEBACK_ARM2_PCT", 0.50),
@@ -279,6 +304,7 @@ const state = {
   tickBuffers: new Map(),
   tickWashoutShadow: new Map(),
   deepWashoutShadow: new Map(),
+  postCrossMemory: new Map(),
   lastTickWashoutCloseMs: new Map(),
   lastDeepWashoutCloseMs: new Map(),
   tickWashoutSummary: new Map(),
@@ -356,7 +382,12 @@ const state = {
     deepWashoutShadowExits: 0,
     deepWashoutShadowWins: 0,
     deepWashoutShadowLosses: 0,
-    deepWashoutShadowPnlPct: 0
+    deepWashoutShadowPnlPct: 0,
+    postCrossSignals: 0,
+    postCrossOpens: 0,
+    postCrossExits: 0,
+    postCrossPnlPct: 0,
+    postCrossMemorySets: 0
   }
 };
 
@@ -582,6 +613,9 @@ function shouldForwardSetup(setup) {
   if (setup === "CROSS_UP_CONFIRM") return CFG.FVVO_FORWARD_CROSS_ENABLED;
   if (setup === "WASHOUT_REVERSAL") return CFG.FVVO_FORWARD_WASHOUT_ENABLED;
   if (setup === "RISING_CONTINUATION") return CFG.FVVO_FORWARD_RISING_ENABLED;
+  if (setup === "POST_CROSS_RECLAIM") return CFG.FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED && !CFG.FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY;
+  if (setup === "TICK_WASHOUT_RECOVERY") return CFG.FVVO_FORWARD_WASHOUT_ENABLED && !CFG.FVVO_TICK_WASHOUT_SHADOW_ONLY;
+  if (setup === "DEEP_WASHOUT_SLOW_RECOVERY") return CFG.FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED && !CFG.FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY;
   return false;
 }
 
@@ -976,6 +1010,110 @@ function evaluateCrossEntry(p) {
   return { ok, setup, reason, checks, momentumOverride };
 }
 
+
+function sourceCrossQualifiesForPostCross(p, crossDecision, barNo) {
+  if (!CFG.FVVO_POST_CROSS_RECLAIM_ENABLED) return false;
+  if (!p || !p.fvvoCrossUp || !p.fvvoAboveZero || !(p.fvvoValue > 0)) return false;
+  if (crossDecision && crossDecision.ok) return false;
+
+  const checks = (crossDecision && crossDecision.checks) || {};
+  const extEma8Pct = Number.isFinite(checks.extEma8Pct) ? checks.extEma8Pct : calcPct(p.close, p.ema8);
+  const extEma18Pct = Number.isFinite(checks.extEma18Pct) ? checks.extEma18Pct : calcPct(p.close, p.ema18);
+  const sourceRedBlocked = checks.recentRedDotBlocked || recentRedPulse(p, CFG.FVVO_POST_CROSS_RED_BLOCK_BARS);
+
+  const rsiOk = Number.isFinite(p.rsi) && p.rsi >= CFG.FVVO_POST_CROSS_SOURCE_MIN_RSI && p.rsi <= CFG.FVVO_POST_CROSS_SOURCE_MAX_RSI;
+  const adxOk = CFG.FVVO_POST_CROSS_SOURCE_MIN_ADX <= 0 || (Number.isFinite(p.adx) && p.adx >= CFG.FVVO_POST_CROSS_SOURCE_MIN_ADX);
+  const slopeOk = Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_POST_CROSS_SOURCE_MIN_SLOPE;
+  const ext8Ok = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA8_PCT;
+  const ext18Ok = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA18_PCT;
+  const redOk = !sourceRedBlocked;
+
+  const ok = rsiOk && adxOk && slopeOk && ext8Ok && ext18Ok && redOk;
+  if (ok) {
+    state.postCrossMemory.set(p.symbol, {
+      symbol: p.symbol,
+      sourceBarNo: barNo,
+      sourceTime: p.time,
+      sourcePrice: p.close,
+      sourceRsi: p.rsi,
+      sourceAdx: p.adx,
+      sourceFvvo: p.fvvoValue,
+      sourceSlope: p.fvvoSlope,
+      sourceExtEma8Pct: extEma8Pct,
+      sourceExtEma18Pct: extEma18Pct,
+      sourceReason: crossDecision ? crossDecision.reason : "NO_CROSS_ENTRY"
+    });
+    state.stats.postCrossMemorySets += 1;
+    logLine("FVVO_POST_CROSS_MEMORY_SET", [
+      `symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `barNo=${barNo}`,
+      `sourceReason=${crossDecision ? crossDecision.reason : "NO_CROSS_ENTRY"}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`,
+      `extEma8=${pct(extEma8Pct)}`,
+      `extEma18=${pct(extEma18Pct)}`
+    ].join(" | "));
+  }
+  return ok;
+}
+
+function evaluatePostCrossReclaimEntry(p, crossDecision, barNo) {
+  const setup = "POST_CROSS_RECLAIM";
+  if (!CFG.FVVO_POST_CROSS_RECLAIM_ENABLED) return { ok: false, setup, reason: "POST_CROSS_RECLAIM_DISABLED", momentumOverride: false, checks: {} };
+
+  if (crossDecision && crossDecision.ok) {
+    state.postCrossMemory.delete(p.symbol);
+    return { ok: false, setup, reason: "FRESH_CROSS_ENTRY_TAKES_PRIORITY", momentumOverride: false, checks: {} };
+  }
+
+  sourceCrossQualifiesForPostCross(p, crossDecision, barNo);
+
+  const mem = state.postCrossMemory.get(p.symbol);
+  if (!mem) return { ok: false, setup, reason: "NO_POST_CROSS_MEMORY", momentumOverride: false, checks: {} };
+
+  const ageBars = barNo - mem.sourceBarNo;
+  const ageOk = ageBars >= CFG.FVVO_POST_CROSS_MIN_AGE_BARS && ageBars <= CFG.FVVO_POST_CROSS_MEMORY_BARS;
+  if (!ageOk) {
+    if (ageBars > CFG.FVVO_POST_CROSS_MEMORY_BARS) state.postCrossMemory.delete(p.symbol);
+    return { ok: false, setup, reason: "POST_CROSS_MEMORY_AGE_NOT_OK", momentumOverride: false, checks: { ageBars, memory: mem } };
+  }
+
+  const extEma8Pct = calcPct(p.close, p.ema8);
+  const extEma18Pct = calcPct(p.close, p.ema18);
+  const priceAboveEma8 = p.close > p.ema8;
+  const priceOk = !CFG.FVVO_POST_CROSS_REQUIRE_ABOVE_EMA8 || priceAboveEma8;
+  const rsiOk = Number.isFinite(p.rsi) && p.rsi >= CFG.FVVO_POST_CROSS_MIN_RSI;
+  const adxOk = CFG.FVVO_POST_CROSS_MIN_ADX <= 0 || (Number.isFinite(p.adx) && p.adx >= CFG.FVVO_POST_CROSS_MIN_ADX);
+  const slopeOk = Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_POST_CROSS_MIN_SLOPE;
+  const fvvoOk = p.fvvoAboveZero && Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_POST_CROSS_MIN_FVVO;
+  const ext8Ok = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_POST_CROSS_MAX_EXT_EMA8_PCT;
+  const ext18Ok = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_POST_CROSS_MAX_EXT_EMA18_PCT;
+  const noRecentRed = !recentRedPulse(p, CFG.FVVO_POST_CROSS_RED_BLOCK_BARS);
+  const noBearishConflict = !p.fvvoBearishColor || p.burstBullish || p.fvvoAboveZero;
+
+  const ok = ageOk && priceOk && rsiOk && adxOk && slopeOk && fvvoOk && ext8Ok && ext18Ok && noRecentRed && noBearishConflict;
+  const checks = { setup, ageBars, memory: mem, priceOk, priceAboveEma8, rsiOk, adxOk, slopeOk, fvvoOk, ext8Ok, ext18Ok, noRecentRed, noBearishConflict, extEma8Pct, extEma18Pct, rsi: p.rsi, adx: p.adx, fvvo: p.fvvoValue, slope: p.fvvoSlope };
+
+  if (ok) {
+    return { ok: true, setup, reason: "FVVO_POST_CROSS_RECLAIM", momentumOverride: false, checks };
+  }
+
+  const failed = [];
+  if (!priceOk) failed.push("PRICE_NOT_ABOVE_EMA8");
+  if (!rsiOk) failed.push("RSI_TOO_LOW");
+  if (!adxOk) failed.push("ADX_TOO_LOW");
+  if (!slopeOk) failed.push("SLOPE_TOO_WEAK");
+  if (!fvvoOk) failed.push("FVVO_NOT_ABOVE_MIN");
+  if (!ext8Ok) failed.push("TOO_EXTENDED_EMA8");
+  if (!ext18Ok) failed.push("TOO_EXTENDED_EMA18");
+  if (!noRecentRed) failed.push("RECENT_RED_PULSE_BLOCK");
+  if (!noBearishConflict) failed.push("FVVO_BEARISH_CONFLICT");
+  return { ok: false, setup, reason: failed.join("+") || "NO_POST_CROSS_RECLAIM", momentumOverride: false, checks };
+}
+
 function evaluateRisingContinuationEntry(p) {
   const setup = "RISING_CONTINUATION";
   if (!CFG.FVVO_LONG_ENABLED) return { ok: false, setup, reason: "FVVO_LONG_DISABLED", momentumOverride: false, checks: {} };
@@ -1013,7 +1151,10 @@ function evaluateRisingContinuationEntry(p) {
 
 function setupPrefix(setup) {
   if (setup === "WASHOUT_REVERSAL") return "FVVO_WASHOUT";
+  if (setup === "TICK_WASHOUT_RECOVERY") return "FVVO_TICK_WASHOUT";
+  if (setup === "DEEP_WASHOUT_SLOW_RECOVERY") return "FVVO_DEEP_WASHOUT";
   if (setup === "CROSS_UP_CONFIRM") return "FVVO_CROSS";
+  if (setup === "POST_CROSS_RECLAIM") return "FVVO_POST_CROSS";
   return "FVVO_RISING";
 }
 
@@ -1061,6 +1202,7 @@ async function openVirtualLong(p, decision, barNo) {
     if (decision.checks && decision.checks.greenPulseAssist) state.stats.greenPulseAssistOpens += 1;
   }
   if (decision.setup === "RISING_CONTINUATION") state.stats.risingOpens += 1;
+  if (decision.setup === "POST_CROSS_RECLAIM") state.stats.postCrossOpens += 1;
 
   logLine(`${setupPrefix(decision.setup)}_LONG_OPEN`, [
     `🟢 setup=${decision.setup}`,
@@ -1233,6 +1375,10 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
     state.stats.risingExits += 1;
     state.stats.risingPnlPct += pnlPct;
   }
+  if (pos.setup === "POST_CROSS_RECLAIM") {
+    state.stats.postCrossExits += 1;
+    state.stats.postCrossPnlPct += pnlPct;
+  }
 
   if (pnlPct > 0.03) state.stats.wins += 1;
   else if (pnlPct < -0.03) state.stats.losses += 1;
@@ -1345,6 +1491,7 @@ function logScorecard() {
   const washoutAvg = avg(state.stats.washoutPnlPct, state.stats.washoutExits);
   const crossAvg = avg(state.stats.crossPnlPct, state.stats.crossExits);
   const risingAvg = avg(state.stats.risingPnlPct, state.stats.risingExits);
+  const postCrossAvg = avg(state.stats.postCrossPnlPct, state.stats.postCrossExits);
 
   logLine("FVVO_RAW_SCORECARD_RESULT", [
     `📈 trades=${exits}`,
@@ -1375,6 +1522,11 @@ function logScorecard() {
     `risingTrades=${state.stats.risingExits}`,
     `risingAvg=${pct(risingAvg)}`,
     `risingTotal=${pct(state.stats.risingPnlPct)}`,
+    `postCrossSignals=${state.stats.postCrossSignals}`,
+    `postCrossMemorySets=${state.stats.postCrossMemorySets}`,
+    `postCrossTrades=${state.stats.postCrossExits}`,
+    `postCrossAvg=${pct(postCrossAvg)}`,
+    `postCrossTotal=${pct(state.stats.postCrossPnlPct)}`,
     `forwardAttempts=${state.stats.forwardAttempts}`,
     `forwardSuccess=${state.stats.forwardSuccess}`,
     `forwardErrors=${state.stats.forwardErrors}`,
@@ -1645,7 +1797,7 @@ function evaluateTickWashoutCandidate(tick) {
   return { ok, setup, reason, checks };
 }
 
-function openTickWashoutShadow(tick, decision) {
+async function openTickWashoutShadow(tick, decision) {
   const s = decision.checks.structure;
   const entryPrice = s.currentPrice;
   const structureStop = s.bottomLow * (1 - Math.abs(CFG.FVVO_TICK_WASHOUT_SHADOW_STOP_BUFFER_PCT) / 100);
@@ -1671,8 +1823,32 @@ function openTickWashoutShadow(tick, decision) {
     peakPnlPct: 0,
     maxDrawdownPct: 0,
     zeroCrossCompared: false,
-    entryChecks: decision.checks
+    entryChecks: decision.checks,
+    forwardedEntry: false,
+    forwardEntryStatus: "NOT_FORWARDED"
   };
+
+  const forwardEligible = shouldForwardSetup(decision.setup) && !CFG.SHADOW_ONLY;
+  if (forwardEligible) {
+    const result = await forwardTo3Commas("enter_long", { ...tick, close: entryPrice }, { setup: decision.setup, reason: decision.reason, momentumOverride: false });
+    shadow.forwardedEntry = result.ok === true && !result.dryRun;
+    shadow.forwardEntryStatus = result.ok ? (result.dryRun ? "DRY_RUN" : "FORWARDED") : (result.skipped ? "SKIPPED" : "ERROR");
+    if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && shadow.forwardedEntry) {
+      state.externalDeals.set(tick.symbol, {
+        symbol: tick.symbol,
+        setup: decision.setup,
+        entryPrice,
+        entryTime: tick.time,
+        openedAt: nowIso(),
+        brain: CFG.BRAIN_NAME
+      });
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_SET", `symbol=${tick.symbol} | setup=${decision.setup} | entry=${n(entryPrice, 4)} | reason=${decision.reason}`);
+    }
+  } else if (shouldForwardSetup(decision.setup)) {
+    shadow.forwardEntryStatus = "SHADOW_ONLY";
+  } else {
+    shadow.forwardEntryStatus = "SETUP_NOT_FORWARD_ENABLED";
+  }
 
   state.tickWashoutShadow.set(tick.symbol, shadow);
   state.stats.tickWashoutSignals += 1;
@@ -1696,12 +1872,14 @@ function openTickWashoutShadow(tick, decision) {
     `adx=${n(decision.checks.adx, 2)}`,
     `belowEma8=${pct(decision.checks.belowEma8Pct)}`,
     `reason=${decision.reason}`,
-    `forward=false`,
+    `forwardEligible=${boolStr(shouldForwardSetup(decision.setup))}`,
+    `forwardedEntry=${boolStr(shadow.forwardedEntry)}`,
+    `forwardEntryStatus=${shadow.forwardEntryStatus}`,
     `shadowOnly=${boolStr(CFG.FVVO_TICK_WASHOUT_SHADOW_ONLY)}`
   ].join(" | "), decision.checks);
 }
 
-function updateTickWashoutShadow(tick) {
+async function updateTickWashoutShadow(tick) {
   const shadow = state.tickWashoutShadow.get(tick.symbol);
   if (!shadow) return;
 
@@ -1732,6 +1910,26 @@ function updateTickWashoutShadow(tick) {
 
   if (!reason) return;
 
+  if (shadow.forwardedEntry && CFG.FVVO_FORWARD_EXIT_ENABLED) {
+    const forwardExitResult = await forwardTo3Commas("exit_long", { ...tick, close: price }, { setup: shadow.setup, reason, momentumOverride: false });
+    if (!forwardExitResult.ok && !forwardExitResult.dryRun) {
+      logLine("C3_FORWARD_EXIT_HOLDING_TICK_WASHOUT", [
+        `reason=EXIT_FORWARD_NOT_CONFIRMED`,
+        `symbol=${tick.symbol}`,
+        `setup=${shadow.setup}`,
+        `exitReason=${reason}`,
+        `exitPrice=${n(price, 4)}`,
+        `pnl=${pct(currentPnlPct)}`,
+        `forwardStatus=${forwardExitResult.reason || "ERROR"}`
+      ].join(" | "));
+      return;
+    }
+    if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED) {
+      state.externalDeals.delete(tick.symbol);
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${tick.symbol} | setup=${shadow.setup} | exit=${n(price, 4)} | reason=${reason}`);
+    }
+  }
+
   state.tickWashoutShadow.delete(tick.symbol);
   state.lastTickWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.tickWashoutShadowExits += 1;
@@ -1754,7 +1952,9 @@ function updateTickWashoutShadow(tick) {
     `B=${n(shadow.bottomLow, 4)}`,
     `drop=${pct(shadow.dropPct)}`,
     `entryBounce=${pct(shadow.bounceFromBottomPct)}`,
-    `entryRecoverOfDrop=${n(shadow.recoveryOfDropPct, 1)}%`
+    `entryRecoverOfDrop=${n(shadow.recoveryOfDropPct, 1)}%`,
+    `forwardedEntry=${boolStr(shadow.forwardedEntry)}`,
+    `forwardEntryStatus=${shadow.forwardEntryStatus}`
   ].join(" | "));
 }
 
@@ -1907,7 +2107,7 @@ function evaluateDeepWashoutCandidate(tick) {
   return { ok, setup, reason, checks };
 }
 
-function openDeepWashoutShadow(tick, decision) {
+async function openDeepWashoutShadow(tick, decision) {
   const s = decision.checks.structure;
   const entryPrice = s.currentPrice;
   const structureStop = s.bottomLow * (1 - Math.abs(CFG.FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT) / 100);
@@ -1932,8 +2132,32 @@ function openDeepWashoutShadow(tick, decision) {
     minPrice: entryPrice,
     peakPnlPct: 0,
     maxDrawdownPct: 0,
-    entryChecks: decision.checks
+    entryChecks: decision.checks,
+    forwardedEntry: false,
+    forwardEntryStatus: "NOT_FORWARDED"
   };
+
+  const forwardEligible = shouldForwardSetup(decision.setup) && !CFG.SHADOW_ONLY;
+  if (forwardEligible) {
+    const result = await forwardTo3Commas("enter_long", { ...tick, close: entryPrice }, { setup: decision.setup, reason: decision.reason, momentumOverride: false });
+    shadow.forwardedEntry = result.ok === true && !result.dryRun;
+    shadow.forwardEntryStatus = result.ok ? (result.dryRun ? "DRY_RUN" : "FORWARDED") : (result.skipped ? "SKIPPED" : "ERROR");
+    if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && shadow.forwardedEntry) {
+      state.externalDeals.set(tick.symbol, {
+        symbol: tick.symbol,
+        setup: decision.setup,
+        entryPrice,
+        entryTime: tick.time,
+        openedAt: nowIso(),
+        brain: CFG.BRAIN_NAME
+      });
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_SET", `symbol=${tick.symbol} | setup=${decision.setup} | entry=${n(entryPrice, 4)} | reason=${decision.reason}`);
+    }
+  } else if (shouldForwardSetup(decision.setup)) {
+    shadow.forwardEntryStatus = "SHADOW_ONLY";
+  } else {
+    shadow.forwardEntryStatus = "SETUP_NOT_FORWARD_ENABLED";
+  }
 
   state.deepWashoutShadow.set(tick.symbol, shadow);
   state.stats.deepWashoutCandidates += 1;
@@ -1957,12 +2181,14 @@ function openDeepWashoutShadow(tick, decision) {
     `adx=${n(decision.checks.adx, 2)}`,
     `belowEma8=${pct(decision.checks.belowEma8Pct)}`,
     `reason=${decision.reason}`,
-    `forward=false`,
+    `forwardEligible=${boolStr(shouldForwardSetup(decision.setup))}`,
+    `forwardedEntry=${boolStr(shadow.forwardedEntry)}`,
+    `forwardEntryStatus=${shadow.forwardEntryStatus}`,
     `shadowOnly=${boolStr(CFG.FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY)}`
   ].join(" | "), decision.checks);
 }
 
-function updateDeepWashoutShadow(tick) {
+async function updateDeepWashoutShadow(tick) {
   const shadow = state.deepWashoutShadow.get(tick.symbol);
   if (!shadow) return;
 
@@ -1991,6 +2217,26 @@ function updateDeepWashoutShadow(tick) {
 
   if (!reason) return;
 
+  if (shadow.forwardedEntry && CFG.FVVO_FORWARD_EXIT_ENABLED) {
+    const forwardExitResult = await forwardTo3Commas("exit_long", { ...tick, close: price }, { setup: shadow.setup, reason, momentumOverride: false });
+    if (!forwardExitResult.ok && !forwardExitResult.dryRun) {
+      logLine("C3_FORWARD_EXIT_HOLDING_DEEP_WASHOUT", [
+        `reason=EXIT_FORWARD_NOT_CONFIRMED`,
+        `symbol=${tick.symbol}`,
+        `setup=${shadow.setup}`,
+        `exitReason=${reason}`,
+        `exitPrice=${n(price, 4)}`,
+        `pnl=${pct(currentPnlPct)}`,
+        `forwardStatus=${forwardExitResult.reason || "ERROR"}`
+      ].join(" | "));
+      return;
+    }
+    if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED) {
+      state.externalDeals.delete(tick.symbol);
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${tick.symbol} | setup=${shadow.setup} | exit=${n(price, 4)} | reason=${reason}`);
+    }
+  }
+
   state.deepWashoutShadow.delete(tick.symbol);
   state.lastDeepWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.deepWashoutShadowExits += 1;
@@ -2013,11 +2259,13 @@ function updateDeepWashoutShadow(tick) {
     `B=${n(shadow.bottomLow, 4)}`,
     `drop=${pct(shadow.dropPct)}`,
     `entryBounce=${pct(shadow.bounceFromBottomPct)}`,
-    `entryRecoverOfDrop=${n(shadow.recoveryOfDropPct, 1)}%`
+    `entryRecoverOfDrop=${n(shadow.recoveryOfDropPct, 1)}%`,
+    `forwardedEntry=${boolStr(shadow.forwardedEntry)}`,
+    `forwardEntryStatus=${shadow.forwardEntryStatus}`
   ].join(" | "));
 }
 
-function handleDeepWashoutShadow(tick) {
+async function handleDeepWashoutShadow(tick) {
   if (!CFG.FVVO_DEEP_WASHOUT_RECOVERY_ENABLED) return;
   state.stats.deepWashoutTicks += 1;
 
@@ -2025,12 +2273,12 @@ function handleDeepWashoutShadow(tick) {
   // If the smaller tick-washout leg is disabled, keep deep-washout replay working.
   if (!CFG.FVVO_TICK_WASHOUT_ENABLED) updateTickBuffer(tick);
 
-  updateDeepWashoutShadow(tick);
+  await updateDeepWashoutShadow(tick);
   if (state.deepWashoutShadow.has(tick.symbol)) return;
 
   const decision = evaluateDeepWashoutCandidate(tick);
   if (decision.ok) {
-    openDeepWashoutShadow(tick, decision);
+    await openDeepWashoutShadow(tick, decision);
     return;
   }
 
@@ -2171,12 +2419,12 @@ function shouldLogTickWashoutNoEntry(decision) {
   );
 }
 
-function handleTickWashoutShadow(tick) {
+async function handleTickWashoutShadow(tick) {
   if (!CFG.FVVO_TICK_WASHOUT_ENABLED) return;
   state.stats.tickWashoutTicks += 1;
 
   updateTickBuffer(tick);
-  updateTickWashoutShadow(tick);
+  await updateTickWashoutShadow(tick);
 
   if (state.tickWashoutShadow.has(tick.symbol)) return;
 
@@ -2185,7 +2433,7 @@ function handleTickWashoutShadow(tick) {
 
   if (decision.ok) {
     state.stats.tickWashoutCandidates += 1;
-    openTickWashoutShadow(tick, decision);
+    await openTickWashoutShadow(tick, decision);
     maybeLogTickWashoutSummary(tick);
     return;
   }
@@ -2224,11 +2472,11 @@ async function handleFastTick(tick) {
   logCompactTickTape(tick);
 
   // v1i: tick washout is shadow-only and should still work even when no real FVVO deal is open.
-  handleTickWashoutShadow(tick);
+  await handleTickWashoutShadow(tick);
 
   // v1k: separate deep-washout slow-recovery shadow leg.
   // This is shadow-only by default and never changes the existing CROSS_UP real-entry logic.
-  handleDeepWashoutShadow(tick);
+  await handleDeepWashoutShadow(tick);
 
   if (!CFG.FVVO_FAST_EXIT_ENABLED) {
     state.stats.fastTicksSkipped += 1;
@@ -2414,6 +2662,7 @@ async function handleFeature(p) {
 
   const washoutDecision = evaluateWashoutEntry(p);
   const crossDecision = evaluateCrossEntry(p);
+  const postCrossDecision = evaluatePostCrossReclaimEntry(p, crossDecision, barNo);
   const risingDecision = evaluateRisingContinuationEntry(p);
 
   if (washoutDecision.ok) {
@@ -2455,6 +2704,34 @@ async function handleFeature(p) {
     ].join(" | "), crossDecision.checks);
   }
 
+  if (postCrossDecision.ok) {
+    state.stats.postCrossSignals += 1;
+    logLine("FVVO_POST_CROSS_LONG_SIGNAL", [
+      `🧪 symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `reason=${postCrossDecision.reason}`,
+      `sourcePrice=${postCrossDecision.checks && postCrossDecision.checks.memory ? n(postCrossDecision.checks.memory.sourcePrice, 4) : "na"}`,
+      `ageBars=${postCrossDecision.checks ? postCrossDecision.checks.ageBars : "na"}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`,
+      `extEma8=${postCrossDecision.checks ? pct(postCrossDecision.checks.extEma8Pct) : "na"}`,
+      `forwardEligible=${boolStr(shouldForwardSetup(postCrossDecision.setup))}`,
+      `shadowOnly=${boolStr(CFG.FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY)}`
+    ].join(" | "), postCrossDecision.checks || {});
+  } else if (CFG.FVVO_POST_CROSS_LOG_NO_ENTRY && postCrossDecision.reason !== "NO_POST_CROSS_MEMORY" && postCrossDecision.reason !== "FRESH_CROSS_ENTRY_TAKES_PRIORITY") {
+    logLine("FVVO_POST_CROSS_NO_ENTRY", [
+      `symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `reason=${postCrossDecision.reason}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`
+    ].join(" | "), postCrossDecision.checks || {});
+  }
+
   if (risingDecision.ok) {
     state.stats.risingSignals += 1;
     logLine("FVVO_RISING_LONG_SIGNAL", [
@@ -2472,7 +2749,12 @@ async function handleFeature(p) {
   let chosenDecision = null;
   if (washoutDecision.ok) chosenDecision = washoutDecision;
   else if (crossDecision.ok) chosenDecision = crossDecision;
+  else if (postCrossDecision.ok) chosenDecision = postCrossDecision;
   else if (risingDecision.ok) chosenDecision = risingDecision;
+
+  if (chosenDecision && chosenDecision.setup === "POST_CROSS_RECLAIM") {
+    state.postCrossMemory.delete(p.symbol);
+  }
 
   if (chosenDecision) {
     await openVirtualLong(p, chosenDecision, barNo);
@@ -2482,6 +2764,7 @@ async function handleFeature(p) {
       `price=${n(p.close, 4)}`,
       `washout=${washoutDecision.reason}`,
       `cross=${crossDecision.reason}`,
+      `postCross=${postCrossDecision.reason}`,
       `rising=${risingDecision.reason}`,
       `rsi=${n(p.rsi, 2)}`,
       `adx=${n(p.adx, 2)}`,
@@ -2660,6 +2943,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FORWARD_CROSS_ENABLED=${CFG.FVVO_FORWARD_CROSS_ENABLED}`);
   console.log(`FVVO_FORWARD_WASHOUT_ENABLED=${CFG.FVVO_FORWARD_WASHOUT_ENABLED}`);
   console.log(`FVVO_FORWARD_RISING_ENABLED=${CFG.FVVO_FORWARD_RISING_ENABLED}`);
+  console.log(`FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED=${CFG.FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED}`);
   console.log(`FVVO_FORWARD_EXIT_ENABLED=${CFG.FVVO_FORWARD_EXIT_ENABLED}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_LONG_ENABLED=${CFG.FVVO_LONG_ENABLED}`);
@@ -2720,6 +3004,17 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_DEEP_WASHOUT_MIN_RSI=${CFG.FVVO_DEEP_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_TP_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_POST_CROSS_RECLAIM_ENABLED=${CFG.FVVO_POST_CROSS_RECLAIM_ENABLED}`);
+  console.log(`FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY=${CFG.FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY}`);
+  console.log(`FVVO_POST_CROSS_MEMORY_BARS=${CFG.FVVO_POST_CROSS_MEMORY_BARS}`);
+  console.log(`FVVO_POST_CROSS_SOURCE_MIN_ADX=${CFG.FVVO_POST_CROSS_SOURCE_MIN_ADX}`);
+  console.log(`FVVO_POST_CROSS_SOURCE_MIN_RSI=${CFG.FVVO_POST_CROSS_SOURCE_MIN_RSI}`);
+  console.log(`FVVO_POST_CROSS_SOURCE_MAX_RSI=${CFG.FVVO_POST_CROSS_SOURCE_MAX_RSI}`);
+  console.log(`FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA8_PCT=${CFG.FVVO_POST_CROSS_SOURCE_MAX_EXT_EMA8_PCT}`);
+  console.log(`FVVO_POST_CROSS_MIN_RSI=${CFG.FVVO_POST_CROSS_MIN_RSI}`);
+  console.log(`FVVO_POST_CROSS_MIN_SLOPE=${CFG.FVVO_POST_CROSS_MIN_SLOPE}`);
+  console.log(`FVVO_POST_CROSS_MAX_EXT_EMA8_PCT=${CFG.FVVO_POST_CROSS_MAX_EXT_EMA8_PCT}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_WASHOUT_ENABLED=${CFG.FVVO_WASHOUT_ENABLED}`);
   console.log(`FVVO_WASHOUT_ALLOW_GREEN_DOT=${CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT}`);
