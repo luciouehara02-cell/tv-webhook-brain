@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = "TickRouter_v2_FVVO_FEATURE_EVENTS";
+const ROUTER_NAME = "TickRouter_v3_FVVO_FEATURE_AND_LEGACY_MIRROR";
 
 const PORT = Number(process.env.PORT || 8080);
 
@@ -21,6 +21,19 @@ const STRICT_DEST_SECRET =
  */
 const ROUTE_SRC_FEATURES_TO_FVVO =
   String(process.env.ROUTE_SRC_FEATURES_TO_FVVO || "false").toLowerCase() ===
+  "true";
+
+/**
+ * When true, an inbound FAST_TICK_FVVO / fvvo_tick payload is also mirrored
+ * to legacy BRAIN_URLS using the old legacy tick format:
+ * { secret, src:"tick", symbol, price, time }
+ *
+ * This lets one TradingView FVVO fast-tick alert feed both:
+ * - FVVO brains via FVVO_BRAIN_URLS as FAST_TICK_FVVO
+ * - legacy/Ray/old brains via BRAIN_URLS as src=tick
+ */
+const FORWARD_FVVO_FAST_TICK_TO_LEGACY =
+  String(process.env.FORWARD_FVVO_FAST_TICK_TO_LEGACY || "true").toLowerCase() ===
   "true";
 
 /**
@@ -693,6 +706,7 @@ app.get("/", (_req, res) => {
     forwardTimeoutMs: FORWARD_TIMEOUT_MS,
     strictDestSecret: STRICT_DEST_SECRET,
     routeSrcFeaturesToFvvo: ROUTE_SRC_FEATURES_TO_FVVO,
+    forwardFvvoFastTickToLegacy: FORWARD_FVVO_FAST_TICK_TO_LEGACY,
     supportedEvents: [
       "FAST_TICK / src=tick",
       "FAST_TICK_FVVO",
@@ -768,7 +782,11 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ ok: false, error: tick.error, kind });
     }
 
-    const legacyTargets = kind === "generic_tick" ? BRAIN_URLS.length : 0;
+    const mirrorFvvoFastTickToLegacy =
+      kind === "generic_tick" ||
+      (kind === "fvvo_fast_tick" && FORWARD_FVVO_FAST_TICK_TO_LEGACY);
+
+    const legacyTargets = mirrorFvvoFastTickToLegacy ? BRAIN_URLS.length : 0;
     const fvvoTargets = FVVO_BRAIN_URLS.length;
 
     // Respond quickly to TradingView / tick source.
@@ -789,7 +807,9 @@ app.post("/webhook", async (req, res) => {
     );
 
     const jobs = [
-      ...(kind === "generic_tick" ? BRAIN_URLS.map((url) => forwardLegacyTick(url, tick)) : []),
+      ...(mirrorFvvoFastTickToLegacy
+        ? BRAIN_URLS.map((url) => forwardLegacyTick(url, tick))
+        : []),
       ...FVVO_BRAIN_URLS.map((url) => forwardFvvoTick(url, tick)),
     ];
 
@@ -875,6 +895,9 @@ app.listen(PORT, () => {
   console.log(`Inbound secret check: ${WEBHOOK_SECRET ? "ON" : "OFF"}`);
   console.log(`STRICT_DEST_SECRET=${STRICT_DEST_SECRET ? "true" : "false"}`);
   console.log(`ROUTE_SRC_FEATURES_TO_FVVO=${ROUTE_SRC_FEATURES_TO_FVVO ? "true" : "false"}`);
+  console.log(
+    `FORWARD_FVVO_FAST_TICK_TO_LEGACY=${FORWARD_FVVO_FAST_TICK_TO_LEGACY ? "true" : "false"}`
+  );
   console.log(
     "Supported routes: FAST_TICK/src=tick, FAST_TICK_FVVO, FEATURE_TICK_FVVO, FEATURE_5M_FVVO"
   );
