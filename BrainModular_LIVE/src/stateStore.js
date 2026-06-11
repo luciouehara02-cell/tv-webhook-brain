@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7b_FAST_TICK_LAUNCH_FIX
+ * BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD
  * Source behavior: v6.6c ATR / structure stop + strong-feature confirm upgrade + adaptive TP ladder + reset/reclaim reentry gate
  *
  * Runtime state and state helper functions.
@@ -84,11 +84,66 @@ export function buildInitialRuntimeState() {
       expiresBar: null,
       price: null,
     },
+    rayFeatureSync: {
+      pending: [],
+      nextId: 1,
+      armedCount: 0,
+      releasedCount: 0,
+      lastArm: null,
+      lastRelease: null,
+    },
+    rayBlockScorecard: {
+      nextId: 1,
+      active: [],
+      opened: 0,
+      updated: 0,
+      closed: 0,
+      lastOpen: null,
+      lastUpdate: null,
+      lastResult: null,
+    },
     fvvo: {
       lastSniperBuyAt: null,
       lastSniperSellAt: null,
       lastBurstBullishAt: null,
       lastBurstBearishAt: null,
+      directEvents: [],
+      lastDirectEvent: null,
+      featureSync: {
+        pending: [],
+        nextId: 1,
+        armedCount: 0,
+        releasedCount: 0,
+        timeoutCount: 0,
+        lastArm: null,
+        lastRelease: null,
+      },
+      shadow: {
+        evaluated: 0,
+        pass: 0,
+        block: 0,
+        syncEvaluated: 0,
+        syncPass: 0,
+        syncBlock: 0,
+        lastDecision: null,
+      },
+      scorecard: {
+        nextId: 1,
+        active: [],
+        opened: 0,
+        updated: 0,
+        closed: 0,
+        lastOpen: null,
+        lastUpdate: null,
+        lastResult: null,
+      },
+      bearishInvalidationShadow: {
+        evaluated: 0,
+        pass: 0,
+        block: 0,
+        lastKey: null,
+        lastDecision: null,
+      },
     },
     firstEntry: {
       pending: false,

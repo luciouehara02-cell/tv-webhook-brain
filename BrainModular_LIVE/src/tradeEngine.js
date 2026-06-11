@@ -1,5 +1,5 @@
 /**
- * BrainRAY_Continuation_v6.7c_DEEP_RECOVERY_OVERRIDE
+ * BrainRAY_Continuation_v6.7i_RAY_BLOCK_TICK_SCORECARD
  * Source behavior: v6.5a modular + feature-sync grace; ATR / structure stop exit layer if enabled
  *
  * Trading logic only. v6.6e keeps v6.6c entry fixes and ATR / structure stop, then adds TP protection override and adaptive TP ladder.
@@ -282,6 +282,7 @@ function evaluateFirstEntryFeatureSyncOnFeature(feature) {
   }
 
   log("🚫 FIRST_ENTRY_FEATURE_SYNC_BLOCKED", decision);
+  openRayBlockScorecard(rayPrice, rayTime, { ...decision, reason: `${decision.reason || "blocked_after_sync"}_feature_sync` }, "ray_bullish_trend_change_feature_sync_block");
   clearFirstEntryFeatureSync(decision.reason || "blocked_after_sync");
   return { handled: true };
 }
@@ -964,6 +965,7 @@ export function handleRayEvent(body) {
         return;
       }
       if (firstDecision.action === "defer") {
+        openRayBlockScorecard(price, ts, firstDecision, "ray_bullish_trend_change_defer");
         armFirstEntryLateExtWatch(price, ts, firstDecision);
         return;
       }
@@ -975,6 +977,7 @@ export function handleRayEvent(body) {
           return;
         }
         log("🚫 FIRST_ENTRY_BLOCKED", firstDecision);
+        openRayBlockScorecard(price, ts, firstDecision, "ray_bullish_trend_change_block");
         clearFirstEntry("blocked_weak_first_entry");
         clearFirstEntryFeatureSync("blocked_weak_first_entry");
         return;
@@ -1047,34 +1050,851 @@ export function handleRayEvent(body) {
   }
 }
 
-export function handleFvvoEvent(body) {
-  const name = String(body.event || "").trim();
-  const ts = pickFirst(body, ["time", "timestamp"], isoNow());
+function fvvoAcceptedTfs() {
+  return String(CONFIG.FVVO_DIRECT_EVENT_ACCEPT_TF || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+function fvvoTfAccepted(tf) {
+  const allowed = fvvoAcceptedTfs();
+  if (!allowed.length || allowed.includes("*")) return true;
+  return allowed.includes(String(tf || ""));
+}
+function classifyFvvoEvent(name = "") {
+  const x = String(name || "").toLowerCase();
+  if (x.includes("sniper") && x.includes("buy")) return "sniper_buy";
+  if (x.includes("sniper") && x.includes("sell")) return "sniper_sell";
+  if (x.includes("burst") && x.includes("bull")) return "burst_bullish";
+  if (x.includes("burst") && x.includes("bear")) return "burst_bearish";
+  return "unknown";
+}
+function fvvoEventMode(name = "", body = {}) {
+  const raw = String(body.mode || body.alert_mode || name || "").toLowerCase();
+  if (raw.includes("opb") || raw.includes("once per bar")) return "opb";
+  if (raw.includes("close") || raw.includes("bar close")) return "close";
+  return "alert";
+}
+function fvvoEventLabel(kind, mode, probe = false) {
+  const suffix = mode === "opb" ? "_OPB" : mode === "close" ? "_CLOSE" : "";
+  const prefix = probe ? "🧪" : "🧿";
+  if (kind === "sniper_buy") return `${prefix} FVVO_SNIPER_BUY${suffix}`;
+  if (kind === "sniper_sell") return `${prefix} FVVO_SNIPER_SELL${suffix}`;
+  if (kind === "burst_bullish") return `${prefix} FVVO_BURST_BULLISH${suffix}`;
+  if (kind === "burst_bearish") return `${prefix} FVVO_BURST_BEARISH${suffix}`;
+  return `${prefix} FVVO_UNKNOWN`;
+}
+function eventPriceFromBody(body = {}) {
+  return n(pickFirst(body, ["price", "trigger_price", "close"], currentPrice()), currentPrice());
+}
+function fvvoDirectEventTs(body = {}) {
+  return pickFirst(body, ["alert_time", "alertTime", "time", "timestamp"], isoNow());
+}
+function compactFvvoDirectEvent(body = {}, kind = "unknown", mode = "alert", probe = false) {
+  const ts = fvvoDirectEventTs(body);
+  return {
+    kind,
+    mode,
+    probe: Boolean(probe),
+    src: s(body.src, "fvvo"),
+    event: s(body.event || body.signal || body.alert || body.action, ""),
+    tf: s(body.tf || body.interval, ""),
+    symbol: normalizeSymbol(s(body.symbol, CONFIG.SYMBOL)),
+    price: round4(eventPriceFromBody(body)),
+    barTime: pickFirst(body, ["bar_time", "barTime", "candle_time", "candleTime"], null),
+    alertTime: ts,
+    serverTime: isoNow(),
+  };
+}
+function storeFvvoDirectEvent(ev) {
+  if (!CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED || !ev || ev.kind === "unknown") return;
+  S.fvvo.directEvents = Array.isArray(S.fvvo.directEvents) ? S.fvvo.directEvents : [];
+  const ttlSec = Math.max(1, n(CONFIG.FVVO_DIRECT_EVENT_TTL_SEC, 360));
+  const now = parseTsMs(ev.alertTime) || Date.now();
+  S.fvvo.directEvents = S.fvvo.directEvents
+    .filter((item) => {
+      const itemMs = parseTsMs(item?.alertTime);
+      return Number.isFinite(itemMs) && Math.abs(now - itemMs) <= ttlSec * 1000;
+    })
+    .slice(-50);
+  S.fvvo.directEvents.push(ev);
+  S.fvvo.lastDirectEvent = ev;
+  log("🧿 FVVO_DIRECT_EVENT_STORED", {
+    kind: ev.kind,
+    mode: ev.mode,
+    probe: ev.probe,
+    tf: ev.tf,
+    symbol: ev.symbol,
+    price: ev.price,
+    bar_time: ev.barTime,
+    alert_time: ev.alertTime,
+  });
+}
+function updateFvvoMemoryForRealEvent(kind, ts) {
+  if (kind === "sniper_buy") S.fvvo.lastSniperBuyAt = ts;
+  if (kind === "sniper_sell") S.fvvo.lastSniperSellAt = ts;
+  if (kind === "burst_bullish") S.fvvo.lastBurstBullishAt = ts;
+  if (kind === "burst_bearish") S.fvvo.lastBurstBearishAt = ts;
+}
+function bullishDirectFvvoKind(kind) {
+  return kind === "sniper_buy" || kind === "burst_bullish";
+}
+function bearishDirectFvvoKind(kind) {
+  return kind === "sniper_sell" || kind === "burst_bearish";
+}
+function fvvoShadowSignalDirection(kind) {
+  if (bullishDirectFvvoKind(kind)) return "long";
+  if (bearishDirectFvvoKind(kind)) return "short";
+  return null;
+}
+function parsePctList(raw, fallback = [0.3, 0.5, 0.8]) {
+  const values = String(raw || "")
+    .split(",")
+    .map((x) => Number(String(x).trim()))
+    .filter((x) => Number.isFinite(x) && x > 0)
+    .sort((a, b2) => a - b2);
+  return values.length ? values : fallback;
+}
+function signedMovePct(entryPrice, price, direction = "long") {
+  const raw = pctDiff(entryPrice, price);
+  return direction === "short" ? -raw : raw;
+}
+function fvvoShadowFavorablePct(entryPrice, feature, direction = "long") {
+  if (!feature) return NaN;
+  return direction === "short" ? signedMovePct(entryPrice, feature.low, direction) : signedMovePct(entryPrice, feature.high, direction);
+}
+function fvvoShadowAdversePct(entryPrice, feature, direction = "long") {
+  if (!feature) return NaN;
+  return direction === "short" ? signedMovePct(entryPrice, feature.high, direction) : signedMovePct(entryPrice, feature.low, direction);
+}
+
+function parseMinList(raw, fallback = [15, 30, 60]) {
+  const values = String(raw || "")
+    .split(",")
+    .map((x) => Number(String(x).trim()))
+    .filter((x) => Number.isFinite(x) && x > 0)
+    .sort((a, b2) => a - b2);
+  return values.length ? values : fallback;
+}
+function scorecardStartMs(item = {}) {
+  const candidates = [item.entryTime, item.rayTime, item.barTime, item.serverTime, item.openedAt].filter(Boolean);
+  for (const c of candidates) {
+    const ms = parseTsMs(c);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return NaN;
+}
+function scorecardElapsedSec(item = {}, eventIso = null) {
+  const startMs = scorecardStartMs(item);
+  const eventMs = parseTsMs(eventIso || isoNow());
+  if (!Number.isFinite(startMs) || !Number.isFinite(eventMs)) return null;
+  return Math.max(0, (eventMs - startMs) / 1000);
+}
+function maybeSetWindowResult(item = {}, windowMin = 15, price = NaN, pct = NaN, eventIso = null, source = "tick") {
+  const elapsedSec = scorecardElapsedSec(item, eventIso);
+  if (!Number.isFinite(elapsedSec) || elapsedSec < windowMin * 60) return false;
+  item.windowResults = item.windowResults || {};
+  const key = `${windowMin}m`;
+  if (item.windowResults[key]) return false;
+  item.windowResults[key] = {
+    source,
+    price: round4(price),
+    pct: round4(pct),
+    elapsedSec: Math.round(elapsedSec),
+    maxFavorablePct: round4(n(item.maxFavorablePct, 0)),
+    maxAdversePct: round4(n(item.maxAdversePct, 0)),
+    tickMaxFavorablePct: Number.isFinite(n(item.tickMaxFavorablePct, NaN)) ? round4(n(item.tickMaxFavorablePct, NaN)) : null,
+    tickMaxAdversePct: Number.isFinite(n(item.tickMaxAdversePct, NaN)) ? round4(n(item.tickMaxAdversePct, NaN)) : null,
+    time: eventIso,
+  };
+  return true;
+}
+function updateLongScorecardTickStats(item = {}, price = NaN, ts = null, targetPct = 0.3, adversePct = 0.5) {
+  const entryPrice = n(item.entryPrice, NaN);
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(price)) return null;
+  const pct = signedMovePct(entryPrice, price, item.direction || "long");
+  item.tickCurrentPct = round4(pct);
+  if (!Number.isFinite(n(item.tickMaxFavorablePct, NaN))) item.tickMaxFavorablePct = 0;
+  if (!Number.isFinite(n(item.tickMaxAdversePct, NaN))) item.tickMaxAdversePct = 0;
+  if (pct > n(item.tickMaxFavorablePct, 0)) item.tickMaxFavorablePct = round4(pct);
+  if (pct < n(item.tickMaxAdversePct, 0)) item.tickMaxAdversePct = round4(pct);
+  const elapsedSec = scorecardElapsedSec(item, ts);
+  const milestones = [];
+  if (!item.firstTickTargetAt && pct >= targetPct) {
+    item.firstTickTargetAt = ts;
+    item.firstTickTargetSec = Number.isFinite(elapsedSec) ? Math.round(elapsedSec) : null;
+    milestones.push("tick_target");
+  }
+  if (!item.firstTickAdverseAt && pct <= -Math.abs(adversePct)) {
+    item.firstTickAdverseAt = ts;
+    item.firstTickAdverseSec = Number.isFinite(elapsedSec) ? Math.round(elapsedSec) : null;
+    milestones.push("tick_adverse");
+  }
+  return { pct, milestones };
+}
+function tickMetricSnapshot(item = {}) {
+  return {
+    tickCurrentPct: Number.isFinite(n(item.tickCurrentPct, NaN)) ? round4(n(item.tickCurrentPct, NaN)) : null,
+    tickMaxFavorablePct: Number.isFinite(n(item.tickMaxFavorablePct, NaN)) ? round4(n(item.tickMaxFavorablePct, NaN)) : null,
+    tickMaxAdversePct: Number.isFinite(n(item.tickMaxAdversePct, NaN)) ? round4(n(item.tickMaxAdversePct, NaN)) : null,
+    firstTickTargetAt: item.firstTickTargetAt || null,
+    firstTickTargetSec: item.firstTickTargetSec ?? null,
+    firstTickAdverseAt: item.firstTickAdverseAt || null,
+    firstTickAdverseSec: item.firstTickAdverseSec ?? null,
+  };
+}
+function openFvvoShadowScorecard(ev = {}) {
+  if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED) return;
+  if (!ev || ev.kind === "unknown") return;
+  if (ev.probe && !CONFIG.FVVO_SHADOW_SCORECARD_INCLUDE_PROBES) return;
+  if (!fvvoTfAccepted(ev.tf)) return;
+  if (normalizeSymbol(ev.symbol) !== CONFIG.SYMBOL) return;
+  const direction = fvvoShadowSignalDirection(ev.kind);
+  if (!direction) return;
+  const entryPrice = n(ev.price, NaN);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return;
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.scorecard = S.fvvo.scorecard || { nextId: 1, active: [], opened: 0, updated: 0, closed: 0 };
+  const id = n(S.fvvo.scorecard.nextId, 1);
+  S.fvvo.scorecard.nextId = id + 1;
+  const item = {
+    id,
+    kind: ev.kind,
+    mode: ev.mode,
+    probe: Boolean(ev.probe),
+    direction,
+    tf: ev.tf,
+    symbol: ev.symbol,
+    entryPrice: round4(entryPrice),
+    entryTime: ev.alertTime,
+    barTime: ev.barTime,
+    serverTime: ev.serverTime,
+    openBarIndex: S.barIndex,
+    barsSeen: 0,
+    lastFeatureTime: null,
+    currentPct: 0,
+    maxFavorablePct: 0,
+    maxAdversePct: 0,
+    tickCurrentPct: 0,
+    tickMaxFavorablePct: 0,
+    tickMaxAdversePct: 0,
+    firstTickTargetAt: null,
+    firstTickTargetSec: null,
+    firstTickAdverseAt: null,
+    firstTickAdverseSec: null,
+    targetsHit: [],
+    closed: false,
+  };
+  S.fvvo.scorecard.active = Array.isArray(S.fvvo.scorecard.active) ? S.fvvo.scorecard.active : [];
+  S.fvvo.scorecard.active.push(item);
+  const maxActive = Math.max(1, Math.floor(n(CONFIG.FVVO_SHADOW_SCORECARD_MAX_ACTIVE, 24)));
+  while (S.fvvo.scorecard.active.length > maxActive) S.fvvo.scorecard.active.shift();
+  S.fvvo.scorecard.opened = n(S.fvvo.scorecard.opened, 0) + 1;
+  S.fvvo.scorecard.lastOpen = { ...item };
+  log("🧪 FVVO_SHADOW_SIGNAL_OPEN", {
+    id,
+    kind: item.kind,
+    mode: item.mode,
+    probe: item.probe,
+    direction: item.direction,
+    tf: item.tf,
+    entryPrice: item.entryPrice,
+    bar_time: item.barTime,
+    alert_time: item.entryTime,
+    featureTimeAtOpen: S.lastFeatureTime,
+  });
+}
+function updateFvvoShadowScorecardOnFeature(feature) {
+  if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED || !feature) return;
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.scorecard = S.fvvo.scorecard || { nextId: 1, active: [], opened: 0, updated: 0, closed: 0 };
+  const active = Array.isArray(S.fvvo.scorecard.active) ? S.fvvo.scorecard.active : [];
+  if (!active.length) return;
+  const targets = parsePctList(CONFIG.FVVO_SHADOW_SCORECARD_TARGETS_PCT);
+  const maxBars = Math.max(1, Math.floor(n(CONFIG.FVVO_SHADOW_SCORECARD_MAX_BARS, 12)));
+  const keep = [];
+  for (const item of active) {
+    if (!item || item.closed) continue;
+    if (item.lastFeatureTime === feature.time) {
+      keep.push(item);
+      continue;
+    }
+    item.lastFeatureTime = feature.time;
+    item.barsSeen = n(item.barsSeen, 0) + 1;
+    const entryPrice = n(item.entryPrice, NaN);
+    const currentPct = signedMovePct(entryPrice, feature.close, item.direction);
+    const favPct = fvvoShadowFavorablePct(entryPrice, feature, item.direction);
+    const advPct = fvvoShadowAdversePct(entryPrice, feature, item.direction);
+    if (Number.isFinite(currentPct)) item.currentPct = round4(currentPct);
+    if (Number.isFinite(favPct)) item.maxFavorablePct = round4(Math.max(n(item.maxFavorablePct, 0), favPct));
+    if (Number.isFinite(advPct)) item.maxAdversePct = round4(Math.min(n(item.maxAdversePct, 0), advPct));
+    item.targetsHit = targets.filter((t) => n(item.maxFavorablePct, 0) >= t).map((x) => round4(x));
+    const update = {
+      id: item.id,
+      kind: item.kind,
+      mode: item.mode,
+      probe: item.probe,
+      direction: item.direction,
+      barsSeen: item.barsSeen,
+      entryPrice: item.entryPrice,
+      currentPrice: round4(feature.close),
+      currentPct: item.currentPct,
+      maxFavorablePct: item.maxFavorablePct,
+      maxAdversePct: item.maxAdversePct,
+      tick: tickMetricSnapshot(item),
+      targetsHit: item.targetsHit,
+      featureTime: feature.time,
+    };
+    S.fvvo.scorecard.updated = n(S.fvvo.scorecard.updated, 0) + 1;
+    S.fvvo.scorecard.lastUpdate = update;
+    log("🧪 FVVO_SHADOW_SIGNAL_UPDATE", update);
+    if (item.barsSeen >= maxBars) {
+      item.closed = true;
+      const result = {
+        ...update,
+        result: n(item.maxFavorablePct, 0) >= Math.min(...targets) ? "target_hit" : n(item.currentPct, 0) > 0 ? "positive_no_target" : "failed_or_negative",
+        closeReason: "max_bars",
+        maxBars,
+      };
+      S.fvvo.scorecard.closed = n(S.fvvo.scorecard.closed, 0) + 1;
+      S.fvvo.scorecard.lastResult = result;
+      log("🧪 FVVO_SHADOW_SIGNAL_RESULT", result);
+    } else {
+      keep.push(item);
+    }
+  }
+  S.fvvo.scorecard.active = keep;
+}
+
+function updateFvvoShadowScorecardOnTick(price, ts) {
+  if (!CONFIG.FVVO_SHADOW_SCORECARD_ENABLED || !CONFIG.FVVO_SHADOW_SCORECARD_TICK_ENABLED) return;
+  if (!S.fvvo) S.fvvo = {};
+  const active = Array.isArray(S.fvvo.scorecard?.active) ? S.fvvo.scorecard.active : [];
+  if (!active.length) return;
+  for (const item of active) {
+    if (!item || item.closed) continue;
+    const result = updateLongScorecardTickStats(
+      item,
+      price,
+      ts,
+      CONFIG.FVVO_SHADOW_SCORECARD_TICK_TARGET_PCT,
+      CONFIG.FVVO_SHADOW_SCORECARD_TICK_ADVERSE_PCT
+    );
+    if (!result || !Array.isArray(result.milestones) || !result.milestones.length) continue;
+    log("🧪 FVVO_SHADOW_SIGNAL_TICK_MILESTONE", {
+      id: item.id,
+      kind: item.kind,
+      mode: item.mode,
+      probe: item.probe,
+      direction: item.direction,
+      price: round4(price),
+      pct: round4(result.pct),
+      milestones: result.milestones,
+      tick: tickMetricSnapshot(item),
+      time: ts,
+    });
+  }
+}
+
+function rayBlockScorecardWindows() {
+  return parseMinList(CONFIG.RAY_BLOCK_SCORECARD_WINDOWS_MIN, [15, 30, 60]);
+}
+function ensureRayBlockScorecardState() {
+  S.rayBlockScorecard = S.rayBlockScorecard || { nextId: 1, active: [], opened: 0, updated: 0, closed: 0 };
+  S.rayBlockScorecard.active = Array.isArray(S.rayBlockScorecard.active) ? S.rayBlockScorecard.active : [];
+  return S.rayBlockScorecard;
+}
+function openRayBlockScorecard(rayPrice, rayTime, decision = {}, source = "ray_bullish_trend_change") {
+  if (!CONFIG.RAY_BLOCK_SCORECARD_ENABLED) return null;
+  if (S.inPosition) return null;
+  const entryPrice = n(rayPrice, NaN);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+  const sc = ensureRayBlockScorecardState();
+  const reason = decision.reason || "blocked_or_deferred_first_entry";
+  const featureTime = decision.metrics?.featureTime || S.lastFeatureTime || null;
+  const key = `${source}|${rayTime || ""}|${reason}|${featureTime || ""}`;
+  if (sc.active.some((x) => x && !x.closed && x.key === key)) return null;
+  const id = n(sc.nextId, 1);
+  sc.nextId = id + 1;
+  const item = {
+    id,
+    key,
+    source,
+    reason,
+    action: decision.action || "block",
+    direction: "long",
+    entryPrice: round4(entryPrice),
+    rayTime,
+    entryTime: rayTime,
+    featureTimeAtOpen: featureTime,
+    openedAt: isoNow(),
+    openBarIndex: S.barIndex,
+    barsSeen: 0,
+    lastFeatureTime: null,
+    currentPct: 0,
+    maxFavorablePct: 0,
+    maxAdversePct: 0,
+    tickCurrentPct: 0,
+    tickMaxFavorablePct: 0,
+    tickMaxAdversePct: 0,
+    firstTickTargetAt: null,
+    firstTickTargetSec: null,
+    firstTickAdverseAt: null,
+    firstTickAdverseSec: null,
+    windowResults: {},
+    redFlags: Array.isArray(decision.redFlags) ? [...decision.redFlags] : [],
+    metrics: decision.metrics || null,
+    closed: false,
+  };
+  sc.active.push(item);
+  const maxActive = Math.max(1, Math.floor(n(CONFIG.RAY_BLOCK_SCORECARD_MAX_ACTIVE, 24)));
+  while (sc.active.length > maxActive) sc.active.shift();
+  sc.opened = n(sc.opened, 0) + 1;
+  sc.lastOpen = { ...item };
+  log("🧪 RAY_BLOCK_SCORECARD_OPEN", {
+    id,
+    source,
+    action: item.action,
+    reason: item.reason,
+    rayPrice: item.entryPrice,
+    rayTime,
+    featureTimeAtOpen: item.featureTimeAtOpen,
+    redFlags: item.redFlags,
+    metrics: item.metrics,
+  });
+  return item;
+}
+function updateRayBlockScorecardOnTick(price, ts) {
+  if (!CONFIG.RAY_BLOCK_SCORECARD_ENABLED || !CONFIG.RAY_BLOCK_SCORECARD_TICK_ENABLED) return;
+  const sc = ensureRayBlockScorecardState();
+  if (!sc.active.length) return;
+  const windows = rayBlockScorecardWindows();
+  for (const item of sc.active) {
+    if (!item || item.closed) continue;
+    const result = updateLongScorecardTickStats(
+      item,
+      price,
+      ts,
+      CONFIG.RAY_BLOCK_SCORECARD_TICK_TARGET_PCT,
+      CONFIG.RAY_BLOCK_SCORECARD_TICK_ADVERSE_PCT
+    );
+    if (!result) continue;
+    for (const w of windows) maybeSetWindowResult(item, w, price, result.pct, ts, "tick");
+    if (Array.isArray(result.milestones) && result.milestones.length) {
+      log("🧪 RAY_BLOCK_SCORECARD_TICK_MILESTONE", {
+        id: item.id,
+        source: item.source,
+        reason: item.reason,
+        price: round4(price),
+        pct: round4(result.pct),
+        milestones: result.milestones,
+        tick: tickMetricSnapshot(item),
+        windowResults: item.windowResults || {},
+        time: ts,
+      });
+    }
+  }
+}
+function updateRayBlockScorecardOnFeature(feature) {
+  if (!CONFIG.RAY_BLOCK_SCORECARD_ENABLED || !feature) return;
+  const sc = ensureRayBlockScorecardState();
+  if (!sc.active.length) return;
+  const maxBars = Math.max(1, Math.floor(n(CONFIG.RAY_BLOCK_SCORECARD_MAX_BARS, 12)));
+  const windows = rayBlockScorecardWindows();
+  const keep = [];
+  for (const item of sc.active) {
+    if (!item || item.closed) continue;
+    if (item.lastFeatureTime === feature.time) {
+      keep.push(item);
+      continue;
+    }
+    item.lastFeatureTime = feature.time;
+    item.barsSeen = n(item.barsSeen, 0) + 1;
+    const entryPrice = n(item.entryPrice, NaN);
+    const currentPct = signedMovePct(entryPrice, feature.close, "long");
+    const favPct = fvvoShadowFavorablePct(entryPrice, feature, "long");
+    const advPct = fvvoShadowAdversePct(entryPrice, feature, "long");
+    if (Number.isFinite(currentPct)) item.currentPct = round4(currentPct);
+    if (Number.isFinite(favPct)) item.maxFavorablePct = round4(Math.max(n(item.maxFavorablePct, 0), favPct));
+    if (Number.isFinite(advPct)) item.maxAdversePct = round4(Math.min(n(item.maxAdversePct, 0), advPct));
+    for (const w of windows) maybeSetWindowResult(item, w, feature.close, currentPct, feature.time, "feature");
+    const update = {
+      id: item.id,
+      source: item.source,
+      action: item.action,
+      reason: item.reason,
+      barsSeen: item.barsSeen,
+      rayPrice: item.entryPrice,
+      currentPrice: round4(feature.close),
+      currentPct: item.currentPct,
+      maxFavorablePct: item.maxFavorablePct,
+      maxAdversePct: item.maxAdversePct,
+      tick: tickMetricSnapshot(item),
+      windowResults: item.windowResults || {},
+      redFlags: item.redFlags,
+      featureTime: feature.time,
+    };
+    sc.updated = n(sc.updated, 0) + 1;
+    sc.lastUpdate = update;
+    log("🧪 RAY_BLOCK_SCORECARD_UPDATE", update);
+    if (item.barsSeen >= maxBars) {
+      item.closed = true;
+      const result = {
+        ...update,
+        result: n(item.maxFavorablePct, 0) >= CONFIG.RAY_BLOCK_SCORECARD_TICK_TARGET_PCT
+          ? "would_have_reached_target"
+          : n(item.currentPct, 0) > 0 ? "positive_no_target" : "block_saved_or_negative",
+        closeReason: "max_bars",
+        maxBars,
+      };
+      sc.closed = n(sc.closed, 0) + 1;
+      sc.lastResult = result;
+      log("🧪 RAY_BLOCK_SCORECARD_RESULT", result);
+    } else {
+      keep.push(item);
+    }
+  }
+  sc.active = keep;
+}
+function featureFlowScore(f = {}) {
+  const oi = n(f.oiTrend, NaN);
+  const oid = n(f.oiDeltaBias, NaN);
+  const cvd = n(f.cvdTrend, NaN);
+  let score = 0;
+  if (Number.isFinite(oi)) score += oi > 0 ? 1 : oi < 0 ? -1 : 0;
+  if (Number.isFinite(oid)) score += oid > 0 ? 1 : oid < 0 ? -1 : 0;
+  if (Number.isFinite(cvd)) score += cvd > 0 ? 1 : cvd < 0 ? -1 : 0;
+  return score;
+}
+function latestBearishFvvoContext(featureTime = null) {
+  const events = Array.isArray(S.fvvo?.directEvents) ? S.fvvo.directEvents : [];
+  const refMs = parseTsMs(featureTime || isoNow()) || Date.now();
+  const recencyMs = Math.max(1, n(CONFIG.FVVO_BEARISH_INVALIDATION_RECENCY_SEC, 900)) * 1000;
+  let latest = null;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const ev = events[i];
+    if (!ev || !bearishDirectFvvoKind(ev.kind)) continue;
+    const evMs = parseTsMs(ev.alertTime || ev.serverTime || ev.barTime);
+    if (!Number.isFinite(evMs)) continue;
+    if (Math.abs(refMs - evMs) <= recencyMs) {
+      latest = ev;
+      break;
+    }
+  }
+  const fv = getFvvoScore(featureTime || null);
+  return { event: latest, fvvo: fv, bearish: Boolean(latest || fv?.score < 0 || fv?.snap?.sniperSell || fv?.snap?.burstBearish) };
+}
+function evaluateFvvoBearishInvalidationShadow(feature) {
+  if (!CONFIG.FVVO_BEARISH_INVALIDATION_SHADOW_ENABLED || !feature) return;
+  const ctx = latestBearishFvvoContext(feature.time);
+  if (!ctx.bearish) return;
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.bearishInvalidationShadow = S.fvvo.bearishInvalidationShadow || { evaluated: 0, pass: 0, block: 0, lastKey: null, lastDecision: null };
+  const bearishKey = `${feature.time}:${ctx.event?.kind || "fvvo_score"}:${ctx.event?.alertTime || "score"}`;
+  if (S.fvvo.bearishInvalidationShadow.lastKey === bearishKey) return;
+  const emaSpreadPct = ema8Ema18SpreadPct(feature.ema8, feature.ema18);
+  const prevSpreadPct = ema8Ema18SpreadPct(S.prevFeature?.ema8, S.prevFeature?.ema18);
+  const spreadImproving = Number.isFinite(emaSpreadPct) && Number.isFinite(prevSpreadPct) && emaSpreadPct > prevSpreadPct;
+  const closeAboveEma8 = Number.isFinite(feature.close) && Number.isFinite(feature.ema8) && feature.close >= feature.ema8;
+  const emaOk = Number.isFinite(feature.ema8) && Number.isFinite(feature.ema18) && (feature.ema8 >= feature.ema18 || spreadImproving);
+  const flowScore = featureFlowScore(feature);
+  const reasons = [];
+  reasonPush(reasons, CONFIG.FVVO_BEARISH_INVALIDATION_REQUIRE_CLOSE_ABOVE_EMA8 && !closeAboveEma8, "close_not_above_ema8");
+  reasonPush(reasons, CONFIG.FVVO_BEARISH_INVALIDATION_REQUIRE_EMA8_ABOVE_EMA18_OR_IMPROVING && !emaOk, "ema8_not_above_or_improving_vs_ema18");
+  reasonPush(reasons, Number.isFinite(feature.rsi) && feature.rsi < CONFIG.FVVO_BEARISH_INVALIDATION_MIN_RSI, "rsi_below_invalidation_min");
+  reasonPush(reasons, Number.isFinite(feature.adx) && feature.adx < CONFIG.FVVO_BEARISH_INVALIDATION_MIN_ADX, "adx_below_invalidation_min");
+  reasonPush(reasons, CONFIG.FVVO_BEARISH_INVALIDATION_REQUIRE_POSITIVE_FLOW && flowScore < CONFIG.FVVO_BEARISH_INVALIDATION_MIN_FLOW_SCORE, "flow_not_positive_enough");
+  const metrics = {
+    featureTime: feature.time,
+    close: round4(feature.close),
+    ema8: round4(feature.ema8),
+    ema18: round4(feature.ema18),
+    emaSpreadPct: round4(emaSpreadPct),
+    prevEmaSpreadPct: round4(prevSpreadPct),
+    spreadImproving,
+    rsi: round4(feature.rsi),
+    adx: round4(feature.adx),
+    oiTrend: Number.isFinite(n(feature.oiTrend, NaN)) ? n(feature.oiTrend, NaN) : null,
+    oiDeltaBias: Number.isFinite(n(feature.oiDeltaBias, NaN)) ? n(feature.oiDeltaBias, NaN) : null,
+    cvdTrend: Number.isFinite(n(feature.cvdTrend, NaN)) ? n(feature.cvdTrend, NaN) : null,
+    flowScore,
+    bearishEvent: ctx.event
+      ? { kind: ctx.event.kind, mode: ctx.event.mode, probe: ctx.event.probe, price: ctx.event.price, bar_time: ctx.event.barTime, alert_time: ctx.event.alertTime }
+      : null,
+    fvvo: ctx.fvvo,
+  };
+  const decision = { action: reasons.length ? "still_bearish_or_unconfirmed" : "bearish_fvvo_invalidated_shadow", reason: reasons[0] || "bullish_reclaim_invalidated_bearish_fvvo", reasons, metrics };
+  S.fvvo.bearishInvalidationShadow.evaluated = n(S.fvvo.bearishInvalidationShadow.evaluated, 0) + 1;
+  S.fvvo.bearishInvalidationShadow.lastKey = bearishKey;
+  S.fvvo.bearishInvalidationShadow.lastDecision = decision;
+  if (reasons.length) {
+    S.fvvo.bearishInvalidationShadow.block = n(S.fvvo.bearishInvalidationShadow.block, 0) + 1;
+    return;
+  }
+  S.fvvo.bearishInvalidationShadow.pass = n(S.fvvo.bearishInvalidationShadow.pass, 0) + 1;
+  log("🧪 FVVO_BEARISH_INVALIDATION_SHADOW", decision);
+}
+
+const fvvoFeatureSyncTimers = new Map();
+
+function fvvoExpectedFeatureTime(ev = {}) {
+  const directBarTime = ev?.barTime || null;
+  if (directBarTime) {
+    const ms = parseTsMs(directBarTime);
+    if (Number.isFinite(ms)) return new Date(ms).toISOString();
+  }
+  const t = parseTsMs(ev?.alertTime || ev?.serverTime || isoNow());
+  if (!Number.isFinite(t)) return null;
+  const graceMs = Math.max(0, n(CONFIG.FVVO_FEATURE_SYNC_CLOSE_ALERT_GRACE_SEC, 20)) * 1000;
+  return barTimeKey(new Date(t - graceMs).toISOString(), n(CONFIG.ENTRY_TF, 5));
+}
+
+function fvvoLatestFeatureIsAtOrAfter(expectedFeatureTime) {
+  if (!expectedFeatureTime || !S.lastFeatureTime) return false;
+  const expectedMs = parseTsMs(expectedFeatureTime);
+  const latestMs = parseTsMs(S.lastFeatureTime);
+  return Number.isFinite(expectedMs) && Number.isFinite(latestMs) && latestMs >= expectedMs;
+}
+
+function clearFvvoFeatureSyncTimer(id) {
+  const timer = fvvoFeatureSyncTimers.get(id);
+  if (timer) clearTimeout(timer);
+  fvvoFeatureSyncTimers.delete(id);
+}
+
+function removePendingFvvoFeatureSync(id) {
+  const pending = Array.isArray(S.fvvo?.featureSync?.pending) ? S.fvvo.featureSync.pending : [];
+  if (!S.fvvo) S.fvvo = {};
+  if (!S.fvvo.featureSync) S.fvvo.featureSync = { pending: [] };
+  S.fvvo.featureSync.pending = pending.filter((item) => item.id !== id);
+}
+
+function shouldArmFvvoFeatureSync(ev) {
+  if (!CONFIG.FVVO_FEATURE_SYNC_WAIT_ENABLED) return false;
+  if (!CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED || !CONFIG.EARLY_FVVO_ENTRY_SHADOW_ENABLED) return false;
+  if (!ev || ev.kind === "unknown" || !bullishDirectFvvoKind(ev.kind)) return false;
+  if (!fvvoTfAccepted(ev.tf)) return false;
+  if (normalizeSymbol(ev.symbol) !== CONFIG.SYMBOL) return false;
+  const waitMs = n(CONFIG.FVVO_FEATURE_SYNC_WAIT_MS, 0);
+  if (!(waitMs > 0)) return false;
+  const expectedFeatureTime = fvvoExpectedFeatureTime(ev);
+  if (!expectedFeatureTime) return false;
+  return !fvvoLatestFeatureIsAtOrAfter(expectedFeatureTime);
+}
+
+function processHeldFvvoFeatureSync(item, reason = "matching_feature_arrived") {
+  if (!item || item.processed) return;
+  item.processed = true;
+  clearFvvoFeatureSyncTimer(item.id);
+  removePendingFvvoFeatureSync(item.id);
+  if (!S.fvvo) S.fvvo = {};
+  if (!S.fvvo.featureSync) S.fvvo.featureSync = { pending: [] };
+  const isTimeout = reason === "timeout";
+  if (isTimeout) S.fvvo.featureSync.timeoutCount = n(S.fvvo.featureSync.timeoutCount, 0) + 1;
+  else S.fvvo.featureSync.releasedCount = n(S.fvvo.featureSync.releasedCount, 0) + 1;
+  S.fvvo.featureSync.lastRelease = {
+    id: item.id,
+    reason,
+    mode: item.mode,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    expectedFeatureTime: item.expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    releasedAt: isoNow(),
+  };
+  const label = isTimeout ? "🧪 FVVO_FEATURE_SYNC_SHADOW_TIMEOUT" : "🧪 FVVO_FEATURE_SYNC_SHADOW_RELEASED";
+  log(label, {
+    id: item.id,
+    mode: item.mode,
+    reason,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    fvvoTime: item.ev?.alertTime,
+    fvvoBarTime: item.expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    waitedMs: Math.max(0, Date.now() - n(item.armedAtMs, Date.now())),
+  });
+  if (!isTimeout) evaluateEarlyFvvoEntryShadow(item.ev, { phase: "sync_release", syncId: item.id, reason });
+}
+
+function armFvvoFeatureSyncWait(ev = {}) {
+  if (!S.fvvo) S.fvvo = {};
+  S.fvvo.featureSync = S.fvvo.featureSync || { pending: [], nextId: 1 };
+  const expectedFeatureTime = fvvoExpectedFeatureTime(ev);
+  const id = n(S.fvvo.featureSync.nextId, 1);
+  S.fvvo.featureSync.nextId = id + 1;
+  const item = {
+    id,
+    ev: { ...ev },
+    expectedFeatureTime,
+    armedAt: isoNow(),
+    armedAtMs: Date.now(),
+    waitMs: n(CONFIG.FVVO_FEATURE_SYNC_WAIT_MS, 1500),
+    mode: "shadow",
+    processed: false,
+  };
+  S.fvvo.featureSync.pending = Array.isArray(S.fvvo.featureSync.pending) ? S.fvvo.featureSync.pending : [];
+  S.fvvo.featureSync.pending.push(item);
+  S.fvvo.featureSync.armedCount = n(S.fvvo.featureSync.armedCount, 0) + 1;
+  S.fvvo.featureSync.lastArm = {
+    id,
+    mode: item.mode,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    fvvoTime: item.ev?.alertTime,
+    expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    waitMs: item.waitMs,
+    armedAt: item.armedAt,
+  };
+  log("🧪 FVVO_FEATURE_SYNC_SHADOW_ARMED", {
+    id,
+    mode: item.mode,
+    kind: item.ev?.kind,
+    event: item.ev?.event,
+    fvvoTime: item.ev?.alertTime,
+    fvvoBarTime: expectedFeatureTime,
+    lastFeatureTime: S.lastFeatureTime,
+    waitMs: item.waitMs,
+  });
+  const timer = setTimeout(() => {
+    const stillPending = (S.fvvo?.featureSync?.pending || []).find((x) => x.id === id);
+    if (stillPending && !stillPending.processed) processHeldFvvoFeatureSync(stillPending, "timeout");
+  }, item.waitMs);
+  fvvoFeatureSyncTimers.set(id, timer);
+  return item;
+}
+
+export function releasePendingFvvoFeatureSync(reason = "matching_feature_arrived") {
+  const pending = Array.isArray(S.fvvo?.featureSync?.pending) ? [...S.fvvo.featureSync.pending] : [];
+  for (const item of pending) {
+    if (!item || item.processed) continue;
+    if (fvvoLatestFeatureIsAtOrAfter(item.expectedFeatureTime)) processHeldFvvoFeatureSync(item, reason);
+  }
+}
+
+export function clearFvvoFeatureSyncTimers() {
+  for (const id of fvvoFeatureSyncTimers.keys()) clearFvvoFeatureSyncTimer(id);
+}
+
+function shadowEarlyFvvoMetrics(ev, fv, options = {}) {
+  const f = S.lastFeature;
+  const close = n(f?.close, NaN);
+  const ema8 = n(f?.ema8, NaN);
+  const ema18 = n(f?.ema18, NaN);
+  const rsi = n(f?.rsi, NaN);
+  const adx = n(f?.adx, NaN);
+  const eventPrice = n(ev?.price, NaN);
+  const ext18 = Number.isFinite(close) && Number.isFinite(ema18) ? pctDiff(ema18, close) : NaN;
+  const chasePct = Number.isFinite(close) && Number.isFinite(eventPrice) ? pctDiff(close, eventPrice) : NaN;
+  const emaSpreadPct = ema8Ema18SpreadPct(ema8, ema18);
+  return {
+    kind: ev.kind,
+    mode: ev.mode,
+    probe: ev.probe,
+    tf: ev.tf,
+    price: round4(eventPrice),
+    close: round4(close),
+    ema8: round4(ema8),
+    ema18: round4(ema18),
+    emaSpreadPct: round4(emaSpreadPct),
+    rsi: round4(rsi),
+    adx: round4(adx),
+    ext18: round4(ext18),
+    chasePct: round4(chasePct),
+    fvvo: fv,
+    bullContext: Boolean(S.ray.bullContext),
+    inPosition: Boolean(S.inPosition),
+    featureTime: f?.time || null,
+    bar_time: ev.barTime,
+    alert_time: ev.alertTime,
+    server_time: ev.serverTime,
+    evalPhase: options.phase || "immediate",
+    syncId: options.syncId || null,
+  };
+}
+function evaluateEarlyFvvoEntryShadow(ev, options = {}) {
+  if (!CONFIG.EARLY_FVVO_ENTRY_SHADOW_ENABLED || !CONFIG.FVVO_DIRECT_EVENT_SHADOW_ENABLED) return;
+  if (!ev || ev.kind === "unknown") return;
+  if (!bullishDirectFvvoKind(ev.kind)) return;
+
+  const reasons = [];
+  const f = S.lastFeature;
+  const fv = getFvvoScore(ev.alertTime || null);
+  const tfOk = fvvoTfAccepted(ev.tf);
+  reasonPush(reasons, !tfOk, "tf_not_accepted");
+  reasonPush(reasons, normalizeSymbol(ev.symbol) !== CONFIG.SYMBOL, "symbol_mismatch");
+  reasonPush(reasons, Boolean(S.inPosition), "already_in_position");
+  reasonPush(reasons, CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_BULL_CONTEXT && !S.ray.bullContext, "no_bull_context");
+  reasonPush(reasons, !f, "no_feature");
+  reasonPush(reasons, f && !isFeatureFresh(), "stale_feature");
+
+  const close = n(f?.close, NaN);
+  const ema8 = n(f?.ema8, NaN);
+  const ema18 = n(f?.ema18, NaN);
+  const rsi = n(f?.rsi, NaN);
+  const adx = n(f?.adx, NaN);
+  const ext18 = Number.isFinite(close) && Number.isFinite(ema18) ? pctDiff(ema18, close) : NaN;
+  const eventPrice = n(ev?.price, NaN);
+  const chasePct = Number.isFinite(close) && Number.isFinite(eventPrice) ? pctDiff(close, eventPrice) : NaN;
+
+  reasonPush(reasons, CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_CLOSE_ABOVE_EMA8 && !(Number.isFinite(close) && Number.isFinite(ema8) && close >= ema8), "close_below_ema8");
+  reasonPush(reasons, CONFIG.EARLY_FVVO_ENTRY_SHADOW_REQUIRE_EMA8_ABOVE_EMA18 && !(Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18), "ema8_below_ema18");
+  reasonPush(reasons, Number.isFinite(rsi) && rsi < CONFIG.EARLY_FVVO_ENTRY_SHADOW_MIN_RSI, "rsi_too_low");
+  reasonPush(reasons, Number.isFinite(adx) && adx < CONFIG.EARLY_FVVO_ENTRY_SHADOW_MIN_ADX, "adx_too_low");
+  reasonPush(reasons, Number.isFinite(ext18) && ext18 > CONFIG.EARLY_FVVO_ENTRY_SHADOW_MAX_EXT18_PCT, "ext18_too_high");
+  reasonPush(reasons, Number.isFinite(chasePct) && chasePct > CONFIG.EARLY_FVVO_ENTRY_SHADOW_MAX_CHASE_PCT, "chase_too_high");
+  const staleBearishBlock = CONFIG.EARLY_FVVO_ENTRY_SHADOW_BLOCK_BEARISH_FVVO && fv.score < 0 && ev.kind === "sniper_buy";
+  reasonPush(reasons, staleBearishBlock, "bearish_fvvo_context");
+
+  const phase = options.phase || "immediate";
+  const isSyncEval = phase === "sync_release";
+  const metrics = shadowEarlyFvvoMetrics(ev, fv, options);
+  S.fvvo.shadow = S.fvvo.shadow || { evaluated: 0, pass: 0, block: 0, syncEvaluated: 0, syncPass: 0, syncBlock: 0, lastDecision: null };
+  S.fvvo.shadow.evaluated = n(S.fvvo.shadow.evaluated, 0) + 1;
+  if (isSyncEval) S.fvvo.shadow.syncEvaluated = n(S.fvvo.shadow.syncEvaluated, 0) + 1;
+  const decision = {
+    action: reasons.length ? "block" : "shadow_pass",
+    reason: reasons.length ? reasons[0] : "early_fvvo_shadow_ok",
+    reasons,
+    metrics,
+  };
+  if (reasons.length) {
+    S.fvvo.shadow.block = n(S.fvvo.shadow.block, 0) + 1;
+    if (isSyncEval) S.fvvo.shadow.syncBlock = n(S.fvvo.shadow.syncBlock, 0) + 1;
+    S.fvvo.shadow.lastDecision = decision;
+    log(isSyncEval ? "🧪 EARLY_FVVO_ENTRY_SHADOW_SYNC_BLOCKED" : "🧪 EARLY_FVVO_ENTRY_SHADOW_BLOCKED", decision);
+    return;
+  }
+  S.fvvo.shadow.pass = n(S.fvvo.shadow.pass, 0) + 1;
+  if (isSyncEval) S.fvvo.shadow.syncPass = n(S.fvvo.shadow.syncPass, 0) + 1;
+  S.fvvo.shadow.lastDecision = decision;
+  log(isSyncEval ? "🧪 EARLY_FVVO_ENTRY_SHADOW_SYNC_PASS" : "🧪 EARLY_FVVO_ENTRY_SHADOW_PASS", decision);
+}
+
+export function handleFvvoEvent(body, options = {}) {
+  const name = String(body.event || body.signal || body.alert || body.action || "").trim();
+  const probe = Boolean(options?.probe);
+  const ts = fvvoDirectEventTs(body);
+  const kind = classifyFvvoEvent(name);
+  const mode = fvvoEventMode(name, body);
   if (!CONFIG.FVVO_ENABLED) {
-    log("🧿 FVVO_IGNORED_DISABLED", { name, ts });
+    log("🧿 FVVO_IGNORED_DISABLED", { name, ts, probe });
     return;
   }
-  if (/Sniper Buy Alert/i.test(name)) {
-    S.fvvo.lastSniperBuyAt = ts;
-    log("🧿 FVVO_SNIPER_BUY", { ts });
+  if (kind === "unknown") {
+    log(fvvoEventLabel(kind, mode, probe), { name, ts, probe });
     return;
   }
-  if (/Sniper Sell Alert/i.test(name)) {
-    S.fvvo.lastSniperSellAt = ts;
-    log("🧿 FVVO_SNIPER_SELL", { ts });
-    return;
-  }
-  if (/Burst Bullish Alert/i.test(name)) {
-    S.fvvo.lastBurstBullishAt = ts;
-    log("🧿 FVVO_BURST_BULLISH", { ts });
-    return;
-  }
-  if (/Burst Bearish Alert/i.test(name)) {
-    S.fvvo.lastBurstBearishAt = ts;
-    log("🧿 FVVO_BURST_BEARISH", { ts });
-    return;
-  }
-  log("🧿 FVVO_UNKNOWN", { name, ts });
+
+  const ev = compactFvvoDirectEvent(body, kind, mode, probe);
+  const updateRealMemory = !probe && (mode !== "opb" || CONFIG.FVVO_OPB_UPDATE_REAL_MEMORY);
+  if (updateRealMemory) updateFvvoMemoryForRealEvent(kind, ts);
+  log(fvvoEventLabel(kind, mode, probe), { ts, mode, tf: ev.tf, price: ev.price, bar_time: ev.barTime, probe, updateRealMemory });
+  storeFvvoDirectEvent(ev);
+  openFvvoShadowScorecard(ev);
+  if (shouldArmFvvoFeatureSync(ev)) armFvvoFeatureSyncWait(ev);
+  evaluateEarlyFvvoEntryShadow(ev);
 }
 
 // --------------------------------------------------
@@ -1125,6 +1945,12 @@ export function handleFeature(body) {
     atr: rawAtr,
     atrPct,
     atrReady,
+    oiTrend: Number.isFinite(n(body.oiTrend, NaN)) ? n(body.oiTrend, NaN) : null,
+    oiDeltaBias: Number.isFinite(n(body.oiDeltaBias, NaN)) ? n(body.oiDeltaBias, NaN) : null,
+    cvdTrend: Number.isFinite(n(body.cvdTrend, NaN)) ? n(body.cvdTrend, NaN) : null,
+    priceDropPct: n(body.priceDropPct, NaN),
+    patternAReady: Number.isFinite(n(body.patternAReady, NaN)) ? n(body.patternAReady, NaN) : null,
+    patternAWatch: Number.isFinite(n(body.patternAWatch, NaN)) ? n(body.patternAWatch, NaN) : null,
   };
   S.prevPrevFeature = S.prevFeature ? { ...S.prevFeature } : null;
   S.prevFeature = S.lastFeature ? { ...S.lastFeature } : null;
@@ -1158,6 +1984,9 @@ export function handleFeature(body) {
     barIndex: S.barIndex,
     fvvo: getFvvoScore(ts),
   });
+  updateFvvoShadowScorecardOnFeature(feature);
+  updateRayBlockScorecardOnFeature(feature);
+  evaluateFvvoBearishInvalidationShadow(feature);
   const featureSyncResult = evaluateFirstEntryFeatureSyncOnFeature(feature);
   if (featureSyncResult?.entered) return;
 
@@ -3397,6 +4226,9 @@ export function handleTick(body) {
   S.tickCount += 1;
   S.lastTickPrice = px;
   S.lastTickTime = ts;
+
+  updateFvvoShadowScorecardOnTick(px, ts);
+  updateRayBlockScorecardOnTick(px, ts);
 
   if (S.firstEntry.pending && !S.inPosition) {
     invalidateFirstEntryConfirm();
