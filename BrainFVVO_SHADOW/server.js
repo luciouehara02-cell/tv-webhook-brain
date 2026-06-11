@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1o_LOG_COLOR_VISUAL
+// BrainFVVO_v1p_DYNAMIC_TRAIL_EXIT_OPTIMIZED
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -8,7 +8,8 @@
 // - Uses one-candle FVVO red/green pulses; raw active states are logged only.
 // - Red pulse blocks new longs briefly and can act as profit-only exit warning.
 // - Green pulse creates recovery memory for cross-up confirmation.
-// - Adds dynamic quick-profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
+// - Adds dynamic trailing profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
+// - v1p replaces fixed quick-TP caps with peak-profit dynamic trailing curves so winners can run while profit is locked.
 // - v1o cosmetic only: color-coded / emoji event badges for easier Railway log scanning.
 // ============================================================
 
@@ -46,7 +47,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1o_LOG_COLOR_VISUAL"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1p_DYNAMIC_TRAIL_EXIT_OPTIMIZED"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -117,6 +118,37 @@ const CFG = {
   FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE: envNum("FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE", -0.30),
   FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8: envBool("FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8", true),
   FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE: envBool("FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE", true),
+
+  // v1p: dynamic peak-profit trailing replaces fixed TP caps. When enabled,
+  // +0.45% becomes the arm point, not an automatic exit. The allowed giveback
+  // tightens as peak profit increases, using per-entry-leg defaults.
+  FVVO_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP: envBool("FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP", false),
+
+  FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT", 0.45),
+  FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT", 0.28),
+  FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT", 0.12),
+  FVVO_DYNAMIC_TRAIL_CROSS_TIGHTEN_PER_1PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_TIGHTEN_PER_1PCT", 0.10),
+
+  FVVO_DYNAMIC_TRAIL_POST_ARM_PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_ARM_PCT", 0.45),
+  FVVO_DYNAMIC_TRAIL_POST_START_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_START_GIVEBACK_PCT", 0.24),
+  FVVO_DYNAMIC_TRAIL_POST_MIN_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_DYNAMIC_TRAIL_POST_TIGHTEN_PER_1PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_TIGHTEN_PER_1PCT", 0.11),
+
+  FVVO_FAST_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_FAST_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP: envBool("FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP", false),
+
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP: envBool("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP", false),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT", 0.20),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT", 0.10),
+
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP: envBool("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP", false),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT", 0.30),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT", 0.12),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT", 0.10),
 
   // v1n: once a trade has had enough run-up, prevent it from round-tripping
   // back into a fee-negative or red trade. This is intentionally conservative.
@@ -385,6 +417,11 @@ const state = {
     forwardExits: 0,
     feeAwareQuickTpExits: 0,
     dynamicQuickTpHolds: 0,
+    dynamicTrailExits: 0,
+    dynamicTrailHolds: 0,
+    fastDynamicTrailExits: 0,
+    tickWashoutDynamicTrailExits: 0,
+    deepWashoutDynamicTrailExits: 0,
     breakevenProtectExits: 0,
     fastExitDynamicQuickTpHolds: 0,
     softExitMinProfitBlocks: 0,
@@ -1408,6 +1445,69 @@ function dynamicQuickTpStrongHold(pos, p, perf) {
   return pnlOk && fvvoOk && rsiOk && adxOk && slopeOk;
 }
 
+
+function clampNum(v, min, max) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, x));
+}
+
+function dynamicTrailProfile(setup) {
+  const s = String(setup || "").toUpperCase();
+  if (s === "POST_CROSS_RECLAIM") {
+    return {
+      enabled: CFG.FVVO_DYNAMIC_TRAIL_ENABLED,
+      armPct: CFG.FVVO_DYNAMIC_TRAIL_POST_ARM_PCT,
+      startGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_POST_START_GIVEBACK_PCT,
+      minGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_POST_MIN_GIVEBACK_PCT,
+      tightenPer1Pct: CFG.FVVO_DYNAMIC_TRAIL_POST_TIGHTEN_PER_1PCT
+    };
+  }
+  if (s === "TICK_WASHOUT_RECOVERY") {
+    return {
+      enabled: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED,
+      armPct: CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT,
+      startGivebackPct: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT,
+      minGivebackPct: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT,
+      tightenPer1Pct: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT
+    };
+  }
+  if (s === "DEEP_WASHOUT_SLOW_RECOVERY") {
+    return {
+      enabled: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED,
+      armPct: CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT,
+      startGivebackPct: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT,
+      minGivebackPct: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT,
+      tightenPer1Pct: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT
+    };
+  }
+  return {
+    enabled: CFG.FVVO_DYNAMIC_TRAIL_ENABLED,
+    armPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT,
+    startGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT,
+    minGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT,
+    tightenPer1Pct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_TIGHTEN_PER_1PCT
+  };
+}
+
+function calcDynamicTrail(setup, perf) {
+  const profile = dynamicTrailProfile(setup);
+  const peak = Number(perf && perf.peakPnlPct);
+  const current = Number(perf && perf.currentPnlPct);
+  if (!profile.enabled || !Number.isFinite(peak) || !Number.isFinite(current)) {
+    return { enabled: false, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null, profile };
+  }
+  if (peak < profile.armPct) {
+    return { enabled: true, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null, profile };
+  }
+  const tighten = Math.max(0, (peak - profile.armPct) * Math.abs(profile.tightenPer1Pct));
+  const allowedGivebackPct = clampNum(profile.startGivebackPct - tighten, profile.minGivebackPct, profile.startGivebackPct);
+  const exitLinePct = peak - allowedGivebackPct;
+  const givebackPct = peak - current;
+  const exit = givebackPct >= allowedGivebackPct && current >= CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT;
+  return { enabled: true, armed: true, exit, allowedGivebackPct, exitLinePct, givebackPct, profile };
+}
+
 function evaluateLongExit(pos, p, perf) {
   const currentPnlPct = perf.currentPnlPct;
   const peakPnlPct = perf.peakPnlPct;
@@ -1418,9 +1518,13 @@ function evaluateLongExit(pos, p, perf) {
 
   const intrabarHardStopHit = CFG.FVVO_INTRABAR_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && Number.isFinite(p.low) && p.low <= pos.stopPrice;
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
+  const dynamicTrail = calcDynamicTrail(pos.setup, perf);
+  const dynamicTrailActive = CFG.FVVO_DYNAMIC_TRAIL_ENABLED && dynamicTrail.enabled && dynamicTrail.armed;
   const quickTpRawHit = CFG.FVVO_QUICK_TP_ENABLED && pos.barsHeld >= CFG.FVVO_QUICK_TP_MIN_BARS && currentPnlPct >= CFG.FVVO_QUICK_TP_MIN_PCT;
   const dynamicQuickTpHold = quickTpRawHit && dynamicQuickTpStrongHold(pos, p, perf);
-  const quickTpExit = quickTpRawHit && !dynamicQuickTpHold;
+  const quickTpReplacedByTrail = CFG.FVVO_DYNAMIC_TRAIL_ENABLED && CFG.FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP && dynamicTrail.enabled;
+  const quickTpExit = quickTpRawHit && !dynamicQuickTpHold && !quickTpReplacedByTrail;
+  const dynamicTrailExit = dynamicTrailActive && dynamicTrail.exit && !strongTrendHold;
   const breakevenProtectExit = CFG.FVVO_BREAKEVEN_PROTECT_ENABLED &&
     peakPnlPct >= CFG.FVVO_BREAKEVEN_ARM_PCT &&
     currentPnlPct <= CFG.FVVO_BREAKEVEN_LOCK_PCT &&
@@ -1444,7 +1548,15 @@ function evaluateLongExit(pos, p, perf) {
   if (quickTpExit) return { exit: true, reason: "FVVO_FEE_AWARE_QUICK_TP", backupUsed: false, exitPrice: p.close, strongTrendHold };
   if (dynamicQuickTpHold) {
     state.stats.dynamicQuickTpHolds += 1;
-    return { exit: false, reason: "HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true };
+    return { exit: false, reason: "HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, dynamicTrail };
+  }
+  if (dynamicTrailExit) return { exit: true, reason: "FVVO_DYNAMIC_TRAIL_EXIT", backupUsed: false, exitPrice: p.close, strongTrendHold, dynamicTrail };
+  if (dynamicTrailActive && strongTrendHold) {
+    state.stats.dynamicTrailHolds += 1;
+    return { exit: false, reason: "HOLD_DYNAMIC_TRAIL_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold, dynamicTrail };
+  }
+  if (dynamicTrailActive && !dynamicTrail.exit) {
+    state.stats.dynamicTrailHolds += 1;
   }
   if (breakevenProtectExit) return { exit: true, reason: "FVVO_BREAKEVEN_PROTECT", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (givebackArm2 && !strongTrendHold && softExitMinProfitOk) return { exit: true, reason: "FVVO_GIVEBACK_ARM2", backupUsed: true, exitPrice: p.close, strongTrendHold };
@@ -1537,6 +1649,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
   if (exitDecision.reason === "FVVO_CLOSE_MAX_LOSS_EXIT") state.stats.closeMaxLossExits += 1;
   if (exitDecision.reason === "FVVO_MAX_HOLD_BARS_EXIT") state.stats.maxHoldExits += 1;
   if (exitDecision.reason === "FVVO_FEE_AWARE_QUICK_TP") state.stats.feeAwareQuickTpExits += 1;
+  if (exitDecision.reason === "FVVO_DYNAMIC_TRAIL_EXIT") state.stats.dynamicTrailExits += 1;
   if (exitDecision.reason === "FVVO_BREAKEVEN_PROTECT") state.stats.breakevenProtectExits += 1;
 
   const result = pnlPct > 0.03 ? "WIN" : pnlPct < -0.03 ? "LOSS" : "FLAT";
@@ -1555,6 +1668,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
     `giveback=${pct(givebackPct)}`,
     `barsHeld=${pos.barsHeld}`,
     `reason=${exitDecision.reason}`,
+    `dynamicTrail=${exitDecision.dynamicTrail && exitDecision.dynamicTrail.armed ? `armed:${pct(exitDecision.dynamicTrail.exitLinePct)}/gb:${pct(exitDecision.dynamicTrail.allowedGivebackPct)}` : "off"}`,
     `strongTrendHold=${boolStr(exitDecision.strongTrendHold)}`,
     `entryMomentumOverride=${boolStr(pos.entryMomentumOverride)}`,
     `redDotSeen=${boolStr(pos.redDotSeen)}`,
@@ -1725,9 +1839,14 @@ function evaluateFastExit(pos, p, perf) {
 
   const hardStopHit = CFG.FVVO_FAST_EXIT_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && p.close <= pos.stopPrice;
   const minHoldOk = elapsedSec >= CFG.FVVO_FAST_EXIT_MIN_HOLD_SEC;
+  const fastPerf = { ...perf, currentPnlPct, peakPnlPct, givebackPct };
+  const dynamicTrail = calcDynamicTrail(pos.setup, fastPerf);
+  const dynamicTrailFastActive = CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED && dynamicTrail.enabled && dynamicTrail.armed;
   const quickTpRawHit = CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED && minHoldOk && currentPnlPct >= CFG.FVVO_FAST_EXIT_QUICK_TP_PCT;
   const fastDynamicQuickTpHold = CFG.FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED && quickTpRawHit && dynamicQuickTpStrongHold(pos, p, { ...perf, currentPnlPct });
-  const quickTpHit = quickTpRawHit && !fastDynamicQuickTpHold;
+  const quickTpReplacedByTrail = CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED && CFG.FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP && dynamicTrail.enabled;
+  const quickTpHit = quickTpRawHit && !fastDynamicQuickTpHold && !quickTpReplacedByTrail;
+  const dynamicTrailHit = CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED && minHoldOk && dynamicTrailFastActive && dynamicTrail.exit;
   const trailHit = CFG.FVVO_FAST_EXIT_TRAIL_ENABLED &&
     minHoldOk &&
     peakPnlPct >= CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT &&
@@ -1742,7 +1861,10 @@ function evaluateFastExit(pos, p, perf) {
   }
   if (fastDynamicQuickTpHold) {
     state.stats.fastExitDynamicQuickTpHolds += 1;
-    return { exit: false, reason: "FAST_TICK_HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec };
+    return { exit: false, reason: "FAST_TICK_HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, dynamicTrail };
+  }
+  if (dynamicTrailHit) {
+    return { exit: true, reason: "FVVO_FAST_TICK_DYNAMIC_TRAIL", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, dynamicTrail };
   }
   if (trailHit) {
     return { exit: true, reason: "FVVO_FAST_TICK_TRAIL_GIVEBACK", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec };
@@ -2050,13 +2172,16 @@ async function updateTickWashoutShadow(tick) {
   const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
 
   const stopHit = price <= shadow.stopPrice;
-  const tpHit = currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
-  const trailHit = shadow.peakPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT && givebackPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT;
+  const dynamicTrail = calcDynamicTrail(shadow.setup, { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct });
+  const tpHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
+  const dynamicTrailHit = CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
+  const trailHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED && shadow.peakPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT && givebackPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT;
   const maxHoldHit = elapsedSec >= CFG.FVVO_TICK_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
 
   let reason = "";
   if (stopHit) reason = "TICK_WASHOUT_STRUCTURE_STOP";
   else if (tpHit) reason = "TICK_WASHOUT_SHADOW_TP";
+  else if (dynamicTrailHit) reason = "TICK_WASHOUT_DYNAMIC_TRAIL";
   else if (trailHit) reason = "TICK_WASHOUT_SHADOW_TRAIL";
   else if (maxHoldHit) reason = "TICK_WASHOUT_MAX_HOLD";
 
@@ -2085,6 +2210,7 @@ async function updateTickWashoutShadow(tick) {
   state.tickWashoutShadow.delete(tick.symbol);
   state.lastTickWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.tickWashoutShadowExits += 1;
+  if (reason === "TICK_WASHOUT_DYNAMIC_TRAIL") state.stats.tickWashoutDynamicTrailExits += 1;
   state.stats.tickWashoutShadowPnlPct += currentPnlPct;
   if (currentPnlPct > 0.02) state.stats.tickWashoutShadowWins += 1;
   else if (currentPnlPct < -0.02) state.stats.tickWashoutShadowLosses += 1;
@@ -2100,6 +2226,7 @@ async function updateTickWashoutShadow(tick) {
     `giveback=${pct(givebackPct)}`,
     `elapsedSec=${n(elapsedSec, 0)}`,
     `reason=${reason}`,
+    `dynamicTrail=${dynamicTrail && dynamicTrail.armed ? `armed:${pct(dynamicTrail.exitLinePct)}/gb:${pct(dynamicTrail.allowedGivebackPct)}` : "off"}`,
     `A=${n(shadow.recentHigh, 4)}`,
     `B=${n(shadow.bottomLow, 4)}`,
     `drop=${pct(shadow.dropPct)}`,
@@ -2359,12 +2486,15 @@ async function updateDeepWashoutShadow(tick) {
   const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
 
   const stopHit = price <= shadow.stopPrice;
-  const tpHit = currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
+  const dynamicTrail = calcDynamicTrail(shadow.setup, { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct });
+  const tpHit = !CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
+  const dynamicTrailHit = CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
   const maxHoldHit = elapsedSec >= CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
 
   let reason = "";
   if (stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
   else if (tpHit) reason = "DEEP_WASHOUT_SHADOW_TP";
+  else if (dynamicTrailHit) reason = "DEEP_WASHOUT_DYNAMIC_TRAIL";
   else if (maxHoldHit) reason = "DEEP_WASHOUT_MAX_HOLD";
 
   if (!reason) return;
@@ -2392,6 +2522,7 @@ async function updateDeepWashoutShadow(tick) {
   state.deepWashoutShadow.delete(tick.symbol);
   state.lastDeepWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.deepWashoutShadowExits += 1;
+  if (reason === "DEEP_WASHOUT_DYNAMIC_TRAIL") state.stats.deepWashoutDynamicTrailExits += 1;
   state.stats.deepWashoutShadowPnlPct += currentPnlPct;
   if (currentPnlPct > 0.02) state.stats.deepWashoutShadowWins += 1;
   else if (currentPnlPct < -0.02) state.stats.deepWashoutShadowLosses += 1;
@@ -2407,6 +2538,7 @@ async function updateDeepWashoutShadow(tick) {
     `giveback=${pct(givebackPct)}`,
     `elapsedSec=${n(elapsedSec, 0)}`,
     `reason=${reason}`,
+    `dynamicTrail=${dynamicTrail && dynamicTrail.armed ? `armed:${pct(dynamicTrail.exitLinePct)}/gb:${pct(dynamicTrail.allowedGivebackPct)}` : "off"}`,
     `A=${n(shadow.recentHigh, 4)}`,
     `B=${n(shadow.bottomLow, 4)}`,
     `drop=${pct(shadow.dropPct)}`,
@@ -2664,6 +2796,7 @@ async function handleFastTick(tick) {
     if (decision.reason === "FVVO_FAST_TICK_HARD_STOP") state.stats.fastExitHardStops += 1;
     if (decision.reason === "FVVO_FAST_TICK_QUICK_TP") state.stats.fastExitQuickTpExits += 1;
     if (decision.reason === "FVVO_FAST_TICK_TRAIL_GIVEBACK") state.stats.fastExitTrailExits += 1;
+    if (decision.reason === "FVVO_FAST_TICK_DYNAMIC_TRAIL") state.stats.fastDynamicTrailExits += 1;
 
     logLine("FVVO_FAST_EXIT_SIGNAL", [
       `⚡ symbol=${p.symbol}`,
@@ -2993,6 +3126,11 @@ app.get("/health", (req, res) => {
       quickTpEnabled: CFG.FVVO_QUICK_TP_ENABLED,
       quickTpMinPct: CFG.FVVO_QUICK_TP_MIN_PCT,
       dynamicQuickTpEnabled: CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED,
+      dynamicTrailEnabled: CFG.FVVO_DYNAMIC_TRAIL_ENABLED,
+      dynamicTrailReplaceQuickTp: CFG.FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP,
+      dynamicTrailCrossArmPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT,
+      dynamicTrailCrossStartGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT,
+      dynamicTrailCrossMinGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT,
       dynamicQuickTpStrongMinRsi: CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI,
       dynamicQuickTpStrongMinAdx: CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX,
       breakevenProtectEnabled: CFG.FVVO_BREAKEVEN_PROTECT_ENABLED,
@@ -3162,6 +3300,11 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_QUICK_TP_MIN_PCT=${CFG.FVVO_QUICK_TP_MIN_PCT}`);
   console.log(`FVVO_QUICK_TP_MIN_BARS=${CFG.FVVO_QUICK_TP_MIN_BARS}`);
   console.log(`FVVO_DYNAMIC_QUICK_TP_ENABLED=${CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_DYNAMIC_TRAIL_ENABLED}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP=${CFG.FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT=${CFG.FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT=${CFG.FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT=${CFG.FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT}`);
   console.log(`FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI=${CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI}`);
   console.log(`FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX=${CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX}`);
   console.log(`FVVO_BREAKEVEN_PROTECT_ENABLED=${CFG.FVVO_BREAKEVEN_PROTECT_ENABLED}`);
@@ -3176,6 +3319,8 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FAST_EXIT_QUICK_TP_ENABLED=${CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_QUICK_TP_PCT=${CFG.FVVO_FAST_EXIT_QUICK_TP_PCT}`);
   console.log(`FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED=${CFG.FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED}`);
+  console.log(`FVVO_FAST_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED}`);
+  console.log(`FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP=${CFG.FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ENABLED=${CFG.FVVO_FAST_EXIT_TRAIL_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ARM_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT}`);
@@ -3193,6 +3338,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC=${CFG.FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC}`);
   console.log(`FVVO_TICK_WASHOUT_MIN_RSI=${CFG.FVVO_TICK_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT=${CFG.FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT}`);
+  console.log(`FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED}`);
   console.log(`FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR=${CFG.FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_DEEP_WASHOUT_RECOVERY_ENABLED=${CFG.FVVO_DEEP_WASHOUT_RECOVERY_ENABLED}`);
@@ -3205,6 +3351,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_MIN_RSI=${CFG.FVVO_DEEP_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_TP_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_POST_CROSS_RECLAIM_ENABLED=${CFG.FVVO_POST_CROSS_RECLAIM_ENABLED}`);
