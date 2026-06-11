@@ -1,13 +1,16 @@
 {
-  "name": "brainfvvo-v1o-log-color-visual",
+  "name": "brainfvvo-v1q-feature-tick-c-point",
   "version": "1.0.0",
   "main": "server.js",
-  "type": "commonjs",
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check server.js"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "BrainFVVO v1q live feature-tick C-point impulse package",
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^5.2.1"
   }
 }

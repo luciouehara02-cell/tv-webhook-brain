@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1o_LOG_COLOR_VISUAL
+// BrainFVVO_v1q_FEATURE_TICK_C_POINT
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -8,7 +8,8 @@
 // - Uses one-candle FVVO red/green pulses; raw active states are logged only.
 // - Red pulse blocks new longs briefly and can act as profit-only exit warning.
 // - Green pulse creates recovery memory for cross-up confirmation.
-// - Adds dynamic quick-profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
+// - Adds dynamic trailing profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
+// - v1p replaces fixed quick-TP caps with peak-profit dynamic trailing curves so winners can run while profit is locked.
 // - v1o cosmetic only: color-coded / emoji event badges for easier Railway log scanning.
 // ============================================================
 
@@ -46,7 +47,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1o_LOG_COLOR_VISUAL"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1q_FEATURE_TICK_C_POINT"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -56,6 +57,16 @@ const CFG = {
   // for replay/search compatibility, then adds a colored badge after it.
   FVVO_LOG_COLOR_ENABLED: envBool("FVVO_LOG_COLOR_ENABLED", true),
   FVVO_LOG_BADGE_ENABLED: envBool("FVVO_LOG_BADGE_ENABLED", true),
+
+  // v1q: live intrabar feature ticks. Use the new Pine publisher on the 5m chart
+  // to send FEATURE_TICK_FVVO every ~15s with current price, EMA, RSI, ADX, and FVVO fields.
+  // FEATURE_5M_FVVO remains the confirmed 5m bar-close event.
+  FVVO_FEATURE_TICK_EVENT: envStr("FVVO_FEATURE_TICK_EVENT", "FEATURE_TICK_FVVO"),
+  FVVO_FEATURE_TICK_ENABLED: envBool("FVVO_FEATURE_TICK_ENABLED", true),
+  FVVO_FEATURE_TICK_LOG_ENABLED: envBool("FVVO_FEATURE_TICK_LOG_ENABLED", true),
+  FVVO_FEATURE_TICK_EXIT_ENABLED: envBool("FVVO_FEATURE_TICK_EXIT_ENABLED", true),
+  FVVO_FEATURE_TICK_ENTRY_ENABLED: envBool("FVVO_FEATURE_TICK_ENTRY_ENABLED", true),
+  FVVO_FEATURE_TICK_MIN_INTERVAL_MS: envNum("FVVO_FEATURE_TICK_MIN_INTERVAL_MS", 8000),
 
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -78,6 +89,7 @@ const CFG = {
   FVVO_FORWARD_WASHOUT_ENABLED: envBool("FVVO_FORWARD_WASHOUT_ENABLED", true),
   FVVO_FORWARD_RISING_ENABLED: envBool("FVVO_FORWARD_RISING_ENABLED", true),
   FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED: envBool("FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED", true),
+  FVVO_FORWARD_C_POINT_IMPULSE_ENABLED: envBool("FVVO_FORWARD_C_POINT_IMPULSE_ENABLED", false),
   FVVO_FORWARD_EXIT_ENABLED: envBool("FVVO_FORWARD_EXIT_ENABLED", true),
 
   FVVO_LONG_ENABLED: envBool("FVVO_LONG_ENABLED", true),
@@ -117,6 +129,37 @@ const CFG = {
   FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE: envNum("FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE", -0.30),
   FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8: envBool("FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8", true),
   FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE: envBool("FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE", true),
+
+  // v1p: dynamic peak-profit trailing replaces fixed TP caps. When enabled,
+  // +0.45% becomes the arm point, not an automatic exit. The allowed giveback
+  // tightens as peak profit increases, using per-entry-leg defaults.
+  FVVO_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP: envBool("FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP", false),
+
+  FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT", 0.45),
+  FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT", 0.28),
+  FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT", 0.12),
+  FVVO_DYNAMIC_TRAIL_CROSS_TIGHTEN_PER_1PCT: envNum("FVVO_DYNAMIC_TRAIL_CROSS_TIGHTEN_PER_1PCT", 0.10),
+
+  FVVO_DYNAMIC_TRAIL_POST_ARM_PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_ARM_PCT", 0.45),
+  FVVO_DYNAMIC_TRAIL_POST_START_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_START_GIVEBACK_PCT", 0.24),
+  FVVO_DYNAMIC_TRAIL_POST_MIN_GIVEBACK_PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_DYNAMIC_TRAIL_POST_TIGHTEN_PER_1PCT: envNum("FVVO_DYNAMIC_TRAIL_POST_TIGHTEN_PER_1PCT", 0.11),
+
+  FVVO_FAST_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_FAST_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP: envBool("FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP", false),
+
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP: envBool("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP", false),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT", 0.20),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT", 0.10),
+
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED: envBool("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED", true),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP: envBool("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP", false),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT", 0.30),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT", 0.12),
+  FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT", 0.10),
 
   // v1n: once a trade has had enough run-up, prevent it from round-tripping
   // back into a fee-negative or red trade. This is intentionally conservative.
@@ -238,6 +281,36 @@ const CFG = {
   FVVO_POST_CROSS_RED_BLOCK_BARS: envNum("FVVO_POST_CROSS_RED_BLOCK_BARS", 2),
   FVVO_POST_CROSS_LOG_NO_ENTRY: envBool("FVVO_POST_CROSS_LOG_NO_ENTRY", false),
 
+  // v1q: C-point impulse breakout/recovery leg. This is designed for FEATURE_TICK_FVVO,
+  // where the brain receives live intrabar RSI/FVVO/EMA values instead of price-only ticks.
+  // Default is shadow/log-only for safety. Enable forwarding only after enough positive logs.
+  FVVO_C_POINT_IMPULSE_ENABLED: envBool("FVVO_C_POINT_IMPULSE_ENABLED", true),
+  FVVO_C_POINT_IMPULSE_SHADOW_ONLY: envBool("FVVO_C_POINT_IMPULSE_SHADOW_ONLY", true),
+  FVVO_C_POINT_LOOKBACK_MIN: envNum("FVVO_C_POINT_LOOKBACK_MIN", 30),
+  FVVO_C_POINT_MIN_DROP_PCT: envNum("FVVO_C_POINT_MIN_DROP_PCT", 0.55),
+  FVVO_C_POINT_MAX_DROP_PCT: envNum("FVVO_C_POINT_MAX_DROP_PCT", 1.40),
+  FVVO_C_POINT_MIN_BOUNCE_FROM_BOTTOM_PCT: envNum("FVVO_C_POINT_MIN_BOUNCE_FROM_BOTTOM_PCT", 0.55),
+  FVVO_C_POINT_MAX_BOUNCE_FROM_BOTTOM_PCT: envNum("FVVO_C_POINT_MAX_BOUNCE_FROM_BOTTOM_PCT", 1.60),
+  FVVO_C_POINT_MIN_RECOVERY_OF_DROP_PCT: envNum("FVVO_C_POINT_MIN_RECOVERY_OF_DROP_PCT", 70),
+  FVVO_C_POINT_NO_FRESH_LOW_SEC: envNum("FVVO_C_POINT_NO_FRESH_LOW_SEC", 60),
+  FVVO_C_POINT_MIN_HIGHER_LOW_COUNT: envNum("FVVO_C_POINT_MIN_HIGHER_LOW_COUNT", 3),
+  FVVO_C_POINT_REQUIRE_BREAK_RECENT_HIGH: envBool("FVVO_C_POINT_REQUIRE_BREAK_RECENT_HIGH", true),
+  FVVO_C_POINT_MIN_BREAK_HIGH_PCT: envNum("FVVO_C_POINT_MIN_BREAK_HIGH_PCT", 0.00),
+  FVVO_C_POINT_MIN_RSI: envNum("FVVO_C_POINT_MIN_RSI", 55),
+  FVVO_C_POINT_MAX_RSI: envNum("FVVO_C_POINT_MAX_RSI", 78),
+  FVVO_C_POINT_MIN_ADX: envNum("FVVO_C_POINT_MIN_ADX", 8),
+  FVVO_C_POINT_MIN_FVVO: envNum("FVVO_C_POINT_MIN_FVVO", -4.50),
+  FVVO_C_POINT_MIN_SLOPE: envNum("FVVO_C_POINT_MIN_SLOPE", -0.30),
+  FVVO_C_POINT_REQUIRE_CLOSE_ABOVE_EMA8: envBool("FVVO_C_POINT_REQUIRE_CLOSE_ABOVE_EMA8", true),
+  FVVO_C_POINT_REQUIRE_CLOSE_ABOVE_EMA18: envBool("FVVO_C_POINT_REQUIRE_CLOSE_ABOVE_EMA18", true),
+  FVVO_C_POINT_MAX_EXT_EMA8_PCT: envNum("FVVO_C_POINT_MAX_EXT_EMA8_PCT", 0.85),
+  FVVO_C_POINT_MAX_EXT_EMA18_PCT: envNum("FVVO_C_POINT_MAX_EXT_EMA18_PCT", 1.10),
+  FVVO_C_POINT_BLOCK_RED_PULSE: envBool("FVVO_C_POINT_BLOCK_RED_PULSE", true),
+  FVVO_C_POINT_BLOCK_RED_ACTIVE: envBool("FVVO_C_POINT_BLOCK_RED_ACTIVE", false),
+  FVVO_C_POINT_REJECT_IF_OPEN_DEAL: envBool("FVVO_C_POINT_REJECT_IF_OPEN_DEAL", true),
+  FVVO_C_POINT_COOLDOWN_SEC: envNum("FVVO_C_POINT_COOLDOWN_SEC", 900),
+  FVVO_C_POINT_LOG_NO_ENTRY: envBool("FVVO_C_POINT_LOG_NO_ENTRY", false),
+
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
   FVVO_GREEN_PULSE_CROSS_MIN_RSI: envNum("FVVO_GREEN_PULSE_CROSS_MIN_RSI", 55),
@@ -323,6 +396,8 @@ const state = {
   startedAt: new Date().toISOString(),
   positions: new Map(),
   lastFeature: new Map(),
+  lastFeatureTick: new Map(),
+  lastFeatureTickAt: new Map(),
   history: new Map(),
   seenBars: new Set(),
   barIndex: new Map(),
@@ -385,6 +460,11 @@ const state = {
     forwardExits: 0,
     feeAwareQuickTpExits: 0,
     dynamicQuickTpHolds: 0,
+    dynamicTrailExits: 0,
+    dynamicTrailHolds: 0,
+    fastDynamicTrailExits: 0,
+    tickWashoutDynamicTrailExits: 0,
+    deepWashoutDynamicTrailExits: 0,
     breakevenProtectExits: 0,
     fastExitDynamicQuickTpHolds: 0,
     softExitMinProfitBlocks: 0,
@@ -419,7 +499,15 @@ const state = {
     postCrossOpens: 0,
     postCrossExits: 0,
     postCrossPnlPct: 0,
-    postCrossMemorySets: 0
+    postCrossMemorySets: 0,
+    featureTicksReceived: 0,
+    featureTicksAccepted: 0,
+    featureTickExitSignals: 0,
+    cPointSignals: 0,
+    cPointOpens: 0,
+    cPointExits: 0,
+    cPointPnlPct: 0,
+    cPointShadowSignals: 0
   }
 };
 
@@ -722,6 +810,7 @@ function shouldForwardSetup(setup) {
   if (setup === "WASHOUT_REVERSAL") return CFG.FVVO_FORWARD_WASHOUT_ENABLED;
   if (setup === "RISING_CONTINUATION") return CFG.FVVO_FORWARD_RISING_ENABLED;
   if (setup === "POST_CROSS_RECLAIM") return CFG.FVVO_FORWARD_POST_CROSS_RECLAIM_ENABLED && !CFG.FVVO_POST_CROSS_RECLAIM_SHADOW_ONLY;
+  if (setup === "C_POINT_IMPULSE") return CFG.FVVO_FORWARD_C_POINT_IMPULSE_ENABLED && !CFG.FVVO_C_POINT_IMPULSE_SHADOW_ONLY;
   if (setup === "TICK_WASHOUT_RECOVERY") return CFG.FVVO_FORWARD_WASHOUT_ENABLED && !CFG.FVVO_TICK_WASHOUT_SHADOW_ONLY;
   if (setup === "DEEP_WASHOUT_SLOW_RECOVERY") return CFG.FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED && !CFG.FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY;
   return false;
@@ -873,7 +962,9 @@ function normalizePayload(body) {
 
   const fvvoValue = safeNum(raw.fvvoValue, null);
   const fvvoSignal = safeNum(raw.fvvoSignal, null);
-  const last = state.lastFeature.get(symbol);
+  const last = event === CFG.FVVO_FEATURE_TICK_EVENT
+    ? (state.lastFeatureTick.get(symbol) || state.lastFeature.get(symbol))
+    : state.lastFeature.get(symbol);
   const prevFvvoValue = last ? last.fvvoValue : null;
 
   let fvvoSlope = safeNum(raw.fvvoSlope, null);
@@ -960,6 +1051,14 @@ function validatePayload(p) {
     return { ok: true, reason: "OK_FAST_TICK" };
   }
 
+  if (p.event === CFG.FVVO_FEATURE_TICK_EVENT) {
+    if (!CFG.FVVO_FEATURE_TICK_ENABLED) return { ok: false, reason: "FEATURE_TICK_DISABLED" };
+    if (!Number.isFinite(p.ema8) || !Number.isFinite(p.ema18)) return { ok: false, reason: "MISSING_FEATURE_TICK_EMA8_OR_EMA18" };
+    if (!Number.isFinite(p.rsi)) return { ok: false, reason: "MISSING_FEATURE_TICK_RSI" };
+    if (!Number.isFinite(p.fvvoValue)) return { ok: false, reason: "MISSING_FEATURE_TICK_FVVO_VALUE" };
+    return { ok: true, reason: "OK_FEATURE_TICK" };
+  }
+
   if (p.event !== "FEATURE_5M_FVVO") return { ok: false, reason: `UNSUPPORTED_EVENT:${p.event}` };
   if (!Number.isFinite(p.ema8) || !Number.isFinite(p.ema18)) return { ok: false, reason: "MISSING_EMA8_OR_EMA18" };
   if (!Number.isFinite(p.rsi)) return { ok: false, reason: "MISSING_RSI" };
@@ -969,6 +1068,7 @@ function validatePayload(p) {
 
 function isDuplicateBar(p) {
   if (p.event === CFG.FVVO_FAST_EXIT_EVENT) return false;
+  if (p.event === CFG.FVVO_FEATURE_TICK_EVENT) return false;
   if (!CFG.BAR_DEDUP_ENABLED) return false;
   const key = `${p.symbol}|${p.tf}|${p.time}`;
   if (state.seenBars.has(key)) return true;
@@ -1263,6 +1363,7 @@ function setupPrefix(setup) {
   if (setup === "DEEP_WASHOUT_SLOW_RECOVERY") return "FVVO_DEEP_WASHOUT";
   if (setup === "CROSS_UP_CONFIRM") return "FVVO_CROSS";
   if (setup === "POST_CROSS_RECLAIM") return "FVVO_POST_CROSS";
+  if (setup === "C_POINT_IMPULSE") return "FVVO_C_POINT";
   return "FVVO_RISING";
 }
 
@@ -1311,6 +1412,7 @@ async function openVirtualLong(p, decision, barNo) {
   }
   if (decision.setup === "RISING_CONTINUATION") state.stats.risingOpens += 1;
   if (decision.setup === "POST_CROSS_RECLAIM") state.stats.postCrossOpens += 1;
+  if (decision.setup === "C_POINT_IMPULSE") state.stats.cPointOpens += 1;
 
   logLine(`${setupPrefix(decision.setup)}_LONG_OPEN`, [
     `🟢 setup=${decision.setup}`,
@@ -1408,6 +1510,69 @@ function dynamicQuickTpStrongHold(pos, p, perf) {
   return pnlOk && fvvoOk && rsiOk && adxOk && slopeOk;
 }
 
+
+function clampNum(v, min, max) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, x));
+}
+
+function dynamicTrailProfile(setup) {
+  const s = String(setup || "").toUpperCase();
+  if (s === "POST_CROSS_RECLAIM") {
+    return {
+      enabled: CFG.FVVO_DYNAMIC_TRAIL_ENABLED,
+      armPct: CFG.FVVO_DYNAMIC_TRAIL_POST_ARM_PCT,
+      startGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_POST_START_GIVEBACK_PCT,
+      minGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_POST_MIN_GIVEBACK_PCT,
+      tightenPer1Pct: CFG.FVVO_DYNAMIC_TRAIL_POST_TIGHTEN_PER_1PCT
+    };
+  }
+  if (s === "TICK_WASHOUT_RECOVERY") {
+    return {
+      enabled: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED,
+      armPct: CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT,
+      startGivebackPct: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT,
+      minGivebackPct: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT,
+      tightenPer1Pct: CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT
+    };
+  }
+  if (s === "DEEP_WASHOUT_SLOW_RECOVERY") {
+    return {
+      enabled: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED,
+      armPct: CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT,
+      startGivebackPct: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_START_GIVEBACK_PCT,
+      minGivebackPct: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_MIN_GIVEBACK_PCT,
+      tightenPer1Pct: CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_TIGHTEN_PER_1PCT
+    };
+  }
+  return {
+    enabled: CFG.FVVO_DYNAMIC_TRAIL_ENABLED,
+    armPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT,
+    startGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT,
+    minGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT,
+    tightenPer1Pct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_TIGHTEN_PER_1PCT
+  };
+}
+
+function calcDynamicTrail(setup, perf) {
+  const profile = dynamicTrailProfile(setup);
+  const peak = Number(perf && perf.peakPnlPct);
+  const current = Number(perf && perf.currentPnlPct);
+  if (!profile.enabled || !Number.isFinite(peak) || !Number.isFinite(current)) {
+    return { enabled: false, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null, profile };
+  }
+  if (peak < profile.armPct) {
+    return { enabled: true, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null, profile };
+  }
+  const tighten = Math.max(0, (peak - profile.armPct) * Math.abs(profile.tightenPer1Pct));
+  const allowedGivebackPct = clampNum(profile.startGivebackPct - tighten, profile.minGivebackPct, profile.startGivebackPct);
+  const exitLinePct = peak - allowedGivebackPct;
+  const givebackPct = peak - current;
+  const exit = givebackPct >= allowedGivebackPct && current >= CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT;
+  return { enabled: true, armed: true, exit, allowedGivebackPct, exitLinePct, givebackPct, profile };
+}
+
 function evaluateLongExit(pos, p, perf) {
   const currentPnlPct = perf.currentPnlPct;
   const peakPnlPct = perf.peakPnlPct;
@@ -1418,9 +1583,13 @@ function evaluateLongExit(pos, p, perf) {
 
   const intrabarHardStopHit = CFG.FVVO_INTRABAR_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && Number.isFinite(p.low) && p.low <= pos.stopPrice;
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
+  const dynamicTrail = calcDynamicTrail(pos.setup, perf);
+  const dynamicTrailActive = CFG.FVVO_DYNAMIC_TRAIL_ENABLED && dynamicTrail.enabled && dynamicTrail.armed;
   const quickTpRawHit = CFG.FVVO_QUICK_TP_ENABLED && pos.barsHeld >= CFG.FVVO_QUICK_TP_MIN_BARS && currentPnlPct >= CFG.FVVO_QUICK_TP_MIN_PCT;
   const dynamicQuickTpHold = quickTpRawHit && dynamicQuickTpStrongHold(pos, p, perf);
-  const quickTpExit = quickTpRawHit && !dynamicQuickTpHold;
+  const quickTpReplacedByTrail = CFG.FVVO_DYNAMIC_TRAIL_ENABLED && CFG.FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP && dynamicTrail.enabled;
+  const quickTpExit = quickTpRawHit && !dynamicQuickTpHold && !quickTpReplacedByTrail;
+  const dynamicTrailExit = dynamicTrailActive && dynamicTrail.exit && !strongTrendHold;
   const breakevenProtectExit = CFG.FVVO_BREAKEVEN_PROTECT_ENABLED &&
     peakPnlPct >= CFG.FVVO_BREAKEVEN_ARM_PCT &&
     currentPnlPct <= CFG.FVVO_BREAKEVEN_LOCK_PCT &&
@@ -1444,7 +1613,15 @@ function evaluateLongExit(pos, p, perf) {
   if (quickTpExit) return { exit: true, reason: "FVVO_FEE_AWARE_QUICK_TP", backupUsed: false, exitPrice: p.close, strongTrendHold };
   if (dynamicQuickTpHold) {
     state.stats.dynamicQuickTpHolds += 1;
-    return { exit: false, reason: "HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true };
+    return { exit: false, reason: "HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, dynamicTrail };
+  }
+  if (dynamicTrailExit) return { exit: true, reason: "FVVO_DYNAMIC_TRAIL_EXIT", backupUsed: false, exitPrice: p.close, strongTrendHold, dynamicTrail };
+  if (dynamicTrailActive && strongTrendHold) {
+    state.stats.dynamicTrailHolds += 1;
+    return { exit: false, reason: "HOLD_DYNAMIC_TRAIL_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold, dynamicTrail };
+  }
+  if (dynamicTrailActive && !dynamicTrail.exit) {
+    state.stats.dynamicTrailHolds += 1;
   }
   if (breakevenProtectExit) return { exit: true, reason: "FVVO_BREAKEVEN_PROTECT", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (givebackArm2 && !strongTrendHold && softExitMinProfitOk) return { exit: true, reason: "FVVO_GIVEBACK_ARM2", backupUsed: true, exitPrice: p.close, strongTrendHold };
@@ -1502,6 +1679,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
 
   state.positions.delete(pos.symbol);
   state.lastExitBar.set(pos.symbol, barNo);
+  if (pos.setup === "C_POINT_IMPULSE") state.lastExitBar.set(`${pos.symbol}|C_POINT_IMPULSE_MS`, timeToMs(p.time));
   state.stats.virtualLongExits += 1;
   state.stats.totalPnlPct += pnlPct;
 
@@ -1521,6 +1699,10 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
     state.stats.postCrossExits += 1;
     state.stats.postCrossPnlPct += pnlPct;
   }
+  if (pos.setup === "C_POINT_IMPULSE") {
+    state.stats.cPointExits += 1;
+    state.stats.cPointPnlPct += pnlPct;
+  }
 
   if (pnlPct > 0.03) state.stats.wins += 1;
   else if (pnlPct < -0.03) state.stats.losses += 1;
@@ -1537,6 +1719,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
   if (exitDecision.reason === "FVVO_CLOSE_MAX_LOSS_EXIT") state.stats.closeMaxLossExits += 1;
   if (exitDecision.reason === "FVVO_MAX_HOLD_BARS_EXIT") state.stats.maxHoldExits += 1;
   if (exitDecision.reason === "FVVO_FEE_AWARE_QUICK_TP") state.stats.feeAwareQuickTpExits += 1;
+  if (exitDecision.reason === "FVVO_DYNAMIC_TRAIL_EXIT") state.stats.dynamicTrailExits += 1;
   if (exitDecision.reason === "FVVO_BREAKEVEN_PROTECT") state.stats.breakevenProtectExits += 1;
 
   const result = pnlPct > 0.03 ? "WIN" : pnlPct < -0.03 ? "LOSS" : "FLAT";
@@ -1555,6 +1738,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
     `giveback=${pct(givebackPct)}`,
     `barsHeld=${pos.barsHeld}`,
     `reason=${exitDecision.reason}`,
+    `dynamicTrail=${exitDecision.dynamicTrail && exitDecision.dynamicTrail.armed ? `armed:${pct(exitDecision.dynamicTrail.exitLinePct)}/gb:${pct(exitDecision.dynamicTrail.allowedGivebackPct)}` : "off"}`,
     `strongTrendHold=${boolStr(exitDecision.strongTrendHold)}`,
     `entryMomentumOverride=${boolStr(pos.entryMomentumOverride)}`,
     `redDotSeen=${boolStr(pos.redDotSeen)}`,
@@ -1688,7 +1872,7 @@ function logScorecard() {
 
 
 function makeFastTickFeaturePayload(tick) {
-  const last = state.lastFeature.get(tick.symbol) || {};
+  const last = state.lastFeatureTick.get(tick.symbol) || state.lastFeature.get(tick.symbol) || {};
   const price = tick.close;
   return {
     ...last,
@@ -1725,9 +1909,14 @@ function evaluateFastExit(pos, p, perf) {
 
   const hardStopHit = CFG.FVVO_FAST_EXIT_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && p.close <= pos.stopPrice;
   const minHoldOk = elapsedSec >= CFG.FVVO_FAST_EXIT_MIN_HOLD_SEC;
+  const fastPerf = { ...perf, currentPnlPct, peakPnlPct, givebackPct };
+  const dynamicTrail = calcDynamicTrail(pos.setup, fastPerf);
+  const dynamicTrailFastActive = CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED && dynamicTrail.enabled && dynamicTrail.armed;
   const quickTpRawHit = CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED && minHoldOk && currentPnlPct >= CFG.FVVO_FAST_EXIT_QUICK_TP_PCT;
   const fastDynamicQuickTpHold = CFG.FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED && quickTpRawHit && dynamicQuickTpStrongHold(pos, p, { ...perf, currentPnlPct });
-  const quickTpHit = quickTpRawHit && !fastDynamicQuickTpHold;
+  const quickTpReplacedByTrail = CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED && CFG.FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP && dynamicTrail.enabled;
+  const quickTpHit = quickTpRawHit && !fastDynamicQuickTpHold && !quickTpReplacedByTrail;
+  const dynamicTrailHit = CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED && minHoldOk && dynamicTrailFastActive && dynamicTrail.exit;
   const trailHit = CFG.FVVO_FAST_EXIT_TRAIL_ENABLED &&
     minHoldOk &&
     peakPnlPct >= CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT &&
@@ -1742,7 +1931,10 @@ function evaluateFastExit(pos, p, perf) {
   }
   if (fastDynamicQuickTpHold) {
     state.stats.fastExitDynamicQuickTpHolds += 1;
-    return { exit: false, reason: "FAST_TICK_HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec };
+    return { exit: false, reason: "FAST_TICK_HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, dynamicTrail };
+  }
+  if (dynamicTrailHit) {
+    return { exit: true, reason: "FVVO_FAST_TICK_DYNAMIC_TRAIL", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, dynamicTrail };
   }
   if (trailHit) {
     return { exit: true, reason: "FVVO_FAST_TICK_TRAIL_GIVEBACK", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec };
@@ -1830,8 +2022,167 @@ function calcTickStructure(symbol, windowMin = CFG.FVVO_TICK_WASHOUT_WINDOW_MIN)
   };
 }
 
+
+function calcTickStructureBeforeCurrent(symbol, windowMin = CFG.FVVO_C_POINT_LOOKBACK_MIN) {
+  const fullArr = state.tickBuffers.get(symbol) || [];
+  if (fullArr.length < 5) return { ok: false, reason: "NOT_ENOUGH_TICKS", tickCount: fullArr.length };
+
+  const latest = fullArr[fullArr.length - 1];
+  const windowMs = Math.max(1, Number(windowMin) || 1) * 60 * 1000;
+  const cutoff = latest.ms - windowMs;
+  const arr = fullArr.filter((x) => x.ms >= cutoff);
+  if (arr.length < 5) return { ok: false, reason: "NOT_ENOUGH_TICKS", tickCount: arr.length };
+
+  const current = arr[arr.length - 1];
+  const prior = arr.slice(0, -1);
+  if (prior.length < 4) return { ok: false, reason: "NOT_ENOUGH_PRIOR_TICKS", tickCount: arr.length };
+
+  let highIdx = 0;
+  for (let i = 1; i < prior.length; i += 1) {
+    if (prior[i].price > prior[highIdx].price) highIdx = i;
+  }
+
+  let lowIdx = highIdx;
+  for (let i = highIdx; i < prior.length; i += 1) {
+    if (prior[i].price < prior[lowIdx].price) lowIdx = i;
+  }
+
+  const recentHigh = prior[highIdx];
+  const bottomLow = prior[lowIdx];
+  const dropAbs = recentHigh.price - bottomLow.price;
+  const dropPctFromHigh = recentHigh.price > 0 ? ((recentHigh.price - bottomLow.price) / recentHigh.price) * 100 : 0;
+  const bounceFromBottomPct = calcPct(current.price, bottomLow.price) || 0;
+  const recoveryOfDropPct = dropAbs > 0 ? ((current.price - bottomLow.price) / dropAbs) * 100 : 0;
+  const noFreshLowSec = Math.max(0, (current.ms - bottomLow.ms) / 1000);
+  const ticksSinceLow = Math.max(0, prior.length - 1 - lowIdx);
+  const breakHighPct = calcPct(current.price, recentHigh.price) || 0;
+
+  let higherLowCount = 0;
+  const tinyStep = bottomLow.price * 0.0001;
+  for (let i = lowIdx + 1; i < prior.length; i += 1) {
+    if (prior[i].price >= bottomLow.price + tinyStep) higherLowCount += 1;
+  }
+
+  return {
+    ok: true,
+    tickCount: arr.length,
+    currentPrice: current.price,
+    currentTime: current.time,
+    recentHigh: recentHigh.price,
+    recentHighTime: recentHigh.time,
+    bottomLow: bottomLow.price,
+    bottomLowTime: bottomLow.time,
+    highIdx,
+    lowIdx,
+    ticksSinceLow,
+    dropPct: dropPctFromHigh,
+    bounceFromBottomPct,
+    recoveryOfDropPct,
+    noFreshLowSec,
+    higherLowCount,
+    breakHighPct
+  };
+}
+
+function evaluateCPointImpulseEntry(p) {
+  const setup = "C_POINT_IMPULSE";
+  if (!CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED) return { ok: false, setup, reason: "FEATURE_TICK_ENTRY_DISABLED", checks: {} };
+  if (!CFG.FVVO_C_POINT_IMPULSE_ENABLED) return { ok: false, setup, reason: "C_POINT_IMPULSE_DISABLED", checks: {} };
+
+  const structure = calcTickStructureBeforeCurrent(p.symbol, CFG.FVVO_C_POINT_LOOKBACK_MIN);
+  if (!structure.ok) return { ok: false, setup, reason: structure.reason, checks: { structure } };
+
+  const extEma8Pct = calcPct(p.close, p.ema8);
+  const extEma18Pct = calcPct(p.close, p.ema18);
+  const priceAboveEma8 = Number.isFinite(p.ema8) && p.close > p.ema8;
+  const priceAboveEma18 = Number.isFinite(p.ema18) && p.close > p.ema18;
+
+  const dropOk = structure.dropPct >= CFG.FVVO_C_POINT_MIN_DROP_PCT && structure.dropPct <= CFG.FVVO_C_POINT_MAX_DROP_PCT;
+  const bounceOk = structure.bounceFromBottomPct >= CFG.FVVO_C_POINT_MIN_BOUNCE_FROM_BOTTOM_PCT && structure.bounceFromBottomPct <= CFG.FVVO_C_POINT_MAX_BOUNCE_FROM_BOTTOM_PCT;
+  const recoveryOk = structure.recoveryOfDropPct >= CFG.FVVO_C_POINT_MIN_RECOVERY_OF_DROP_PCT;
+  const noFreshLowOk = structure.noFreshLowSec >= CFG.FVVO_C_POINT_NO_FRESH_LOW_SEC;
+  const higherLowOk = structure.higherLowCount >= CFG.FVVO_C_POINT_MIN_HIGHER_LOW_COUNT;
+  const breakHighOk = !CFG.FVVO_C_POINT_REQUIRE_BREAK_RECENT_HIGH || structure.breakHighPct >= CFG.FVVO_C_POINT_MIN_BREAK_HIGH_PCT;
+
+  const rsiOk = Number.isFinite(p.rsi) && p.rsi >= CFG.FVVO_C_POINT_MIN_RSI && p.rsi <= CFG.FVVO_C_POINT_MAX_RSI;
+  const adxOk = CFG.FVVO_C_POINT_MIN_ADX <= 0 || (Number.isFinite(p.adx) && p.adx >= CFG.FVVO_C_POINT_MIN_ADX);
+  const fvvoOk = Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_C_POINT_MIN_FVVO;
+  const slopeOk = Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_C_POINT_MIN_SLOPE;
+  const priceEma8Ok = !CFG.FVVO_C_POINT_REQUIRE_CLOSE_ABOVE_EMA8 || priceAboveEma8;
+  const priceEma18Ok = !CFG.FVVO_C_POINT_REQUIRE_CLOSE_ABOVE_EMA18 || priceAboveEma18;
+  const ext8Ok = Number.isFinite(extEma8Pct) && extEma8Pct <= CFG.FVVO_C_POINT_MAX_EXT_EMA8_PCT;
+  const ext18Ok = Number.isFinite(extEma18Pct) && extEma18Pct <= CFG.FVVO_C_POINT_MAX_EXT_EMA18_PCT;
+  const redPulseOk = !CFG.FVVO_C_POINT_BLOCK_RED_PULSE || !p.fvvoRedPulse;
+  const redActiveOk = !CFG.FVVO_C_POINT_BLOCK_RED_ACTIVE || !p.fvvoRedActive;
+
+  const openRealPosition = state.positions.has(p.symbol);
+  const openExternalDeal = state.externalDeals.has(p.symbol);
+  const dealBlock = CFG.FVVO_C_POINT_REJECT_IF_OPEN_DEAL && (openRealPosition || openExternalDeal);
+  const lastExitMs = state.lastExitBar.get(`${p.symbol}|C_POINT_IMPULSE_MS`) || 0;
+  const cooldownOk = CFG.FVVO_C_POINT_COOLDOWN_SEC <= 0 || (timeToMs(p.time) - lastExitMs) / 1000 >= CFG.FVVO_C_POINT_COOLDOWN_SEC;
+
+  const ok = dropOk && bounceOk && recoveryOk && noFreshLowOk && higherLowOk && breakHighOk &&
+    rsiOk && adxOk && fvvoOk && slopeOk && priceEma8Ok && priceEma18Ok && ext8Ok && ext18Ok &&
+    redPulseOk && redActiveOk && !dealBlock && cooldownOk;
+
+  const checks = {
+    setup,
+    structure,
+    dropOk,
+    bounceOk,
+    recoveryOk,
+    noFreshLowOk,
+    higherLowOk,
+    breakHighOk,
+    rsiOk,
+    adxOk,
+    fvvoOk,
+    slopeOk,
+    priceEma8Ok,
+    priceEma18Ok,
+    ext8Ok,
+    ext18Ok,
+    redPulseOk,
+    redActiveOk,
+    dealBlock,
+    cooldownOk,
+    extEma8Pct,
+    extEma18Pct,
+    rsi: p.rsi,
+    adx: p.adx,
+    fvvo: p.fvvoValue,
+    slope: p.fvvoSlope,
+    recentHigh: structure.recentHigh,
+    bottomLow: structure.bottomLow
+  };
+
+  if (ok) return { ok: true, setup, reason: "FVVO_C_POINT_IMPULSE_BREAKOUT", momentumOverride: false, checks };
+
+  const failed = [];
+  if (!dropOk) failed.push("DROP_NOT_IN_RANGE");
+  if (!bounceOk) failed.push("BOUNCE_NOT_IN_RANGE");
+  if (!recoveryOk) failed.push("RECOVERY_OF_DROP_TOO_SMALL");
+  if (!noFreshLowOk) failed.push("FRESH_LOW_TOO_RECENT");
+  if (!higherLowOk) failed.push("NOT_ENOUGH_HIGHER_LOWS");
+  if (!breakHighOk) failed.push("RECENT_HIGH_NOT_BROKEN");
+  if (!rsiOk) failed.push("RSI_NOT_OK");
+  if (!adxOk) failed.push("ADX_TOO_LOW");
+  if (!fvvoOk) failed.push("FVVO_TOO_DEEP");
+  if (!slopeOk) failed.push("FVVO_SLOPE_TOO_WEAK");
+  if (!priceEma8Ok) failed.push("PRICE_NOT_ABOVE_EMA8");
+  if (!priceEma18Ok) failed.push("PRICE_NOT_ABOVE_EMA18");
+  if (!ext8Ok) failed.push("TOO_EXTENDED_EMA8");
+  if (!ext18Ok) failed.push("TOO_EXTENDED_EMA18");
+  if (!redPulseOk) failed.push("RED_PULSE_BLOCK");
+  if (!redActiveOk) failed.push("RED_ACTIVE_BLOCK");
+  if (dealBlock) failed.push("OPEN_DEAL_BLOCK");
+  if (!cooldownOk) failed.push("C_POINT_COOLDOWN");
+
+  return { ok: false, setup, reason: failed.join("+") || "NO_C_POINT_IMPULSE", momentumOverride: false, checks };
+}
+
 function getLatestFeatureForTick(symbol) {
-  return state.lastFeature.get(symbol) || null;
+  return state.lastFeatureTick.get(symbol) || state.lastFeature.get(symbol) || null;
 }
 
 function evaluateTickWashoutCandidate(tick) {
@@ -2050,13 +2401,16 @@ async function updateTickWashoutShadow(tick) {
   const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
 
   const stopHit = price <= shadow.stopPrice;
-  const tpHit = currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
-  const trailHit = shadow.peakPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT && givebackPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT;
+  const dynamicTrail = calcDynamicTrail(shadow.setup, { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct });
+  const tpHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
+  const dynamicTrailHit = CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
+  const trailHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED && shadow.peakPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT && givebackPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT;
   const maxHoldHit = elapsedSec >= CFG.FVVO_TICK_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
 
   let reason = "";
   if (stopHit) reason = "TICK_WASHOUT_STRUCTURE_STOP";
   else if (tpHit) reason = "TICK_WASHOUT_SHADOW_TP";
+  else if (dynamicTrailHit) reason = "TICK_WASHOUT_DYNAMIC_TRAIL";
   else if (trailHit) reason = "TICK_WASHOUT_SHADOW_TRAIL";
   else if (maxHoldHit) reason = "TICK_WASHOUT_MAX_HOLD";
 
@@ -2085,6 +2439,7 @@ async function updateTickWashoutShadow(tick) {
   state.tickWashoutShadow.delete(tick.symbol);
   state.lastTickWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.tickWashoutShadowExits += 1;
+  if (reason === "TICK_WASHOUT_DYNAMIC_TRAIL") state.stats.tickWashoutDynamicTrailExits += 1;
   state.stats.tickWashoutShadowPnlPct += currentPnlPct;
   if (currentPnlPct > 0.02) state.stats.tickWashoutShadowWins += 1;
   else if (currentPnlPct < -0.02) state.stats.tickWashoutShadowLosses += 1;
@@ -2100,6 +2455,7 @@ async function updateTickWashoutShadow(tick) {
     `giveback=${pct(givebackPct)}`,
     `elapsedSec=${n(elapsedSec, 0)}`,
     `reason=${reason}`,
+    `dynamicTrail=${dynamicTrail && dynamicTrail.armed ? `armed:${pct(dynamicTrail.exitLinePct)}/gb:${pct(dynamicTrail.allowedGivebackPct)}` : "off"}`,
     `A=${n(shadow.recentHigh, 4)}`,
     `B=${n(shadow.bottomLow, 4)}`,
     `drop=${pct(shadow.dropPct)}`,
@@ -2359,12 +2715,15 @@ async function updateDeepWashoutShadow(tick) {
   const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
 
   const stopHit = price <= shadow.stopPrice;
-  const tpHit = currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
+  const dynamicTrail = calcDynamicTrail(shadow.setup, { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct });
+  const tpHit = !CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
+  const dynamicTrailHit = CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
   const maxHoldHit = elapsedSec >= CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
 
   let reason = "";
   if (stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
   else if (tpHit) reason = "DEEP_WASHOUT_SHADOW_TP";
+  else if (dynamicTrailHit) reason = "DEEP_WASHOUT_DYNAMIC_TRAIL";
   else if (maxHoldHit) reason = "DEEP_WASHOUT_MAX_HOLD";
 
   if (!reason) return;
@@ -2392,6 +2751,7 @@ async function updateDeepWashoutShadow(tick) {
   state.deepWashoutShadow.delete(tick.symbol);
   state.lastDeepWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.deepWashoutShadowExits += 1;
+  if (reason === "DEEP_WASHOUT_DYNAMIC_TRAIL") state.stats.deepWashoutDynamicTrailExits += 1;
   state.stats.deepWashoutShadowPnlPct += currentPnlPct;
   if (currentPnlPct > 0.02) state.stats.deepWashoutShadowWins += 1;
   else if (currentPnlPct < -0.02) state.stats.deepWashoutShadowLosses += 1;
@@ -2407,6 +2767,7 @@ async function updateDeepWashoutShadow(tick) {
     `giveback=${pct(givebackPct)}`,
     `elapsedSec=${n(elapsedSec, 0)}`,
     `reason=${reason}`,
+    `dynamicTrail=${dynamicTrail && dynamicTrail.armed ? `armed:${pct(dynamicTrail.exitLinePct)}/gb:${pct(dynamicTrail.allowedGivebackPct)}` : "off"}`,
     `A=${n(shadow.recentHigh, 4)}`,
     `B=${n(shadow.bottomLow, 4)}`,
     `drop=${pct(shadow.dropPct)}`,
@@ -2664,6 +3025,7 @@ async function handleFastTick(tick) {
     if (decision.reason === "FVVO_FAST_TICK_HARD_STOP") state.stats.fastExitHardStops += 1;
     if (decision.reason === "FVVO_FAST_TICK_QUICK_TP") state.stats.fastExitQuickTpExits += 1;
     if (decision.reason === "FVVO_FAST_TICK_TRAIL_GIVEBACK") state.stats.fastExitTrailExits += 1;
+    if (decision.reason === "FVVO_FAST_TICK_DYNAMIC_TRAIL") state.stats.fastDynamicTrailExits += 1;
 
     logLine("FVVO_FAST_EXIT_SIGNAL", [
       `⚡ symbol=${p.symbol}`,
@@ -2694,6 +3056,118 @@ async function handleFastTick(tick) {
       `giveback=${pct(perf.givebackPct)}`,
       `elapsedSec=${n(decision.elapsedSec, 0)}`
     ].join(" | "));
+  }
+}
+
+
+async function handleFeatureTick(p) {
+  state.stats.accepted += 1;
+  state.stats.featureTicksReceived += 1;
+
+  const nowMs = timeToMs(p.time);
+  const lastMs = state.lastFeatureTickAt.get(p.symbol) || 0;
+  if (CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS > 0 && lastMs && nowMs - lastMs < CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS) {
+    return;
+  }
+  state.lastFeatureTickAt.set(p.symbol, nowMs);
+  state.lastFeatureTick.set(p.symbol, p);
+  state.stats.featureTicksAccepted += 1;
+
+  if (CFG.FVVO_FEATURE_TICK_LOG_ENABLED) {
+    logLine("FEATURE_TICK_FVVO", [
+      `symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `ema8=${n(p.ema8, 4)}`,
+      `ema18=${n(p.ema18, 4)}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`,
+      `aboveZero=${boolStr(p.fvvoAboveZero)}`,
+      `crossUp=${boolStr(p.fvvoCrossUp)}`,
+      `redPulse=${boolStr(p.fvvoRedPulse)}`,
+      `redActive=${boolStr(p.fvvoRedActive)}`,
+      `greenPulse=${boolStr(p.fvvoGreenPulse)}`
+    ].join(" | "));
+  }
+
+  // Feed the same tick-based bottom/recovery trackers, but now they can use live
+  // intrabar FVVO/RSI/EMA context via state.lastFeatureTick.
+  await handleTickWashoutShadow(p);
+  await handleDeepWashoutShadow(p);
+
+  const openPos = state.positions.get(p.symbol);
+  if (openPos && CFG.FVVO_FEATURE_TICK_EXIT_ENABLED) {
+    const perf = calcLongPerformance(openPos, p);
+    const exitDecision = evaluateFastExit(openPos, p, perf);
+    if (exitDecision.exit) {
+      state.stats.featureTickExitSignals += 1;
+      logLine("FVVO_FEATURE_TICK_EXIT_SIGNAL", [
+        `⚡ symbol=${p.symbol}`,
+        `price=${n(p.close, 4)}`,
+        `entry=${n(openPos.entryPrice, 4)}`,
+        `pnl=${pct(perf.currentPnlPct)}`,
+        `netAfterFee=${pct(perf.currentPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
+        `peak=${pct(perf.peakPnlPct)}`,
+        `giveback=${pct(perf.givebackPct)}`,
+        `reason=${exitDecision.reason}`,
+        `rsi=${n(p.rsi, 2)}`,
+        `adx=${n(p.adx, 2)}`,
+        `fvvo=${n(p.fvvoValue, 6)}`,
+        `slope=${n(p.fvvoSlope, 6)}`,
+        `forwardedEntry=${boolStr(openPos.forwardedEntry)}`
+      ].join(" | "));
+      const barNo = state.barIndex.get(p.symbol) || openPos.entryBarNo || 0;
+      await closeVirtualLong(openPos, p, perf, exitDecision, barNo);
+    }
+    return;
+  }
+
+  if (!CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED) return;
+  if (state.positions.has(p.symbol)) return;
+  if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && state.externalDeals.has(p.symbol)) return;
+
+  const decision = evaluateCPointImpulseEntry(p);
+  if (decision.ok) {
+    state.stats.cPointSignals += 1;
+    logLine("FVVO_C_POINT_IMPULSE_SIGNAL", [
+      `🧪 symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `reason=${decision.reason}`,
+      `A=${decision.checks && decision.checks.structure ? n(decision.checks.structure.recentHigh, 4) : "na"}`,
+      `B=${decision.checks && decision.checks.structure ? n(decision.checks.structure.bottomLow, 4) : "na"}`,
+      `drop=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.dropPct) : "na"}`,
+      `bounce=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.bounceFromBottomPct) : "na"}`,
+      `recoverOfDrop=${decision.checks && decision.checks.structure ? n(decision.checks.structure.recoveryOfDropPct, 1) + "%" : "na"}`,
+      `breakHigh=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.breakHighPct) : "na"}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`,
+      `forwardEligible=${boolStr(shouldForwardSetup(decision.setup))}`,
+      `shadowOnly=${boolStr(CFG.FVVO_C_POINT_IMPULSE_SHADOW_ONLY)}`
+    ].join(" | "), decision.checks || {});
+
+    if (CFG.FVVO_C_POINT_IMPULSE_SHADOW_ONLY || !shouldForwardSetup(decision.setup)) {
+      state.stats.cPointShadowSignals += 1;
+      return;
+    }
+
+    const barNo = state.barIndex.get(p.symbol) || 0;
+    await openVirtualLong(p, decision, barNo);
+    return;
+  }
+
+  if (CFG.FVVO_C_POINT_LOG_NO_ENTRY && decision.reason !== "NOT_ENOUGH_TICKS") {
+    logLine("FVVO_C_POINT_IMPULSE_NO_ENTRY", [
+      `symbol=${p.symbol}`,
+      `price=${n(p.close, 4)}`,
+      `reason=${decision.reason}`,
+      `rsi=${n(p.rsi, 2)}`,
+      `adx=${n(p.adx, 2)}`,
+      `fvvo=${n(p.fvvoValue, 6)}`,
+      `slope=${n(p.fvvoSlope, 6)}`
+    ].join(" | "), decision.checks || {});
   }
 }
 
@@ -2993,6 +3467,11 @@ app.get("/health", (req, res) => {
       quickTpEnabled: CFG.FVVO_QUICK_TP_ENABLED,
       quickTpMinPct: CFG.FVVO_QUICK_TP_MIN_PCT,
       dynamicQuickTpEnabled: CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED,
+      dynamicTrailEnabled: CFG.FVVO_DYNAMIC_TRAIL_ENABLED,
+      dynamicTrailReplaceQuickTp: CFG.FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP,
+      dynamicTrailCrossArmPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT,
+      dynamicTrailCrossStartGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT,
+      dynamicTrailCrossMinGivebackPct: CFG.FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT,
       dynamicQuickTpStrongMinRsi: CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI,
       dynamicQuickTpStrongMinAdx: CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX,
       breakevenProtectEnabled: CFG.FVVO_BREAKEVEN_PROTECT_ENABLED,
@@ -3057,6 +3536,8 @@ if (CFG.ENABLE_REPLAY_BATCH) {
         }
         if (payload.event === CFG.FVVO_FAST_EXIT_EVENT) {
           await handleFastTick(payload);
+        } else if (payload.event === CFG.FVVO_FEATURE_TICK_EVENT) {
+          await handleFeatureTick(payload);
         } else {
           await handleFeature(payload);
         }
@@ -3097,6 +3578,8 @@ app.post(CFG.WEBHOOK_PATH, async (req, res) => {
   try {
     if (payload.event === CFG.FVVO_FAST_EXIT_EVENT) {
       await handleFastTick(payload);
+    } else if (payload.event === CFG.FVVO_FEATURE_TICK_EVENT) {
+      await handleFeatureTick(payload);
     } else {
       await handleFeature(payload);
     }
@@ -3131,6 +3614,11 @@ app.listen(CFG.PORT, () => {
   console.log(`C3_DRY_RUN=${CFG.C3_DRY_RUN}`);
   console.log(`FVVO_LOG_COLOR_ENABLED=${CFG.FVVO_LOG_COLOR_ENABLED}`);
   console.log(`FVVO_LOG_BADGE_ENABLED=${CFG.FVVO_LOG_BADGE_ENABLED}`);
+  console.log(`FVVO_FEATURE_TICK_EVENT=${CFG.FVVO_FEATURE_TICK_EVENT}`);
+  console.log(`FVVO_FEATURE_TICK_ENABLED=${CFG.FVVO_FEATURE_TICK_ENABLED}`);
+  console.log(`FVVO_FEATURE_TICK_EXIT_ENABLED=${CFG.FVVO_FEATURE_TICK_EXIT_ENABLED}`);
+  console.log(`FVVO_FEATURE_TICK_ENTRY_ENABLED=${CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED}`);
+  console.log(`FVVO_FEATURE_TICK_MIN_INTERVAL_MS=${CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS}`);
   console.log(`C3_SIGNAL_URL=${CFG.C3_SIGNAL_URL}`);
   console.log(`C3_SIGNAL_SECRET_SET=${Boolean(CFG.C3_SIGNAL_SECRET)}`);
   console.log(`SYMBOL_BOT_MAP_SYMBOLS=${Object.keys(CFG.SYMBOL_BOT_MAP).join(",") || "none"}`);
@@ -3162,6 +3650,11 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_QUICK_TP_MIN_PCT=${CFG.FVVO_QUICK_TP_MIN_PCT}`);
   console.log(`FVVO_QUICK_TP_MIN_BARS=${CFG.FVVO_QUICK_TP_MIN_BARS}`);
   console.log(`FVVO_DYNAMIC_QUICK_TP_ENABLED=${CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_DYNAMIC_TRAIL_ENABLED}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP=${CFG.FVVO_DYNAMIC_TRAIL_REPLACE_QUICK_TP}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT=${CFG.FVVO_DYNAMIC_TRAIL_CROSS_ARM_PCT}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT=${CFG.FVVO_DYNAMIC_TRAIL_CROSS_START_GIVEBACK_PCT}`);
+  console.log(`FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT=${CFG.FVVO_DYNAMIC_TRAIL_CROSS_MIN_GIVEBACK_PCT}`);
   console.log(`FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI=${CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI}`);
   console.log(`FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX=${CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX}`);
   console.log(`FVVO_BREAKEVEN_PROTECT_ENABLED=${CFG.FVVO_BREAKEVEN_PROTECT_ENABLED}`);
@@ -3176,6 +3669,8 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FAST_EXIT_QUICK_TP_ENABLED=${CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_QUICK_TP_PCT=${CFG.FVVO_FAST_EXIT_QUICK_TP_PCT}`);
   console.log(`FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED=${CFG.FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED}`);
+  console.log(`FVVO_FAST_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_FAST_DYNAMIC_TRAIL_ENABLED}`);
+  console.log(`FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP=${CFG.FVVO_FAST_DYNAMIC_TRAIL_REPLACE_QUICK_TP}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ENABLED=${CFG.FVVO_FAST_EXIT_TRAIL_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ARM_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT}`);
@@ -3193,6 +3688,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC=${CFG.FVVO_TICK_WASHOUT_NO_FRESH_LOW_SEC}`);
   console.log(`FVVO_TICK_WASHOUT_MIN_RSI=${CFG.FVVO_TICK_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT=${CFG.FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT}`);
+  console.log(`FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED}`);
   console.log(`FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR=${CFG.FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_DEEP_WASHOUT_RECOVERY_ENABLED=${CFG.FVVO_DEEP_WASHOUT_RECOVERY_ENABLED}`);
@@ -3205,6 +3701,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_MIN_RSI=${CFG.FVVO_DEEP_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_TP_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_POST_CROSS_RECLAIM_ENABLED=${CFG.FVVO_POST_CROSS_RECLAIM_ENABLED}`);
@@ -3217,6 +3714,16 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_POST_CROSS_MIN_RSI=${CFG.FVVO_POST_CROSS_MIN_RSI}`);
   console.log(`FVVO_POST_CROSS_MIN_SLOPE=${CFG.FVVO_POST_CROSS_MIN_SLOPE}`);
   console.log(`FVVO_POST_CROSS_MAX_EXT_EMA8_PCT=${CFG.FVVO_POST_CROSS_MAX_EXT_EMA8_PCT}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_C_POINT_IMPULSE_ENABLED=${CFG.FVVO_C_POINT_IMPULSE_ENABLED}`);
+  console.log(`FVVO_C_POINT_IMPULSE_SHADOW_ONLY=${CFG.FVVO_C_POINT_IMPULSE_SHADOW_ONLY}`);
+  console.log(`FVVO_FORWARD_C_POINT_IMPULSE_ENABLED=${CFG.FVVO_FORWARD_C_POINT_IMPULSE_ENABLED}`);
+  console.log(`FVVO_C_POINT_MIN_DROP_PCT=${CFG.FVVO_C_POINT_MIN_DROP_PCT}`);
+  console.log(`FVVO_C_POINT_MAX_DROP_PCT=${CFG.FVVO_C_POINT_MAX_DROP_PCT}`);
+  console.log(`FVVO_C_POINT_MIN_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_C_POINT_MIN_BOUNCE_FROM_BOTTOM_PCT}`);
+  console.log(`FVVO_C_POINT_MIN_RSI=${CFG.FVVO_C_POINT_MIN_RSI}`);
+  console.log(`FVVO_C_POINT_MIN_SLOPE=${CFG.FVVO_C_POINT_MIN_SLOPE}`);
+  console.log(`FVVO_C_POINT_MAX_EXT_EMA8_PCT=${CFG.FVVO_C_POINT_MAX_EXT_EMA8_PCT}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_WASHOUT_ENABLED=${CFG.FVVO_WASHOUT_ENABLED}`);
   console.log(`FVVO_WASHOUT_ALLOW_GREEN_DOT=${CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT}`);
