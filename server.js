@@ -1,7 +1,9 @@
 import express from "express";
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
+
+const ROUTER_NAME = "TickRouter_v2_FVVO_FEATURE_EVENTS";
 
 const PORT = Number(process.env.PORT || 8080);
 
@@ -13,6 +15,15 @@ const STRICT_DEST_SECRET =
   String(process.env.STRICT_DEST_SECRET || "true").toLowerCase() === "true";
 
 /**
+ * If true, a payload with src="features" and no event can be routed to FVVO as
+ * FEATURE_5M_FVVO. Keep false unless you intentionally send FVVO 5m feature
+ * publisher through TickRouter in old src="features" format.
+ */
+const ROUTE_SRC_FEATURES_TO_FVVO =
+  String(process.env.ROUTE_SRC_FEATURES_TO_FVVO || "false").toLowerCase() ===
+  "true";
+
+/**
  * Cleans Railway/env formatting mistakes:
  * - outer quotes around whole URL lists
  * - quotes around individual URLs
@@ -22,8 +33,8 @@ const STRICT_DEST_SECRET =
 function cleanEnvUrlPart(v) {
   return String(v || "")
     .trim()
-    .replace(/^['"]+/, "")
-    .replace(/['"]+$/, "")
+    .replace(/^["']+/, "")
+    .replace(/["']+$/, "")
     .trim();
 }
 
@@ -43,9 +54,11 @@ function parseUrlList(envValue) {
 const RAW_BRAIN_URLS = parseUrlList(process.env.BRAIN_URLS || "");
 
 /**
- * New FVVO fast-exit targets.
- * These receive FVVO tick format:
- * { secret, event:"FAST_TICK_FVVO", src:"fvvo_tick", intent:"fvvo_tick", symbol, price, time }
+ * FVVO targets.
+ * These can now receive:
+ * - FAST_TICK_FVVO
+ * - FEATURE_TICK_FVVO
+ * - FEATURE_5M_FVVO
  */
 const RAW_FVVO_BRAIN_URLS = parseUrlList(process.env.FVVO_BRAIN_URLS || "");
 
@@ -108,21 +121,72 @@ function secretFromEnv(envName) {
   return String(process.env[envName] || "");
 }
 
+function upperEvent(inbound) {
+  return String(inbound?.event || "").trim().toUpperCase();
+}
+
+function lowerSrc(inbound) {
+  return String(inbound?.src || "").trim().toLowerCase();
+}
+
+function lowerIntent(inbound) {
+  return String(inbound?.intent || "").trim().toLowerCase();
+}
+
 function looksLikeFvvoTick(inbound) {
-  const src = String(inbound?.src || "").toLowerCase();
-  const intent = String(inbound?.intent || "").toLowerCase();
-  const event = String(inbound?.event || "").toUpperCase();
+  const src = lowerSrc(inbound);
+  const intent = lowerIntent(inbound);
+  const event = upperEvent(inbound);
 
   return src === "fvvo_tick" || intent === "fvvo_tick" || event === "FAST_TICK_FVVO";
 }
 
 function looksLikeGenericTick(inbound) {
-  const src = String(inbound?.src || "").toLowerCase();
-  return src === "tick";
+  const src = lowerSrc(inbound);
+  const intent = lowerIntent(inbound);
+  const event = upperEvent(inbound);
+
+  return src === "tick" || intent === "tick" || event === "FAST_TICK";
 }
 
-function looksLikeTick(inbound) {
-  return looksLikeGenericTick(inbound) || looksLikeFvvoTick(inbound);
+function looksLikeFeatureTickFvvo(inbound) {
+  const src = lowerSrc(inbound);
+  const intent = lowerIntent(inbound);
+  const event = upperEvent(inbound);
+
+  return (
+    src === "fvvo_feature_tick" ||
+    intent === "fvvo_feature_tick" ||
+    event === "FEATURE_TICK_FVVO"
+  );
+}
+
+function looksLikeFeature5mFvvo(inbound) {
+  const src = lowerSrc(inbound);
+  const intent = lowerIntent(inbound);
+  const event = upperEvent(inbound);
+
+  if (
+    src === "fvvo_feature_5m" ||
+    intent === "fvvo_feature_5m" ||
+    event === "FEATURE_5M_FVVO"
+  ) {
+    return true;
+  }
+
+  if (ROUTE_SRC_FEATURES_TO_FVVO && src === "features") {
+    return true;
+  }
+
+  return false;
+}
+
+function getPayloadKind(inbound) {
+  if (looksLikeFeatureTickFvvo(inbound)) return "fvvo_feature_tick";
+  if (looksLikeFeature5mFvvo(inbound)) return "fvvo_feature_5m";
+  if (looksLikeFvvoTick(inbound)) return "fvvo_fast_tick";
+  if (looksLikeGenericTick(inbound)) return "generic_tick";
+  return "unknown";
 }
 
 function normalizeTimeValue(v) {
@@ -163,6 +227,47 @@ function normalizeTickPayload(inbound) {
 
   return {
     ok: true,
+    symbol,
+    price,
+    time,
+    inboundSrc: String(inbound?.src || ""),
+    inboundIntent: String(inbound?.intent || ""),
+    inboundEvent: String(inbound?.event || ""),
+  };
+}
+
+function normalizeFeaturePayload(inbound, kind) {
+  const symbol = String(inbound?.symbol || inbound?.ticker || "").trim();
+
+  const priceRaw =
+    inbound?.price ??
+    inbound?.close ??
+    inbound?.lastPrice ??
+    inbound?.last ??
+    inbound?.c;
+
+  const price = Number(priceRaw);
+
+  const time = normalizeTimeValue(
+    inbound?.time ??
+      inbound?.bar_time ??
+      inbound?.alert_time ??
+      inbound?.timenow ??
+      inbound?.timestamp ??
+      inbound?.ts
+  );
+
+  if (!symbol) {
+    return { ok: false, error: "missing_symbol" };
+  }
+
+  if (!Number.isFinite(price) || price <= 0) {
+    return { ok: false, error: "invalid_price" };
+  }
+
+  return {
+    ok: true,
+    kind,
     symbol,
     price,
     time,
@@ -342,6 +447,42 @@ function buildFvvoTickPayload(tick, secret) {
   };
 }
 
+function scrubInboundSecret(payload) {
+  const out = { ...(payload || {}) };
+  delete out.secret;
+  delete out.tv_secret;
+  delete out.token;
+  delete out.passphrase;
+  return out;
+}
+
+function buildFvvoFeaturePayload(inbound, feature, secret) {
+  const clean = scrubInboundSecret(inbound);
+  const kind = feature.kind;
+
+  const out = {
+    ...clean,
+    secret,
+    symbol: feature.symbol,
+    price: feature.price,
+  };
+
+  if (!out.tf) out.tf = String(inbound?.tf || process.env.ENTRY_TF || "5");
+  if (!out.time && feature.time) out.time = feature.time;
+
+  if (kind === "fvvo_feature_tick") {
+    out.event = "FEATURE_TICK_FVVO";
+    out.src = out.src || "fvvo_feature_tick";
+    out.intent = out.intent || "fvvo_feature_tick";
+  } else {
+    out.event = "FEATURE_5M_FVVO";
+    out.src = out.src || "fvvo_feature_5m";
+    out.intent = out.intent || "fvvo_feature_5m";
+  }
+
+  return out;
+}
+
 async function forwardToBrain(url, payload, timeoutMs) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -380,7 +521,7 @@ async function forwardLegacyTick(urlRaw, tick) {
   if (!hostFromUrl(url)) {
     console.error(`❌ Invalid legacy destination URL -> ${urlRaw}`);
     return {
-      mode: "legacy",
+      mode: "legacy_tick",
       url: urlRaw,
       ok: false,
       status: 0,
@@ -395,7 +536,7 @@ async function forwardLegacyTick(urlRaw, tick) {
       `⛔ LEGACY SKIP -> ${url} (missing destination brain secret) source=${source}`
     );
     return {
-      mode: "legacy",
+      mode: "legacy_tick",
       url,
       ok: false,
       status: 0,
@@ -409,12 +550,12 @@ async function forwardLegacyTick(urlRaw, tick) {
   const suffix = String(secret).slice(-6);
 
   console.log(
-    `🔐 LEGACY -> ${url} host=${hostFromUrl(url)} secretSuffix=${suffix} ` +
+    `🔐 LEGACY_TICK -> ${url} host=${hostFromUrl(url)} secretSuffix=${suffix} ` +
       `symbol=${tick.symbol} price=${tick.price} via=${source}`
   );
 
   const r = await forwardToBrain(url, out, FORWARD_TIMEOUT_MS);
-  return { ...r, mode: "legacy", source };
+  return { ...r, mode: "legacy_tick", source };
 }
 
 async function forwardFvvoTick(urlRaw, tick) {
@@ -423,7 +564,7 @@ async function forwardFvvoTick(urlRaw, tick) {
   if (!hostFromUrl(url)) {
     console.error(`❌ Invalid FVVO destination URL -> ${urlRaw}`);
     return {
-      mode: "fvvo",
+      mode: "fvvo_tick",
       url: urlRaw,
       ok: false,
       status: 0,
@@ -438,7 +579,7 @@ async function forwardFvvoTick(urlRaw, tick) {
       `⛔ FVVO SKIP -> ${url} (missing FVVO destination secret) source=${source}`
     );
     return {
-      mode: "fvvo",
+      mode: "fvvo_tick",
       url,
       ok: false,
       status: 0,
@@ -452,17 +593,98 @@ async function forwardFvvoTick(urlRaw, tick) {
   const suffix = String(secret).slice(-6);
 
   console.log(
-    `🔐 FVVO -> ${url} host=${hostFromUrl(url)} secretSuffix=${suffix} ` +
+    `🔐 FVVO_TICK -> ${url} host=${hostFromUrl(url)} secretSuffix=${suffix} ` +
       `event=FAST_TICK_FVVO symbol=${tick.symbol} price=${tick.price} via=${source}`
   );
 
   const r = await forwardToBrain(url, out, FORWARD_TIMEOUT_MS);
-  return { ...r, mode: "fvvo", source };
+  return { ...r, mode: "fvvo_tick", source };
+}
+
+async function forwardFvvoFeature(urlRaw, inbound, feature) {
+  const url = cleanEnvUrlPart(urlRaw);
+
+  if (!hostFromUrl(url)) {
+    console.error(`❌ Invalid FVVO feature destination URL -> ${urlRaw}`);
+    return {
+      mode: feature.kind,
+      url: urlRaw,
+      ok: false,
+      status: 0,
+      resp: "invalid_destination_url",
+    };
+  }
+
+  const { secret, source } = fvvoSecretFor(url);
+
+  if (!secret) {
+    console.error(
+      `⛔ FVVO FEATURE SKIP -> ${url} (missing FVVO destination secret) source=${source}`
+    );
+    return {
+      mode: feature.kind,
+      url,
+      ok: false,
+      status: 0,
+      resp: "skipped_missing_fvvo_secret",
+      skipped: true,
+      source,
+    };
+  }
+
+  const out = buildFvvoFeaturePayload(inbound, feature, secret);
+  const suffix = String(secret).slice(-6);
+
+  console.log(
+    `🔐 FVVO_FEATURE -> ${url} host=${hostFromUrl(url)} secretSuffix=${suffix} ` +
+      `event=${out.event} symbol=${feature.symbol} price=${feature.price} via=${source}`
+  );
+
+  const r = await forwardToBrain(url, out, FORWARD_TIMEOUT_MS);
+  return { ...r, mode: feature.kind, source };
+}
+
+function summarizeResults(results, targetCounts) {
+  const anyOk = results.some((r) => r.ok);
+  const legacyOk = results.filter((r) => r.mode === "legacy_tick" && r.ok).length;
+  const fvvoTickOk = results.filter((r) => r.mode === "fvvo_tick" && r.ok).length;
+  const featureTickOk = results.filter(
+    (r) => r.mode === "fvvo_feature_tick" && r.ok
+  ).length;
+  const feature5mOk = results.filter(
+    (r) => r.mode === "fvvo_feature_5m" && r.ok
+  ).length;
+
+  return {
+    anyOk,
+    legacyOk,
+    fvvoTickOk,
+    featureTickOk,
+    feature5mOk,
+    ...targetCounts,
+  };
+}
+
+function logForwardResults(results) {
+  for (const r of results) {
+    if (r.ok) {
+      console.log(`✅ Forward OK [${r.mode}] -> ${r.url} | status=${r.status}`);
+    } else if (r.skipped) {
+      console.error(
+        `❌ Forward SKIPPED [${r.mode}] -> ${r.url} | ${r.resp} | via=${r.source}`
+      );
+    } else {
+      console.error(
+        `❌ Forward FAIL [${r.mode}] -> ${r.url} | status=${r.status} | ${r.resp}`
+      );
+    }
+  }
 }
 
 app.get("/", (_req, res) => {
   res.json({
     service: "tick-router",
+    routerName: ROUTER_NAME,
     legacyBrains: BRAIN_URLS,
     fvvoBrains: FVVO_BRAIN_URLS,
     rawLegacyBrainsCount: RAW_BRAIN_URLS.length,
@@ -470,6 +692,13 @@ app.get("/", (_req, res) => {
     hasInboundSecret: Boolean(WEBHOOK_SECRET),
     forwardTimeoutMs: FORWARD_TIMEOUT_MS,
     strictDestSecret: STRICT_DEST_SECRET,
+    routeSrcFeaturesToFvvo: ROUTE_SRC_FEATURES_TO_FVVO,
+    supportedEvents: [
+      "FAST_TICK / src=tick",
+      "FAST_TICK_FVVO",
+      "FEATURE_TICK_FVVO",
+      "FEATURE_5M_FVVO",
+    ],
     hasBrainSecretMapJson: Boolean(Object.keys(BRAIN_SECRET_MAP || {}).length),
     hasFvvoSecretMapJson: Boolean(Object.keys(FVVO_SECRET_MAP || {}).length),
     perBrainSecrets: {
@@ -491,9 +720,10 @@ app.get("/", (_req, res) => {
 
 app.post("/webhook", async (req, res) => {
   const inbound = req.body || {};
+  const kind = getPayloadKind(inbound);
 
   if (!inboundSecretOk(inbound)) {
-    return res.status(401).json({ ok: false, error: "secret_mismatch" });
+    return res.status(401).json({ ok: false, error: "secret_mismatch", kind });
   }
 
   if (!BRAIN_URLS.length && !FVVO_BRAIN_URLS.length) {
@@ -501,11 +731,12 @@ app.post("/webhook", async (req, res) => {
       ok: false,
       error: "no_destinations_set",
       detail: "Set BRAIN_URLS and/or FVVO_BRAIN_URLS",
+      kind,
     });
   }
 
-  if (!looksLikeTick(inbound)) {
-    console.log("ℹ️ Non-tick payload ignored", {
+  if (kind === "unknown") {
+    console.log("ℹ️ Payload ignored: unsupported route", {
       src: inbound?.src,
       intent: inbound?.intent,
       event: inbound?.event,
@@ -515,83 +746,138 @@ app.post("/webhook", async (req, res) => {
     return res.status(200).json({
       ok: true,
       ignored: true,
-      reason: "non_tick_payload",
+      reason: "unsupported_payload_kind",
+      kind,
     });
   }
 
-  const tick = normalizeTickPayload(inbound);
+  if (kind === "generic_tick" || kind === "fvvo_fast_tick") {
+    const tick = normalizeTickPayload(inbound);
 
-  if (!tick.ok) {
-    console.error("❌ Invalid tick payload", {
-      error: tick.error,
-      src: inbound?.src,
-      intent: inbound?.intent,
-      event: inbound?.event,
-      symbol: inbound?.symbol,
-      price: inbound?.price,
-      close: inbound?.close,
-    });
+    if (!tick.ok) {
+      console.error("❌ Invalid tick payload", {
+        error: tick.error,
+        src: inbound?.src,
+        intent: inbound?.intent,
+        event: inbound?.event,
+        symbol: inbound?.symbol,
+        price: inbound?.price,
+        close: inbound?.close,
+      });
 
-    return res.status(400).json({
-      ok: false,
-      error: tick.error,
-    });
-  }
-
-  // Respond quickly to TradingView / tick source.
-  res.status(200).json({
-    ok: true,
-    accepted: true,
-    symbol: tick.symbol,
-    price: tick.price,
-    legacyTargets: BRAIN_URLS.length,
-    fvvoTargets: FVVO_BRAIN_URLS.length,
-  });
-
-  console.log(
-    `📍 TICK_IN src=${tick.inboundSrc || "-"} intent=${tick.inboundIntent || "-"} ` +
-      `event=${tick.inboundEvent || "-"} symbol=${tick.symbol} price=${tick.price} time=${tick.time}`
-  );
-
-  const jobs = [
-    ...BRAIN_URLS.map((url) => forwardLegacyTick(url, tick)),
-    ...FVVO_BRAIN_URLS.map((url) => forwardFvvoTick(url, tick)),
-  ];
-
-  const results = await Promise.all(jobs);
-  const anyOk = results.some((r) => r.ok);
-  const legacyOk = results.filter((r) => r.mode === "legacy" && r.ok).length;
-  const fvvoOk = results.filter((r) => r.mode === "fvvo" && r.ok).length;
-
-  for (const r of results) {
-    if (r.ok) {
-      console.log(
-        `✅ Forward OK [${r.mode}] -> ${r.url} | status=${r.status}`
-      );
-    } else if (r.skipped) {
-      console.error(
-        `❌ Forward SKIPPED [${r.mode}] -> ${r.url} | ${r.resp} | via=${r.source}`
-      );
-    } else {
-      console.error(
-        `❌ Forward FAIL [${r.mode}] -> ${r.url} | status=${r.status} | ${r.resp}`
-      );
+      return res.status(400).json({ ok: false, error: tick.error, kind });
     }
+
+    const legacyTargets = kind === "generic_tick" ? BRAIN_URLS.length : 0;
+    const fvvoTargets = FVVO_BRAIN_URLS.length;
+
+    // Respond quickly to TradingView / tick source.
+    res.status(200).json({
+      ok: true,
+      accepted: true,
+      kind,
+      symbol: tick.symbol,
+      price: tick.price,
+      legacyTargets,
+      fvvoTargets,
+    });
+
+    console.log(
+      `📍 ROUTER_IN kind=${kind} src=${tick.inboundSrc || "-"} ` +
+        `intent=${tick.inboundIntent || "-"} event=${tick.inboundEvent || "-"} ` +
+        `symbol=${tick.symbol} price=${tick.price} time=${tick.time}`
+    );
+
+    const jobs = [
+      ...(kind === "generic_tick" ? BRAIN_URLS.map((url) => forwardLegacyTick(url, tick)) : []),
+      ...FVVO_BRAIN_URLS.map((url) => forwardFvvoTick(url, tick)),
+    ];
+
+    const results = await Promise.all(jobs);
+    logForwardResults(results);
+    const summary = summarizeResults(results, {
+      legacyTargets,
+      fvvoTargets,
+      featureTargets: 0,
+    });
+
+    console.log(
+      `➡️ TickRouter forwarded kind=${kind} symbol=${tick.symbol} price=${tick.price} ` +
+        `legacyOk=${summary.legacyOk}/${legacyTargets} ` +
+        `fvvoTickOk=${summary.fvvoTickOk}/${fvvoTargets} anyOk=${summary.anyOk}`
+    );
+
+    return;
   }
 
-  console.log(
-    `➡️ TickRouter forwarded symbol=${tick.symbol} price=${tick.price} ` +
-      `legacyOk=${legacyOk}/${BRAIN_URLS.length} ` +
-      `fvvoOk=${fvvoOk}/${FVVO_BRAIN_URLS.length} anyOk=${anyOk}`
-  );
+  if (kind === "fvvo_feature_tick" || kind === "fvvo_feature_5m") {
+    const feature = normalizeFeaturePayload(inbound, kind);
+
+    if (!feature.ok) {
+      console.error("❌ Invalid FVVO feature payload", {
+        error: feature.error,
+        src: inbound?.src,
+        intent: inbound?.intent,
+        event: inbound?.event,
+        symbol: inbound?.symbol,
+        price: inbound?.price,
+        close: inbound?.close,
+      });
+
+      return res.status(400).json({ ok: false, error: feature.error, kind });
+    }
+
+    const fvvoTargets = FVVO_BRAIN_URLS.length;
+
+    // Respond quickly to TradingView.
+    res.status(200).json({
+      ok: true,
+      accepted: true,
+      kind,
+      symbol: feature.symbol,
+      price: feature.price,
+      fvvoTargets,
+    });
+
+    console.log(
+      `📍 ROUTER_IN kind=${kind} src=${feature.inboundSrc || "-"} ` +
+        `intent=${feature.inboundIntent || "-"} event=${feature.inboundEvent || "-"} ` +
+        `symbol=${feature.symbol} price=${feature.price} time=${feature.time}`
+    );
+
+    const jobs = FVVO_BRAIN_URLS.map((url) =>
+      forwardFvvoFeature(url, inbound, feature)
+    );
+
+    const results = await Promise.all(jobs);
+    logForwardResults(results);
+    const summary = summarizeResults(results, {
+      legacyTargets: 0,
+      fvvoTargets: 0,
+      featureTargets: fvvoTargets,
+    });
+
+    const okCount = kind === "fvvo_feature_tick" ? summary.featureTickOk : summary.feature5mOk;
+
+    console.log(
+      `➡️ TickRouter forwarded kind=${kind} symbol=${feature.symbol} price=${feature.price} ` +
+        `fvvoFeatureOk=${okCount}/${fvvoTargets} anyOk=${summary.anyOk}`
+    );
+
+    return;
+  }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ tick-router listening on port ${PORT}`);
+  console.log(`✅ ${ROUTER_NAME} listening on port ${PORT}`);
   console.log(`Legacy brains: ${BRAIN_URLS.join(", ") || "(none)"}`);
   console.log(`FVVO brains: ${FVVO_BRAIN_URLS.join(", ") || "(none)"}`);
   console.log(`Inbound secret check: ${WEBHOOK_SECRET ? "ON" : "OFF"}`);
   console.log(`STRICT_DEST_SECRET=${STRICT_DEST_SECRET ? "true" : "false"}`);
+  console.log(`ROUTE_SRC_FEATURES_TO_FVVO=${ROUTE_SRC_FEATURES_TO_FVVO ? "true" : "false"}`);
+  console.log(
+    "Supported routes: FAST_TICK/src=tick, FAST_TICK_FVVO, FEATURE_TICK_FVVO, FEATURE_5M_FVVO"
+  );
   console.log(
     `BrainSecretMapJSON=${Object.keys(BRAIN_SECRET_MAP || {}).length ? "ON" : "OFF"}`
   );
