@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1j_LOG_COMPACT
+// BrainFVVO_v1k_DEEP_WASHOUT_SLOW_RECOVERY_SHADOW
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -45,7 +45,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1j_LOG_COMPACT"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1k_DEEP_WASHOUT_SLOW_RECOVERY_SHADOW"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -155,6 +155,36 @@ const CFG = {
   FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT", 0.45),
   FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT", 0.18),
 
+  // v1k: deep washout slow-recovery shadow leg. This is research-only by default.
+  // It watches for a larger 2.5%+ selloff and then a slower +1.0% recovery from the bottom.
+  // It never forwards entries while FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED=false.
+  FVVO_DEEP_WASHOUT_RECOVERY_ENABLED: envBool("FVVO_DEEP_WASHOUT_RECOVERY_ENABLED", true),
+  FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY: envBool("FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY", true),
+  FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED: envBool("FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED", false),
+  FVVO_DEEP_WASHOUT_LOOKBACK_MIN: envNum("FVVO_DEEP_WASHOUT_LOOKBACK_MIN", 360),
+  FVVO_DEEP_WASHOUT_MIN_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_MIN_DROP_PCT", 2.50),
+  FVVO_DEEP_WASHOUT_MAX_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_DROP_PCT", 3.25),
+  FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT: envNum("FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT", 1.00),
+  FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT", 1.50),
+  FVVO_DEEP_WASHOUT_NO_FRESH_LOW_SEC: envNum("FVVO_DEEP_WASHOUT_NO_FRESH_LOW_SEC", 180),
+  FVVO_DEEP_WASHOUT_MIN_HIGHER_LOW_COUNT: envNum("FVVO_DEEP_WASHOUT_MIN_HIGHER_LOW_COUNT", 3),
+  FVVO_DEEP_WASHOUT_MIN_RSI: envNum("FVVO_DEEP_WASHOUT_MIN_RSI", 52),
+  FVVO_DEEP_WASHOUT_REQUIRE_RSI_RISING: envBool("FVVO_DEEP_WASHOUT_REQUIRE_RSI_RISING", true),
+  FVVO_DEEP_WASHOUT_MIN_SLOPE: envNum("FVVO_DEEP_WASHOUT_MIN_SLOPE", -1.00),
+  FVVO_DEEP_WASHOUT_REQUIRE_SLOPE_IMPROVING: envBool("FVVO_DEEP_WASHOUT_REQUIRE_SLOPE_IMPROVING", true),
+  FVVO_DEEP_WASHOUT_MIN_FVVO: envNum("FVVO_DEEP_WASHOUT_MIN_FVVO", -5.00),
+  FVVO_DEEP_WASHOUT_MAX_BELOW_EMA8_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_BELOW_EMA8_PCT", 0.25),
+  FVVO_DEEP_WASHOUT_REJECT_ADX_RISING_BEAR: envBool("FVVO_DEEP_WASHOUT_REJECT_ADX_RISING_BEAR", true),
+  FVVO_DEEP_WASHOUT_REJECT_ADX_MIN: envNum("FVVO_DEEP_WASHOUT_REJECT_ADX_MIN", 25),
+  FVVO_DEEP_WASHOUT_RED_BLOCK_BARS: envNum("FVVO_DEEP_WASHOUT_RED_BLOCK_BARS", 2),
+  FVVO_DEEP_WASHOUT_REJECT_IF_OPEN_DEAL: envBool("FVVO_DEEP_WASHOUT_REJECT_IF_OPEN_DEAL", true),
+  FVVO_DEEP_WASHOUT_COOLDOWN_SEC: envNum("FVVO_DEEP_WASHOUT_COOLDOWN_SEC", 1200),
+  FVVO_DEEP_WASHOUT_SHADOW_TP_PCT: envNum("FVVO_DEEP_WASHOUT_SHADOW_TP_PCT", 0.75),
+  FVVO_DEEP_WASHOUT_SHADOW_MAX_HOLD_MIN: envNum("FVVO_DEEP_WASHOUT_SHADOW_MAX_HOLD_MIN", 90),
+  FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT: envNum("FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT", 0.08),
+  FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT: envNum("FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT", 0.60),
+  FVVO_DEEP_WASHOUT_LOG_NO_ENTRY: envBool("FVVO_DEEP_WASHOUT_LOG_NO_ENTRY", false),
+
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
   FVVO_GREEN_PULSE_CROSS_MIN_RSI: envNum("FVVO_GREEN_PULSE_CROSS_MIN_RSI", 55),
@@ -248,7 +278,9 @@ const state = {
   lastFastTickAt: new Map(),
   tickBuffers: new Map(),
   tickWashoutShadow: new Map(),
+  deepWashoutShadow: new Map(),
   lastTickWashoutCloseMs: new Map(),
+  lastDeepWashoutCloseMs: new Map(),
   tickWashoutSummary: new Map(),
   stats: {
     received: 0,
@@ -317,7 +349,14 @@ const state = {
     tickWashoutShadowPnlPct: 0,
     tickWashoutPinkRejects: 0,
     tickWashoutDealBlocks: 0,
-    tickWashoutZeroCrossCompares: 0
+    tickWashoutZeroCrossCompares: 0,
+    deepWashoutTicks: 0,
+    deepWashoutCandidates: 0,
+    deepWashoutShadowOpens: 0,
+    deepWashoutShadowExits: 0,
+    deepWashoutShadowWins: 0,
+    deepWashoutShadowLosses: 0,
+    deepWashoutShadowPnlPct: 0
   }
 };
 
@@ -1417,7 +1456,12 @@ function updateTickBuffer(tick) {
   const arr = state.tickBuffers.get(symbol) || [];
   arr.push({ ms, price, time: tick.time });
 
-  const windowMs = Math.max(1, CFG.FVVO_TICK_WASHOUT_WINDOW_MIN) * 60 * 1000;
+  const maxWindowMin = Math.max(
+    1,
+    CFG.FVVO_TICK_WASHOUT_WINDOW_MIN,
+    CFG.FVVO_DEEP_WASHOUT_LOOKBACK_MIN
+  );
+  const windowMs = maxWindowMin * 60 * 1000;
   const cutoff = ms - windowMs;
   while (arr.length && arr[0].ms < cutoff) arr.shift();
   while (arr.length > 2000) arr.shift();
@@ -1426,8 +1470,14 @@ function updateTickBuffer(tick) {
   return arr;
 }
 
-function calcTickStructure(symbol) {
-  const arr = state.tickBuffers.get(symbol) || [];
+function calcTickStructure(symbol, windowMin = CFG.FVVO_TICK_WASHOUT_WINDOW_MIN) {
+  const fullArr = state.tickBuffers.get(symbol) || [];
+  if (fullArr.length < 4) return { ok: false, reason: "NOT_ENOUGH_TICKS", tickCount: fullArr.length };
+
+  const latest = fullArr[fullArr.length - 1];
+  const windowMs = Math.max(1, Number(windowMin) || 1) * 60 * 1000;
+  const cutoff = latest.ms - windowMs;
+  const arr = fullArr.filter((x) => x.ms >= cutoff);
   if (arr.length < 4) return { ok: false, reason: "NOT_ENOUGH_TICKS", tickCount: arr.length };
 
   const current = arr[arr.length - 1];
@@ -1444,7 +1494,6 @@ function calcTickStructure(symbol) {
   const recentHigh = arr[highIdx];
   const bottomLow = arr[lowIdx];
   const dropAbs = recentHigh.price - bottomLow.price;
-  const dropPct = calcPct(recentHigh.price, bottomLow.price) || 0; // high vs low as positive pct from low base
   const dropPctFromHigh = recentHigh.price > 0 ? ((recentHigh.price - bottomLow.price) / recentHigh.price) * 100 : 0;
   const bounceFromBottomPct = calcPct(current.price, bottomLow.price) || 0;
   const recoveryOfDropPct = dropAbs > 0 ? ((current.price - bottomLow.price) / dropAbs) * 100 : 0;
@@ -1737,6 +1786,269 @@ function compareTickWashoutToZeroCross(p) {
 }
 
 
+function evaluateDeepWashoutCandidate(tick) {
+  const setup = "DEEP_WASHOUT_SLOW_RECOVERY";
+  if (!CFG.FVVO_DEEP_WASHOUT_RECOVERY_ENABLED) return { ok: false, setup, reason: "DEEP_WASHOUT_DISABLED", checks: {} };
+
+  const last = getLatestFeatureForTick(tick.symbol);
+  if (!last) return { ok: false, setup, reason: "NO_5M_FEATURE_CONTEXT", checks: {} };
+
+  const structure = calcTickStructure(tick.symbol, CFG.FVVO_DEEP_WASHOUT_LOOKBACK_MIN);
+  if (!structure.ok) return { ok: false, setup, reason: structure.reason, checks: { structure } };
+
+  const prev = previousBar(tick.symbol);
+  const prevRsi = prev ? safeNum(prev.rsi, null) : null;
+  const prevAdx = prev ? safeNum(prev.adx, null) : null;
+  const prevSlope = prev ? safeNum(prev.fvvoSlope, null) : null;
+
+  const price = structure.currentPrice;
+  const fvvo = safeNum(last.fvvoValue, null);
+  const slope = safeNum(last.fvvoSlope, null);
+  const rsi = safeNum(last.rsi, null);
+  const adx = safeNum(last.adx, null);
+  const ema8 = safeNum(last.ema8, null);
+  const ema18 = safeNum(last.ema18, null);
+
+  const dropOk = structure.dropPct >= CFG.FVVO_DEEP_WASHOUT_MIN_DROP_PCT && structure.dropPct <= CFG.FVVO_DEEP_WASHOUT_MAX_DROP_PCT;
+  const bounceOk = structure.bounceFromBottomPct >= CFG.FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT && structure.bounceFromBottomPct <= CFG.FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT;
+  const noFreshLowOk = structure.noFreshLowSec >= CFG.FVVO_DEEP_WASHOUT_NO_FRESH_LOW_SEC;
+  const higherLowOk = structure.higherLowCount >= CFG.FVVO_DEEP_WASHOUT_MIN_HIGHER_LOW_COUNT;
+
+  const rsiOk = Number.isFinite(rsi) && rsi >= CFG.FVVO_DEEP_WASHOUT_MIN_RSI;
+  const rsiRising = !CFG.FVVO_DEEP_WASHOUT_REQUIRE_RSI_RISING || !Number.isFinite(prevRsi) || rsi >= prevRsi;
+  const slopeOk = Number.isFinite(slope) && slope >= CFG.FVVO_DEEP_WASHOUT_MIN_SLOPE;
+  const slopeImproving = !CFG.FVVO_DEEP_WASHOUT_REQUIRE_SLOPE_IMPROVING || !Number.isFinite(prevSlope) || slope >= prevSlope;
+  const fvvoOk = Number.isFinite(fvvo) && fvvo >= CFG.FVVO_DEEP_WASHOUT_MIN_FVVO;
+
+  const belowEma8Pct = calcBelowPct(ema8, price);
+  const priceNearEma8Ok = Number.isFinite(belowEma8Pct) && belowEma8Pct <= CFG.FVVO_DEEP_WASHOUT_MAX_BELOW_EMA8_PCT;
+
+  const adxRising = Number.isFinite(adx) && Number.isFinite(prevAdx) && adx > prevAdx;
+  const emaBearStructure = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 < ema18;
+  const priceBelowEma8 = Number.isFinite(ema8) && price < ema8;
+  const adxRisingBearReject = CFG.FVVO_DEEP_WASHOUT_REJECT_ADX_RISING_BEAR &&
+    Number.isFinite(adx) &&
+    adx >= CFG.FVVO_DEEP_WASHOUT_REJECT_ADX_MIN &&
+    adxRising &&
+    emaBearStructure &&
+    priceBelowEma8;
+
+  const recentRedPulseBlocked = last ? recentRedPulse(last, CFG.FVVO_DEEP_WASHOUT_RED_BLOCK_BARS) : false;
+  const openRealPosition = state.positions.has(tick.symbol);
+  const openExternalDeal = state.externalDeals.has(tick.symbol);
+  const openTickWashoutShadow = state.tickWashoutShadow.has(tick.symbol);
+  const openDeepWashoutShadow = state.deepWashoutShadow.has(tick.symbol);
+  const dealBlock = CFG.FVVO_DEEP_WASHOUT_REJECT_IF_OPEN_DEAL && (openRealPosition || openExternalDeal || openTickWashoutShadow || openDeepWashoutShadow);
+
+  const lastCloseMs = state.lastDeepWashoutCloseMs.get(tick.symbol) || 0;
+  const cooldownOk = CFG.FVVO_DEEP_WASHOUT_COOLDOWN_SEC <= 0 || (timeToMs(tick.time) - lastCloseMs) / 1000 >= CFG.FVVO_DEEP_WASHOUT_COOLDOWN_SEC;
+
+  const ok = dropOk && bounceOk && noFreshLowOk && higherLowOk &&
+    rsiOk && rsiRising && slopeOk && slopeImproving && fvvoOk && priceNearEma8Ok &&
+    !adxRisingBearReject && !recentRedPulseBlocked && !dealBlock && cooldownOk;
+
+  const checks = {
+    setup,
+    structure,
+    dropOk,
+    bounceOk,
+    noFreshLowOk,
+    higherLowOk,
+    rsiOk,
+    rsiRising,
+    slopeOk,
+    slopeImproving,
+    fvvoOk,
+    belowEma8Pct,
+    priceNearEma8Ok,
+    adxRising,
+    emaBearStructure,
+    priceBelowEma8,
+    adxRisingBearReject,
+    recentRedPulseBlocked,
+    openRealPosition,
+    openExternalDeal,
+    openTickWashoutShadow,
+    openDeepWashoutShadow,
+    dealBlock,
+    cooldownOk,
+    fvvo,
+    slope,
+    prevSlope,
+    rsi,
+    prevRsi,
+    adx,
+    prevAdx,
+    ema8,
+    ema18
+  };
+
+  let reason = "NO_DEEP_WASHOUT";
+  if (ok) reason = "FVVO_DEEP_WASHOUT_SLOW_RECOVERY_C";
+  else {
+    const failed = [];
+    if (!dropOk) failed.push("DEEP_DROP_NOT_IN_RANGE");
+    if (!bounceOk) failed.push("DEEP_BOUNCE_NOT_IN_RANGE");
+    if (!noFreshLowOk) failed.push("DEEP_FRESH_LOW_TOO_RECENT");
+    if (!higherLowOk) failed.push("DEEP_NOT_ENOUGH_HIGHER_TICKS");
+    if (!rsiOk) failed.push("DEEP_RSI_TOO_LOW");
+    if (!rsiRising) failed.push("DEEP_RSI_NOT_RISING");
+    if (!slopeOk) failed.push("DEEP_SLOPE_TOO_WEAK");
+    if (!slopeImproving) failed.push("DEEP_SLOPE_NOT_IMPROVING");
+    if (!fvvoOk) failed.push("DEEP_FVVO_TOO_LOW");
+    if (!priceNearEma8Ok) failed.push("DEEP_PRICE_TOO_FAR_BELOW_EMA8");
+    if (adxRisingBearReject) failed.push("DEEP_ADX_RISING_BEAR_REJECT");
+    if (recentRedPulseBlocked) failed.push("DEEP_RECENT_RED_PULSE_BLOCK");
+    if (dealBlock) failed.push("DEEP_OPEN_DEAL_BLOCK");
+    if (!cooldownOk) failed.push("DEEP_COOLDOWN");
+    reason = failed.join("+") || "NO_DEEP_WASHOUT";
+  }
+
+  return { ok, setup, reason, checks };
+}
+
+function openDeepWashoutShadow(tick, decision) {
+  const s = decision.checks.structure;
+  const entryPrice = s.currentPrice;
+  const structureStop = s.bottomLow * (1 - Math.abs(CFG.FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT) / 100);
+  const maxLossStop = entryPrice * (1 - Math.abs(CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT) / 100);
+  const stopPrice = Math.max(structureStop, maxLossStop);
+
+  const shadow = {
+    setup: decision.setup,
+    symbol: tick.symbol,
+    entryPrice,
+    entryTime: tick.time,
+    entryMs: timeToMs(tick.time),
+    entryReason: decision.reason,
+    recentHigh: s.recentHigh,
+    bottomLow: s.bottomLow,
+    bottomLowTime: s.bottomLowTime,
+    dropPct: s.dropPct,
+    bounceFromBottomPct: s.bounceFromBottomPct,
+    recoveryOfDropPct: s.recoveryOfDropPct,
+    stopPrice,
+    maxPrice: entryPrice,
+    minPrice: entryPrice,
+    peakPnlPct: 0,
+    maxDrawdownPct: 0,
+    entryChecks: decision.checks
+  };
+
+  state.deepWashoutShadow.set(tick.symbol, shadow);
+  state.stats.deepWashoutCandidates += 1;
+  state.stats.deepWashoutShadowOpens += 1;
+
+  logLine("FVVO_DEEP_WASHOUT_SHADOW_OPEN", [
+    `🧪 setup=${decision.setup}`,
+    `symbol=${tick.symbol}`,
+    `entry=${n(entryPrice, 4)}`,
+    `stop=${n(stopPrice, 4)}`,
+    `A=${n(s.recentHigh, 4)}`,
+    `B=${n(s.bottomLow, 4)}`,
+    `drop=${pct(s.dropPct)}`,
+    `bounce=${pct(s.bounceFromBottomPct)}`,
+    `recoverOfDrop=${n(s.recoveryOfDropPct, 1)}%`,
+    `noFreshLowSec=${n(s.noFreshLowSec, 0)}`,
+    `higherLowCount=${s.higherLowCount}`,
+    `fvvo=${n(decision.checks.fvvo, 6)}`,
+    `slope=${n(decision.checks.slope, 6)}`,
+    `rsi=${n(decision.checks.rsi, 2)}`,
+    `adx=${n(decision.checks.adx, 2)}`,
+    `belowEma8=${pct(decision.checks.belowEma8Pct)}`,
+    `reason=${decision.reason}`,
+    `forward=false`,
+    `shadowOnly=${boolStr(CFG.FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY)}`
+  ].join(" | "), decision.checks);
+}
+
+function updateDeepWashoutShadow(tick) {
+  const shadow = state.deepWashoutShadow.get(tick.symbol);
+  if (!shadow) return;
+
+  const price = Number(tick.close);
+  if (!Number.isFinite(price) || price <= 0) return;
+
+  if (price > shadow.maxPrice) shadow.maxPrice = price;
+  if (price < shadow.minPrice) shadow.minPrice = price;
+
+  const currentPnlPct = calcPct(price, shadow.entryPrice) || 0;
+  const peakPnlPct = calcPct(shadow.maxPrice, shadow.entryPrice) || 0;
+  const drawdownPct = calcPct(shadow.minPrice, shadow.entryPrice) || 0;
+  shadow.peakPnlPct = Math.max(shadow.peakPnlPct, peakPnlPct);
+  shadow.maxDrawdownPct = Math.min(shadow.maxDrawdownPct, drawdownPct);
+  const givebackPct = shadow.peakPnlPct - currentPnlPct;
+  const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
+
+  const stopHit = price <= shadow.stopPrice;
+  const tpHit = currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
+  const maxHoldHit = elapsedSec >= CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
+
+  let reason = "";
+  if (stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
+  else if (tpHit) reason = "DEEP_WASHOUT_SHADOW_TP";
+  else if (maxHoldHit) reason = "DEEP_WASHOUT_MAX_HOLD";
+
+  if (!reason) return;
+
+  state.deepWashoutShadow.delete(tick.symbol);
+  state.lastDeepWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
+  state.stats.deepWashoutShadowExits += 1;
+  state.stats.deepWashoutShadowPnlPct += currentPnlPct;
+  if (currentPnlPct > 0.02) state.stats.deepWashoutShadowWins += 1;
+  else if (currentPnlPct < -0.02) state.stats.deepWashoutShadowLosses += 1;
+
+  logLine("FVVO_DEEP_WASHOUT_SHADOW_RESULT", [
+    `symbol=${tick.symbol}`,
+    `entry=${n(shadow.entryPrice, 4)}`,
+    `exit=${n(price, 4)}`,
+    `pnl=${pct(currentPnlPct)}`,
+    `netAfterFee=${pct(currentPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
+    `peak=${pct(shadow.peakPnlPct)}`,
+    `drawdown=${pct(shadow.maxDrawdownPct)}`,
+    `giveback=${pct(givebackPct)}`,
+    `elapsedSec=${n(elapsedSec, 0)}`,
+    `reason=${reason}`,
+    `A=${n(shadow.recentHigh, 4)}`,
+    `B=${n(shadow.bottomLow, 4)}`,
+    `drop=${pct(shadow.dropPct)}`,
+    `entryBounce=${pct(shadow.bounceFromBottomPct)}`,
+    `entryRecoverOfDrop=${n(shadow.recoveryOfDropPct, 1)}%`
+  ].join(" | "));
+}
+
+function handleDeepWashoutShadow(tick) {
+  if (!CFG.FVVO_DEEP_WASHOUT_RECOVERY_ENABLED) return;
+  state.stats.deepWashoutTicks += 1;
+
+  // Normally handleTickWashoutShadow() updates the shared tick buffer first.
+  // If the smaller tick-washout leg is disabled, keep deep-washout replay working.
+  if (!CFG.FVVO_TICK_WASHOUT_ENABLED) updateTickBuffer(tick);
+
+  updateDeepWashoutShadow(tick);
+  if (state.deepWashoutShadow.has(tick.symbol)) return;
+
+  const decision = evaluateDeepWashoutCandidate(tick);
+  if (decision.ok) {
+    openDeepWashoutShadow(tick, decision);
+    return;
+  }
+
+  if (CFG.FVVO_DEEP_WASHOUT_LOG_NO_ENTRY) {
+    logLine("FVVO_DEEP_WASHOUT_NO_ENTRY", [
+      `symbol=${tick.symbol}`,
+      `price=${n(tick.close, 4)}`,
+      `reason=${decision.reason}`,
+      `drop=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.dropPct) : "na"}`,
+      `bounce=${decision.checks && decision.checks.structure ? pct(decision.checks.structure.bounceFromBottomPct) : "na"}`,
+      `rsi=${decision.checks ? n(decision.checks.rsi, 2) : "na"}`,
+      `slope=${decision.checks ? n(decision.checks.slope, 6) : "na"}`,
+      `fvvo=${decision.checks ? n(decision.checks.fvvo, 6) : "na"}`
+    ].join(" | "), decision.checks || {});
+  }
+}
+
+
 function logCompactTickTape(tick) {
   if (!CFG.FVVO_TICK_TAPE_LOG_ENABLED) return;
 
@@ -1914,6 +2226,9 @@ async function handleFastTick(tick) {
   // v1i: tick washout is shadow-only and should still work even when no real FVVO deal is open.
   handleTickWashoutShadow(tick);
 
+  // v1k: separate deep-washout slow-recovery shadow leg.
+  // This is shadow-only by default and never changes the existing CROSS_UP real-entry logic.
+  handleDeepWashoutShadow(tick);
 
   if (!CFG.FVVO_FAST_EXIT_ENABLED) {
     state.stats.fastTicksSkipped += 1;
@@ -2393,6 +2708,18 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_TICK_WASHOUT_MIN_RSI=${CFG.FVVO_TICK_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT=${CFG.FVVO_TICK_WASHOUT_MAX_BELOW_EMA8_PCT}`);
   console.log(`FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR=${CFG.FVVO_TICK_WASHOUT_REJECT_ADX_RISING_BEAR}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_DEEP_WASHOUT_RECOVERY_ENABLED=${CFG.FVVO_DEEP_WASHOUT_RECOVERY_ENABLED}`);
+  console.log(`FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY=${CFG.FVVO_DEEP_WASHOUT_RECOVERY_SHADOW_ONLY}`);
+  console.log(`FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED=${CFG.FVVO_FORWARD_DEEP_WASHOUT_RECOVERY_ENABLED}`);
+  console.log(`FVVO_DEEP_WASHOUT_LOOKBACK_MIN=${CFG.FVVO_DEEP_WASHOUT_LOOKBACK_MIN}`);
+  console.log(`FVVO_DEEP_WASHOUT_MIN_DROP_PCT=${CFG.FVVO_DEEP_WASHOUT_MIN_DROP_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_MAX_DROP_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_DROP_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_MIN_RSI=${CFG.FVVO_DEEP_WASHOUT_MIN_RSI}`);
+  console.log(`FVVO_DEEP_WASHOUT_SHADOW_TP_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT}`);
   console.log("------------------------------------------------------------");
   console.log(`FVVO_WASHOUT_ENABLED=${CFG.FVVO_WASHOUT_ENABLED}`);
   console.log(`FVVO_WASHOUT_ALLOW_GREEN_DOT=${CFG.FVVO_WASHOUT_ALLOW_GREEN_DOT}`);
