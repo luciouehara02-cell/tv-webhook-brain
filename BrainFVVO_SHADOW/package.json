@@ -1,1 +1,13 @@
-{"name":"brainfvvo-v1l-post-cross-reclaim-optimized","version":"1.0.0","main":"server.js","scripts":{"start":"node server.js"},"dependencies":{"express":"^4.18.3"},"engines":{"node":">=18"}}
+{
+  "name": "brainfvvo-v1n-dynamic-exit-optimized",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

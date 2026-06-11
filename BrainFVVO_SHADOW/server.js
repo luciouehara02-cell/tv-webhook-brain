@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1m_ALL_LEGS_FORWARD_OPTIMIZED
+// BrainFVVO_v1n_DYNAMIC_EXIT_OPTIMIZED
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -8,7 +8,7 @@
 // - Uses one-candle FVVO red/green pulses; raw active states are logged only.
 // - Red pulse blocks new longs briefly and can act as profit-only exit warning.
 // - Green pulse creates recovery memory for cross-up confirmation.
-// - Adds fee-aware quick TP, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
+// - Adds dynamic quick-profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
 // ============================================================
 
 const express = require("express");
@@ -45,7 +45,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1m_ALL_LEGS_FORWARD_OPTIMIZED"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1n_DYNAMIC_EXIT_OPTIMIZED"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -98,6 +98,27 @@ const CFG = {
   FVVO_QUICK_TP_ENABLED: envBool("FVVO_QUICK_TP_ENABLED", true),
   FVVO_QUICK_TP_MIN_PCT: envNum("FVVO_QUICK_TP_MIN_PCT", 0.45),
   FVVO_QUICK_TP_MIN_BARS: envNum("FVVO_QUICK_TP_MIN_BARS", 1),
+
+  // v1n: quick TP is no longer a hard profit cap. If profit reaches the quick
+  // threshold but trend is strong, the brain holds and lets trailing/giveback
+  // manage the winner instead of closing immediately.
+  FVVO_DYNAMIC_QUICK_TP_ENABLED: envBool("FVVO_DYNAMIC_QUICK_TP_ENABLED", true),
+  FVVO_DYNAMIC_QUICK_TP_HOLD_CROSS: envBool("FVVO_DYNAMIC_QUICK_TP_HOLD_CROSS", true),
+  FVVO_DYNAMIC_QUICK_TP_HOLD_POST_CROSS: envBool("FVVO_DYNAMIC_QUICK_TP_HOLD_POST_CROSS", true),
+  FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI: envNum("FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI", 60),
+  FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX: envNum("FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX", 24),
+  FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_FVVO: envNum("FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_FVVO", 0),
+  FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE: envNum("FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE", -0.30),
+  FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8: envBool("FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8", true),
+  FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE: envBool("FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE", true),
+
+  // v1n: once a trade has had enough run-up, prevent it from round-tripping
+  // back into a fee-negative or red trade. This is intentionally conservative.
+  FVVO_BREAKEVEN_PROTECT_ENABLED: envBool("FVVO_BREAKEVEN_PROTECT_ENABLED", true),
+  FVVO_BREAKEVEN_ARM_PCT: envNum("FVVO_BREAKEVEN_ARM_PCT", 0.30),
+  FVVO_BREAKEVEN_LOCK_PCT: envNum("FVVO_BREAKEVEN_LOCK_PCT", 0.05),
+  FVVO_BREAKEVEN_MIN_GIVEBACK_PCT: envNum("FVVO_BREAKEVEN_MIN_GIVEBACK_PCT", 0.20),
+
   FVVO_SOFT_EXIT_MIN_PROFIT_PCT: envNum("FVVO_SOFT_EXIT_MIN_PROFIT_PCT", 0.25),
   FVVO_EXTERNAL_DEAL_LOCK_ENABLED: envBool("FVVO_EXTERNAL_DEAL_LOCK_ENABLED", true),
 
@@ -110,7 +131,8 @@ const CFG = {
   FVVO_FAST_EXIT_ONLY_FOR_FORWARDED_ENTRY: envBool("FVVO_FAST_EXIT_ONLY_FOR_FORWARDED_ENTRY", true),
   FVVO_FAST_EXIT_HARD_STOP_ENABLED: envBool("FVVO_FAST_EXIT_HARD_STOP_ENABLED", true),
   FVVO_FAST_EXIT_QUICK_TP_ENABLED: envBool("FVVO_FAST_EXIT_QUICK_TP_ENABLED", true),
-  FVVO_FAST_EXIT_QUICK_TP_PCT: envNum("FVVO_FAST_EXIT_QUICK_TP_PCT", 0.48),
+  FVVO_FAST_EXIT_QUICK_TP_PCT: envNum("FVVO_FAST_EXIT_QUICK_TP_PCT", 0.50),
+  FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED: envBool("FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED", false),
   FVVO_FAST_EXIT_TRAIL_ENABLED: envBool("FVVO_FAST_EXIT_TRAIL_ENABLED", true),
   FVVO_FAST_EXIT_TRAIL_ARM_PCT: envNum("FVVO_FAST_EXIT_TRAIL_ARM_PCT", 0.50),
   FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT: envNum("FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT", 0.12),
@@ -255,7 +277,7 @@ const CFG = {
   FVVO_RISING_MAX_EXT_EMA18_PCT: envNum("FVVO_RISING_MAX_EXT_EMA18_PCT", 0.55),
 
   FVVO_INTRABAR_HARD_STOP_ENABLED: envBool("FVVO_INTRABAR_HARD_STOP_ENABLED", true),
-  FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.30),
+  FVVO_MAX_LOSS_EXIT_PCT: envNum("FVVO_MAX_LOSS_EXIT_PCT", 0.25),
   FVVO_GIVEBACK_ARM1_PCT: envNum("FVVO_GIVEBACK_ARM1_PCT", 0.30),
   FVVO_GIVEBACK_ARM1_DROP_PCT: envNum("FVVO_GIVEBACK_ARM1_DROP_PCT", 0.15),
   FVVO_GIVEBACK_ARM2_PCT: envNum("FVVO_GIVEBACK_ARM2_PCT", 0.50),
@@ -271,7 +293,8 @@ const CFG = {
   FVVO_STRONG_TREND_HOLD_MAX_NEG_SLOPE: envNum("FVVO_STRONG_TREND_HOLD_MAX_NEG_SLOPE", -0.60),
 
   BAR_DEDUP_ENABLED: envBool("BAR_DEDUP_ENABLED", true),
-  HISTORY_MAX_BARS: envNum("HISTORY_MAX_BARS", 120)
+  HISTORY_MAX_BARS: envNum("HISTORY_MAX_BARS", 120),
+  ENABLE_REPLAY_BATCH: envBool("ENABLE_REPLAY_BATCH", false)
 };
 
 if (CFG.LIVE_FORWARD_ALLOWED) {
@@ -355,6 +378,9 @@ const state = {
     forwardEntries: 0,
     forwardExits: 0,
     feeAwareQuickTpExits: 0,
+    dynamicQuickTpHolds: 0,
+    breakevenProtectExits: 0,
+    fastExitDynamicQuickTpHolds: 0,
     softExitMinProfitBlocks: 0,
     externalDealEntryBlocks: 0,
     fastTicksReceived: 0,
@@ -1277,6 +1303,29 @@ function isStrongTrendHold(pos, p, perf) {
   return pnlPositive && fvvoOk && priceOk && rsiOk && adxOk && slopeOk;
 }
 
+
+function dynamicQuickTpStrongHold(pos, p, perf) {
+  if (!CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED) return false;
+  if (!pos || !p || !perf) return false;
+
+  const setup = pos.setup || "UNKNOWN";
+  const setupAllowed =
+    (setup === "CROSS_UP_CONFIRM" && CFG.FVVO_DYNAMIC_QUICK_TP_HOLD_CROSS) ||
+    (setup === "POST_CROSS_RECLAIM" && CFG.FVVO_DYNAMIC_QUICK_TP_HOLD_POST_CROSS);
+
+  if (!setupAllowed) return false;
+  if (CFG.FVVO_DYNAMIC_QUICK_TP_BLOCK_ON_RED_PULSE && p.fvvoRedPulse) return false;
+  if (CFG.FVVO_DYNAMIC_QUICK_TP_REQUIRE_ABOVE_EMA8 && !(p.close >= p.ema8)) return false;
+
+  const pnlOk = perf.currentPnlPct >= CFG.FVVO_QUICK_TP_MIN_PCT;
+  const fvvoOk = p.fvvoAboveZero && Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_FVVO;
+  const rsiOk = Number.isFinite(p.rsi) && p.rsi >= CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI;
+  const adxOk = CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX <= 0 || (Number.isFinite(p.adx) && p.adx >= CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX);
+  const slopeOk = !Number.isFinite(p.fvvoSlope) || p.fvvoSlope >= CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MAX_NEG_SLOPE;
+
+  return pnlOk && fvvoOk && rsiOk && adxOk && slopeOk;
+}
+
 function evaluateLongExit(pos, p, perf) {
   const currentPnlPct = perf.currentPnlPct;
   const peakPnlPct = perf.peakPnlPct;
@@ -1287,7 +1336,13 @@ function evaluateLongExit(pos, p, perf) {
 
   const intrabarHardStopHit = CFG.FVVO_INTRABAR_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && Number.isFinite(p.low) && p.low <= pos.stopPrice;
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
-  const quickTpExit = CFG.FVVO_QUICK_TP_ENABLED && pos.barsHeld >= CFG.FVVO_QUICK_TP_MIN_BARS && currentPnlPct >= CFG.FVVO_QUICK_TP_MIN_PCT;
+  const quickTpRawHit = CFG.FVVO_QUICK_TP_ENABLED && pos.barsHeld >= CFG.FVVO_QUICK_TP_MIN_BARS && currentPnlPct >= CFG.FVVO_QUICK_TP_MIN_PCT;
+  const dynamicQuickTpHold = quickTpRawHit && dynamicQuickTpStrongHold(pos, p, perf);
+  const quickTpExit = quickTpRawHit && !dynamicQuickTpHold;
+  const breakevenProtectExit = CFG.FVVO_BREAKEVEN_PROTECT_ENABLED &&
+    peakPnlPct >= CFG.FVVO_BREAKEVEN_ARM_PCT &&
+    currentPnlPct <= CFG.FVVO_BREAKEVEN_LOCK_PCT &&
+    givebackPct >= CFG.FVVO_BREAKEVEN_MIN_GIVEBACK_PCT;
   const softExitMinProfitOk = currentPnlPct >= CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT;
   const givebackArm2 = peakPnlPct >= CFG.FVVO_GIVEBACK_ARM2_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM2_DROP_PCT;
   const givebackArm1 = peakPnlPct >= CFG.FVVO_GIVEBACK_ARM1_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
@@ -1305,6 +1360,11 @@ function evaluateLongExit(pos, p, perf) {
   if (redPulseProfitExit) return { exit: true, reason: "FVVO_RED_PULSE_PROFIT_WARNING", backupUsed: false, exitPrice: p.close, strongTrendHold };
   if (closeMaxLossHit) return { exit: true, reason: "FVVO_CLOSE_MAX_LOSS_EXIT", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (quickTpExit) return { exit: true, reason: "FVVO_FEE_AWARE_QUICK_TP", backupUsed: false, exitPrice: p.close, strongTrendHold };
+  if (dynamicQuickTpHold) {
+    state.stats.dynamicQuickTpHolds += 1;
+    return { exit: false, reason: "HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true };
+  }
+  if (breakevenProtectExit) return { exit: true, reason: "FVVO_BREAKEVEN_PROTECT", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (givebackArm2 && !strongTrendHold && softExitMinProfitOk) return { exit: true, reason: "FVVO_GIVEBACK_ARM2", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (givebackArm2 && !strongTrendHold && !softExitMinProfitOk) {
     state.stats.softExitMinProfitBlocks += 1;
@@ -1395,6 +1455,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
   if (exitDecision.reason === "FVVO_CLOSE_MAX_LOSS_EXIT") state.stats.closeMaxLossExits += 1;
   if (exitDecision.reason === "FVVO_MAX_HOLD_BARS_EXIT") state.stats.maxHoldExits += 1;
   if (exitDecision.reason === "FVVO_FEE_AWARE_QUICK_TP") state.stats.feeAwareQuickTpExits += 1;
+  if (exitDecision.reason === "FVVO_BREAKEVEN_PROTECT") state.stats.breakevenProtectExits += 1;
 
   const result = pnlPct > 0.03 ? "WIN" : pnlPct < -0.03 ? "LOSS" : "FLAT";
   const prefix = setupPrefix(pos.setup);
@@ -1535,6 +1596,9 @@ function logScorecard() {
     `forwardEntries=${state.stats.forwardEntries}`,
     `forwardExits=${state.stats.forwardExits}`,
     `feeQuickTpExits=${state.stats.feeAwareQuickTpExits}`,
+    `dynamicQuickTpHolds=${state.stats.dynamicQuickTpHolds}`,
+    `breakevenProtectExits=${state.stats.breakevenProtectExits}`,
+    `fastDynamicQuickTpHolds=${state.stats.fastExitDynamicQuickTpHolds}`,
     `softExitBlocks=${state.stats.softExitMinProfitBlocks}`,
     `externalDealBlocks=${state.stats.externalDealEntryBlocks}`
   ].join(" | "));
@@ -1579,7 +1643,9 @@ function evaluateFastExit(pos, p, perf) {
 
   const hardStopHit = CFG.FVVO_FAST_EXIT_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && p.close <= pos.stopPrice;
   const minHoldOk = elapsedSec >= CFG.FVVO_FAST_EXIT_MIN_HOLD_SEC;
-  const quickTpHit = CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED && minHoldOk && currentPnlPct >= CFG.FVVO_FAST_EXIT_QUICK_TP_PCT;
+  const quickTpRawHit = CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED && minHoldOk && currentPnlPct >= CFG.FVVO_FAST_EXIT_QUICK_TP_PCT;
+  const fastDynamicQuickTpHold = CFG.FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED && quickTpRawHit && dynamicQuickTpStrongHold(pos, p, { ...perf, currentPnlPct });
+  const quickTpHit = quickTpRawHit && !fastDynamicQuickTpHold;
   const trailHit = CFG.FVVO_FAST_EXIT_TRAIL_ENABLED &&
     minHoldOk &&
     peakPnlPct >= CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT &&
@@ -1591,6 +1657,10 @@ function evaluateFastExit(pos, p, perf) {
   }
   if (quickTpHit) {
     return { exit: true, reason: "FVVO_FAST_TICK_QUICK_TP", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec };
+  }
+  if (fastDynamicQuickTpHold) {
+    state.stats.fastExitDynamicQuickTpHolds += 1;
+    return { exit: false, reason: "FAST_TICK_HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec };
   }
   if (trailHit) {
     return { exit: true, reason: "FVVO_FAST_TICK_TRAIL_GIVEBACK", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec };
@@ -2840,6 +2910,12 @@ app.get("/health", (req, res) => {
       feeRoundTripPct: CFG.FVVO_FEE_ROUND_TRIP_PCT,
       quickTpEnabled: CFG.FVVO_QUICK_TP_ENABLED,
       quickTpMinPct: CFG.FVVO_QUICK_TP_MIN_PCT,
+      dynamicQuickTpEnabled: CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED,
+      dynamicQuickTpStrongMinRsi: CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI,
+      dynamicQuickTpStrongMinAdx: CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX,
+      breakevenProtectEnabled: CFG.FVVO_BREAKEVEN_PROTECT_ENABLED,
+      breakevenArmPct: CFG.FVVO_BREAKEVEN_ARM_PCT,
+      breakevenLockPct: CFG.FVVO_BREAKEVEN_LOCK_PCT,
       softExitMinProfitPct: CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT,
       externalDealLockEnabled: CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED,
       externalDealOpen: state.externalDeals.has(CFG.SYMBOL),
@@ -2876,6 +2952,41 @@ app.get("/health", (req, res) => {
     }))
   });
 });
+
+
+if (CFG.ENABLE_REPLAY_BATCH) {
+  app.post("/replay_batch", async (req, res) => {
+    const body = req.body || {};
+    const events = Array.isArray(body) ? body : (Array.isArray(body.events) ? body.events : []);
+    let processed = 0;
+    let rejected = 0;
+    for (const rawEvent of events) {
+      try {
+        const payload = normalizePayload(rawEvent);
+        const validation = validatePayload(payload);
+        if (!validation.ok) {
+          state.stats.rejected += 1;
+          rejected += 1;
+          continue;
+        }
+        if (isDuplicateBar(payload)) {
+          state.stats.duplicates += 1;
+          continue;
+        }
+        if (payload.event === CFG.FVVO_FAST_EXIT_EVENT) {
+          await handleFastTick(payload);
+        } else {
+          await handleFeature(payload);
+        }
+        processed += 1;
+      } catch (err) {
+        rejected += 1;
+        state.stats.rejected += 1;
+      }
+    }
+    res.json({ ok: true, processed, rejected, stats: state.stats, openPositions: Array.from(state.positions.values()) });
+  });
+}
 
 app.post(CFG.WEBHOOK_PATH, async (req, res) => {
   state.stats.received += 1;
@@ -2966,6 +3077,12 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_QUICK_TP_ENABLED=${CFG.FVVO_QUICK_TP_ENABLED}`);
   console.log(`FVVO_QUICK_TP_MIN_PCT=${CFG.FVVO_QUICK_TP_MIN_PCT}`);
   console.log(`FVVO_QUICK_TP_MIN_BARS=${CFG.FVVO_QUICK_TP_MIN_BARS}`);
+  console.log(`FVVO_DYNAMIC_QUICK_TP_ENABLED=${CFG.FVVO_DYNAMIC_QUICK_TP_ENABLED}`);
+  console.log(`FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI=${CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_RSI}`);
+  console.log(`FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX=${CFG.FVVO_DYNAMIC_QUICK_TP_STRONG_MIN_ADX}`);
+  console.log(`FVVO_BREAKEVEN_PROTECT_ENABLED=${CFG.FVVO_BREAKEVEN_PROTECT_ENABLED}`);
+  console.log(`FVVO_BREAKEVEN_ARM_PCT=${CFG.FVVO_BREAKEVEN_ARM_PCT}`);
+  console.log(`FVVO_BREAKEVEN_LOCK_PCT=${CFG.FVVO_BREAKEVEN_LOCK_PCT}`);
   console.log(`FVVO_SOFT_EXIT_MIN_PROFIT_PCT=${CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT}`);
   console.log(`FVVO_EXTERNAL_DEAL_LOCK_ENABLED=${CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_ENABLED=${CFG.FVVO_FAST_EXIT_ENABLED}`);
@@ -2974,6 +3091,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FAST_EXIT_MIN_HOLD_SEC=${CFG.FVVO_FAST_EXIT_MIN_HOLD_SEC}`);
   console.log(`FVVO_FAST_EXIT_QUICK_TP_ENABLED=${CFG.FVVO_FAST_EXIT_QUICK_TP_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_QUICK_TP_PCT=${CFG.FVVO_FAST_EXIT_QUICK_TP_PCT}`);
+  console.log(`FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED=${CFG.FVVO_FAST_EXIT_DYNAMIC_QUICK_TP_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ENABLED=${CFG.FVVO_FAST_EXIT_TRAIL_ENABLED}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_ARM_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_ARM_PCT}`);
   console.log(`FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT=${CFG.FVVO_FAST_EXIT_TRAIL_GIVEBACK_PCT}`);
