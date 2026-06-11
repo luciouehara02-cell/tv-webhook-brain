@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1n_DYNAMIC_EXIT_OPTIMIZED
+// BrainFVVO_v1o_LOG_COLOR_VISUAL
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -9,6 +9,7 @@
 // - Red pulse blocks new longs briefly and can act as profit-only exit warning.
 // - Green pulse creates recovery memory for cross-up confirmation.
 // - Adds dynamic quick-profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
+// - v1o cosmetic only: color-coded / emoji event badges for easier Railway log scanning.
 // ============================================================
 
 const express = require("express");
@@ -45,11 +46,16 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1n_DYNAMIC_EXIT_OPTIMIZED"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1o_LOG_COLOR_VISUAL"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
   DEBUG: envBool("DEBUG", true),
+
+  // v1o: visual-only log formatting. Keeps the third pipe-delimited field as the raw event type
+  // for replay/search compatibility, then adds a colored badge after it.
+  FVVO_LOG_COLOR_ENABLED: envBool("FVVO_LOG_COLOR_ENABLED", true),
+  FVVO_LOG_BADGE_ENABLED: envBool("FVVO_LOG_BADGE_ENABLED", true),
 
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -527,10 +533,86 @@ function calcBelowPct(reference, value) {
   return ((r - v) / r) * 100;
 }
 
+const ANSI = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  gray: "\x1b[90m",
+  white: "\x1b[37m"
+};
+
+function logColor(text, colorCode, opts = {}) {
+  if (!CFG.FVVO_LOG_COLOR_ENABLED || !colorCode) return text;
+  const style = `${opts.bold ? ANSI.bold : ""}${opts.dim ? ANSI.dim : ""}${colorCode}`;
+  return `${style}${text}${ANSI.reset}`;
+}
+
+function classifyLogEvent(type, msg = "") {
+  const t = String(type || "").toUpperCase();
+  const m = String(msg || "").toUpperCase();
+
+  if (t === "ERROR" || t.includes("ERROR") || t.includes("BAD_SECRET") || t.includes("SYMBOL_MISMATCH")) {
+    return { icon: "🟥", label: "ERROR", color: ANSI.red, bold: true };
+  }
+  if (t.includes("REJECT") || t.includes("DUPLICATE")) {
+    return { icon: "🟧", label: "REJECT", color: ANSI.yellow, bold: true };
+  }
+  if (t.includes("C3_FORWARD_SUCCESS") || t.includes("3COMMAS_FORWARD_OK")) {
+    return { icon: "✅", label: "FORWARD_OK", color: ANSI.green, bold: true };
+  }
+  if (t.includes("C3_FORWARD_SEND") || t.includes("FORWARD_RETRY") || m.includes("ACTION=ENTER_LONG")) {
+    return { icon: "📤", label: "FORWARD", color: ANSI.cyan, bold: true };
+  }
+  if (t.includes("C3_FORWARD_SKIP") || t.includes("FORWARD_DRY_RUN")) {
+    return { icon: "⏭️", label: "SKIP", color: ANSI.gray };
+  }
+  if (t.includes("EXIT") || t.includes("RESULT") || t.includes("BREAKEVEN") || m.includes("ACTION=EXIT_LONG")) {
+    return { icon: "🔴", label: "EXIT", color: ANSI.red, bold: true };
+  }
+  if (t.includes("NO_ENTRY") || t.includes("NO_SIGNAL")) {
+    return { icon: "⚫", label: "NO_ENTRY", color: ANSI.gray, dim: true };
+  }
+  if (t.includes("LONG_OPEN") || t.includes("LONG_SIGNAL") || t.includes("ENTRY") || t.includes("DEAL_LOCK_SET")) {
+    return { icon: "🟢", label: "ENTRY", color: ANSI.green, bold: true };
+  }
+  if (t.includes("HOLD") || t.includes("ARMED") || t.includes("TRAIL") || t.includes("LEVEL_UP")) {
+    return { icon: "🔵", label: "MANAGE", color: ANSI.blue, bold: true };
+  }
+  if (t.includes("FEATURE_5M") || t.includes("RAW_SCORECARD") || t.includes("SCORECARD")) {
+    return { icon: "📊", label: "FEATURE", color: ANSI.cyan, bold: true };
+  }
+  if (t.includes("TICK_TAPE") || t.includes("FAST_TICK")) {
+    return { icon: "⚪", label: "TICK", color: ANSI.gray };
+  }
+  if (t.includes("PULSE") || t.includes("DOT")) {
+    return { icon: "🟣", label: "PULSE", color: ANSI.magenta, bold: true };
+  }
+  if (t.includes("SUMMARY") || t.includes("MEMORY") || t.includes("COMPARE")) {
+    return { icon: "📝", label: "INFO", color: ANSI.white };
+  }
+  return { icon: "ℹ️", label: "INFO", color: ANSI.white };
+}
+
+function formatLogBadge(type, msg) {
+  if (!CFG.FVVO_LOG_BADGE_ENABLED) return "";
+  const c = classifyLogEvent(type, msg);
+  return logColor(`${c.icon} ${c.label}`, c.color, { bold: c.bold, dim: c.dim });
+}
+
 function logLine(type, msg, obj = null) {
+  // Keep type as its own pipe-delimited field for replay/search compatibility:
+  // timestamp | brain | RAW_EVENT_TYPE | COLORED_BADGE | message
   const prefix = `${nowIso()} | ${CFG.BRAIN_NAME} | ${type}`;
-  if (obj && CFG.DEBUG) console.log(`${prefix} | ${msg} | ${JSON.stringify(obj)}`);
-  else console.log(`${prefix} | ${msg}`);
+  const badge = formatLogBadge(type, msg);
+  const badgePart = badge ? ` | ${badge}` : "";
+  if (obj && CFG.DEBUG) console.log(`${prefix}${badgePart} | ${msg} | ${JSON.stringify(obj)}`);
+  else console.log(`${prefix}${badgePart} | ${msg}`);
 }
 
 function getHistory(symbol) {
@@ -3047,6 +3129,8 @@ app.listen(CFG.PORT, () => {
   console.log(`DEMO_FORWARD_ALLOWED=${CFG.DEMO_FORWARD_ALLOWED}`);
   console.log(`LIVE_FORWARD_ALLOWED=${CFG.LIVE_FORWARD_ALLOWED}`);
   console.log(`C3_DRY_RUN=${CFG.C3_DRY_RUN}`);
+  console.log(`FVVO_LOG_COLOR_ENABLED=${CFG.FVVO_LOG_COLOR_ENABLED}`);
+  console.log(`FVVO_LOG_BADGE_ENABLED=${CFG.FVVO_LOG_BADGE_ENABLED}`);
   console.log(`C3_SIGNAL_URL=${CFG.C3_SIGNAL_URL}`);
   console.log(`C3_SIGNAL_SECRET_SET=${Boolean(CFG.C3_SIGNAL_SECRET)}`);
   console.log(`SYMBOL_BOT_MAP_SYMBOLS=${Object.keys(CFG.SYMBOL_BOT_MAP).join(",") || "none"}`);
