@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1q_FEATURE_TICK_C_POINT
+// BrainFVVO_v1r_FEATURE_LEG_EXIT_PROFILES
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -11,6 +11,7 @@
 // - Adds dynamic trailing profit protection, breakeven protection, exit forwarding, forwarded-deal lock, and tick/fast-exit management by default.
 // - v1p replaces fixed quick-TP caps with peak-profit dynamic trailing curves so winners can run while profit is locked.
 // - v1o cosmetic only: color-coded / emoji event badges for easier Railway log scanning.
+// - v1r adds leg-specific FEATURE_TICK_FVVO exit profiles for C_POINT_IMPULSE, TICK_WASHOUT_RECOVERY, and DEEP_WASHOUT_SLOW_RECOVERY.
 // ============================================================
 
 const express = require("express");
@@ -47,7 +48,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1q_FEATURE_TICK_C_POINT"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1r_FEATURE_LEG_EXIT_PROFILES"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -311,6 +312,66 @@ const CFG = {
   FVVO_C_POINT_COOLDOWN_SEC: envNum("FVVO_C_POINT_COOLDOWN_SEC", 900),
   FVVO_C_POINT_LOG_NO_ENTRY: envBool("FVVO_C_POINT_LOG_NO_ENTRY", false),
 
+  // v1r: leg-specific FEATURE_TICK_FVVO exits. These run before the 5m candle close,
+  // but only for the first three intrabar-sensitive legs: C-point, tick washout, and deep washout.
+  FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED: envBool("FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED", true),
+  FVVO_FEATURE_EXIT_MIN_HOLD_SEC: envNum("FVVO_FEATURE_EXIT_MIN_HOLD_SEC", 15),
+  FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP: envBool("FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP", true),
+
+  FVVO_C_POINT_FEATURE_EXIT_ENABLED: envBool("FVVO_C_POINT_FEATURE_EXIT_ENABLED", true),
+  FVVO_C_POINT_FEATURE_HARD_STOP_PCT: envNum("FVVO_C_POINT_FEATURE_HARD_STOP_PCT", 0.25),
+  FVVO_C_POINT_FEATURE_BE_ARM_PCT: envNum("FVVO_C_POINT_FEATURE_BE_ARM_PCT", 0.30),
+  FVVO_C_POINT_FEATURE_BE_LOCK_PCT: envNum("FVVO_C_POINT_FEATURE_BE_LOCK_PCT", 0.05),
+  FVVO_C_POINT_FEATURE_BE_MIN_GIVEBACK_PCT: envNum("FVVO_C_POINT_FEATURE_BE_MIN_GIVEBACK_PCT", 0.20),
+  FVVO_C_POINT_FEATURE_TRAIL_ARM_PCT: envNum("FVVO_C_POINT_FEATURE_TRAIL_ARM_PCT", 0.45),
+  FVVO_C_POINT_FEATURE_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_C_POINT_FEATURE_TRAIL_START_GIVEBACK_PCT", 0.28),
+  FVVO_C_POINT_FEATURE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_C_POINT_FEATURE_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_C_POINT_FEATURE_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_C_POINT_FEATURE_TRAIL_TIGHTEN_PER_1PCT", 0.12),
+  FVVO_C_POINT_FEATURE_WEAKNESS_ENABLED: envBool("FVVO_C_POINT_FEATURE_WEAKNESS_ENABLED", true),
+  FVVO_C_POINT_FEATURE_WEAKNESS_CONFIRM_TICKS: envNum("FVVO_C_POINT_FEATURE_WEAKNESS_CONFIRM_TICKS", 2),
+  FVVO_C_POINT_FEATURE_RED_EXIT_MIN_PROFIT_PCT: envNum("FVVO_C_POINT_FEATURE_RED_EXIT_MIN_PROFIT_PCT", 0.30),
+  FVVO_C_POINT_FEATURE_SLOPE_FAIL_MAX: envNum("FVVO_C_POINT_FEATURE_SLOPE_FAIL_MAX", -0.60),
+  FVVO_C_POINT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT: envNum("FVVO_C_POINT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT", 0.35),
+  FVVO_C_POINT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT: envNum("FVVO_C_POINT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT", 0.35),
+  FVVO_C_POINT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_C_POINT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.45),
+  FVVO_C_POINT_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_C_POINT_FEATURE_RSI_ROLLOVER_DROP_PCT", 5.00),
+
+  FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED: envBool("FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED", true),
+  FVVO_TICK_WASHOUT_FEATURE_HARD_STOP_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_HARD_STOP_PCT", 0.25),
+  FVVO_TICK_WASHOUT_FEATURE_BE_ARM_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_BE_ARM_PCT", 0.30),
+  FVVO_TICK_WASHOUT_FEATURE_BE_LOCK_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_BE_LOCK_PCT", 0.05),
+  FVVO_TICK_WASHOUT_FEATURE_BE_MIN_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_BE_MIN_GIVEBACK_PCT", 0.20),
+  FVVO_TICK_WASHOUT_FEATURE_TRAIL_ARM_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_TRAIL_ARM_PCT", 0.45),
+  FVVO_TICK_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT", 0.20),
+  FVVO_TICK_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_TICK_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT", 0.10),
+  FVVO_TICK_WASHOUT_FEATURE_WEAKNESS_ENABLED: envBool("FVVO_TICK_WASHOUT_FEATURE_WEAKNESS_ENABLED", true),
+  FVVO_TICK_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS: envNum("FVVO_TICK_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS", 2),
+  FVVO_TICK_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT", 0.35),
+  FVVO_TICK_WASHOUT_FEATURE_SLOPE_FAIL_MAX: envNum("FVVO_TICK_WASHOUT_FEATURE_SLOPE_FAIL_MAX", -0.60),
+  FVVO_TICK_WASHOUT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT", 0.35),
+  FVVO_TICK_WASHOUT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT", 0.35),
+  FVVO_TICK_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.45),
+  FVVO_TICK_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_TICK_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT", 5.00),
+
+  FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED: envBool("FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED", true),
+  FVVO_DEEP_WASHOUT_FEATURE_HARD_STOP_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_HARD_STOP_PCT", 0.60),
+  FVVO_DEEP_WASHOUT_FEATURE_BE_ARM_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_BE_ARM_PCT", 0.45),
+  FVVO_DEEP_WASHOUT_FEATURE_BE_LOCK_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_BE_LOCK_PCT", 0.08),
+  FVVO_DEEP_WASHOUT_FEATURE_BE_MIN_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_BE_MIN_GIVEBACK_PCT", 0.28),
+  FVVO_DEEP_WASHOUT_FEATURE_TRAIL_ARM_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_TRAIL_ARM_PCT", 0.75),
+  FVVO_DEEP_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT", 0.30),
+  FVVO_DEEP_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT", 0.12),
+  FVVO_DEEP_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT", 0.10),
+  FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_ENABLED: envBool("FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_ENABLED", false),
+  FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS: envNum("FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS", 3),
+  FVVO_DEEP_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT", 0.60),
+  FVVO_DEEP_WASHOUT_FEATURE_SLOPE_FAIL_MAX: envNum("FVVO_DEEP_WASHOUT_FEATURE_SLOPE_FAIL_MAX", -0.80),
+  FVVO_DEEP_WASHOUT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT", 0.60),
+  FVVO_DEEP_WASHOUT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT", 0.60),
+  FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.80),
+  FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT", 7.00),
+
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
   FVVO_GREEN_PULSE_CROSS_MIN_RSI: envNum("FVVO_GREEN_PULSE_CROSS_MIN_RSI", 55),
@@ -398,6 +459,7 @@ const state = {
   lastFeature: new Map(),
   lastFeatureTick: new Map(),
   lastFeatureTickAt: new Map(),
+  featureExitWeakness: new Map(),
   history: new Map(),
   seenBars: new Set(),
   barIndex: new Map(),
@@ -503,6 +565,11 @@ const state = {
     featureTicksReceived: 0,
     featureTicksAccepted: 0,
     featureTickExitSignals: 0,
+    featureTickLegExitSignals: 0,
+    featureTickLegHardStopExits: 0,
+    featureTickLegBreakevenExits: 0,
+    featureTickLegDynamicTrailExits: 0,
+    featureTickLegWeaknessExits: 0,
     cPointSignals: 0,
     cPointOpens: 0,
     cPointExits: 0,
@@ -1677,6 +1744,7 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
     }
   }
 
+  clearFeatureWeaknessForPosition(pos);
   state.positions.delete(pos.symbol);
   state.lastExitBar.set(pos.symbol, barNo);
   if (pos.setup === "C_POINT_IMPULSE") state.lastExitBar.set(`${pos.symbol}|C_POINT_IMPULSE_MS`, timeToMs(p.time));
@@ -1719,8 +1787,9 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
   if (exitDecision.reason === "FVVO_CLOSE_MAX_LOSS_EXIT") state.stats.closeMaxLossExits += 1;
   if (exitDecision.reason === "FVVO_MAX_HOLD_BARS_EXIT") state.stats.maxHoldExits += 1;
   if (exitDecision.reason === "FVVO_FEE_AWARE_QUICK_TP") state.stats.feeAwareQuickTpExits += 1;
-  if (exitDecision.reason === "FVVO_DYNAMIC_TRAIL_EXIT") state.stats.dynamicTrailExits += 1;
-  if (exitDecision.reason === "FVVO_BREAKEVEN_PROTECT") state.stats.breakevenProtectExits += 1;
+  if (exitDecision.reason === "FVVO_DYNAMIC_TRAIL_EXIT" || String(exitDecision.reason || "").includes("DYNAMIC_TRAIL")) state.stats.dynamicTrailExits += 1;
+  if (exitDecision.reason === "FVVO_BREAKEVEN_PROTECT" || String(exitDecision.reason || "").includes("BREAKEVEN")) state.stats.breakevenProtectExits += 1;
+  if (String(exitDecision.reason || "").startsWith("FVVO_FEATURE_") && String(exitDecision.reason || "").includes("HARD_STOP")) state.stats.intrabarHardStopExits += 1;
 
   const result = pnlPct > 0.03 ? "WIN" : pnlPct < -0.03 ? "LOSS" : "FLAT";
   const prefix = setupPrefix(pos.setup);
@@ -1866,7 +1935,12 @@ function logScorecard() {
     `breakevenProtectExits=${state.stats.breakevenProtectExits}`,
     `fastDynamicQuickTpHolds=${state.stats.fastExitDynamicQuickTpHolds}`,
     `softExitBlocks=${state.stats.softExitMinProfitBlocks}`,
-    `externalDealBlocks=${state.stats.externalDealEntryBlocks}`
+    `externalDealBlocks=${state.stats.externalDealEntryBlocks}`,
+    `featureTickLegExits=${state.stats.featureTickLegExitSignals}`,
+    `featureTickLegHardStops=${state.stats.featureTickLegHardStopExits}`,
+    `featureTickLegBreakevens=${state.stats.featureTickLegBreakevenExits}`,
+    `featureTickLegDynamicTrails=${state.stats.featureTickLegDynamicTrailExits}`,
+    `featureTickLegWeaknessExits=${state.stats.featureTickLegWeaknessExits}`
   ].join(" | "));
 }
 
@@ -1942,6 +2016,256 @@ function evaluateFastExit(pos, p, perf) {
   return { exit: false, reason: "FAST_TICK_HOLD", backupUsed: false, exitPrice: null, strongTrendHold: false, elapsedSec };
 }
 
+
+
+
+function featureExitLabel(setup) {
+  const s = String(setup || "").toUpperCase();
+  if (s === "C_POINT_IMPULSE") return "C_POINT";
+  if (s === "TICK_WASHOUT_RECOVERY") return "TICK_WASHOUT";
+  if (s === "DEEP_WASHOUT_SLOW_RECOVERY") return "DEEP_WASHOUT";
+  return "GENERIC";
+}
+
+function featureExitProfile(setup) {
+  if (!CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED) return null;
+  const s = String(setup || "").toUpperCase();
+  const minHoldSec = Math.max(0, CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC);
+  if (s === "C_POINT_IMPULSE") {
+    return {
+      enabled: CFG.FVVO_C_POINT_FEATURE_EXIT_ENABLED,
+      label: "C_POINT",
+      hardStopPct: CFG.FVVO_C_POINT_FEATURE_HARD_STOP_PCT,
+      beArmPct: CFG.FVVO_C_POINT_FEATURE_BE_ARM_PCT,
+      beLockPct: CFG.FVVO_C_POINT_FEATURE_BE_LOCK_PCT,
+      beMinGivebackPct: CFG.FVVO_C_POINT_FEATURE_BE_MIN_GIVEBACK_PCT,
+      trailArmPct: CFG.FVVO_C_POINT_FEATURE_TRAIL_ARM_PCT,
+      trailStartGivebackPct: CFG.FVVO_C_POINT_FEATURE_TRAIL_START_GIVEBACK_PCT,
+      trailMinGivebackPct: CFG.FVVO_C_POINT_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
+      trailTightenPer1Pct: CFG.FVVO_C_POINT_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      weaknessEnabled: CFG.FVVO_C_POINT_FEATURE_WEAKNESS_ENABLED,
+      weaknessConfirmTicks: CFG.FVVO_C_POINT_FEATURE_WEAKNESS_CONFIRM_TICKS,
+      redExitMinProfitPct: CFG.FVVO_C_POINT_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
+      slopeFailMax: CFG.FVVO_C_POINT_FEATURE_SLOPE_FAIL_MAX,
+      slopeExitMinProfitPct: CFG.FVVO_C_POINT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT,
+      ema8LossMinProfitPct: CFG.FVVO_C_POINT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT,
+      rsiRolloverMinProfitPct: CFG.FVVO_C_POINT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT,
+      rsiRolloverDropPct: CFG.FVVO_C_POINT_FEATURE_RSI_ROLLOVER_DROP_PCT,
+      minHoldSec
+    };
+  }
+  if (s === "TICK_WASHOUT_RECOVERY") {
+    return {
+      enabled: CFG.FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED,
+      label: "TICK_WASHOUT",
+      hardStopPct: CFG.FVVO_TICK_WASHOUT_FEATURE_HARD_STOP_PCT,
+      beArmPct: CFG.FVVO_TICK_WASHOUT_FEATURE_BE_ARM_PCT,
+      beLockPct: CFG.FVVO_TICK_WASHOUT_FEATURE_BE_LOCK_PCT,
+      beMinGivebackPct: CFG.FVVO_TICK_WASHOUT_FEATURE_BE_MIN_GIVEBACK_PCT,
+      trailArmPct: CFG.FVVO_TICK_WASHOUT_FEATURE_TRAIL_ARM_PCT,
+      trailStartGivebackPct: CFG.FVVO_TICK_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT,
+      trailMinGivebackPct: CFG.FVVO_TICK_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
+      trailTightenPer1Pct: CFG.FVVO_TICK_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      weaknessEnabled: CFG.FVVO_TICK_WASHOUT_FEATURE_WEAKNESS_ENABLED,
+      weaknessConfirmTicks: CFG.FVVO_TICK_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS,
+      redExitMinProfitPct: CFG.FVVO_TICK_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
+      slopeFailMax: CFG.FVVO_TICK_WASHOUT_FEATURE_SLOPE_FAIL_MAX,
+      slopeExitMinProfitPct: CFG.FVVO_TICK_WASHOUT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT,
+      ema8LossMinProfitPct: CFG.FVVO_TICK_WASHOUT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT,
+      rsiRolloverMinProfitPct: CFG.FVVO_TICK_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT,
+      rsiRolloverDropPct: CFG.FVVO_TICK_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT,
+      minHoldSec
+    };
+  }
+  if (s === "DEEP_WASHOUT_SLOW_RECOVERY") {
+    return {
+      enabled: CFG.FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED,
+      label: "DEEP_WASHOUT",
+      hardStopPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_HARD_STOP_PCT,
+      beArmPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_BE_ARM_PCT,
+      beLockPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_BE_LOCK_PCT,
+      beMinGivebackPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_BE_MIN_GIVEBACK_PCT,
+      trailArmPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_ARM_PCT,
+      trailStartGivebackPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT,
+      trailMinGivebackPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
+      trailTightenPer1Pct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      weaknessEnabled: CFG.FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_ENABLED,
+      weaknessConfirmTicks: CFG.FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS,
+      redExitMinProfitPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
+      slopeFailMax: CFG.FVVO_DEEP_WASHOUT_FEATURE_SLOPE_FAIL_MAX,
+      slopeExitMinProfitPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT,
+      ema8LossMinProfitPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT,
+      rsiRolloverMinProfitPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT,
+      rsiRolloverDropPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT,
+      minHoldSec
+    };
+  }
+  return null;
+}
+
+function calcFeatureProfileTrail(profile, perf) {
+  const peak = Number(perf && perf.peakPnlPct);
+  const current = Number(perf && perf.currentPnlPct);
+  if (!profile || !Number.isFinite(peak) || !Number.isFinite(current)) {
+    return { enabled: false, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null };
+  }
+  if (peak < profile.trailArmPct) {
+    return { enabled: true, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null };
+  }
+  const tighten = Math.max(0, (peak - profile.trailArmPct) * Math.abs(profile.trailTightenPer1Pct));
+  const allowedGivebackPct = clampNum(profile.trailStartGivebackPct - tighten, profile.trailMinGivebackPct, profile.trailStartGivebackPct);
+  const exitLinePct = peak - allowedGivebackPct;
+  const givebackPct = peak - current;
+  const exit = givebackPct >= allowedGivebackPct && current >= CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT;
+  return { enabled: true, armed: true, exit, allowedGivebackPct, exitLinePct, givebackPct, profile };
+}
+
+function bumpFeatureWeakness(symbol, setup, name, condition) {
+  const key = `${symbol}|${setup}|${name}`;
+  if (!condition) {
+    state.featureExitWeakness.delete(key);
+    return 0;
+  }
+  const next = (state.featureExitWeakness.get(key) || 0) + 1;
+  state.featureExitWeakness.set(key, next);
+  return next;
+}
+
+function clearFeatureWeaknessForPosition(pos) {
+  if (!pos) return;
+  const prefix = `${pos.symbol}|${pos.setup}|`;
+  for (const key of Array.from(state.featureExitWeakness.keys())) {
+    if (key.startsWith(prefix)) state.featureExitWeakness.delete(key);
+  }
+}
+
+function evaluateFeatureTickLegExit(pos, p, perf) {
+  const profile = featureExitProfile(pos && pos.setup);
+  if (!profile || !profile.enabled) return evaluateFastExit(pos, p, perf);
+
+  const currentPnlPct = perf.currentPnlPct;
+  const peakPnlPct = perf.peakPnlPct;
+  const givebackPct = perf.givebackPct;
+  const elapsedSec = Math.max(0, (timeToMs(p.time) - (pos.entryMs || timeToMs(pos.entryTime))) / 1000);
+  const label = profile.label || featureExitLabel(pos.setup);
+  const minHoldOk = elapsedSec >= profile.minHoldSec;
+
+  const hardStopPrice = pos.entryPrice * (1 - Math.abs(profile.hardStopPct) / 100);
+  const hardStopHit = profile.hardStopPct > 0 && (currentPnlPct <= -Math.abs(profile.hardStopPct) || p.close <= hardStopPrice);
+  if (hardStopHit) {
+    return { exit: true, reason: `FVVO_FEATURE_${label}_HARD_STOP`, backupUsed: true, exitPrice: p.close <= hardStopPrice ? hardStopPrice : p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
+  }
+
+  if (!minHoldOk) {
+    return { exit: false, reason: `FEATURE_${label}_HOLD_MIN_HOLD`, backupUsed: false, exitPrice: null, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
+  }
+
+  const beExit = profile.beArmPct > 0 &&
+    peakPnlPct >= profile.beArmPct &&
+    currentPnlPct <= profile.beLockPct &&
+    givebackPct >= profile.beMinGivebackPct;
+  if (beExit) {
+    return { exit: true, reason: `FVVO_FEATURE_${label}_BREAKEVEN`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
+  }
+
+  const dynamicTrail = calcFeatureProfileTrail(profile, perf);
+  if (dynamicTrail.armed && dynamicTrail.exit) {
+    return { exit: true, reason: `FVVO_FEATURE_${label}_DYNAMIC_TRAIL`, backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, dynamicTrail, featureExitProfile: profile };
+  }
+
+  if (profile.weaknessEnabled) {
+    const confirmTicks = Math.max(1, Number(profile.weaknessConfirmTicks) || 1);
+    const closeLostEma8 = Number.isFinite(p.ema8) && p.close < p.ema8;
+    const prevRsi = Number.isFinite(p.prevRsi) ? p.prevRsi : (Number.isFinite(pos.lastFeatureExitRsi) ? pos.lastFeatureExitRsi : null);
+    const redWeak = Boolean(p.fvvoRedPulse) && currentPnlPct >= profile.redExitMinProfitPct;
+    const slopeWeak = Number.isFinite(p.fvvoSlope) && p.fvvoSlope <= profile.slopeFailMax && currentPnlPct >= profile.slopeExitMinProfitPct;
+    const emaWeak = closeLostEma8 && currentPnlPct >= profile.ema8LossMinProfitPct;
+    const rsiWeak = Number.isFinite(prevRsi) && Number.isFinite(p.rsi) && (prevRsi - p.rsi) >= profile.rsiRolloverDropPct && currentPnlPct >= profile.rsiRolloverMinProfitPct;
+
+    const redCount = bumpFeatureWeakness(p.symbol, pos.setup, "red", redWeak);
+    const slopeCount = bumpFeatureWeakness(p.symbol, pos.setup, "slope", slopeWeak);
+    const emaCount = bumpFeatureWeakness(p.symbol, pos.setup, "ema8", emaWeak);
+    const rsiCount = bumpFeatureWeakness(p.symbol, pos.setup, "rsi", rsiWeak);
+
+    pos.lastFeatureExitRsi = p.rsi;
+
+    if (redCount >= confirmTicks) return { exit: true, reason: `FVVO_FEATURE_${label}_WEAKNESS_RED`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, weaknessCount: redCount };
+    if (slopeCount >= confirmTicks) return { exit: true, reason: `FVVO_FEATURE_${label}_WEAKNESS_SLOPE`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, weaknessCount: slopeCount };
+    if (emaCount >= confirmTicks) return { exit: true, reason: `FVVO_FEATURE_${label}_WEAKNESS_EMA8`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, weaknessCount: emaCount };
+    if (rsiCount >= confirmTicks) return { exit: true, reason: `FVVO_FEATURE_${label}_WEAKNESS_RSI`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, weaknessCount: rsiCount };
+  }
+
+  pos.lastFeatureExitRsi = p.rsi;
+  return { exit: false, reason: `FEATURE_${label}_HOLD`, backupUsed: false, exitPrice: null, strongTrendHold: false, elapsedSec, dynamicTrail, featureExitProfile: profile };
+}
+
+
+
+function evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec) {
+  if (!shadow || tick.event !== CFG.FVVO_FEATURE_TICK_EVENT) return null;
+  const profile = featureExitProfile(shadow.setup);
+  if (!profile || !profile.enabled) return null;
+
+  const label = profile.label || featureExitLabel(shadow.setup);
+  const currentPnlPct = perf.currentPnlPct;
+  const peakPnlPct = perf.peakPnlPct;
+  const givebackPct = perf.givebackPct;
+  const price = Number(tick.close);
+
+  const hardStopPrice = shadow.entryPrice * (1 - Math.abs(profile.hardStopPct) / 100);
+  const hardStopHit = profile.hardStopPct > 0 && (currentPnlPct <= -Math.abs(profile.hardStopPct) || price <= hardStopPrice);
+  if (hardStopHit) {
+    return { reason: `FVVO_FEATURE_${label}_HARD_STOP`, exitPrice: price <= hardStopPrice ? hardStopPrice : price, dynamicTrail: null };
+  }
+
+  if (elapsedSec < profile.minHoldSec) return null;
+
+  const beExit = profile.beArmPct > 0 &&
+    peakPnlPct >= profile.beArmPct &&
+    currentPnlPct <= profile.beLockPct &&
+    givebackPct >= profile.beMinGivebackPct;
+  if (beExit) {
+    return { reason: `FVVO_FEATURE_${label}_BREAKEVEN`, exitPrice: price, dynamicTrail: null };
+  }
+
+  const dynamicTrail = calcFeatureProfileTrail(profile, perf);
+  if (dynamicTrail.armed && dynamicTrail.exit) {
+    return { reason: `FVVO_FEATURE_${label}_DYNAMIC_TRAIL`, exitPrice: price, dynamicTrail };
+  }
+
+  if (profile.weaknessEnabled) {
+    const confirmTicks = Math.max(1, Number(profile.weaknessConfirmTicks) || 1);
+    const closeLostEma8 = Number.isFinite(tick.ema8) && price < tick.ema8;
+    const prevRsi = Number.isFinite(tick.prevRsi) ? tick.prevRsi : (Number.isFinite(shadow.lastFeatureExitRsi) ? shadow.lastFeatureExitRsi : null);
+    const redWeak = Boolean(tick.fvvoRedPulse) && currentPnlPct >= profile.redExitMinProfitPct;
+    const slopeWeak = Number.isFinite(tick.fvvoSlope) && tick.fvvoSlope <= profile.slopeFailMax && currentPnlPct >= profile.slopeExitMinProfitPct;
+    const emaWeak = closeLostEma8 && currentPnlPct >= profile.ema8LossMinProfitPct;
+    const rsiWeak = Number.isFinite(prevRsi) && Number.isFinite(tick.rsi) && (prevRsi - tick.rsi) >= profile.rsiRolloverDropPct && currentPnlPct >= profile.rsiRolloverMinProfitPct;
+
+    const redCount = bumpFeatureWeakness(tick.symbol, shadow.setup, "red", redWeak);
+    const slopeCount = bumpFeatureWeakness(tick.symbol, shadow.setup, "slope", slopeWeak);
+    const emaCount = bumpFeatureWeakness(tick.symbol, shadow.setup, "ema8", emaWeak);
+    const rsiCount = bumpFeatureWeakness(tick.symbol, shadow.setup, "rsi", rsiWeak);
+    shadow.lastFeatureExitRsi = tick.rsi;
+
+    if (redCount >= confirmTicks) return { reason: `FVVO_FEATURE_${label}_WEAKNESS_RED`, exitPrice: price, dynamicTrail: null };
+    if (slopeCount >= confirmTicks) return { reason: `FVVO_FEATURE_${label}_WEAKNESS_SLOPE`, exitPrice: price, dynamicTrail: null };
+    if (emaCount >= confirmTicks) return { reason: `FVVO_FEATURE_${label}_WEAKNESS_EMA8`, exitPrice: price, dynamicTrail: null };
+    if (rsiCount >= confirmTicks) return { reason: `FVVO_FEATURE_${label}_WEAKNESS_RSI`, exitPrice: price, dynamicTrail: null };
+  }
+
+  shadow.lastFeatureExitRsi = tick.rsi;
+  return null;
+}
+
+function countFeatureLegExitReason(reason) {
+  if (!String(reason || "").startsWith("FVVO_FEATURE_")) return;
+  state.stats.featureTickLegExitSignals += 1;
+  if (String(reason).includes("HARD_STOP")) state.stats.featureTickLegHardStopExits += 1;
+  if (String(reason).includes("BREAKEVEN")) state.stats.featureTickLegBreakevenExits += 1;
+  if (String(reason).includes("DYNAMIC_TRAIL")) state.stats.featureTickLegDynamicTrailExits += 1;
+  if (String(reason).includes("WEAKNESS")) state.stats.featureTickLegWeaknessExits += 1;
+}
 
 function updateTickBuffer(tick) {
   const symbol = tick.symbol;
@@ -2400,15 +2724,24 @@ async function updateTickWashoutShadow(tick) {
   const givebackPct = shadow.peakPnlPct - currentPnlPct;
   const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
 
+  const perf = { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct };
+  let dynamicTrail = calcDynamicTrail(shadow.setup, perf);
+  const featureProfileActive = tick.event === CFG.FVVO_FEATURE_TICK_EVENT && Boolean(featureExitProfile(shadow.setup));
+  const featureExit = evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec);
   const stopHit = price <= shadow.stopPrice;
-  const dynamicTrail = calcDynamicTrail(shadow.setup, { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct });
-  const tpHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
+  const tpHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && !(CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP && featureProfileActive) && currentPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TP_PCT;
   const dynamicTrailHit = CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
   const trailHit = !CFG.FVVO_TICK_WASHOUT_DYNAMIC_TRAIL_ENABLED && shadow.peakPnlPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_ARM_PCT && givebackPct >= CFG.FVVO_TICK_WASHOUT_SHADOW_TRAIL_GIVEBACK_PCT;
   const maxHoldHit = elapsedSec >= CFG.FVVO_TICK_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
 
   let reason = "";
-  if (stopHit) reason = "TICK_WASHOUT_STRUCTURE_STOP";
+  let exitPrice = price;
+  if (featureExit) {
+    reason = featureExit.reason;
+    exitPrice = featureExit.exitPrice;
+    if (featureExit.dynamicTrail) dynamicTrail = featureExit.dynamicTrail;
+  }
+  else if (stopHit) reason = "TICK_WASHOUT_STRUCTURE_STOP";
   else if (tpHit) reason = "TICK_WASHOUT_SHADOW_TP";
   else if (dynamicTrailHit) reason = "TICK_WASHOUT_DYNAMIC_TRAIL";
   else if (trailHit) reason = "TICK_WASHOUT_SHADOW_TRAIL";
@@ -2417,39 +2750,42 @@ async function updateTickWashoutShadow(tick) {
   if (!reason) return;
 
   if (shadow.forwardedEntry && CFG.FVVO_FORWARD_EXIT_ENABLED) {
-    const forwardExitResult = await forwardTo3Commas("exit_long", { ...tick, close: price }, { setup: shadow.setup, reason, momentumOverride: false });
+    const forwardExitResult = await forwardTo3Commas("exit_long", { ...tick, close: exitPrice }, { setup: shadow.setup, reason, momentumOverride: false });
     if (!forwardExitResult.ok && !forwardExitResult.dryRun) {
       logLine("C3_FORWARD_EXIT_HOLDING_TICK_WASHOUT", [
         `reason=EXIT_FORWARD_NOT_CONFIRMED`,
         `symbol=${tick.symbol}`,
         `setup=${shadow.setup}`,
         `exitReason=${reason}`,
-        `exitPrice=${n(price, 4)}`,
-        `pnl=${pct(currentPnlPct)}`,
+        `exitPrice=${n(exitPrice, 4)}`,
+        `pnl=${pct(calcPct(exitPrice, shadow.entryPrice) || currentPnlPct)}`,
         `forwardStatus=${forwardExitResult.reason || "ERROR"}`
       ].join(" | "));
       return;
     }
     if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED) {
       state.externalDeals.delete(tick.symbol);
-      logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${tick.symbol} | setup=${shadow.setup} | exit=${n(price, 4)} | reason=${reason}`);
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${tick.symbol} | setup=${shadow.setup} | exit=${n(exitPrice, 4)} | reason=${reason}`);
     }
   }
 
+  clearFeatureWeaknessForPosition(shadow);
   state.tickWashoutShadow.delete(tick.symbol);
   state.lastTickWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.tickWashoutShadowExits += 1;
-  if (reason === "TICK_WASHOUT_DYNAMIC_TRAIL") state.stats.tickWashoutDynamicTrailExits += 1;
-  state.stats.tickWashoutShadowPnlPct += currentPnlPct;
-  if (currentPnlPct > 0.02) state.stats.tickWashoutShadowWins += 1;
-  else if (currentPnlPct < -0.02) state.stats.tickWashoutShadowLosses += 1;
+  const exitPnlPct = calcPct(exitPrice, shadow.entryPrice) || currentPnlPct;
+  if (reason === "TICK_WASHOUT_DYNAMIC_TRAIL" || String(reason).includes("DYNAMIC_TRAIL")) state.stats.tickWashoutDynamicTrailExits += 1;
+  countFeatureLegExitReason(reason);
+  state.stats.tickWashoutShadowPnlPct += exitPnlPct;
+  if (exitPnlPct > 0.02) state.stats.tickWashoutShadowWins += 1;
+  else if (exitPnlPct < -0.02) state.stats.tickWashoutShadowLosses += 1;
 
   logLine("FVVO_TICK_WASHOUT_SHADOW_RESULT", [
     `symbol=${tick.symbol}`,
     `entry=${n(shadow.entryPrice, 4)}`,
-    `exit=${n(price, 4)}`,
-    `pnl=${pct(currentPnlPct)}`,
-    `netAfterFee=${pct(currentPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
+    `exit=${n(exitPrice, 4)}`,
+    `pnl=${pct(exitPnlPct)}`,
+    `netAfterFee=${pct(exitPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
     `peak=${pct(shadow.peakPnlPct)}`,
     `drawdown=${pct(shadow.maxDrawdownPct)}`,
     `giveback=${pct(givebackPct)}`,
@@ -2714,14 +3050,23 @@ async function updateDeepWashoutShadow(tick) {
   const givebackPct = shadow.peakPnlPct - currentPnlPct;
   const elapsedSec = Math.max(0, (timeToMs(tick.time) - shadow.entryMs) / 1000);
 
+  const perf = { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct };
+  let dynamicTrail = calcDynamicTrail(shadow.setup, perf);
+  const featureProfileActive = tick.event === CFG.FVVO_FEATURE_TICK_EVENT && Boolean(featureExitProfile(shadow.setup));
+  const featureExit = evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec);
   const stopHit = price <= shadow.stopPrice;
-  const dynamicTrail = calcDynamicTrail(shadow.setup, { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct });
-  const tpHit = !CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
+  const tpHit = !CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && !(CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP && featureProfileActive) && currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
   const dynamicTrailHit = CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
   const maxHoldHit = elapsedSec >= CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_HOLD_MIN * 60;
 
   let reason = "";
-  if (stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
+  let exitPrice = price;
+  if (featureExit) {
+    reason = featureExit.reason;
+    exitPrice = featureExit.exitPrice;
+    if (featureExit.dynamicTrail) dynamicTrail = featureExit.dynamicTrail;
+  }
+  else if (stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
   else if (tpHit) reason = "DEEP_WASHOUT_SHADOW_TP";
   else if (dynamicTrailHit) reason = "DEEP_WASHOUT_DYNAMIC_TRAIL";
   else if (maxHoldHit) reason = "DEEP_WASHOUT_MAX_HOLD";
@@ -2729,39 +3074,42 @@ async function updateDeepWashoutShadow(tick) {
   if (!reason) return;
 
   if (shadow.forwardedEntry && CFG.FVVO_FORWARD_EXIT_ENABLED) {
-    const forwardExitResult = await forwardTo3Commas("exit_long", { ...tick, close: price }, { setup: shadow.setup, reason, momentumOverride: false });
+    const forwardExitResult = await forwardTo3Commas("exit_long", { ...tick, close: exitPrice }, { setup: shadow.setup, reason, momentumOverride: false });
     if (!forwardExitResult.ok && !forwardExitResult.dryRun) {
       logLine("C3_FORWARD_EXIT_HOLDING_DEEP_WASHOUT", [
         `reason=EXIT_FORWARD_NOT_CONFIRMED`,
         `symbol=${tick.symbol}`,
         `setup=${shadow.setup}`,
         `exitReason=${reason}`,
-        `exitPrice=${n(price, 4)}`,
-        `pnl=${pct(currentPnlPct)}`,
+        `exitPrice=${n(exitPrice, 4)}`,
+        `pnl=${pct(calcPct(exitPrice, shadow.entryPrice) || currentPnlPct)}`,
         `forwardStatus=${forwardExitResult.reason || "ERROR"}`
       ].join(" | "));
       return;
     }
     if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED) {
       state.externalDeals.delete(tick.symbol);
-      logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${tick.symbol} | setup=${shadow.setup} | exit=${n(price, 4)} | reason=${reason}`);
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${tick.symbol} | setup=${shadow.setup} | exit=${n(exitPrice, 4)} | reason=${reason}`);
     }
   }
 
+  clearFeatureWeaknessForPosition(shadow);
   state.deepWashoutShadow.delete(tick.symbol);
   state.lastDeepWashoutCloseMs.set(tick.symbol, timeToMs(tick.time));
   state.stats.deepWashoutShadowExits += 1;
-  if (reason === "DEEP_WASHOUT_DYNAMIC_TRAIL") state.stats.deepWashoutDynamicTrailExits += 1;
-  state.stats.deepWashoutShadowPnlPct += currentPnlPct;
-  if (currentPnlPct > 0.02) state.stats.deepWashoutShadowWins += 1;
-  else if (currentPnlPct < -0.02) state.stats.deepWashoutShadowLosses += 1;
+  const exitPnlPct = calcPct(exitPrice, shadow.entryPrice) || currentPnlPct;
+  if (reason === "DEEP_WASHOUT_DYNAMIC_TRAIL" || String(reason).includes("DYNAMIC_TRAIL")) state.stats.deepWashoutDynamicTrailExits += 1;
+  countFeatureLegExitReason(reason);
+  state.stats.deepWashoutShadowPnlPct += exitPnlPct;
+  if (exitPnlPct > 0.02) state.stats.deepWashoutShadowWins += 1;
+  else if (exitPnlPct < -0.02) state.stats.deepWashoutShadowLosses += 1;
 
   logLine("FVVO_DEEP_WASHOUT_SHADOW_RESULT", [
     `symbol=${tick.symbol}`,
     `entry=${n(shadow.entryPrice, 4)}`,
-    `exit=${n(price, 4)}`,
-    `pnl=${pct(currentPnlPct)}`,
-    `netAfterFee=${pct(currentPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
+    `exit=${n(exitPrice, 4)}`,
+    `pnl=${pct(exitPnlPct)}`,
+    `netAfterFee=${pct(exitPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
     `peak=${pct(shadow.peakPnlPct)}`,
     `drawdown=${pct(shadow.maxDrawdownPct)}`,
     `giveback=${pct(givebackPct)}`,
@@ -3069,6 +3417,9 @@ async function handleFeatureTick(p) {
   if (CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS > 0 && lastMs && nowMs - lastMs < CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS) {
     return;
   }
+  const prevFeatureTick = state.lastFeatureTick.get(p.symbol) || state.lastFeature.get(p.symbol) || null;
+  if (prevFeatureTick && Number.isFinite(prevFeatureTick.rsi)) p.prevRsi = prevFeatureTick.rsi;
+  if (prevFeatureTick && Number.isFinite(prevFeatureTick.fvvoSlope)) p.prevFvvoSlope = prevFeatureTick.fvvoSlope;
   state.lastFeatureTickAt.set(p.symbol, nowMs);
   state.lastFeatureTick.set(p.symbol, p);
   state.stats.featureTicksAccepted += 1;
@@ -3099,9 +3450,10 @@ async function handleFeatureTick(p) {
   const openPos = state.positions.get(p.symbol);
   if (openPos && CFG.FVVO_FEATURE_TICK_EXIT_ENABLED) {
     const perf = calcLongPerformance(openPos, p);
-    const exitDecision = evaluateFastExit(openPos, p, perf);
+    const exitDecision = evaluateFeatureTickLegExit(openPos, p, perf);
     if (exitDecision.exit) {
       state.stats.featureTickExitSignals += 1;
+      countFeatureLegExitReason(exitDecision.reason);
       logLine("FVVO_FEATURE_TICK_EXIT_SIGNAL", [
         `⚡ symbol=${p.symbol}`,
         `price=${n(p.close, 4)}`,
@@ -3619,6 +3971,12 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FEATURE_TICK_EXIT_ENABLED=${CFG.FVVO_FEATURE_TICK_EXIT_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_ENTRY_ENABLED=${CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_MIN_INTERVAL_MS=${CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS}`);
+  console.log(`FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED=${CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED}`);
+  console.log(`FVVO_FEATURE_EXIT_MIN_HOLD_SEC=${CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC}`);
+  console.log(`FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP=${CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP}`);
+  console.log(`FVVO_C_POINT_FEATURE_EXIT_ENABLED=${CFG.FVVO_C_POINT_FEATURE_EXIT_ENABLED}`);
+  console.log(`FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED=${CFG.FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED}`);
+  console.log(`FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED=${CFG.FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED}`);
   console.log(`C3_SIGNAL_URL=${CFG.C3_SIGNAL_URL}`);
   console.log(`C3_SIGNAL_SECRET_SET=${Boolean(CFG.C3_SIGNAL_SECRET)}`);
   console.log(`SYMBOL_BOT_MAP_SYMBOLS=${Object.keys(CFG.SYMBOL_BOT_MAP).join(",") || "none"}`);
