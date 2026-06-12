@@ -1,16 +1,1 @@
-{
-  "name": "brainfvvo-v1q-feature-tick-c-point",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "BrainFVVO v1q live feature-tick C-point impulse package",
-  "dependencies": {
-    "express": "^5.2.1"
-  }
-}
+{"name":"brainfvvo-v1r-feature-leg-exit-profiles","version":"1.0.0","description":"BrainFVVO v1r with leg-specific FEATURE_TICK_FVVO exits","main":"server.js","scripts":{"start":"node server.js"},"dependencies":{"express":"^4.18.2"},"engines":{"node":">=18"}}
