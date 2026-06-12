@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = "TickRouter_v3_FVVO_FEATURE_AND_LEGACY_MIRROR";
+const ROUTER_NAME = "TickRouter_v4_FEATURE_TICK_LEGACY_MIRROR";
 
 const PORT = Number(process.env.PORT || 8080);
 
@@ -34,6 +34,32 @@ const ROUTE_SRC_FEATURES_TO_FVVO =
  */
 const FORWARD_FVVO_FAST_TICK_TO_LEGACY =
   String(process.env.FORWARD_FVVO_FAST_TICK_TO_LEGACY || "true").toLowerCase() ===
+  "true";
+
+/**
+ * v4 combined-alert mode.
+ *
+ * When true, one inbound FEATURE_TICK_FVVO alert is forwarded to:
+ * - FVVO_BRAIN_URLS as the full FEATURE_TICK_FVVO payload
+ * - BRAIN_URLS as a legacy price tick payload: { secret, src:"tick", symbol, price, time }
+ *
+ * This lets you disable the old separate FAST_TICK_FVVO price alert and run one
+ * 15s feature-tick alert that keeps legacy/Ray brains alive with price ticks.
+ */
+const FORWARD_FVVO_FEATURE_TICK_TO_LEGACY =
+  String(process.env.FORWARD_FVVO_FEATURE_TICK_TO_LEGACY || "true").toLowerCase() ===
+  "true";
+
+/**
+ * Optional compatibility mode. Normally keep false because FVVO brains already
+ * receive the full FEATURE_TICK_FVVO payload and v1r can evaluate feature-tick
+ * entries/exits from it.
+ *
+ * Set true only if a FVVO brain still requires old FAST_TICK_FVVO / FVVO_TICK_TAPE
+ * handling while you want to run only one TradingView alert.
+ */
+const FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK =
+  String(process.env.FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK || "false").toLowerCase() ===
   "true";
 
 /**
@@ -707,10 +733,12 @@ app.get("/", (_req, res) => {
     strictDestSecret: STRICT_DEST_SECRET,
     routeSrcFeaturesToFvvo: ROUTE_SRC_FEATURES_TO_FVVO,
     forwardFvvoFastTickToLegacy: FORWARD_FVVO_FAST_TICK_TO_LEGACY,
+    forwardFvvoFeatureTickToLegacy: FORWARD_FVVO_FEATURE_TICK_TO_LEGACY,
+    forwardFvvoFeatureTickAsFvvoFastTick: FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK,
     supportedEvents: [
       "FAST_TICK / src=tick",
       "FAST_TICK_FVVO",
-      "FEATURE_TICK_FVVO",
+      "FEATURE_TICK_FVVO -> FVVO feature + optional legacy tick mirror",
       "FEATURE_5M_FVVO",
     ],
     hasBrainSecretMapJson: Boolean(Object.keys(BRAIN_SECRET_MAP || {}).length),
@@ -847,16 +875,31 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ ok: false, error: feature.error, kind });
     }
 
-    const fvvoTargets = FVVO_BRAIN_URLS.length;
+    const mirrorFeatureTickToLegacy =
+      kind === "fvvo_feature_tick" && FORWARD_FVVO_FEATURE_TICK_TO_LEGACY;
 
-    // Respond quickly to TradingView.
+    const mirrorFeatureTickAsFvvoFastTick =
+      kind === "fvvo_feature_tick" && FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK;
+
+    const legacyTargets = mirrorFeatureTickToLegacy ? BRAIN_URLS.length : 0;
+    const fvvoFeatureTargets = FVVO_BRAIN_URLS.length;
+    const fvvoFastTickTargets = mirrorFeatureTickAsFvvoFastTick
+      ? FVVO_BRAIN_URLS.length
+      : 0;
+
+    // Respond quickly to TradingView. Forwarding continues async after the 200.
     res.status(200).json({
       ok: true,
       accepted: true,
       kind,
       symbol: feature.symbol,
       price: feature.price,
-      fvvoTargets,
+      legacyTargets,
+      fvvoFeatureTargets,
+      fvvoFastTickTargets,
+      combinedAlertMode:
+        kind === "fvvo_feature_tick" &&
+        (mirrorFeatureTickToLegacy || mirrorFeatureTickAsFvvoFastTick),
     });
 
     console.log(
@@ -865,23 +908,32 @@ app.post("/webhook", async (req, res) => {
         `symbol=${feature.symbol} price=${feature.price} time=${feature.time}`
     );
 
-    const jobs = FVVO_BRAIN_URLS.map((url) =>
-      forwardFvvoFeature(url, inbound, feature)
-    );
+    const jobs = [
+      ...(mirrorFeatureTickToLegacy
+        ? BRAIN_URLS.map((url) => forwardLegacyTick(url, feature))
+        : []),
+      ...FVVO_BRAIN_URLS.map((url) => forwardFvvoFeature(url, inbound, feature)),
+      ...(mirrorFeatureTickAsFvvoFastTick
+        ? FVVO_BRAIN_URLS.map((url) => forwardFvvoTick(url, feature))
+        : []),
+    ];
 
     const results = await Promise.all(jobs);
     logForwardResults(results);
     const summary = summarizeResults(results, {
-      legacyTargets: 0,
-      fvvoTargets: 0,
-      featureTargets: fvvoTargets,
+      legacyTargets,
+      fvvoTargets: fvvoFastTickTargets,
+      featureTargets: fvvoFeatureTargets,
     });
 
-    const okCount = kind === "fvvo_feature_tick" ? summary.featureTickOk : summary.feature5mOk;
+    const okCount =
+      kind === "fvvo_feature_tick" ? summary.featureTickOk : summary.feature5mOk;
 
     console.log(
       `➡️ TickRouter forwarded kind=${kind} symbol=${feature.symbol} price=${feature.price} ` +
-        `fvvoFeatureOk=${okCount}/${fvvoTargets} anyOk=${summary.anyOk}`
+        `legacyOk=${summary.legacyOk}/${legacyTargets} ` +
+        `fvvoFeatureOk=${okCount}/${fvvoFeatureTargets} ` +
+        `fvvoTickOk=${summary.fvvoTickOk}/${fvvoFastTickTargets} anyOk=${summary.anyOk}`
     );
 
     return;
@@ -899,7 +951,17 @@ app.listen(PORT, () => {
     `FORWARD_FVVO_FAST_TICK_TO_LEGACY=${FORWARD_FVVO_FAST_TICK_TO_LEGACY ? "true" : "false"}`
   );
   console.log(
-    "Supported routes: FAST_TICK/src=tick, FAST_TICK_FVVO, FEATURE_TICK_FVVO, FEATURE_5M_FVVO"
+    `FORWARD_FVVO_FEATURE_TICK_TO_LEGACY=${
+      FORWARD_FVVO_FEATURE_TICK_TO_LEGACY ? "true" : "false"
+    }`
+  );
+  console.log(
+    `FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK=${
+      FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK ? "true" : "false"
+    }`
+  );
+  console.log(
+    "Supported routes: FAST_TICK/src=tick, FAST_TICK_FVVO, FEATURE_TICK_FVVO(+legacy mirror), FEATURE_5M_FVVO"
   );
   console.log(
     `BrainSecretMapJSON=${Object.keys(BRAIN_SECRET_MAP || {}).length ? "ON" : "OFF"}`

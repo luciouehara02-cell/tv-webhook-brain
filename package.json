@@ -1,6 +1,6 @@
 {
-  "name": "tickrouter-v2-fvvo-feature-events",
-  "version": "2.0.0",
+  "name": "tickrouter-v4-feature-tick-legacy-mirror",
+  "version": "4.0.0",
   "type": "module",
   "main": "server.js",
   "scripts": {
