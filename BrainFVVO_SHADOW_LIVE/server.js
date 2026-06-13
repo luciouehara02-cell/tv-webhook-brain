@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1r_FEATURE_LEG_EXIT_PROFILES
+// BrainFVVO_v1s_LIVE_GUARDS_ALL_ACTIVE_FEATURE_EXITS
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -12,6 +12,7 @@
 // - v1p replaces fixed quick-TP caps with peak-profit dynamic trailing curves so winners can run while profit is locked.
 // - v1o cosmetic only: color-coded / emoji event badges for easier Railway log scanning.
 // - v1r adds leg-specific FEATURE_TICK_FVVO exit profiles for C_POINT_IMPULSE, TICK_WASHOUT_RECOVERY, and DEEP_WASHOUT_SLOW_RECOVERY.
+// - v1s adds CROSS_UP_CONFIRM and POST_CROSS_RECLAIM feature-tick exits, stale-feature entry blocking, and live/demo session risk guards.
 // ============================================================
 
 const express = require("express");
@@ -48,7 +49,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1r_FEATURE_LEG_EXIT_PROFILES"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1s_LIVE_GUARDS_ALL_ACTIVE_FEATURE_EXITS"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -77,6 +78,28 @@ const CFG = {
   DEMO_FORWARD_ALLOWED: envBool("DEMO_FORWARD_ALLOWED", false),
   LIVE_FORWARD_ALLOWED: envBool("LIVE_FORWARD_ALLOWED", false),
   C3_DRY_RUN: envBool("C3_DRY_RUN", false),
+
+  // v1s: explicit live/demo forwarding guards. LIVE_FORWARD_ALLOWED can now be true,
+  // but new live entries are still protected by confirmation, stale-feed checks,
+  // daily/session limits, and emergency kill switches. Exits remain allowed unless
+  // FVVO_EMERGENCY_DISABLE_ALL_FORWARDS is explicitly true.
+  FVVO_LIVE_CONFIRM_REQUIRED: envBool("FVVO_LIVE_CONFIRM_REQUIRED", true),
+  FVVO_LIVE_CONFIRM_TEXT: envStr("FVVO_LIVE_CONFIRM_TEXT", "I_UNDERSTAND_LIVE_TRADING_RISK"),
+  FVVO_LIVE_CONFIRM: envStr("FVVO_LIVE_CONFIRM", ""),
+  FVVO_EMERGENCY_DISABLE_ALL_FORWARDS: envBool("FVVO_EMERGENCY_DISABLE_ALL_FORWARDS", false),
+  FVVO_EMERGENCY_DISABLE_NEW_ENTRIES: envBool("FVVO_EMERGENCY_DISABLE_NEW_ENTRIES", false),
+  FVVO_SKIP_VIRTUAL_ENTRY_IF_FORWARD_BLOCKED: envBool("FVVO_SKIP_VIRTUAL_ENTRY_IF_FORWARD_BLOCKED", true),
+
+  FVVO_RISK_GUARDS_ENABLED: envBool("FVVO_RISK_GUARDS_ENABLED", true),
+  FVVO_MAX_TRADES_PER_DAY: envNum("FVVO_MAX_TRADES_PER_DAY", envNum("FVVO_MAX_FORWARDED_ENTRIES_PER_DAY", 4)),
+  FVVO_MAX_CONSECUTIVE_LOSSES: envNum("FVVO_MAX_CONSECUTIVE_LOSSES", 2),
+  FVVO_MAX_DAILY_NET_LOSS_PCT: envNum("FVVO_MAX_DAILY_NET_LOSS_PCT", 0.90),
+  FVVO_DISABLE_NEW_ENTRIES_AFTER_LOSS_STREAK: envBool("FVVO_DISABLE_NEW_ENTRIES_AFTER_LOSS_STREAK", true),
+
+  FVVO_STALE_FEATURE_TICK_GUARD_ENABLED: envBool("FVVO_STALE_FEATURE_TICK_GUARD_ENABLED", true),
+  FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC: envNum("FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC", 60),
+  FVVO_STALE_FEATURE_TICK_BLOCK_5M_ENTRIES: envBool("FVVO_STALE_FEATURE_TICK_BLOCK_5M_ENTRIES", true),
+  FVVO_STALE_FEATURE_TICK_BLOCK_FEATURE_ENTRIES: envBool("FVVO_STALE_FEATURE_TICK_BLOCK_FEATURE_ENTRIES", false),
 
   C3_SIGNAL_URL: envStr("C3_SIGNAL_URL", "https://api.3commas.io/signal_bots/webhooks"),
   C3_SIGNAL_SECRET: envStr("C3_SIGNAL_SECRET", ""),
@@ -372,6 +395,43 @@ const CFG = {
   FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.80),
   FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_FEATURE_RSI_ROLLOVER_DROP_PCT", 7.00),
 
+  // v1s: feature-tick exits for the two most common confirmed-bar entry legs.
+  FVVO_CROSS_FEATURE_EXIT_ENABLED: envBool("FVVO_CROSS_FEATURE_EXIT_ENABLED", true),
+  FVVO_CROSS_FEATURE_HARD_STOP_PCT: envNum("FVVO_CROSS_FEATURE_HARD_STOP_PCT", 0.25),
+  FVVO_CROSS_FEATURE_BE_ARM_PCT: envNum("FVVO_CROSS_FEATURE_BE_ARM_PCT", 0.30),
+  FVVO_CROSS_FEATURE_BE_LOCK_PCT: envNum("FVVO_CROSS_FEATURE_BE_LOCK_PCT", 0.05),
+  FVVO_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT: envNum("FVVO_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT", 0.20),
+  FVVO_CROSS_FEATURE_TRAIL_ARM_PCT: envNum("FVVO_CROSS_FEATURE_TRAIL_ARM_PCT", 0.45),
+  FVVO_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT", 0.28),
+  FVVO_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT", 0.12),
+  FVVO_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT", 0.10),
+  FVVO_CROSS_FEATURE_WEAKNESS_ENABLED: envBool("FVVO_CROSS_FEATURE_WEAKNESS_ENABLED", true),
+  FVVO_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS: envNum("FVVO_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS", 2),
+  FVVO_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT: envNum("FVVO_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT", 0.35),
+  FVVO_CROSS_FEATURE_SLOPE_FAIL_MAX: envNum("FVVO_CROSS_FEATURE_SLOPE_FAIL_MAX", -0.65),
+  FVVO_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT: envNum("FVVO_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT", 0.40),
+  FVVO_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT: envNum("FVVO_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT", 0.35),
+  FVVO_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.50),
+  FVVO_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT", 6.00),
+
+  FVVO_POST_CROSS_FEATURE_EXIT_ENABLED: envBool("FVVO_POST_CROSS_FEATURE_EXIT_ENABLED", true),
+  FVVO_POST_CROSS_FEATURE_HARD_STOP_PCT: envNum("FVVO_POST_CROSS_FEATURE_HARD_STOP_PCT", 0.25),
+  FVVO_POST_CROSS_FEATURE_BE_ARM_PCT: envNum("FVVO_POST_CROSS_FEATURE_BE_ARM_PCT", 0.30),
+  FVVO_POST_CROSS_FEATURE_BE_LOCK_PCT: envNum("FVVO_POST_CROSS_FEATURE_BE_LOCK_PCT", 0.05),
+  FVVO_POST_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT: envNum("FVVO_POST_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT", 0.20),
+  FVVO_POST_CROSS_FEATURE_TRAIL_ARM_PCT: envNum("FVVO_POST_CROSS_FEATURE_TRAIL_ARM_PCT", 0.45),
+  FVVO_POST_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT: envNum("FVVO_POST_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT", 0.24),
+  FVVO_POST_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_POST_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_POST_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT: envNum("FVVO_POST_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT", 0.11),
+  FVVO_POST_CROSS_FEATURE_WEAKNESS_ENABLED: envBool("FVVO_POST_CROSS_FEATURE_WEAKNESS_ENABLED", true),
+  FVVO_POST_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS: envNum("FVVO_POST_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS", 2),
+  FVVO_POST_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT: envNum("FVVO_POST_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT", 0.30),
+  FVVO_POST_CROSS_FEATURE_SLOPE_FAIL_MAX: envNum("FVVO_POST_CROSS_FEATURE_SLOPE_FAIL_MAX", -0.55),
+  FVVO_POST_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT: envNum("FVVO_POST_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT", 0.35),
+  FVVO_POST_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT: envNum("FVVO_POST_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT", 0.30),
+  FVVO_POST_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_POST_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.45),
+  FVVO_POST_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_POST_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT", 5.00),
+
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
   FVVO_GREEN_PULSE_CROSS_MIN_RSI: envNum("FVVO_GREEN_PULSE_CROSS_MIN_RSI", 55),
@@ -437,13 +497,8 @@ const CFG = {
   ENABLE_REPLAY_BATCH: envBool("ENABLE_REPLAY_BATCH", false)
 };
 
-if (CFG.LIVE_FORWARD_ALLOWED) {
-  console.log("⚠️ SAFETY: LIVE_FORWARD_ALLOWED=true is not supported in v1h. Forcing false.");
-  CFG.LIVE_FORWARD_ALLOWED = false;
-}
-
-if (CFG.ENABLE_HTTP_FORWARD && !CFG.DEMO_FORWARD_ALLOWED) {
-  console.log("⚠️ SAFETY: ENABLE_HTTP_FORWARD=true but DEMO_FORWARD_ALLOWED is not true. Forwarding disabled.");
+if (CFG.ENABLE_HTTP_FORWARD && !CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED) {
+  console.log("⚠️ SAFETY: ENABLE_HTTP_FORWARD=true but neither DEMO_FORWARD_ALLOWED nor LIVE_FORWARD_ALLOWED is true. Forwarding disabled.");
   CFG.ENABLE_HTTP_FORWARD = false;
 }
 
@@ -460,6 +515,18 @@ const state = {
   lastFeatureTick: new Map(),
   lastFeatureTickAt: new Map(),
   featureExitWeakness: new Map(),
+  risk: {
+    day: null,
+    entriesToday: 0,
+    exitsToday: 0,
+    dailyNetPnlPct: 0,
+    consecutiveLosses: 0,
+    blockedEntries: 0,
+    emergencyBlocks: 0,
+    liveConfirmBlocks: 0,
+    staleFeatureBlocks: 0,
+    lastBlockReason: ""
+  },
   history: new Map(),
   seenBars: new Set(),
   barIndex: new Map(),
@@ -574,7 +641,11 @@ const state = {
     cPointOpens: 0,
     cPointExits: 0,
     cPointPnlPct: 0,
-    cPointShadowSignals: 0
+    cPointShadowSignals: 0,
+    riskGuardBlocks: 0,
+    emergencyForwardBlocks: 0,
+    liveConfirmBlocks: 0,
+    staleFeatureEntryBlocks: 0
   }
 };
 
@@ -872,6 +943,128 @@ function getBotUuid(symbol) {
   return fallback ? String(fallback) : "";
 }
 
+function riskDayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function ensureRiskDay() {
+  const today = riskDayKey();
+  if (state.risk.day !== today) {
+    state.risk.day = today;
+    state.risk.entriesToday = 0;
+    state.risk.exitsToday = 0;
+    state.risk.dailyNetPnlPct = 0;
+    state.risk.consecutiveLosses = 0;
+    state.risk.blockedEntries = 0;
+    state.risk.lastBlockReason = "";
+  }
+  return state.risk;
+}
+
+function liveConfirmOk() {
+  if (!CFG.LIVE_FORWARD_ALLOWED) return true;
+  if (!CFG.FVVO_LIVE_CONFIRM_REQUIRED) return true;
+  return CFG.FVVO_LIVE_CONFIRM === CFG.FVVO_LIVE_CONFIRM_TEXT;
+}
+
+function riskSnapshot() {
+  const r = ensureRiskDay();
+  return {
+    day: r.day,
+    entriesToday: r.entriesToday,
+    exitsToday: r.exitsToday,
+    dailyNetPnlPct: r.dailyNetPnlPct,
+    consecutiveLosses: r.consecutiveLosses,
+    maxTradesPerDay: CFG.FVVO_MAX_TRADES_PER_DAY,
+    maxConsecutiveLosses: CFG.FVVO_MAX_CONSECUTIVE_LOSSES,
+    maxDailyNetLossPct: CFG.FVVO_MAX_DAILY_NET_LOSS_PCT,
+    lastBlockReason: r.lastBlockReason
+  };
+}
+
+function forwardSafetyBlock(action, p = {}, setup = "UNKNOWN") {
+  const isEntry = action === "enter_long";
+  if (CFG.FVVO_EMERGENCY_DISABLE_ALL_FORWARDS) return "EMERGENCY_DISABLE_ALL_FORWARDS";
+  if (isEntry && CFG.FVVO_EMERGENCY_DISABLE_NEW_ENTRIES) return "EMERGENCY_DISABLE_NEW_ENTRIES";
+  if (!CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED) return "NO_FORWARD_MODE_ALLOWED";
+  if (isEntry && CFG.LIVE_FORWARD_ALLOWED && !liveConfirmOk()) return "LIVE_CONFIRM_MISSING";
+
+  if (isEntry && CFG.FVVO_RISK_GUARDS_ENABLED) {
+    const r = ensureRiskDay();
+    if (CFG.FVVO_MAX_TRADES_PER_DAY > 0 && r.entriesToday >= CFG.FVVO_MAX_TRADES_PER_DAY) return "RISK_MAX_TRADES_PER_DAY";
+    if (CFG.FVVO_DISABLE_NEW_ENTRIES_AFTER_LOSS_STREAK && CFG.FVVO_MAX_CONSECUTIVE_LOSSES > 0 && r.consecutiveLosses >= CFG.FVVO_MAX_CONSECUTIVE_LOSSES) return "RISK_MAX_CONSECUTIVE_LOSSES";
+    if (CFG.FVVO_MAX_DAILY_NET_LOSS_PCT > 0 && r.dailyNetPnlPct <= -Math.abs(CFG.FVVO_MAX_DAILY_NET_LOSS_PCT)) return "RISK_MAX_DAILY_NET_LOSS";
+  }
+
+  return "";
+}
+
+function noteForwardBlock(reason) {
+  const r = ensureRiskDay();
+  r.lastBlockReason = reason;
+  if (String(reason).startsWith("RISK_")) {
+    r.blockedEntries += 1;
+    state.stats.riskGuardBlocks += 1;
+  }
+  if (String(reason).startsWith("EMERGENCY_")) {
+    r.emergencyBlocks += 1;
+    state.stats.emergencyForwardBlocks += 1;
+  }
+  if (reason === "LIVE_CONFIRM_MISSING") {
+    r.liveConfirmBlocks += 1;
+    state.stats.liveConfirmBlocks += 1;
+  }
+}
+
+function recordForwardedEntry() {
+  const r = ensureRiskDay();
+  r.entriesToday += 1;
+}
+
+function recordForwardedExit(pnlPct) {
+  const r = ensureRiskDay();
+  const netPct = (Number(pnlPct) || 0) - CFG.FVVO_FEE_ROUND_TRIP_PCT;
+  r.exitsToday += 1;
+  r.dailyNetPnlPct += netPct;
+  if (netPct < -0.03) r.consecutiveLosses += 1;
+  else if (netPct > 0.03) r.consecutiveLosses = 0;
+}
+
+function featureTickFreshStatus(symbol, referenceMs = Date.now()) {
+  const lastMs = state.lastFeatureTickAt.get(symbol) || 0;
+  if (!CFG.FVVO_STALE_FEATURE_TICK_GUARD_ENABLED) return { ok: true, reason: "STALE_GUARD_DISABLED", ageSec: 0, lastMs };
+  if (!lastMs) return { ok: false, reason: "NO_FEATURE_TICK_YET", ageSec: null, lastMs };
+  const ageSec = Math.max(0, (referenceMs - lastMs) / 1000);
+  if (ageSec > CFG.FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC) return { ok: false, reason: "FEATURE_TICK_STALE", ageSec, lastMs };
+  return { ok: true, reason: "FEATURE_TICK_FRESH", ageSec, lastMs };
+}
+
+function shouldBlock5mEntryForStaleFeatureTick(p) {
+  if (!CFG.FVVO_STALE_FEATURE_TICK_BLOCK_5M_ENTRIES) return { block: false, status: null };
+  const status = featureTickFreshStatus(p.symbol, timeToMs(p.time));
+  return { block: !status.ok, status };
+}
+
+function shouldBlockFeatureEntryForStaleFeatureTick(p) {
+  if (!CFG.FVVO_STALE_FEATURE_TICK_BLOCK_FEATURE_ENTRIES) return { block: false, status: null };
+  const status = featureTickFreshStatus(p.symbol, timeToMs(p.time));
+  return { block: !status.ok, status };
+}
+
+function logEntryForwardPreflightBlock(p, setup, reason) {
+  noteForwardBlock(reason);
+  logLine("FVVO_ENTRY_FORWARD_BLOCK", [
+    `symbol=${p.symbol}`,
+    `setup=${setup}`,
+    `price=${n(p.close, 4)}`,
+    `reason=${reason}`,
+    `shadowOnly=${boolStr(CFG.SHADOW_ONLY)}`,
+    `demoAllowed=${boolStr(CFG.DEMO_FORWARD_ALLOWED)}`,
+    `liveAllowed=${boolStr(CFG.LIVE_FORWARD_ALLOWED)}`,
+    `risk=${JSON.stringify(riskSnapshot())}`
+  ].join(" | "));
+}
+
 function shouldForwardSetup(setup) {
   if (setup === "CROSS_UP_CONFIRM") return CFG.FVVO_FORWARD_CROSS_ENABLED;
   if (setup === "WASHOUT_REVERSAL") return CFG.FVVO_FORWARD_WASHOUT_ENABLED;
@@ -932,10 +1125,12 @@ async function forwardTo3Commas(action, p, extra = {}) {
     return { ok: false, skipped: true, reason: "FORWARD_DISABLED" };
   }
 
-  if (!CFG.DEMO_FORWARD_ALLOWED || CFG.LIVE_FORWARD_ALLOWED) {
+  const safetyBlock = forwardSafetyBlock(action, p, setup);
+  if (safetyBlock) {
     state.stats.forwardSkipped += 1;
-    logLine("C3_FORWARD_SKIP", `reason=SAFETY_GATE_BLOCK | action=${action} | setup=${setup} | demoAllowed=${CFG.DEMO_FORWARD_ALLOWED} | liveAllowed=${CFG.LIVE_FORWARD_ALLOWED}`);
-    return { ok: false, skipped: true, reason: "SAFETY_GATE_BLOCK" };
+    noteForwardBlock(safetyBlock);
+    logLine("C3_FORWARD_SKIP", `reason=${safetyBlock} | action=${action} | setup=${setup} | demoAllowed=${CFG.DEMO_FORWARD_ALLOWED} | liveAllowed=${CFG.LIVE_FORWARD_ALLOWED} | risk=${JSON.stringify(riskSnapshot())}`);
+    return { ok: false, skipped: true, reason: safetyBlock };
   }
 
   if (!CFG.C3_SIGNAL_SECRET) {
@@ -988,10 +1183,13 @@ async function forwardTo3Commas(action, p, extra = {}) {
     }
 
     state.stats.forwardSuccess += 1;
-    if (action === "enter_long") state.stats.forwardEntries += 1;
+    if (action === "enter_long") {
+      state.stats.forwardEntries += 1;
+      recordForwardedEntry();
+    }
     if (action === "exit_long") state.stats.forwardExits += 1;
 
-    logLine("C3_FORWARD_SUCCESS", `status=${response.status} | action=${action} | setup=${setup} | symbol=${p.symbol} | price=${n(p.close, 4)} | response=${truncText(text)}`);
+    logLine("C3_FORWARD_SUCCESS", `status=${response.status} | action=${action} | setup=${setup} | symbol=${p.symbol} | price=${n(p.close, 4)} | risk=${JSON.stringify(riskSnapshot())} | response=${truncText(text)}`);
     return { ok: true, status: response.status, body: text };
   } catch (err) {
     state.stats.forwardErrors += 1;
@@ -1435,6 +1633,13 @@ function setupPrefix(setup) {
 }
 
 async function openVirtualLong(p, decision, barNo) {
+  const preflightBlock = shouldForwardSetup(decision.setup) && !CFG.SHADOW_ONLY ? forwardSafetyBlock("enter_long", p, decision.setup) : "";
+  if (preflightBlock && CFG.FVVO_SKIP_VIRTUAL_ENTRY_IF_FORWARD_BLOCKED) {
+    state.stats.forwardSkipped += 1;
+    logEntryForwardPreflightBlock(p, decision.setup, preflightBlock);
+    return;
+  }
+
   const position = {
     side: "LONG",
     setup: decision.setup,
@@ -1742,6 +1947,8 @@ async function closeVirtualLong(pos, p, perf, exitDecision, barNo) {
       state.externalDeals.delete(pos.symbol);
       logLine("FVVO_EXTERNAL_DEAL_LOCK_CLEAR", `symbol=${p.symbol} | setup=${pos.setup} | exit=${n(exitPrice, 4)} | reason=${exitDecision.reason}`);
     }
+    recordForwardedExit(pnlPct);
+    logLine("FVVO_RISK_GUARD_UPDATE", `symbol=${p.symbol} | setup=${pos.setup} | pnl=${pct(pnlPct)} | netAfterFee=${pct(pnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)} | risk=${JSON.stringify(riskSnapshot())}`);
   }
 
   clearFeatureWeaknessForPosition(pos);
@@ -1940,7 +2147,12 @@ function logScorecard() {
     `featureTickLegHardStops=${state.stats.featureTickLegHardStopExits}`,
     `featureTickLegBreakevens=${state.stats.featureTickLegBreakevenExits}`,
     `featureTickLegDynamicTrails=${state.stats.featureTickLegDynamicTrailExits}`,
-    `featureTickLegWeaknessExits=${state.stats.featureTickLegWeaknessExits}`
+    `featureTickLegWeaknessExits=${state.stats.featureTickLegWeaknessExits}`,
+    `riskGuardBlocks=${state.stats.riskGuardBlocks}`,
+    `emergencyForwardBlocks=${state.stats.emergencyForwardBlocks}`,
+    `liveConfirmBlocks=${state.stats.liveConfirmBlocks}`,
+    `staleFeatureEntryBlocks=${state.stats.staleFeatureEntryBlocks}`,
+    `risk=${JSON.stringify(riskSnapshot())}`
   ].join(" | "));
 }
 
@@ -2021,6 +2233,8 @@ function evaluateFastExit(pos, p, perf) {
 
 function featureExitLabel(setup) {
   const s = String(setup || "").toUpperCase();
+  if (s === "CROSS_UP_CONFIRM") return "CROSS";
+  if (s === "POST_CROSS_RECLAIM") return "POST_CROSS";
   if (s === "C_POINT_IMPULSE") return "C_POINT";
   if (s === "TICK_WASHOUT_RECOVERY") return "TICK_WASHOUT";
   if (s === "DEEP_WASHOUT_SLOW_RECOVERY") return "DEEP_WASHOUT";
@@ -2031,6 +2245,52 @@ function featureExitProfile(setup) {
   if (!CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED) return null;
   const s = String(setup || "").toUpperCase();
   const minHoldSec = Math.max(0, CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC);
+  if (s === "CROSS_UP_CONFIRM") {
+    return {
+      enabled: CFG.FVVO_CROSS_FEATURE_EXIT_ENABLED,
+      label: "CROSS",
+      hardStopPct: CFG.FVVO_CROSS_FEATURE_HARD_STOP_PCT,
+      beArmPct: CFG.FVVO_CROSS_FEATURE_BE_ARM_PCT,
+      beLockPct: CFG.FVVO_CROSS_FEATURE_BE_LOCK_PCT,
+      beMinGivebackPct: CFG.FVVO_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT,
+      trailArmPct: CFG.FVVO_CROSS_FEATURE_TRAIL_ARM_PCT,
+      trailStartGivebackPct: CFG.FVVO_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT,
+      trailMinGivebackPct: CFG.FVVO_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
+      trailTightenPer1Pct: CFG.FVVO_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      weaknessEnabled: CFG.FVVO_CROSS_FEATURE_WEAKNESS_ENABLED,
+      weaknessConfirmTicks: CFG.FVVO_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS,
+      redExitMinProfitPct: CFG.FVVO_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
+      slopeFailMax: CFG.FVVO_CROSS_FEATURE_SLOPE_FAIL_MAX,
+      slopeExitMinProfitPct: CFG.FVVO_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT,
+      ema8LossMinProfitPct: CFG.FVVO_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT,
+      rsiRolloverMinProfitPct: CFG.FVVO_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT,
+      rsiRolloverDropPct: CFG.FVVO_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT,
+      minHoldSec
+    };
+  }
+  if (s === "POST_CROSS_RECLAIM") {
+    return {
+      enabled: CFG.FVVO_POST_CROSS_FEATURE_EXIT_ENABLED,
+      label: "POST_CROSS",
+      hardStopPct: CFG.FVVO_POST_CROSS_FEATURE_HARD_STOP_PCT,
+      beArmPct: CFG.FVVO_POST_CROSS_FEATURE_BE_ARM_PCT,
+      beLockPct: CFG.FVVO_POST_CROSS_FEATURE_BE_LOCK_PCT,
+      beMinGivebackPct: CFG.FVVO_POST_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT,
+      trailArmPct: CFG.FVVO_POST_CROSS_FEATURE_TRAIL_ARM_PCT,
+      trailStartGivebackPct: CFG.FVVO_POST_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT,
+      trailMinGivebackPct: CFG.FVVO_POST_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
+      trailTightenPer1Pct: CFG.FVVO_POST_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      weaknessEnabled: CFG.FVVO_POST_CROSS_FEATURE_WEAKNESS_ENABLED,
+      weaknessConfirmTicks: CFG.FVVO_POST_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS,
+      redExitMinProfitPct: CFG.FVVO_POST_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
+      slopeFailMax: CFG.FVVO_POST_CROSS_FEATURE_SLOPE_FAIL_MAX,
+      slopeExitMinProfitPct: CFG.FVVO_POST_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT,
+      ema8LossMinProfitPct: CFG.FVVO_POST_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT,
+      rsiRolloverMinProfitPct: CFG.FVVO_POST_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT,
+      rsiRolloverDropPct: CFG.FVVO_POST_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT,
+      minHoldSec
+    };
+  }
   if (s === "C_POINT_IMPULSE") {
     return {
       enabled: CFG.FVVO_C_POINT_FEATURE_EXIT_ENABLED,
@@ -2627,6 +2887,12 @@ function evaluateTickWashoutCandidate(tick) {
 async function openTickWashoutShadow(tick, decision) {
   const s = decision.checks.structure;
   const entryPrice = s.currentPrice;
+  const preflightBlock = shouldForwardSetup(decision.setup) && !CFG.SHADOW_ONLY ? forwardSafetyBlock("enter_long", { ...tick, close: entryPrice }, decision.setup) : "";
+  if (preflightBlock && CFG.FVVO_SKIP_VIRTUAL_ENTRY_IF_FORWARD_BLOCKED) {
+    state.stats.forwardSkipped += 1;
+    logEntryForwardPreflightBlock({ ...tick, close: entryPrice }, decision.setup, preflightBlock);
+    return;
+  }
   const structureStop = s.bottomLow * (1 - Math.abs(CFG.FVVO_TICK_WASHOUT_SHADOW_STOP_BUFFER_PCT) / 100);
   const maxLossStop = entryPrice * (1 - Math.abs(CFG.FVVO_TICK_WASHOUT_SHADOW_MAX_LOSS_PCT) / 100);
   const stopPrice = Math.max(structureStop, maxLossStop);
@@ -2954,6 +3220,12 @@ function evaluateDeepWashoutCandidate(tick) {
 async function openDeepWashoutShadow(tick, decision) {
   const s = decision.checks.structure;
   const entryPrice = s.currentPrice;
+  const preflightBlock = shouldForwardSetup(decision.setup) && !CFG.SHADOW_ONLY ? forwardSafetyBlock("enter_long", { ...tick, close: entryPrice }, decision.setup) : "";
+  if (preflightBlock && CFG.FVVO_SKIP_VIRTUAL_ENTRY_IF_FORWARD_BLOCKED) {
+    state.stats.forwardSkipped += 1;
+    logEntryForwardPreflightBlock({ ...tick, close: entryPrice }, decision.setup, preflightBlock);
+    return;
+  }
   const structureStop = s.bottomLow * (1 - Math.abs(CFG.FVVO_DEEP_WASHOUT_SHADOW_STOP_BUFFER_PCT) / 100);
   const maxLossStop = entryPrice * (1 - Math.abs(CFG.FVVO_DEEP_WASHOUT_SHADOW_MAX_LOSS_PCT) / 100);
   const stopPrice = Math.max(structureStop, maxLossStop);
@@ -3479,6 +3751,16 @@ async function handleFeatureTick(p) {
   if (state.positions.has(p.symbol)) return;
   if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && state.externalDeals.has(p.symbol)) return;
 
+  const staleFeatureEntry = shouldBlockFeatureEntryForStaleFeatureTick(p);
+  if (staleFeatureEntry.block) {
+    state.stats.staleFeatureEntryBlocks += 1;
+    const r = ensureRiskDay();
+    r.staleFeatureBlocks += 1;
+    r.lastBlockReason = staleFeatureEntry.status.reason;
+    logLine("FVVO_C_POINT_IMPULSE_NO_ENTRY", `symbol=${p.symbol} | price=${n(p.close, 4)} | reason=${staleFeatureEntry.status.reason} | featureTickAgeSec=${staleFeatureEntry.status.ageSec === null ? "na" : n(staleFeatureEntry.status.ageSec, 1)}`);
+    return;
+  }
+
   const decision = evaluateCPointImpulseEntry(p);
   if (decision.ok) {
     state.stats.cPointSignals += 1;
@@ -3638,6 +3920,29 @@ async function handleFeature(p) {
     return;
   }
 
+  const staleEntry = shouldBlock5mEntryForStaleFeatureTick(p);
+  if (staleEntry.block) {
+    state.stats.staleFeatureEntryBlocks += 1;
+    const r = ensureRiskDay();
+    r.staleFeatureBlocks += 1;
+    r.lastBlockReason = staleEntry.status.reason;
+    if (CFG.DEBUG) {
+      logLine("FVVO_RAW_LONG_NO_ENTRY", [
+        `symbol=${p.symbol}`,
+        `price=${n(p.close, 4)}`,
+        `reason=${staleEntry.status.reason}`,
+        `featureTickAgeSec=${staleEntry.status.ageSec === null ? "na" : n(staleEntry.status.ageSec, 1)}`,
+        `maxAgeSec=${CFG.FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC}`,
+        `rsi=${n(p.rsi, 2)}`,
+        `fvvo=${n(p.fvvoValue, 6)}`,
+        `slope=${n(p.fvvoSlope, 6)}`
+      ].join(" | "));
+    }
+    state.lastFeature.set(p.symbol, p);
+    pushHistory(p);
+    return;
+  }
+
   const washoutDecision = evaluateWashoutEntry(p);
   const crossDecision = evaluateCrossEntry(p);
   const postCrossDecision = evaluatePostCrossReclaimEntry(p, crossDecision, barNo);
@@ -3767,7 +4072,7 @@ app.get("/", (req, res) => {
   res.json({
     ok: true,
     brain: CFG.BRAIN_NAME,
-    mode: CFG.SHADOW_ONLY ? "SHADOW_ONLY" : "DEMO_FORWARD",
+    mode: CFG.SHADOW_ONLY ? "SHADOW_ONLY" : (CFG.LIVE_FORWARD_ALLOWED ? "LIVE_FORWARD" : "DEMO_FORWARD"),
     startedAt: state.startedAt,
     symbol: CFG.SYMBOL,
     tf: CFG.ENTRY_TF,
@@ -3783,12 +4088,20 @@ app.get("/health", (req, res) => {
     brain: CFG.BRAIN_NAME,
     startedAt: state.startedAt,
     now: nowIso(),
-    mode: CFG.SHADOW_ONLY ? "SHADOW_ONLY" : "DEMO_FORWARD",
+    mode: CFG.SHADOW_ONLY ? "SHADOW_ONLY" : (CFG.LIVE_FORWARD_ALLOWED ? "LIVE_FORWARD" : "DEMO_FORWARD"),
     forwarding: {
       enableHttpForward: CFG.ENABLE_HTTP_FORWARD,
       demoForwardAllowed: CFG.DEMO_FORWARD_ALLOWED,
       liveForwardAllowed: CFG.LIVE_FORWARD_ALLOWED,
       dryRun: CFG.C3_DRY_RUN,
+      emergencyDisableAllForwards: CFG.FVVO_EMERGENCY_DISABLE_ALL_FORWARDS,
+      emergencyDisableNewEntries: CFG.FVVO_EMERGENCY_DISABLE_NEW_ENTRIES,
+      liveConfirmRequired: CFG.FVVO_LIVE_CONFIRM_REQUIRED,
+      liveConfirmOk: liveConfirmOk(),
+      riskGuardsEnabled: CFG.FVVO_RISK_GUARDS_ENABLED,
+      risk: riskSnapshot(),
+      staleFeatureTickGuardEnabled: CFG.FVVO_STALE_FEATURE_TICK_GUARD_ENABLED,
+      staleFeatureTickMaxAgeSec: CFG.FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC,
       forwardCross: CFG.FVVO_FORWARD_CROSS_ENABLED,
       forwardWashout: CFG.FVVO_FORWARD_WASHOUT_ENABLED,
       forwardRising: CFG.FVVO_FORWARD_RISING_ENABLED,
@@ -3964,6 +4277,16 @@ app.listen(CFG.PORT, () => {
   console.log(`DEMO_FORWARD_ALLOWED=${CFG.DEMO_FORWARD_ALLOWED}`);
   console.log(`LIVE_FORWARD_ALLOWED=${CFG.LIVE_FORWARD_ALLOWED}`);
   console.log(`C3_DRY_RUN=${CFG.C3_DRY_RUN}`);
+  console.log(`FVVO_LIVE_CONFIRM_REQUIRED=${CFG.FVVO_LIVE_CONFIRM_REQUIRED}`);
+  console.log(`FVVO_LIVE_CONFIRM_OK=${liveConfirmOk()}`);
+  console.log(`FVVO_EMERGENCY_DISABLE_ALL_FORWARDS=${CFG.FVVO_EMERGENCY_DISABLE_ALL_FORWARDS}`);
+  console.log(`FVVO_EMERGENCY_DISABLE_NEW_ENTRIES=${CFG.FVVO_EMERGENCY_DISABLE_NEW_ENTRIES}`);
+  console.log(`FVVO_RISK_GUARDS_ENABLED=${CFG.FVVO_RISK_GUARDS_ENABLED}`);
+  console.log(`FVVO_MAX_TRADES_PER_DAY=${CFG.FVVO_MAX_TRADES_PER_DAY}`);
+  console.log(`FVVO_MAX_CONSECUTIVE_LOSSES=${CFG.FVVO_MAX_CONSECUTIVE_LOSSES}`);
+  console.log(`FVVO_MAX_DAILY_NET_LOSS_PCT=${CFG.FVVO_MAX_DAILY_NET_LOSS_PCT}`);
+  console.log(`FVVO_STALE_FEATURE_TICK_GUARD_ENABLED=${CFG.FVVO_STALE_FEATURE_TICK_GUARD_ENABLED}`);
+  console.log(`FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC=${CFG.FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC}`);
   console.log(`FVVO_LOG_COLOR_ENABLED=${CFG.FVVO_LOG_COLOR_ENABLED}`);
   console.log(`FVVO_LOG_BADGE_ENABLED=${CFG.FVVO_LOG_BADGE_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_EVENT=${CFG.FVVO_FEATURE_TICK_EVENT}`);
@@ -3977,6 +4300,8 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_C_POINT_FEATURE_EXIT_ENABLED=${CFG.FVVO_C_POINT_FEATURE_EXIT_ENABLED}`);
   console.log(`FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED=${CFG.FVVO_TICK_WASHOUT_FEATURE_EXIT_ENABLED}`);
   console.log(`FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED=${CFG.FVVO_DEEP_WASHOUT_FEATURE_EXIT_ENABLED}`);
+  console.log(`FVVO_CROSS_FEATURE_EXIT_ENABLED=${CFG.FVVO_CROSS_FEATURE_EXIT_ENABLED}`);
+  console.log(`FVVO_POST_CROSS_FEATURE_EXIT_ENABLED=${CFG.FVVO_POST_CROSS_FEATURE_EXIT_ENABLED}`);
   console.log(`C3_SIGNAL_URL=${CFG.C3_SIGNAL_URL}`);
   console.log(`C3_SIGNAL_SECRET_SET=${Boolean(CFG.C3_SIGNAL_SECRET)}`);
   console.log(`SYMBOL_BOT_MAP_SYMBOLS=${Object.keys(CFG.SYMBOL_BOT_MAP).join(",") || "none"}`);
