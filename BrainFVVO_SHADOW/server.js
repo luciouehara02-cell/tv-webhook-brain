@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1u_RAY_REGIME_FILTER_LOG_TIDY_RAY_FIELDS
+// BrainFVVO_v1v_5M_RAY_REGIME_CONTEXT
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -15,6 +15,7 @@
 // - v1s adds CROSS_UP_CONFIRM and POST_CROSS_RECLAIM feature-tick exits, stale-feature entry blocking, and live/demo session risk guards.
 // - v1t adds a FEATURE_TICK breakout/continuation cross leg for strong 5m trend continuation after shallow pullbacks.
 // - v1u adds Ray-style regime gating and moves the colored emoji badge near the start of each log line.
+// - v1v makes confirmed 5m Ray regime the master entry-gate context; 15s Ray is logged only.
 // ============================================================
 
 const express = require("express");
@@ -51,7 +52,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1u_RAY_REGIME_FILTER_LOG_TIDY_RAY_FIELDS"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1v_5M_RAY_REGIME_CONTEXT"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -542,6 +543,11 @@ const CFG = {
   FVVO_RAY_REGIME_FILTER_ENABLED: envBool("FVVO_RAY_REGIME_FILTER_ENABLED", true),
   FVVO_RAY_REGIME_LOG_ENABLED: envBool("FVVO_RAY_REGIME_LOG_ENABLED", true),
   FVVO_RAY_REGIME_USE_EXTERNAL: envBool("FVVO_RAY_REGIME_USE_EXTERNAL", true),
+  // v1v: use the latest confirmed FEATURE_5M_FVVO Ray regime as the master gate for 15s FEATURE_TICK_FVVO entries.
+  // The 15s Ray regime is still logged as tickRayRegime, but it does not control continuation/reversal permissions by default.
+  FVVO_RAY_REGIME_USE_5M_CONTEXT: envBool("FVVO_RAY_REGIME_USE_5M_CONTEXT", true),
+  FVVO_RAY_REGIME_5M_MAX_AGE_SEC: envNum("FVVO_RAY_REGIME_5M_MAX_AGE_SEC", 420),
+  FVVO_RAY_REGIME_5M_STALE_FALLBACK: envStr("FVVO_RAY_REGIME_5M_STALE_FALLBACK", "RAY_NEUTRAL"),
   FVVO_RAY_BULL_MIN_RSI: envNum("FVVO_RAY_BULL_MIN_RSI", 52),
   FVVO_RAY_BULL_MIN_ADX: envNum("FVVO_RAY_BULL_MIN_ADX", 14),
   FVVO_RAY_BULL_MIN_FVVO: envNum("FVVO_RAY_BULL_MIN_FVVO", 0),
@@ -575,6 +581,7 @@ const state = {
   lastFeature: new Map(),
   lastFeatureTick: new Map(),
   lastFeatureTickAt: new Map(),
+  lastRay5mContext: new Map(),
   featureExitWeakness: new Map(),
   risk: {
     day: null,
@@ -2786,7 +2793,16 @@ function explicitRayRegime(p) {
   return "";
 }
 
-function classifyRayRegime(p) {
+function normalizeRayRegimeName(v, fallback = "RAY_NEUTRAL") {
+  const raw = String(v || "").trim().toUpperCase();
+  if (["RAY_BULL", "BULL", "BULLISH", "1"].includes(raw)) return "RAY_BULL";
+  if (["RAY_BEAR", "BEAR", "BEARISH", "-1"].includes(raw)) return "RAY_BEAR";
+  if (["RAY_BEAR_EXHAUSTION", "BEAR_EXHAUSTION", "EXHAUSTION", "-2"].includes(raw)) return "RAY_BEAR_EXHAUSTION";
+  if (["RAY_NEUTRAL", "NEUTRAL", "0"].includes(raw)) return "RAY_NEUTRAL";
+  return fallback;
+}
+
+function classifyRayRegimeFromPayload(p) {
   const explicit = explicitRayRegime(p);
   if (explicit) {
     return { regime: explicit, source: "external", exhaustion: explicit === "RAY_BEAR_EXHAUSTION" };
@@ -2847,17 +2863,117 @@ function classifyRayRegime(p) {
   return { regime, source: "proxy", exhaustion, bullScore, bearScore, priceAboveStack, priceBelowStack, ctxBull, ctxBear };
 }
 
+function rayTrendFromRegime(regime) {
+  if (regime === "RAY_BULL") return 1;
+  if (regime === "RAY_BEAR") return -1;
+  if (regime === "RAY_BEAR_EXHAUSTION") return -2;
+  return 0;
+}
+
+function updateRay5mContext(p) {
+  if (p.event !== "FEATURE_5M_FVVO") return null;
+  const payloadGate = classifyRayRegimeFromPayload(p);
+  const eventMs = timeToMs(p.time);
+  const context = {
+    symbol: p.symbol,
+    regime: payloadGate.regime,
+    source: `5m_${payloadGate.source}`,
+    payloadSource: payloadGate.source,
+    updatedAtMs: eventMs,
+    updatedAtIso: new Date(eventMs).toISOString(),
+    rawRegime: p.rayRegime ? String(p.rayRegime) : "na",
+    rawTrend: Number.isFinite(Number(p.rayTrend)) ? Number(p.rayTrend) : null,
+    rayBull: p.rayBull === true,
+    rayBear: p.rayBear === true,
+    rayBearExhaustion: p.rayBearExhaustion === true,
+    bullScore: payloadGate.bullScore,
+    bearScore: payloadGate.bearScore
+  };
+  state.lastRay5mContext.set(p.symbol, context);
+  return context;
+}
+
+function getRay5mContext(symbol, referenceMs = Date.now()) {
+  const ctx = state.lastRay5mContext.get(symbol) || null;
+  if (!ctx) return null;
+  const ageSec = Math.max(0, (referenceMs - ctx.updatedAtMs) / 1000);
+  return Object.assign({}, ctx, { ageSec, stale: ageSec > CFG.FVVO_RAY_REGIME_5M_MAX_AGE_SEC });
+}
+
+function classifyRayRegime(p) {
+  const payloadGate = classifyRayRegimeFromPayload(p);
+
+  if (CFG.FVVO_RAY_REGIME_USE_5M_CONTEXT && p.event === CFG.FVVO_FEATURE_TICK_EVENT) {
+    const ctx = getRay5mContext(p.symbol, timeToMs(p.time));
+    if (ctx && !ctx.stale) {
+      return {
+        regime: ctx.regime,
+        source: ctx.source,
+        exhaustion: ctx.regime === "RAY_BEAR_EXHAUSTION",
+        contextAgeSec: ctx.ageSec,
+        contextUpdatedAt: ctx.updatedAtIso,
+        contextRawRegime: ctx.rawRegime,
+        contextRayBull: ctx.rayBull,
+        contextRayBear: ctx.rayBear,
+        contextRayBearExhaustion: ctx.rayBearExhaustion,
+        tickRegime: payloadGate.regime,
+        tickSource: payloadGate.source,
+        using5mContext: true
+      };
+    }
+
+    const fallback = normalizeRayRegimeName(CFG.FVVO_RAY_REGIME_5M_STALE_FALLBACK, "RAY_NEUTRAL");
+    return {
+      regime: fallback,
+      source: ctx ? "5m_context_stale_fallback" : "5m_context_missing_fallback",
+      exhaustion: fallback === "RAY_BEAR_EXHAUSTION",
+      contextAgeSec: ctx ? ctx.ageSec : null,
+      contextUpdatedAt: ctx ? ctx.updatedAtIso : "na",
+      contextRawRegime: ctx ? ctx.rawRegime : "na",
+      tickRegime: payloadGate.regime,
+      tickSource: payloadGate.source,
+      using5mContext: false,
+      missing5mContext: !ctx,
+      stale5mContext: Boolean(ctx && ctx.stale)
+    };
+  }
+
+  return Object.assign({}, payloadGate, {
+    tickRegime: payloadGate.regime,
+    tickSource: payloadGate.source,
+    using5mContext: false
+  });
+}
+
 function rayRegimeLogFields(p) {
+  const payloadGate = classifyRayRegimeFromPayload(p);
   const gate = classifyRayRegime(p);
-  const fields = [
-    `rayRegime=${gate.regime}`,
-    `raySource=${gate.source}`,
-    `rayBull=${boolStr(p.rayBull === true)}`,
-    `rayBear=${boolStr(p.rayBear === true)}`,
-    `rayBearExhaustion=${boolStr(p.rayBearExhaustion === true)}`,
-    `rayRaw=${p.rayRegime ? String(p.rayRegime) : "na"}`,
-    `rayTrendRaw=${Number.isFinite(Number(p.rayTrend)) ? n(p.rayTrend, 0) : "na"}`
-  ];
+  const fields = [];
+
+  if (p.event === CFG.FVVO_FEATURE_TICK_EVENT && CFG.FVVO_RAY_REGIME_USE_5M_CONTEXT) {
+    fields.push(`gateRayRegime=${gate.regime}`);
+    fields.push(`gateRaySource=${gate.source}`);
+    fields.push(`context5mRayRegime=${gate.using5mContext ? gate.regime : "na"}`);
+    fields.push(`context5mAgeSec=${gate.contextAgeSec === null || gate.contextAgeSec === undefined ? "na" : n(gate.contextAgeSec, 1)}`);
+    fields.push(`tickRayRegime=${payloadGate.regime}`);
+    fields.push(`tickRaySource=${payloadGate.source}`);
+    fields.push(`tickRayBull=${boolStr(p.rayBull === true)}`);
+    fields.push(`tickRayBear=${boolStr(p.rayBear === true)}`);
+    fields.push(`tickRayBearExhaustion=${boolStr(p.rayBearExhaustion === true)}`);
+    fields.push(`rayRaw=${p.rayRegime ? String(p.rayRegime) : "na"}`);
+    fields.push(`rayTrendRaw=${Number.isFinite(Number(p.rayTrend)) ? n(p.rayTrend, 0) : "na"}`);
+    if (gate.missing5mContext) fields.push("rayContextStatus=MISSING_5M_CONTEXT");
+    if (gate.stale5mContext) fields.push("rayContextStatus=STALE_5M_CONTEXT");
+    return fields;
+  }
+
+  fields.push(`rayRegime=${gate.regime}`);
+  fields.push(`raySource=${gate.source}`);
+  fields.push(`rayBull=${boolStr(p.rayBull === true)}`);
+  fields.push(`rayBear=${boolStr(p.rayBear === true)}`);
+  fields.push(`rayBearExhaustion=${boolStr(p.rayBearExhaustion === true)}`);
+  fields.push(`rayRaw=${p.rayRegime ? String(p.rayRegime) : "na"}`);
+  fields.push(`rayTrendRaw=${Number.isFinite(Number(p.rayTrend)) ? n(p.rayTrend, 0) : "na"}`);
 
   if (gate.source === "proxy") {
     fields.push(`rayBullScore=${gate.bullScore === undefined ? "na" : gate.bullScore}`);
@@ -2900,8 +3016,11 @@ function applyRayRegimeGate(decision, p) {
       `leg=${setup}`,
       `allowed=${boolStr(allowed)}`,
       `reason=${reason}`,
-      `rayRegime=${gate.regime}`,
-      `source=${gate.source}`,
+      `gateRayRegime=${gate.regime}`,
+      `gateRaySource=${gate.source}`,
+      `tickRayRegime=${gate.tickRegime || "na"}`,
+      `context5mRayRegime=${gate.using5mContext ? gate.regime : "na"}`,
+      `context5mAgeSec=${gate.contextAgeSec === null || gate.contextAgeSec === undefined ? "na" : n(gate.contextAgeSec, 1)}`,
       `bullScore=${gate.bullScore === undefined ? "na" : gate.bullScore}`,
       `bearScore=${gate.bearScore === undefined ? "na" : gate.bearScore}`,
       `price=${n(p.close, 4)}`,
@@ -4157,6 +4276,7 @@ async function handleFeatureTick(p) {
 async function handleFeature(p) {
   state.stats.accepted += 1;
   const barNo = nextBarNumber(p.symbol);
+  updateRay5mContext(p);
 
   if (CFG.DEBUG) {
     logLine("FEATURE_5M_FVVO", [
@@ -4645,6 +4765,11 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FEATURE_TICK_EXIT_ENABLED=${CFG.FVVO_FEATURE_TICK_EXIT_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_ENTRY_ENABLED=${CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_MIN_INTERVAL_MS=${CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS}`);
+  console.log(`FVVO_RAY_REGIME_FILTER_ENABLED=${CFG.FVVO_RAY_REGIME_FILTER_ENABLED}`);
+  console.log(`FVVO_RAY_REGIME_USE_EXTERNAL=${CFG.FVVO_RAY_REGIME_USE_EXTERNAL}`);
+  console.log(`FVVO_RAY_REGIME_USE_5M_CONTEXT=${CFG.FVVO_RAY_REGIME_USE_5M_CONTEXT}`);
+  console.log(`FVVO_RAY_REGIME_5M_MAX_AGE_SEC=${CFG.FVVO_RAY_REGIME_5M_MAX_AGE_SEC}`);
+  console.log(`FVVO_RAY_REGIME_5M_STALE_FALLBACK=${CFG.FVVO_RAY_REGIME_5M_STALE_FALLBACK}`);
   console.log(`FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED=${CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED}`);
   console.log(`FVVO_FEATURE_EXIT_MIN_HOLD_SEC=${CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC}`);
   console.log(`FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP=${CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP}`);
