@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1u_RAY_REGIME_FILTER_LOG_TIDY
+// BrainFVVO_v1u_RAY_REGIME_FILTER_LOG_TIDY_RAY_FIELDS
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -51,7 +51,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1u_RAY_REGIME_FILTER_LOG_TIDY"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1u_RAY_REGIME_FILTER_LOG_TIDY_RAY_FIELDS"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -1363,6 +1363,7 @@ function normalizePayload(body) {
     burstBullish: safeBool(raw.burstBullish, false),
     burstBearish: safeBool(raw.burstBearish, false),
     rayRegime: strFromPayload(raw.rayRegime, strFromPayload(raw.rayTrend, "")),
+    rayTrend: safeNum(raw.rayTrend, null),
     rayBull: safeBool(raw.rayBull, false),
     rayBear: safeBool(raw.rayBear, false),
     rayBearExhaustion: safeBool(raw.rayBearExhaustion, false)
@@ -2846,6 +2847,26 @@ function classifyRayRegime(p) {
   return { regime, source: "proxy", exhaustion, bullScore, bearScore, priceAboveStack, priceBelowStack, ctxBull, ctxBear };
 }
 
+function rayRegimeLogFields(p) {
+  const gate = classifyRayRegime(p);
+  const fields = [
+    `rayRegime=${gate.regime}`,
+    `raySource=${gate.source}`,
+    `rayBull=${boolStr(p.rayBull === true)}`,
+    `rayBear=${boolStr(p.rayBear === true)}`,
+    `rayBearExhaustion=${boolStr(p.rayBearExhaustion === true)}`,
+    `rayRaw=${p.rayRegime ? String(p.rayRegime) : "na"}`,
+    `rayTrendRaw=${Number.isFinite(Number(p.rayTrend)) ? n(p.rayTrend, 0) : "na"}`
+  ];
+
+  if (gate.source === "proxy") {
+    fields.push(`rayBullScore=${gate.bullScore === undefined ? "na" : gate.bullScore}`);
+    fields.push(`rayBearScore=${gate.bearScore === undefined ? "na" : gate.bearScore}`);
+  }
+
+  return fields;
+}
+
 function isReversalSetup(setup) {
   return setup === "C_POINT_IMPULSE" || setup === "TICK_WASHOUT_RECOVERY" || setup === "DEEP_WASHOUT_SLOW_RECOVERY" || setup === "WASHOUT_REVERSAL";
 }
@@ -3999,7 +4020,8 @@ async function handleFeatureTick(p) {
       `crossUp=${boolStr(p.fvvoCrossUp)}`,
       `redPulse=${boolStr(p.fvvoRedPulse)}`,
       `redActive=${boolStr(p.fvvoRedActive)}`,
-      `greenPulse=${boolStr(p.fvvoGreenPulse)}`
+      `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
+      ...rayRegimeLogFields(p)
     ].join(" | "));
   }
 
@@ -4162,7 +4184,8 @@ async function handleFeature(p) {
       `redLegacy=${boolStr(p.fvvoRedDotLegacy)}`,
       `greenLegacy=${boolStr(p.fvvoGreenDotLegacy)}`,
       `pulseLogic=${boolStr(CFG.FVVO_PULSE_LOGIC_ENABLED && CFG.FVVO_DOT_PULSE_USE_IN_LOGIC)}`,
-      `bullishColor=${boolStr(p.fvvoBullishColor)}`
+      `bullishColor=${boolStr(p.fvvoBullishColor)}`,
+      ...rayRegimeLogFields(p)
     ].join(" | "));
   }
 
