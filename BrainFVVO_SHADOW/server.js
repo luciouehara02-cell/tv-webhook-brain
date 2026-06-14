@@ -52,7 +52,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1v_5M_RAY_REGIME_CONTEXT"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1w_CTX_SLOPE_FILTER_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -357,6 +357,7 @@ const CFG = {
   FVVO_FEATURE_CROSS_CONT_CTX_MAX_RSI: envNum("FVVO_FEATURE_CROSS_CONT_CTX_MAX_RSI", 68),
   FVVO_FEATURE_CROSS_CONT_CTX_MIN_ADX: envNum("FVVO_FEATURE_CROSS_CONT_CTX_MIN_ADX", 25),
   FVVO_FEATURE_CROSS_CONT_CTX_MIN_FVVO: envNum("FVVO_FEATURE_CROSS_CONT_CTX_MIN_FVVO", 0),
+  FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE: envNum("FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE", -999),
   FVVO_FEATURE_CROSS_CONT_REQUIRE_CTX_ABOVE_EMA8: envBool("FVVO_FEATURE_CROSS_CONT_REQUIRE_CTX_ABOVE_EMA8", true),
   FVVO_FEATURE_CROSS_CONT_BLOCK_RED_PULSE: envBool("FVVO_FEATURE_CROSS_CONT_BLOCK_RED_PULSE", true),
   FVVO_FEATURE_CROSS_CONT_BLOCK_RED_ACTIVE: envBool("FVVO_FEATURE_CROSS_CONT_BLOCK_RED_ACTIVE", false),
@@ -3064,15 +3065,16 @@ function evaluateFeatureCrossContinuationEntry(p) {
   const ctxRsiOk = Number.isFinite(ctx.rsi) && ctx.rsi >= CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_RSI && ctx.rsi <= CFG.FVVO_FEATURE_CROSS_CONT_CTX_MAX_RSI;
   const ctxAdxOk = Number.isFinite(ctx.adx) && ctx.adx >= CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_ADX;
   const ctxFvvoOk = Boolean(ctx.fvvoAboveZero) && Number.isFinite(ctx.fvvoValue) && ctx.fvvoValue >= CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_FVVO;
+  const ctxSlopeOk = CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE <= -999 || (Number.isFinite(ctx.fvvoSlope) && ctx.fvvoSlope >= CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE);
   const ctxTrendOk = !CFG.FVVO_FEATURE_CROSS_CONT_REQUIRE_CTX_ABOVE_EMA8 || (Number.isFinite(ctx.ema8) && ctx.close >= ctx.ema8);
   const redPulseOk = !CFG.FVVO_FEATURE_CROSS_CONT_BLOCK_RED_PULSE || !p.fvvoRedPulse;
   const redActiveOk = !CFG.FVVO_FEATURE_CROSS_CONT_BLOCK_RED_ACTIVE || !p.fvvoRedActive;
 
-  const ok = crossOk && aboveZeroOk && rsiOk && adxOk && slopeOk && priceNearEma8Ok && ext18Ok && ext8Ok && rangeOk && ctxRsiOk && ctxAdxOk && ctxFvvoOk && ctxTrendOk && redPulseOk && redActiveOk;
+  const ok = crossOk && aboveZeroOk && rsiOk && adxOk && slopeOk && priceNearEma8Ok && ext18Ok && ext8Ok && rangeOk && ctxRsiOk && ctxAdxOk && ctxFvvoOk && ctxSlopeOk && ctxTrendOk && redPulseOk && redActiveOk;
 
   const checks = {
     setup, ctxTime: ctx.time, ctxClose: ctx.close, ctxRsi: ctx.rsi, ctxAdx: ctx.adx, ctxFvvo: ctx.fvvoValue, ctxSlope: ctx.fvvoSlope,
-    crossOk, aboveZeroOk, rsiOk, adxOk, slopeOk, priceNearEma8Ok, ext18Ok, ext8Ok, rangeOk, ctxRsiOk, ctxAdxOk, ctxFvvoOk, ctxTrendOk, redPulseOk, redActiveOk,
+    crossOk, aboveZeroOk, rsiOk, adxOk, slopeOk, priceNearEma8Ok, ext18Ok, ext8Ok, rangeOk, ctxRsiOk, ctxAdxOk, ctxFvvoOk, ctxSlopeOk, ctxTrendOk, redPulseOk, redActiveOk,
     belowEma8Pct, extEma8Pct, extEma18Pct, recentRange: range, rsi: p.rsi, adx: p.adx, fvvo: p.fvvoValue, slope: p.fvvoSlope
   };
 
@@ -3091,6 +3093,7 @@ function evaluateFeatureCrossContinuationEntry(p) {
   if (!ctxRsiOk) failed.push("CTX_RSI_NOT_IN_RANGE");
   if (!ctxAdxOk) failed.push("CTX_ADX_TOO_LOW");
   if (!ctxFvvoOk) failed.push("CTX_FVVO_NOT_BULLISH");
+  if (!ctxSlopeOk) failed.push("CTX_SLOPE_TOO_WEAK");
   if (!ctxTrendOk) failed.push("CTX_PRICE_NOT_ABOVE_EMA8");
   if (!redPulseOk) failed.push("RED_PULSE_BLOCK");
   if (!redActiveOk) failed.push("RED_ACTIVE_BLOCK");
@@ -4770,6 +4773,8 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_RAY_REGIME_USE_5M_CONTEXT=${CFG.FVVO_RAY_REGIME_USE_5M_CONTEXT}`);
   console.log(`FVVO_RAY_REGIME_5M_MAX_AGE_SEC=${CFG.FVVO_RAY_REGIME_5M_MAX_AGE_SEC}`);
   console.log(`FVVO_RAY_REGIME_5M_STALE_FALLBACK=${CFG.FVVO_RAY_REGIME_5M_STALE_FALLBACK}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_MIN_ADX=${CFG.FVVO_FEATURE_CROSS_CONT_MIN_ADX}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE=${CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE}`);
   console.log(`FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED=${CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED}`);
   console.log(`FVVO_FEATURE_EXIT_MIN_HOLD_SEC=${CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC}`);
   console.log(`FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP=${CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP}`);
