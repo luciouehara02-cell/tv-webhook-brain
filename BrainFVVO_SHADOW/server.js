@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1v_5M_RAY_REGIME_CONTEXT
+// BrainFVVO_v1y_EXTENDED_RAY_BULL_HOLD_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -16,6 +16,8 @@
 // - v1t adds a FEATURE_TICK breakout/continuation cross leg for strong 5m trend continuation after shallow pullbacks.
 // - v1u adds Ray-style regime gating and moves the colored emoji badge near the start of each log line.
 // - v1v makes confirmed 5m Ray regime the master entry-gate context; 15s Ray is logged only.
+// - v1x adds leg-specific Ray Bull exit hold for soft/backup exits.
+// - v1y is a DEMO config-package improvement: extends CROSS_UP_CONFIRM Ray Bull hold to 7200s after Jun14 replay showed 900s expired too early.
 // ============================================================
 
 const express = require("express");
@@ -52,7 +54,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1x_RAY_BULL_EXIT_HOLD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1y_EXTENDED_RAY_BULL_HOLD_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
