@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2a_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_DEMO
+// BrainFVVO_v2a1_STALE_CONTEXT_GUARD_HOTFIX_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -57,7 +57,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2a_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2a1_STALE_CONTEXT_GUARD_HOTFIX_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -3653,7 +3653,6 @@ function evaluateCPointImpulseEntry(p) {
   if (!ext18Ok) failed.push("TOO_EXTENDED_EMA18");
   if (!redPulseOk) failed.push("RED_PULSE_BLOCK");
   if (!redActiveOk) failed.push("RED_ACTIVE_BLOCK");
-  if (!staleContextOk) failed.push("STALE_CONTEXT_TICK_RAY_NOT_BULLISH");
   if (dealBlock) failed.push("OPEN_DEAL_BLOCK");
   if (!cooldownOk) failed.push("C_POINT_COOLDOWN");
 
