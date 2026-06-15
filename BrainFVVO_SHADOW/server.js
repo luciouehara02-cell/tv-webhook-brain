@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1aa_FEATURE_CROSS_CONT_SQUEEZE_HOLD_DEMO
+// BrainFVVO_v2a_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -19,6 +19,8 @@
 // - v1x adds leg-specific Ray Bull exit hold for soft/backup exits.
 // - v1y is a DEMO config-package improvement: extends CROSS_UP_CONFIRM Ray Bull hold to 7200s after Jun14 replay showed 900s expired too early.
 // - v1z adds CROSS_UP_CONFIRM squeeze hold that can block feature dynamic-trail and quick-TP exits while the confirmed FVVO context remains bullish.
+// - v1aa adds FEATURE_CROSS_CONTINUATION squeeze hold for strong continuation breakouts.
+// - v2a adds FEATURE_CROSS_CONTINUATION stale-context entry guard to block weak entries using old 5m context unless the live tick is strongly bullish.
 // ============================================================
 
 const express = require("express");
@@ -55,7 +57,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1aa_FEATURE_CROSS_CONT_SQUEEZE_HOLD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2a_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -365,6 +367,18 @@ const CFG = {
   FVVO_FEATURE_CROSS_CONT_BLOCK_RED_PULSE: envBool("FVVO_FEATURE_CROSS_CONT_BLOCK_RED_PULSE", true),
   FVVO_FEATURE_CROSS_CONT_BLOCK_RED_ACTIVE: envBool("FVVO_FEATURE_CROSS_CONT_BLOCK_RED_ACTIVE", false),
   FVVO_FEATURE_CROSS_CONT_LOG_NO_ENTRY: envBool("FVVO_FEATURE_CROSS_CONT_LOG_NO_ENTRY", false),
+
+  // v2a: stale-context guard for FEATURE_CROSS_CONTINUATION entries.
+  // If the 5m context is old and the live tick Ray regime is not bullish,
+  // block moderate continuation entries unless a strong live tick override is present.
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_ENABLED: envBool("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_ENABLED", true),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_MAX_AGE_SEC: envNum("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_MAX_AGE_SEC", 180),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_REQUIRE_TICK_RAY_BULL: envBool("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_REQUIRE_TICK_RAY_BULL", true),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_OVERRIDE_ENABLED: envBool("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_OVERRIDE_ENABLED", true),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_RSI: envNum("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_RSI", 62),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_ADX: envNum("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_ADX", 18),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_SLOPE: envNum("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_SLOPE", 1.10),
+  FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_FVVO: envNum("FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_FVVO", 1.00),
 
   // v1r: leg-specific FEATURE_TICK_FVVO exits. These run before the 5m candle close,
   // but only for the first three intrabar-sensitive legs: C-point, tick washout, and deep washout.
@@ -3499,10 +3513,28 @@ function evaluateFeatureCrossContinuationEntry(p) {
   const redPulseOk = !CFG.FVVO_FEATURE_CROSS_CONT_BLOCK_RED_PULSE || !p.fvvoRedPulse;
   const redActiveOk = !CFG.FVVO_FEATURE_CROSS_CONT_BLOCK_RED_ACTIVE || !p.fvvoRedActive;
 
-  const ok = crossOk && aboveZeroOk && rsiOk && adxOk && slopeOk && priceNearEma8Ok && ext18Ok && ext8Ok && rangeOk && ctxRsiOk && ctxAdxOk && ctxFvvoOk && ctxSlopeOk && ctxTrendOk && redPulseOk && redActiveOk;
+  const nowMs = timeToMs(p.time);
+  const ctxMs = timeToMs(ctx.time);
+  const ctxAgeSec = Number.isFinite(nowMs) && Number.isFinite(ctxMs) ? Math.max(0, (nowMs - ctxMs) / 1000) : null;
+  const tickRay = classifyRayRegimeFromPayload(p);
+  const tickRayRegime = tickRay && tickRay.regime ? tickRay.regime : "RAY_NEUTRAL";
+  const tickRayBullOk = tickRayRegime === "RAY_BULL" || p.rayBull === true;
+  const staleContext = CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_ENABLED &&
+    Number.isFinite(ctxAgeSec) && ctxAgeSec > CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_MAX_AGE_SEC;
+  const strongTickOverride = CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_OVERRIDE_ENABLED &&
+    Number.isFinite(p.rsi) && p.rsi >= CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_RSI &&
+    Number.isFinite(p.adx) && p.adx >= CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_ADX &&
+    Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_SLOPE &&
+    Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_FVVO;
+  const staleContextOk = !staleContext ||
+    !CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_REQUIRE_TICK_RAY_BULL ||
+    tickRayBullOk ||
+    strongTickOverride;
+
+  const ok = crossOk && aboveZeroOk && rsiOk && adxOk && slopeOk && priceNearEma8Ok && ext18Ok && ext8Ok && rangeOk && ctxRsiOk && ctxAdxOk && ctxFvvoOk && ctxSlopeOk && ctxTrendOk && redPulseOk && redActiveOk && staleContextOk;
 
   const checks = {
-    setup, ctxTime: ctx.time, ctxClose: ctx.close, ctxRsi: ctx.rsi, ctxAdx: ctx.adx, ctxFvvo: ctx.fvvoValue, ctxSlope: ctx.fvvoSlope,
+    setup, ctxTime: ctx.time, ctxClose: ctx.close, ctxRsi: ctx.rsi, ctxAdx: ctx.adx, ctxFvvo: ctx.fvvoValue, ctxSlope: ctx.fvvoSlope, ctxAgeSec, tickRayRegime, tickRayBullOk, staleContext, strongTickOverride, staleContextOk,
     crossOk, aboveZeroOk, rsiOk, adxOk, slopeOk, priceNearEma8Ok, ext18Ok, ext8Ok, rangeOk, ctxRsiOk, ctxAdxOk, ctxFvvoOk, ctxSlopeOk, ctxTrendOk, redPulseOk, redActiveOk,
     belowEma8Pct, extEma8Pct, extEma18Pct, recentRange: range, rsi: p.rsi, adx: p.adx, fvvo: p.fvvoValue, slope: p.fvvoSlope
   };
@@ -3526,6 +3558,7 @@ function evaluateFeatureCrossContinuationEntry(p) {
   if (!ctxTrendOk) failed.push("CTX_PRICE_NOT_ABOVE_EMA8");
   if (!redPulseOk) failed.push("RED_PULSE_BLOCK");
   if (!redActiveOk) failed.push("RED_ACTIVE_BLOCK");
+  if (!staleContextOk) failed.push("STALE_CONTEXT_TICK_RAY_NOT_BULLISH");
   return { ok: false, setup, reason: failed.join("+") || "NO_FEATURE_CROSS_CONTINUATION", momentumOverride: false, checks };
 }
 
@@ -3620,6 +3653,7 @@ function evaluateCPointImpulseEntry(p) {
   if (!ext18Ok) failed.push("TOO_EXTENDED_EMA18");
   if (!redPulseOk) failed.push("RED_PULSE_BLOCK");
   if (!redActiveOk) failed.push("RED_ACTIVE_BLOCK");
+  if (!staleContextOk) failed.push("STALE_CONTEXT_TICK_RAY_NOT_BULLISH");
   if (dealBlock) failed.push("OPEN_DEAL_BLOCK");
   if (!cooldownOk) failed.push("C_POINT_COOLDOWN");
 
@@ -5206,6 +5240,14 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_RAY_REGIME_5M_STALE_FALLBACK=${CFG.FVVO_RAY_REGIME_5M_STALE_FALLBACK}`);
   console.log(`FVVO_FEATURE_CROSS_CONT_MIN_ADX=${CFG.FVVO_FEATURE_CROSS_CONT_MIN_ADX}`);
   console.log(`FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE=${CFG.FVVO_FEATURE_CROSS_CONT_CTX_MIN_SLOPE}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_ENABLED=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_GUARD_ENABLED}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_MAX_AGE_SEC=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_MAX_AGE_SEC}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_REQUIRE_TICK_RAY_BULL=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_REQUIRE_TICK_RAY_BULL}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_OVERRIDE_ENABLED=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_OVERRIDE_ENABLED}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_RSI=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_RSI}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_ADX=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_ADX}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_SLOPE=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_SLOPE}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_FVVO=${CFG.FVVO_FEATURE_CROSS_CONT_STALE_CONTEXT_STRONG_MIN_FVVO}`);
   console.log(`FVVO_RAY_BULL_EXIT_HOLD_ENABLED=${CFG.FVVO_RAY_BULL_EXIT_HOLD_ENABLED}`);
   console.log(`FVVO_CROSS_RAY_BULL_HOLD_SEC=${CFG.FVVO_CROSS_RAY_BULL_HOLD_SEC}`);
   console.log(`FVVO_FEATURE_CROSS_CONT_RAY_BULL_HOLD_SEC=${CFG.FVVO_FEATURE_CROSS_CONT_RAY_BULL_HOLD_SEC}`);
