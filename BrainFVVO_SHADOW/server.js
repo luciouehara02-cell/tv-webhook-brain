@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v1y_EXTENDED_RAY_BULL_HOLD_DEMO
+// BrainFVVO_v1z_CROSS_SQUEEZE_HOLD_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -18,6 +18,7 @@
 // - v1v makes confirmed 5m Ray regime the master entry-gate context; 15s Ray is logged only.
 // - v1x adds leg-specific Ray Bull exit hold for soft/backup exits.
 // - v1y is a DEMO config-package improvement: extends CROSS_UP_CONFIRM Ray Bull hold to 7200s after Jun14 replay showed 900s expired too early.
+// - v1z adds CROSS_UP_CONFIRM squeeze hold that can block feature dynamic-trail and quick-TP exits while the confirmed FVVO context remains bullish.
 // ============================================================
 
 const express = require("express");
@@ -54,7 +55,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1y_EXTENDED_RAY_BULL_HOLD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v1z_CROSS_SQUEEZE_HOLD_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -549,9 +550,22 @@ const CFG = {
   FVVO_POST_CROSS_RAY_BULL_HOLD_SEC: envNum("FVVO_POST_CROSS_RAY_BULL_HOLD_SEC", 300),
   FVVO_RAY_BULL_HOLD_BLOCK_HARD_DOWN_BACKUP: envBool("FVVO_RAY_BULL_HOLD_BLOCK_HARD_DOWN_BACKUP", true),
   FVVO_RAY_BULL_HOLD_BLOCK_WEAKNESS_EXIT: envBool("FVVO_RAY_BULL_HOLD_BLOCK_WEAKNESS_EXIT", true),
+  FVVO_RAY_BULL_HOLD_BLOCK_DYNAMIC_TRAIL: envBool("FVVO_RAY_BULL_HOLD_BLOCK_DYNAMIC_TRAIL", false),
   FVVO_RAY_BULL_HOLD_REQUIRE_PRICE_ABOVE_EMA18: envBool("FVVO_RAY_BULL_HOLD_REQUIRE_PRICE_ABOVE_EMA18", true),
   FVVO_RAY_BULL_HOLD_REQUIRE_CTX_FVVO_ABOVE_ZERO: envBool("FVVO_RAY_BULL_HOLD_REQUIRE_CTX_FVVO_ABOVE_ZERO", true),
   FVVO_RAY_BULL_HOLD_MAX_UNREALIZED_LOSS_PCT: envNum("FVVO_RAY_BULL_HOLD_MAX_UNREALIZED_LOSS_PCT", -0.10),
+
+  // v1z DEMO: CROSS_UP_CONFIRM squeeze hold. This is intentionally narrower than
+  // the generic Ray Bull hold: it targets clean cross entries only, blocks dynamic
+  // trail / quick TP while the 5m FVVO context remains above zero, and never blocks
+  // hard stop / close max-loss exits.
+  FVVO_CROSS_SQUEEZE_HOLD_ENABLED: envBool("FVVO_CROSS_SQUEEZE_HOLD_ENABLED", true),
+  FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL: envBool("FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL", true),
+  FVVO_CROSS_SQUEEZE_HOLD_BLOCK_QUICK_TP: envBool("FVVO_CROSS_SQUEEZE_HOLD_BLOCK_QUICK_TP", true),
+  FVVO_CROSS_SQUEEZE_HOLD_MIN_PNL_PCT: envNum("FVVO_CROSS_SQUEEZE_HOLD_MIN_PNL_PCT", 0.20),
+  FVVO_CROSS_SQUEEZE_HOLD_CTX_MIN_FVVO: envNum("FVVO_CROSS_SQUEEZE_HOLD_CTX_MIN_FVVO", 0),
+  FVVO_CROSS_SQUEEZE_HOLD_REQUIRE_PRICE_ABOVE_EMA18: envBool("FVVO_CROSS_SQUEEZE_HOLD_REQUIRE_PRICE_ABOVE_EMA18", true),
+  FVVO_CROSS_SQUEEZE_HOLD_MAX_BELOW_EMA18_PCT: envNum("FVVO_CROSS_SQUEEZE_HOLD_MAX_BELOW_EMA18_PCT", 0.15),
 
 
   // v1u: Ray-style regime gate. This can use explicit publisher fields (rayRegime/rayBull/rayBear)
@@ -2021,6 +2035,98 @@ function rayBullExitHoldLogFields(hold) {
   ];
 }
 
+function crossSqueezeExitHold(pos, p, perf) {
+  if (!CFG.FVVO_CROSS_SQUEEZE_HOLD_ENABLED || !pos || !p || !perf) return { hold: false, reason: "DISABLED" };
+  if (String(pos.setup || "").toUpperCase() !== "CROSS_UP_CONFIRM") return { hold: false, reason: "SETUP_NOT_CROSS" };
+
+  const holdSec = Math.max(0, Number(CFG.FVVO_CROSS_RAY_BULL_HOLD_SEC) || 0);
+  if (holdSec <= 0) return { hold: false, reason: "HOLD_WINDOW_DISABLED", holdSec };
+
+  const entryMs = pos.entryMs || timeToMs(pos.entryTime);
+  const nowMs = timeToMs(p.time);
+  const elapsedSec = Number.isFinite(entryMs) && Number.isFinite(nowMs) ? Math.max(0, (nowMs - entryMs) / 1000) : 0;
+  if (elapsedSec > holdSec) return { hold: false, reason: "HOLD_WINDOW_EXPIRED", holdSec, elapsedSec };
+
+  const currentPnlPct = Number(perf.currentPnlPct);
+  if (!Number.isFinite(currentPnlPct) || currentPnlPct < CFG.FVVO_CROSS_SQUEEZE_HOLD_MIN_PNL_PCT) {
+    return { hold: false, reason: "PNL_BELOW_SQUEEZE_HOLD_MIN", holdSec, elapsedSec, currentPnlPct };
+  }
+  if (Number.isFinite(currentPnlPct) && currentPnlPct < CFG.FVVO_RAY_BULL_HOLD_MAX_UNREALIZED_LOSS_PCT) {
+    return { hold: false, reason: "MAX_UNREALIZED_LOSS_EXCEEDED", holdSec, elapsedSec, currentPnlPct };
+  }
+
+  const priceAboveEma18 = Number.isFinite(p.ema18) && Number.isFinite(p.close) && p.close >= p.ema18;
+  const belowEma18Pct = Number.isFinite(p.ema18) && Number.isFinite(p.close) && p.ema18 > 0 && p.close < p.ema18
+    ? ((p.ema18 - p.close) / p.ema18) * 100
+    : 0;
+  if (CFG.FVVO_CROSS_SQUEEZE_HOLD_REQUIRE_PRICE_ABOVE_EMA18 && !priceAboveEma18 && belowEma18Pct > CFG.FVVO_CROSS_SQUEEZE_HOLD_MAX_BELOW_EMA18_PCT) {
+    return { hold: false, reason: "PRICE_TOO_FAR_BELOW_EMA18", holdSec, elapsedSec, currentPnlPct, priceAboveEma18, belowEma18Pct };
+  }
+
+  const payloadGate = classifyRayRegimeFromPayload(p);
+  const gate = classifyRayRegime(p);
+  const ctx = currentRay5mContextFeature(p);
+  const ctxFvvo = ctx ? Number(ctx.fvvoValue) : NaN;
+  const ctxFvvoOk = Number.isFinite(ctxFvvo) && ctxFvvo > CFG.FVVO_CROSS_SQUEEZE_HOLD_CTX_MIN_FVVO;
+  const tickRayBull = payloadGate.regime === "RAY_BULL" || p.rayBull === true;
+  const gateRayBull = gate.regime === "RAY_BULL";
+  const ctxRayBull = ctx && ctx.regime === "RAY_BULL";
+  const ctxPriceStackOk = ctx && Number.isFinite(ctx.close) && Number.isFinite(ctx.ema8) && Number.isFinite(ctx.ema18) && ctx.close >= ctx.ema8 && ctx.ema8 >= ctx.ema18;
+
+  if (!(ctxFvvoOk || gateRayBull || tickRayBull || ctxRayBull || ctxPriceStackOk)) {
+    return {
+      hold: false,
+      reason: "SQUEEZE_CONTEXT_NOT_BULLISH",
+      holdSec,
+      elapsedSec,
+      currentPnlPct,
+      gateRayRegime: gate.regime,
+      gateRaySource: gate.source,
+      tickRayRegime: payloadGate.regime,
+      tickRaySource: payloadGate.source,
+      ctxRayRegime: ctx ? ctx.regime : "na",
+      ctxFvvo
+    };
+  }
+
+  return {
+    hold: true,
+    reason: "CROSS_SQUEEZE_HOLD",
+    setup: pos.setup,
+    holdSec,
+    elapsedSec,
+    currentPnlPct,
+    gateRayRegime: gate.regime,
+    gateRaySource: gate.source,
+    tickRayRegime: payloadGate.regime,
+    tickRaySource: payloadGate.source,
+    ctxRayRegime: ctx ? ctx.regime : "na",
+    ctxFvvo,
+    ctxFvvoOk,
+    tickRayBull,
+    gateRayBull,
+    ctxRayBull,
+    ctxPriceStackOk,
+    priceAboveEma18,
+    belowEma18Pct
+  };
+}
+
+function crossSqueezeHoldLogFields(hold) {
+  if (!hold || !hold.hold) return [];
+  return [
+    `crossSqueezeHold=true`,
+    `holdSec=${n(hold.holdSec, 0)}`,
+    `elapsedSec=${n(hold.elapsedSec, 0)}`,
+    `pnl=${pct(hold.currentPnlPct)}`,
+    `gateRayRegime=${hold.gateRayRegime || "na"}`,
+    `tickRayRegime=${hold.tickRayRegime || "na"}`,
+    `ctxRayRegime=${hold.ctxRayRegime || "na"}`,
+    `ctxFvvo=${Number.isFinite(hold.ctxFvvo) ? n(hold.ctxFvvo, 6) : "na"}`,
+    `holdReason=${hold.reason || "na"}`
+  ];
+}
+
 function evaluateLongExit(pos, p, perf) {
   const currentPnlPct = perf.currentPnlPct;
   const peakPnlPct = perf.peakPnlPct;
@@ -2029,6 +2135,7 @@ function evaluateLongExit(pos, p, perf) {
   const hardDownSlope = Number.isFinite(p.fvvoSlope) && p.fvvoSlope <= CFG.FVVO_HARD_DOWN_SLOPE;
   const strongTrendHold = isStrongTrendHold(pos, p, perf);
   const rayBullHold = rayBullExitHold(pos, p, perf);
+  const crossSqueezeHold = crossSqueezeExitHold(pos, p, perf);
 
   const intrabarHardStopHit = CFG.FVVO_INTRABAR_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && Number.isFinite(p.low) && p.low <= pos.stopPrice;
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
@@ -2057,12 +2164,24 @@ function evaluateLongExit(pos, p, perf) {
 
   if (intrabarHardStopHit) return { exit: true, reason: "FVVO_INTRABAR_HARD_STOP", backupUsed: true, exitPrice: pos.stopPrice, strongTrendHold };
   if (p.fvvoRedPulse && CFG.FVVO_RED_PULSE_EXIT_ENABLED) state.stats.redPulseWarnings += 1;
+  if (redPulseProfitExit && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_RED_PULSE", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
+  }
   if (redPulseProfitExit) return { exit: true, reason: "FVVO_RED_PULSE_PROFIT_WARNING", backupUsed: false, exitPrice: p.close, strongTrendHold };
   if (closeMaxLossHit) return { exit: true, reason: "FVVO_CLOSE_MAX_LOSS_EXIT", backupUsed: true, exitPrice: p.close, strongTrendHold };
+  if (quickTpExit && CFG.FVVO_CROSS_SQUEEZE_HOLD_BLOCK_QUICK_TP && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_QUICK_TP", backupUsed: false, exitPrice: null, strongTrendHold: true, dynamicTrail, crossSqueezeHold };
+  }
   if (quickTpExit) return { exit: true, reason: "FVVO_FEE_AWARE_QUICK_TP", backupUsed: false, exitPrice: p.close, strongTrendHold };
   if (dynamicQuickTpHold) {
     state.stats.dynamicQuickTpHolds += 1;
     return { exit: false, reason: "HOLD_DYNAMIC_QUICK_TP_STRONG_TREND", backupUsed: false, exitPrice: null, strongTrendHold: true, dynamicTrail };
+  }
+  if (dynamicTrailExit && CFG.FVVO_RAY_BULL_HOLD_BLOCK_DYNAMIC_TRAIL && rayBullHold.hold) {
+    return { exit: false, reason: "HOLD_RAY_BULL_BLOCKED_DYNAMIC_TRAIL", backupUsed: false, exitPrice: null, strongTrendHold: true, dynamicTrail, rayBullHold };
+  }
+  if (dynamicTrailExit && CFG.FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_DYNAMIC_TRAIL", backupUsed: false, exitPrice: null, strongTrendHold: true, dynamicTrail, crossSqueezeHold };
   }
   if (dynamicTrailExit) return { exit: true, reason: "FVVO_DYNAMIC_TRAIL_EXIT", backupUsed: false, exitPrice: p.close, strongTrendHold, dynamicTrail };
   if (dynamicTrailActive && strongTrendHold) {
@@ -2073,6 +2192,9 @@ function evaluateLongExit(pos, p, perf) {
     state.stats.dynamicTrailHolds += 1;
   }
   if (breakevenProtectExit) return { exit: true, reason: "FVVO_BREAKEVEN_PROTECT", backupUsed: true, exitPrice: p.close, strongTrendHold };
+  if (givebackArm2 && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_GIVEBACK_ARM2", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
+  }
   if (givebackArm2 && !strongTrendHold && softExitMinProfitOk) return { exit: true, reason: "FVVO_GIVEBACK_ARM2", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (givebackArm2 && !strongTrendHold && !softExitMinProfitOk) {
     state.stats.softExitMinProfitBlocks += 1;
@@ -2081,6 +2203,9 @@ function evaluateLongExit(pos, p, perf) {
   if (givebackArm2 && strongTrendHold) {
     state.stats.givebackBlockedByStrongTrend += 1;
     return { exit: false, reason: "HOLD_STRONG_TREND_BLOCKED_GIVEBACK_ARM2", backupUsed: false, exitPrice: null, strongTrendHold };
+  }
+  if (givebackArm1 && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_GIVEBACK_ARM1", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
   }
   if (givebackArm1 && !strongTrendHold && softExitMinProfitOk) return { exit: true, reason: "FVVO_GIVEBACK_ARM1", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (givebackArm1 && !strongTrendHold && !softExitMinProfitOk) {
@@ -2091,13 +2216,25 @@ function evaluateLongExit(pos, p, perf) {
     state.stats.givebackBlockedByStrongTrend += 1;
     return { exit: false, reason: "HOLD_STRONG_TREND_BLOCKED_GIVEBACK_ARM1", backupUsed: false, exitPrice: null, strongTrendHold };
   }
+  if (backupNoRedDot && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_ZERO_LOSS_EMA8_BACKUP", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
+  }
   if (backupNoRedDot) return { exit: true, reason: "FVVO_NO_RED_DOT_BACKUP_ZERO_LOSS_EMA8_GIVEBACK", backupUsed: true, exitPrice: p.close, strongTrendHold };
+  if (crossDownExit && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_CROSS_DOWN_BACKUP", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
+  }
   if (crossDownExit) return { exit: true, reason: "FVVO_CROSS_DOWN_BACKUP", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (hardSlopeExit) {
+    if (crossSqueezeHold.hold) {
+      return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_HARD_DOWN_BACKUP", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
+    }
     if (CFG.FVVO_RAY_BULL_HOLD_BLOCK_HARD_DOWN_BACKUP && rayBullHold.hold) {
       return { exit: false, reason: "HOLD_RAY_BULL_BLOCKED_HARD_DOWN_BACKUP", backupUsed: false, exitPrice: null, strongTrendHold: true, rayBullHold };
     }
     return { exit: true, reason: "FVVO_HARD_DOWN_SLOPE_BACKUP", backupUsed: true, exitPrice: p.close, strongTrendHold };
+  }
+  if (ema8LossProfitExit && crossSqueezeHold.hold) {
+    return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_EMA8_LOSS_BACKUP", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
   }
   if (ema8LossProfitExit) return { exit: true, reason: "FVVO_EMA8_LOSS_PROFIT_BACKUP", backupUsed: true, exitPrice: p.close, strongTrendHold };
   if (maxHoldExit) return { exit: true, reason: "FVVO_MAX_HOLD_BARS_EXIT", backupUsed: true, exitPrice: p.close, strongTrendHold };
@@ -2636,15 +2773,29 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
 
   const dynamicTrail = calcFeatureProfileTrail(profile, perf);
   if (dynamicTrail.armed && dynamicTrail.exit) {
+    const rayBullHold = rayBullExitHold(pos, p, perf);
+    const crossSqueezeHold = crossSqueezeExitHold(pos, p, perf);
+    if (CFG.FVVO_RAY_BULL_HOLD_BLOCK_DYNAMIC_TRAIL && rayBullHold.hold) {
+      return { exit: false, reason: `FEATURE_${label}_HOLD_RAY_BULL_BLOCKED_DYNAMIC_TRAIL`, backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, dynamicTrail, featureExitProfile: profile, rayBullHold };
+    }
+    if (CFG.FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL && crossSqueezeHold.hold) {
+      return { exit: false, reason: `FEATURE_${label}_HOLD_CROSS_SQUEEZE_BLOCKED_DYNAMIC_TRAIL`, backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, dynamicTrail, featureExitProfile: profile, crossSqueezeHold };
+    }
     return { exit: true, reason: `FVVO_FEATURE_${label}_DYNAMIC_TRAIL`, backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, dynamicTrail, featureExitProfile: profile };
   }
 
   if (profile.weaknessEnabled) {
     const rayBullHold = rayBullExitHold(pos, p, perf);
+    const crossSqueezeHold = crossSqueezeExitHold(pos, p, perf);
     if (CFG.FVVO_RAY_BULL_HOLD_BLOCK_WEAKNESS_EXIT && rayBullHold.hold) {
       clearFeatureWeaknessForPosition(pos);
       pos.lastFeatureExitRsi = p.rsi;
       return { exit: false, reason: `FEATURE_${label}_HOLD_RAY_BULL_BLOCKED_WEAKNESS`, backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, featureExitProfile: profile, rayBullHold };
+    }
+    if (CFG.FVVO_CROSS_SQUEEZE_HOLD_ENABLED && crossSqueezeHold.hold) {
+      clearFeatureWeaknessForPosition(pos);
+      pos.lastFeatureExitRsi = p.rsi;
+      return { exit: false, reason: `FEATURE_${label}_HOLD_CROSS_SQUEEZE_BLOCKED_WEAKNESS`, backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, featureExitProfile: profile, crossSqueezeHold };
     }
 
     const confirmTicks = Math.max(1, Number(profile.weaknessConfirmTicks) || 1);
@@ -2703,10 +2854,21 @@ function evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec) {
 
   const dynamicTrail = calcFeatureProfileTrail(profile, perf);
   if (dynamicTrail.armed && dynamicTrail.exit) {
+    const crossSqueezeHold = crossSqueezeExitHold(shadow, tick, perf);
+    if (CFG.FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL && crossSqueezeHold.hold) {
+      shadow.lastFeatureExitRsi = tick.rsi;
+      return null;
+    }
     return { reason: `FVVO_FEATURE_${label}_DYNAMIC_TRAIL`, exitPrice: price, dynamicTrail };
   }
 
   if (profile.weaknessEnabled) {
+    const crossSqueezeHold = crossSqueezeExitHold(shadow, tick, perf);
+    if (CFG.FVVO_CROSS_SQUEEZE_HOLD_ENABLED && crossSqueezeHold.hold) {
+      shadow.lastFeatureExitRsi = tick.rsi;
+      return null;
+    }
+
     const confirmTicks = Math.max(1, Number(profile.weaknessConfirmTicks) || 1);
     const closeLostEma8 = Number.isFinite(tick.ema8) && price < tick.ema8;
     const prevRsi = Number.isFinite(tick.prevRsi) ? tick.prevRsi : (Number.isFinite(shadow.lastFeatureExitRsi) ? shadow.lastFeatureExitRsi : null);
@@ -4904,9 +5066,17 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_POST_CROSS_RAY_BULL_HOLD_SEC=${CFG.FVVO_POST_CROSS_RAY_BULL_HOLD_SEC}`);
   console.log(`FVVO_RAY_BULL_HOLD_BLOCK_HARD_DOWN_BACKUP=${CFG.FVVO_RAY_BULL_HOLD_BLOCK_HARD_DOWN_BACKUP}`);
   console.log(`FVVO_RAY_BULL_HOLD_BLOCK_WEAKNESS_EXIT=${CFG.FVVO_RAY_BULL_HOLD_BLOCK_WEAKNESS_EXIT}`);
+  console.log(`FVVO_RAY_BULL_HOLD_BLOCK_DYNAMIC_TRAIL=${CFG.FVVO_RAY_BULL_HOLD_BLOCK_DYNAMIC_TRAIL}`);
   console.log(`FVVO_RAY_BULL_HOLD_REQUIRE_PRICE_ABOVE_EMA18=${CFG.FVVO_RAY_BULL_HOLD_REQUIRE_PRICE_ABOVE_EMA18}`);
   console.log(`FVVO_RAY_BULL_HOLD_REQUIRE_CTX_FVVO_ABOVE_ZERO=${CFG.FVVO_RAY_BULL_HOLD_REQUIRE_CTX_FVVO_ABOVE_ZERO}`);
   console.log(`FVVO_RAY_BULL_HOLD_MAX_UNREALIZED_LOSS_PCT=${CFG.FVVO_RAY_BULL_HOLD_MAX_UNREALIZED_LOSS_PCT}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_ENABLED=${CFG.FVVO_CROSS_SQUEEZE_HOLD_ENABLED}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL=${CFG.FVVO_CROSS_SQUEEZE_HOLD_BLOCK_DYNAMIC_TRAIL}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_BLOCK_QUICK_TP=${CFG.FVVO_CROSS_SQUEEZE_HOLD_BLOCK_QUICK_TP}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_MIN_PNL_PCT=${CFG.FVVO_CROSS_SQUEEZE_HOLD_MIN_PNL_PCT}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_CTX_MIN_FVVO=${CFG.FVVO_CROSS_SQUEEZE_HOLD_CTX_MIN_FVVO}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_REQUIRE_PRICE_ABOVE_EMA18=${CFG.FVVO_CROSS_SQUEEZE_HOLD_REQUIRE_PRICE_ABOVE_EMA18}`);
+  console.log(`FVVO_CROSS_SQUEEZE_HOLD_MAX_BELOW_EMA18_PCT=${CFG.FVVO_CROSS_SQUEEZE_HOLD_MAX_BELOW_EMA18_PCT}`);
   console.log(`FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED=${CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED}`);
   console.log(`FVVO_FEATURE_EXIT_MIN_HOLD_SEC=${CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC}`);
   console.log(`FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP=${CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP}`);
