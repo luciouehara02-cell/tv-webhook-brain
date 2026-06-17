@@ -1,6 +1,6 @@
 //############### PowerShell ################
 
-1. Manual entry — start deal now
+1. Manual entry — start deal now (START)
 
 $body = @{
   secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
@@ -32,7 +32,7 @@ Invoke-RestMethod `
   -Body $body
 
 
-3) Handoff / reset control when BOT already in trade(Manual BOT EXIT)
+3) Handoff / reset control when BOT already in trade (Take OVER by Manual BOT EXIT)
 Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
 
 $body = @{
@@ -62,4 +62,3 @@ Invoke-RestMethod `
   -Uri "https://braindemolong-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
-
