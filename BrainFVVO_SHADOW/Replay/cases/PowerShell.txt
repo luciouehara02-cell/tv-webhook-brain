@@ -1,0 +1,65 @@
+//############### PowerShell ################
+
+1. Manual entry — start deal now
+
+$body = @{
+  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  action = "enter_long"
+  symbol = "BINANCE:SOLUSDT"
+  profile = "FEATURE_CROSS_CONTINUATION"
+  reason = "manual_entry_latest_price"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+2. Manual exit — close deal now (STOP)
+This sends exit_long to 3Commas immediately.
+
+$body = @{
+  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  action = "exit_long"
+  symbol = "BINANCE:SOLUSDT"
+  reason = "manual_exit"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+3) Handoff / reset control when BOT already in trade(Manual BOT EXIT)
+Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
+
+$body = @{
+  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  action = "handoff_manual"
+  symbol = "BINANCE:SOLUSDT"
+  reason = "user_will_manage_exit"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+4) Clear handoff after you manually close in 3Commas (CLEAR MEMORY)
+Use this only after the deal is already closed manually.
+
+$body = @{
+  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  action = "clear_handoff"
+  symbol = "BINANCE:SOLUSDT"
+  reason = "manual_deal_closed"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
