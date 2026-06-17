@@ -1,4 +1,4 @@
-//############### PowerShell ################
+//############### DEMO PowerShell ################
 
 1. Manual entry — start deal now (START)
 
