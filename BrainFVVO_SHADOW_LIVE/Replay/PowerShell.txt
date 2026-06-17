@@ -1,9 +1,10 @@
-//############### PowerShell ################
+//############### LIVE PowerShell ################
+brainfvvoshadwlive-production.up.railway.app
 
 1. Manual entry — start deal now (START)
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_MANUAL_6k3wqs9x5z2p2f5m3Live"
   action = "enter_long"
   symbol = "BINANCE:SOLUSDT"
   profile = "FEATURE_CROSS_CONTINUATION"
@@ -11,7 +12,7 @@ $body = @{
 } | ConvertTo-Json
 Invoke-RestMethod `
   -Method Post `
-  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
 
@@ -20,14 +21,14 @@ Invoke-RestMethod `
 This sends exit_long to 3Commas immediately.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_MANUAL_6k3wqs9x5z2p2f5m3Live"
   action = "exit_long"
   symbol = "BINANCE:SOLUSDT"
   reason = "manual_exit"
 } | ConvertTo-Json
 Invoke-RestMethod `
   -Method Post `
-  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
 
@@ -36,14 +37,14 @@ Invoke-RestMethod `
 Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_MANUAL_6k3wqs9x5z2p2f5m3Live"
   action = "handoff_manual"
   symbol = "BINANCE:SOLUSDT"
   reason = "user_will_manage_exit"
 } | ConvertTo-Json
 Invoke-RestMethod `
   -Method Post `
-  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
 
@@ -52,14 +53,15 @@ Invoke-RestMethod `
 Use this only after the deal is already closed manually.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_MANUAL_6k3wqs9x5z2p2f5m3Live"
   action = "clear_handoff"
   symbol = "BINANCE:SOLUSDT"
   reason = "manual_deal_closed"
 } | ConvertTo-Json
 Invoke-RestMethod `
   -Method Post `
-  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
+
 
