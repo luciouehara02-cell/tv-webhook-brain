@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2d_PINK_EXIT_CROSS_GUARD_DEMO
+// BrainFVVO_v2e_POST_PINK_QUALITY_GUARD_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -23,6 +23,8 @@
 // - v2a adds FEATURE_CROSS_CONTINUATION stale-context entry guard to block weak entries using old 5m context unless the live tick is strongly bullish.
 // - v2b adds manual-control webhooks, conservative risk-streak thresholds, and weak-entry guards for POST_CROSS / FEATURE_CROSS_CONT.
 // - v2c adds replay-tuned deep-washout overheat protection, fee-aware deep-washout BE lock, and shadow/optional PINK_IMPULSE_RECLAIM.
+// - v2d adds neutral-Ray cross guard, Pink Impulse fee-aware exits, Ray-Bull hold, and same-move cooldown.
+// - v2e adds Post-Cross overheat guard and Pink stale-context/neutral-tick positive-FVVO guard.
 // - v2d adds Pink Impulse fee-aware exits/hold/cooldown and a neutral-Ray weak CROSS_UP_CONFIRM guard.
 // ============================================================
 
@@ -60,7 +62,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2d_PINK_EXIT_CROSS_GUARD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2e_POST_PINK_QUALITY_GUARD_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -344,6 +346,12 @@ const CFG = {
   FVVO_POST_CROSS_NEUTRAL_RAY_MIN_RSI: envNum("FVVO_POST_CROSS_NEUTRAL_RAY_MIN_RSI", 55),
   FVVO_POST_CROSS_NEUTRAL_RAY_MIN_SLOPE: envNum("FVVO_POST_CROSS_NEUTRAL_RAY_MIN_SLOPE", 0.75),
 
+  // v2e: block overheated POST_CROSS_RECLAIM entries that historically reversed quickly.
+  FVVO_POST_CROSS_OVERHEAT_GUARD_ENABLED: envBool("FVVO_POST_CROSS_OVERHEAT_GUARD_ENABLED", true),
+  FVVO_POST_CROSS_OVERHEAT_MIN_FVVO: envNum("FVVO_POST_CROSS_OVERHEAT_MIN_FVVO", 2.20),
+  FVVO_POST_CROSS_OVERHEAT_MIN_ADX: envNum("FVVO_POST_CROSS_OVERHEAT_MIN_ADX", 24),
+  FVVO_POST_CROSS_OVERHEAT_BLOCK_WHEN_RAY_NOT_BULL: envBool("FVVO_POST_CROSS_OVERHEAT_BLOCK_WHEN_RAY_NOT_BULL", true),
+
   // v1q: C-point impulse breakout/recovery leg. This is designed for FEATURE_TICK_FVVO,
   // where the brain receives live intrabar RSI/FVVO/EMA values instead of price-only ticks.
   // Default is shadow/log-only for safety. Enable forwarding only after enough positive logs.
@@ -447,6 +455,14 @@ const CFG = {
   FVVO_PINK_IMPULSE_RAY_BULL_MAX_UNREALIZED_LOSS_PCT: envNum("FVVO_PINK_IMPULSE_RAY_BULL_MAX_UNREALIZED_LOSS_PCT", -0.25),
   FVVO_PINK_IMPULSE_AFTER_EXIT_COOLDOWN_SEC: envNum("FVVO_PINK_IMPULSE_AFTER_EXIT_COOLDOWN_SEC", 900),
   FVVO_PINK_IMPULSE_BLOCK_AFTER_DEEP_EXIT_SEC: envNum("FVVO_PINK_IMPULSE_BLOCK_AFTER_DEEP_EXIT_SEC", 900),
+
+  // v2e: prevent stale 5m-context Pink entries when live tick Ray is not bullish
+  // and FVVO is already positive but not strong enough to prove momentum.
+  FVVO_PINK_IMPULSE_STALE_NEUTRAL_POSITIVE_GUARD_ENABLED: envBool("FVVO_PINK_IMPULSE_STALE_NEUTRAL_POSITIVE_GUARD_ENABLED", true),
+  FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_CTX_AGE_SEC: envNum("FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_CTX_AGE_SEC", 240),
+  FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_FVVO: envNum("FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_FVVO", 0.25),
+  FVVO_PINK_IMPULSE_STALE_NEUTRAL_MAX_FVVO: envNum("FVVO_PINK_IMPULSE_STALE_NEUTRAL_MAX_FVVO", 1.50),
+  FVVO_PINK_IMPULSE_STALE_NEUTRAL_REQUIRE_TICK_NOT_BULL: envBool("FVVO_PINK_IMPULSE_STALE_NEUTRAL_REQUIRE_TICK_NOT_BULL", true),
 
   // v2d: block weak neutral-Ray fresh FVVO crosses. Ray Bull crosses still use the normal v2c logic.
   FVVO_CROSS_NEUTRAL_RAY_GUARD_ENABLED: envBool("FVVO_CROSS_NEUTRAL_RAY_GUARD_ENABLED", true),
@@ -1816,8 +1832,16 @@ function evaluatePostCrossReclaimEntry(p, crossDecision, barNo) {
     Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= CFG.FVVO_POST_CROSS_NEUTRAL_RAY_MIN_SLOPE;
   const neutralRayGuardOk = !CFG.FVVO_POST_CROSS_NEUTRAL_RAY_GUARD_ENABLED || postCrossRayBull || postCrossNeutralStrong;
 
-  const ok = ageOk && priceOk && rsiOk && adxOk && slopeOk && fvvoOk && ext8Ok && ext18Ok && noRecentRed && noBearishConflict && neutralRayGuardOk;
-  const checks = { setup, ageBars, memory: mem, priceOk, priceAboveEma8, rsiOk, adxOk, slopeOk, fvvoOk, ext8Ok, ext18Ok, noRecentRed, noBearishConflict, neutralRayGuardOk, postCrossRayRegime, postCrossRayBull, postCrossNeutralStrong, extEma8Pct, extEma18Pct, rsi: p.rsi, adx: p.adx, fvvo: p.fvvoValue, slope: p.fvvoSlope };
+  const postCrossOverheatActive = Boolean(
+    CFG.FVVO_POST_CROSS_OVERHEAT_GUARD_ENABLED &&
+    Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_POST_CROSS_OVERHEAT_MIN_FVVO &&
+    Number.isFinite(p.adx) && p.adx >= CFG.FVVO_POST_CROSS_OVERHEAT_MIN_ADX &&
+    (!CFG.FVVO_POST_CROSS_OVERHEAT_BLOCK_WHEN_RAY_NOT_BULL || !postCrossRayBull)
+  );
+  const postCrossOverheatOk = !postCrossOverheatActive;
+
+  const ok = ageOk && priceOk && rsiOk && adxOk && slopeOk && fvvoOk && ext8Ok && ext18Ok && noRecentRed && noBearishConflict && neutralRayGuardOk && postCrossOverheatOk;
+  const checks = { setup, ageBars, memory: mem, priceOk, priceAboveEma8, rsiOk, adxOk, slopeOk, fvvoOk, ext8Ok, ext18Ok, noRecentRed, noBearishConflict, neutralRayGuardOk, postCrossRayRegime, postCrossRayBull, postCrossNeutralStrong, postCrossOverheatActive, postCrossOverheatOk, extEma8Pct, extEma18Pct, rsi: p.rsi, adx: p.adx, fvvo: p.fvvoValue, slope: p.fvvoSlope };
 
   if (ok) {
     return { ok: true, setup, reason: "FVVO_POST_CROSS_RECLAIM", momentumOverride: false, checks };
@@ -1834,6 +1858,7 @@ function evaluatePostCrossReclaimEntry(p, crossDecision, barNo) {
   if (!noRecentRed) failed.push("RECENT_RED_PULSE_BLOCK");
   if (!noBearishConflict) failed.push("FVVO_BEARISH_CONFLICT");
   if (!neutralRayGuardOk) failed.push("POST_CROSS_NEUTRAL_RAY_WEAK");
+  if (!postCrossOverheatOk) failed.push("POST_CROSS_OVERHEAT_BLOCK");
   return { ok: false, setup, reason: failed.join("+") || "NO_POST_CROSS_RECLAIM", momentumOverride: false, checks };
 }
 
@@ -4816,6 +4841,18 @@ function evaluatePinkImpulseReclaimEntry(p) {
 
   const ray = classifyRayRegime(p);
   const rayBullOk = !CFG.FVVO_PINK_IMPULSE_REQUIRE_RAY_BULL || ray.regime === "RAY_BULL";
+  const pinkTickRegime = ray && ray.tickRegime ? String(ray.tickRegime) : String(p.rayRegime || p.rayRaw || "RAY_NEUTRAL");
+  const pinkTickBull = pinkTickRegime === "RAY_BULL" || p.rayBull === true;
+  const pinkContextAgeSec = Number.isFinite(ray.contextAgeSec) ? ray.contextAgeSec : null;
+  const pinkStaleNeutralPositiveActive = Boolean(
+    CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_POSITIVE_GUARD_ENABLED &&
+    Number.isFinite(pinkContextAgeSec) && pinkContextAgeSec >= CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_CTX_AGE_SEC &&
+    Number.isFinite(p.fvvoValue) &&
+    p.fvvoValue >= CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_FVVO &&
+    p.fvvoValue <= CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_MAX_FVVO &&
+    (!CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_REQUIRE_TICK_NOT_BULL || !pinkTickBull)
+  );
+  const pinkStaleNeutralPositiveOk = !pinkStaleNeutralPositiveActive;
   const redOk = !p.fvvoRedPulse;
   const openRealPosition = state.positions.has(p.symbol);
   const openExternalDeal = CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && state.externalDeals.has(p.symbol);
@@ -4827,7 +4864,7 @@ function evaluatePinkImpulseReclaimEntry(p) {
     (Number.isFinite(prevFvvo) && prevFvvo < 0 && Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_PINK_IMPULSE_MIN_FVVO) ||
     (Number.isFinite(p.fvvoValue) && p.fvvoValue >= CFG.FVVO_PINK_IMPULSE_MIN_FVVO && Number.isFinite(p.fvvoSlope) && p.fvvoSlope >= Math.max(CFG.FVVO_PINK_IMPULSE_MIN_SLOPE, 1.00));
 
-  const ok = freshCrossOrReclaim && rsiOk && adxOk && slopeOk && fvvoOk && aboveEma8Ok && aboveEma18Ok && ext8Ok && ext18Ok && noFreshLowOk && rayBullOk && redOk && afterPinkExitCooldownOk && afterDeepExitCooldownOk && !dealBlock;
+  const ok = freshCrossOrReclaim && rsiOk && adxOk && slopeOk && fvvoOk && aboveEma8Ok && aboveEma18Ok && ext8Ok && ext18Ok && noFreshLowOk && rayBullOk && pinkStaleNeutralPositiveOk && redOk && afterPinkExitCooldownOk && afterDeepExitCooldownOk && !dealBlock;
 
   const checks = {
     setup,
@@ -4846,6 +4883,11 @@ function evaluatePinkImpulseReclaimEntry(p) {
     lastPinkExitAgeSec: lastPinkExitMs ? (nowMs - lastPinkExitMs) / 1000 : null,
     lastDeepExitAgeSec: lastDeepExitMs ? (nowMs - lastDeepExitMs) / 1000 : null,
     rayBullOk,
+    pinkTickRegime,
+    pinkTickBull,
+    pinkContextAgeSec,
+    pinkStaleNeutralPositiveActive,
+    pinkStaleNeutralPositiveOk,
     redOk,
     dealBlock,
     openRealPosition,
@@ -4876,6 +4918,7 @@ function evaluatePinkImpulseReclaimEntry(p) {
   if (!ext18Ok) failed.push("EXT_EMA18_TOO_HIGH");
   if (!noFreshLowOk) failed.push("FRESH_LOW_TOO_RECENT");
   if (!rayBullOk) failed.push("RAY_NOT_BULL");
+  if (!pinkStaleNeutralPositiveOk) failed.push("PINK_STALE_NEUTRAL_POSITIVE_FVVO_BLOCK");
   if (!redOk) failed.push("RED_PULSE_BLOCK");
   if (!afterPinkExitCooldownOk) failed.push("PINK_AFTER_EXIT_COOLDOWN");
   if (!afterDeepExitCooldownOk) failed.push("PINK_AFTER_DEEP_EXIT_COOLDOWN");
@@ -5825,6 +5868,11 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_PINK_IMPULSE_RAY_BULL_HOLD_SEC=${CFG.FVVO_PINK_IMPULSE_RAY_BULL_HOLD_SEC}`);
   console.log(`FVVO_PINK_IMPULSE_AFTER_EXIT_COOLDOWN_SEC=${CFG.FVVO_PINK_IMPULSE_AFTER_EXIT_COOLDOWN_SEC}`);
   console.log(`FVVO_PINK_IMPULSE_BLOCK_AFTER_DEEP_EXIT_SEC=${CFG.FVVO_PINK_IMPULSE_BLOCK_AFTER_DEEP_EXIT_SEC}`);
+  console.log(`FVVO_PINK_IMPULSE_STALE_NEUTRAL_POSITIVE_GUARD_ENABLED=${CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_POSITIVE_GUARD_ENABLED}`);
+  console.log(`FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_CTX_AGE_SEC=${CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_CTX_AGE_SEC}`);
+  console.log(`FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_FVVO=${CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_MIN_FVVO}`);
+  console.log(`FVVO_PINK_IMPULSE_STALE_NEUTRAL_MAX_FVVO=${CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_MAX_FVVO}`);
+  console.log(`FVVO_PINK_IMPULSE_STALE_NEUTRAL_REQUIRE_TICK_NOT_BULL=${CFG.FVVO_PINK_IMPULSE_STALE_NEUTRAL_REQUIRE_TICK_NOT_BULL}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_GUARD_ENABLED=${CFG.FVVO_CROSS_NEUTRAL_RAY_GUARD_ENABLED}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MIN_ADX=${CFG.FVVO_CROSS_NEUTRAL_RAY_MIN_ADX}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MIN_RSI=${CFG.FVVO_CROSS_NEUTRAL_RAY_MIN_RSI}`);
@@ -5965,6 +6013,10 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_POST_CROSS_NEUTRAL_RAY_GUARD_ENABLED=${CFG.FVVO_POST_CROSS_NEUTRAL_RAY_GUARD_ENABLED}`);
   console.log(`FVVO_POST_CROSS_NEUTRAL_RAY_MIN_RSI=${CFG.FVVO_POST_CROSS_NEUTRAL_RAY_MIN_RSI}`);
   console.log(`FVVO_POST_CROSS_NEUTRAL_RAY_MIN_SLOPE=${CFG.FVVO_POST_CROSS_NEUTRAL_RAY_MIN_SLOPE}`);
+  console.log(`FVVO_POST_CROSS_OVERHEAT_GUARD_ENABLED=${CFG.FVVO_POST_CROSS_OVERHEAT_GUARD_ENABLED}`);
+  console.log(`FVVO_POST_CROSS_OVERHEAT_MIN_FVVO=${CFG.FVVO_POST_CROSS_OVERHEAT_MIN_FVVO}`);
+  console.log(`FVVO_POST_CROSS_OVERHEAT_MIN_ADX=${CFG.FVVO_POST_CROSS_OVERHEAT_MIN_ADX}`);
+  console.log(`FVVO_POST_CROSS_OVERHEAT_BLOCK_WHEN_RAY_NOT_BULL=${CFG.FVVO_POST_CROSS_OVERHEAT_BLOCK_WHEN_RAY_NOT_BULL}`);
   console.log(`FVVO_POST_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT=${CFG.FVVO_POST_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT}`);
   console.log(`FVVO_POST_CROSS_FEATURE_SLOPE_FAIL_MAX=${CFG.FVVO_POST_CROSS_FEATURE_SLOPE_FAIL_MAX}`);
   console.log(`FVVO_POST_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS=${CFG.FVVO_POST_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS}`);
