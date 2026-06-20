@@ -29,6 +29,8 @@
 // - v2f adds risk/Pink/Cross tightening controls.
 // - v2g adds replay-tuned fee-aware micro-trails for CROSS_UP_CONFIRM and PINK_IMPULSE_RECLAIM.
 // - v2h adds setup-specific no-progress exits plus conditional fee-trails for FEATURE_CROSS_CONTINUATION and DEEP_WASHOUT_SLOW_RECOVERY.
+// - v2i compares five exit algorithms against all currently available de-duplicated historic FVVO trades.
+//   Only the adaptive ATR/MFE trail passed the forward holdout gate; it is DEMO-first and applies only to CROSS_UP_CONFIRM and DEEP_WASHOUT_SLOW_RECOVERY.
 // ============================================================
 
 const express = require("express");
@@ -647,6 +649,17 @@ const CFG = {
   FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT: envNum("FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT", 0.20),
   FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE: envNum("FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE", -0.90),
 
+  // v2i: adaptive tick-volatility MFE trail. This is a DEMO-first additional exit only.
+  // It derives a local ATR proxy from the mean absolute return of recent FEATURE_TICK_FVVO prices.
+  // The profile applies only to named setup families and never changes entries or hard-stop behavior.
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_ENABLED: envBool("FVVO_ADAPTIVE_ATR_MFE_TRAIL_ENABLED", false),
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_SETUPS: envStr("FVVO_ADAPTIVE_ATR_MFE_TRAIL_SETUPS", "CROSS_UP_CONFIRM,DEEP_WASHOUT_SLOW_RECOVERY"),
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS: envNum("FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS", 4),
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_ARM_PCT: envNum("FVVO_ADAPTIVE_ATR_MFE_TRAIL_ARM_PCT", 0.15),
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT", 0.04),
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT: envNum("FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT", 15.0),
+  FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT: envNum("FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT", 0.15),
+
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
   FVVO_GREEN_PULSE_CROSS_MIN_RSI: envNum("FVVO_GREEN_PULSE_CROSS_MIN_RSI", 55),
@@ -918,6 +931,7 @@ const state = {
     featureTickLegHardStopExits: 0,
     featureTickLegBreakevenExits: 0,
     featureTickLegFeeTrailExits: 0,
+    featureTickLegAdaptiveAtrMfeTrailExits: 0,
     featureTickLegNoProgressExits: 0,
     featureTickLegDynamicTrailExits: 0,
     featureTickLegWeaknessExits: 0,
@@ -2014,6 +2028,7 @@ async function openVirtualLong(p, decision, barNo) {
     minPrice: p.close,
     peakPnlPct: 0,
     maxDrawdownPct: 0,
+    featureExitAtrPrices: [p.close],
     stopPrice: CFG.FVVO_MAX_LOSS_EXIT_PCT > 0 ? p.close * (1 - Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT) / 100) : null,
     redDotSeen: false,
     greenDotAtEntry: p.fvvoGreenDot,
@@ -2846,6 +2861,7 @@ function logScorecard() {
     `featureTickLegHardStops=${state.stats.featureTickLegHardStopExits}`,
     `featureTickLegBreakevens=${state.stats.featureTickLegBreakevenExits}`,
     `featureTickLegFeeTrails=${state.stats.featureTickLegFeeTrailExits}`,
+    `featureTickLegAdaptiveAtrMfeTrails=${state.stats.featureTickLegAdaptiveAtrMfeTrailExits}`,
     `featureTickLegNoProgress=${state.stats.featureTickLegNoProgressExits}`,
     `featureTickLegDynamicTrails=${state.stats.featureTickLegDynamicTrailExits}`,
     `featureTickLegWeaknessExits=${state.stats.featureTickLegWeaknessExits}`,
@@ -3150,6 +3166,73 @@ function featureExitProfile(setup) {
   return null;
 }
 
+function adaptiveAtrMfeTrailSetupEnabled(setup) {
+  const enabledSetups = String(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_SETUPS || "")
+    .split(",")
+    .map((v) => String(v || "").trim().toUpperCase())
+    .filter(Boolean);
+  return enabledSetups.includes(String(setup || "").toUpperCase());
+}
+
+function updateAdaptiveAtrMfeTrailPrices(holder, rawPrice) {
+  if (!holder || !Number.isFinite(Number(rawPrice)) || Number(rawPrice) <= 0) return { ready: false, atrPct: null, sampleCount: 0 };
+  const lookback = Math.max(1, Math.floor(Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS) || 4));
+  if (!Array.isArray(holder.featureExitAtrPrices)) {
+    holder.featureExitAtrPrices = Number.isFinite(Number(holder.entryPrice)) && Number(holder.entryPrice) > 0 ? [Number(holder.entryPrice)] : [];
+  }
+  const arr = holder.featureExitAtrPrices;
+  const price = Number(rawPrice);
+  if (!arr.length || Number(arr[arr.length - 1]) !== price) arr.push(price);
+  while (arr.length > lookback + 1) arr.shift();
+  if (arr.length < 2) return { ready: false, atrPct: null, sampleCount: 0 };
+
+  let total = 0;
+  let count = 0;
+  for (let i = 1; i < arr.length; i += 1) {
+    const prev = Number(arr[i - 1]);
+    const curr = Number(arr[i]);
+    if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev <= 0) continue;
+    total += Math.abs((curr / prev - 1) * 100);
+    count += 1;
+  }
+  return { ready: count > 0, atrPct: count > 0 ? total / count : null, sampleCount: count };
+}
+
+function calcAdaptiveAtrMfeTrail(holder, p, perf) {
+  const setup = String(holder && holder.setup || "").toUpperCase();
+  const enabled = Boolean(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ENABLED) && adaptiveAtrMfeTrailSetupEnabled(setup);
+  const tickAtr = updateAdaptiveAtrMfeTrailPrices(holder, p && p.close);
+  const armPct = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ARM_PCT) || 0);
+  const minGivebackPct = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT) || 0);
+  const atrMult = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT) || 0);
+  const minExitGrossPct = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT) || 0);
+  const peak = Number(perf && perf.peakPnlPct);
+  const current = Number(perf && perf.currentPnlPct);
+  const giveback = Number(perf && perf.givebackPct);
+  const dynamicGivebackPct = tickAtr.ready && Number.isFinite(tickAtr.atrPct)
+    ? Math.max(minGivebackPct, tickAtr.atrPct * atrMult)
+    : null;
+  const armed = enabled && tickAtr.ready && Number.isFinite(peak) && peak >= armPct;
+  const exit = armed && Number.isFinite(current) && Number.isFinite(giveback) &&
+    Number.isFinite(dynamicGivebackPct) && current >= minExitGrossPct && giveback >= dynamicGivebackPct;
+  return {
+    enabled,
+    setup,
+    armed,
+    exit,
+    armPct,
+    minGivebackPct,
+    atrMult,
+    minExitGrossPct,
+    peakPnlPct: peak,
+    currentPnlPct: current,
+    givebackPct: giveback,
+    dynamicGivebackPct,
+    tickAtrPct: tickAtr.atrPct,
+    tickAtrSamples: tickAtr.sampleCount
+  };
+}
+
 function calcFeatureFeeTrail(profile, p, perf) {
   const enabled = Boolean(profile && profile.feeTrailEnabled);
   const armPct = Math.max(0, Number(profile && profile.feeTrailArmPct) || 0);
@@ -3245,6 +3328,11 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
   const feeTrail = calcFeatureFeeTrail(profile, p, perf);
   if (feeTrail.armed && feeTrail.exit) {
     return { exit: true, reason: `FVVO_FEATURE_${label}_FEE_TRAIL`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, feeTrail, featureExitProfile: profile };
+  }
+
+  const adaptiveAtrMfeTrail = calcAdaptiveAtrMfeTrail(pos, p, perf);
+  if (adaptiveAtrMfeTrail.armed && adaptiveAtrMfeTrail.exit) {
+    return { exit: true, reason: `FVVO_FEATURE_${label}_ADAPTIVE_ATR_MFE_TRAIL`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, adaptiveAtrMfeTrail, featureExitProfile: profile };
   }
 
   const dynamicTrail = calcFeatureProfileTrail(profile, perf);
@@ -3360,6 +3448,11 @@ function evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec) {
     return { reason: `FVVO_FEATURE_${label}_FEE_TRAIL`, exitPrice: price, dynamicTrail: null, feeTrail };
   }
 
+  const adaptiveAtrMfeTrail = calcAdaptiveAtrMfeTrail(shadow, tick, perf);
+  if (adaptiveAtrMfeTrail.armed && adaptiveAtrMfeTrail.exit) {
+    return { reason: `FVVO_FEATURE_${label}_ADAPTIVE_ATR_MFE_TRAIL`, exitPrice: price, dynamicTrail: null, adaptiveAtrMfeTrail };
+  }
+
   const dynamicTrail = calcFeatureProfileTrail(profile, perf);
   if (dynamicTrail.armed && dynamicTrail.exit) {
     const crossSqueezeHold = crossSqueezeExitHold(shadow, tick, perf);
@@ -3427,6 +3520,7 @@ function countFeatureLegExitReason(reason) {
   if (String(reason).includes("HARD_STOP")) state.stats.featureTickLegHardStopExits += 1;
   if (String(reason).includes("BREAKEVEN")) state.stats.featureTickLegBreakevenExits += 1;
   if (String(reason).includes("FEE_TRAIL")) state.stats.featureTickLegFeeTrailExits += 1;
+  if (String(reason).includes("ADAPTIVE_ATR_MFE_TRAIL")) state.stats.featureTickLegAdaptiveAtrMfeTrailExits += 1;
   if (String(reason).includes("NO_PROGRESS")) state.stats.featureTickLegNoProgressExits += 1;
   if (String(reason).includes("DYNAMIC_TRAIL")) state.stats.featureTickLegDynamicTrailExits += 1;
   if (String(reason).includes("WEAKNESS")) state.stats.featureTickLegWeaknessExits += 1;
@@ -4185,6 +4279,7 @@ async function openTickWashoutShadow(tick, decision) {
     minPrice: entryPrice,
     peakPnlPct: 0,
     maxDrawdownPct: 0,
+    featureExitAtrPrices: [entryPrice],
     zeroCrossCompared: false,
     entryChecks: decision.checks,
     forwardedEntry: false,
@@ -4524,6 +4619,7 @@ async function openDeepWashoutShadow(tick, decision) {
     minPrice: entryPrice,
     peakPnlPct: 0,
     maxDrawdownPct: 0,
+    featureExitAtrPrices: [entryPrice],
     entryChecks: decision.checks,
     forwardedEntry: false,
     forwardEntryStatus: "NOT_FORWARDED"
@@ -6072,6 +6168,13 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_ENABLED=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ENABLED}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_SETUPS=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_SETUPS}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_ARM_PCT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ARM_PCT}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT}`);
   console.log(`FVVO_RAY_BULL_EXIT_HOLD_ENABLED=${CFG.FVVO_RAY_BULL_EXIT_HOLD_ENABLED}`);
   console.log(`FVVO_CROSS_RAY_BULL_HOLD_SEC=${CFG.FVVO_CROSS_RAY_BULL_HOLD_SEC}`);
   console.log(`FVVO_FEATURE_CROSS_CONT_RAY_BULL_HOLD_SEC=${CFG.FVVO_FEATURE_CROSS_CONT_RAY_BULL_HOLD_SEC}`);
