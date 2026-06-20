@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2f_RISK_PINK_CROSS_TIGHTEN_DEMO
+// BrainFVVO_v2h_EXIT_PROTECTION_REPLAY_TUNED_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -26,6 +26,9 @@
 // - v2d adds neutral-Ray cross guard, Pink Impulse fee-aware exits, Ray-Bull hold, and same-move cooldown.
 // - v2e adds Post-Cross overheat guard and Pink stale-context/neutral-tick positive-FVVO guard.
 // - v2d adds Pink Impulse fee-aware exits/hold/cooldown and a neutral-Ray weak CROSS_UP_CONFIRM guard.
+// - v2f adds risk/Pink/Cross tightening controls.
+// - v2g adds replay-tuned fee-aware micro-trails for CROSS_UP_CONFIRM and PINK_IMPULSE_RECLAIM.
+// - v2h adds setup-specific no-progress exits plus conditional fee-trails for FEATURE_CROSS_CONTINUATION and DEEP_WASHOUT_SLOW_RECOVERY.
 // ============================================================
 
 const express = require("express");
@@ -62,7 +65,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2f_RISK_PINK_CROSS_TIGHTEN_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2h_EXIT_PROTECTION_REPLAY_TUNED_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -596,6 +599,54 @@ const CFG = {
   FVVO_FEATURE_CROSS_CONT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT: envNum("FVVO_FEATURE_CROSS_CONT_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT", 0.45),
   FVVO_FEATURE_CROSS_CONT_FEATURE_RSI_ROLLOVER_DROP_PCT: envNum("FVVO_FEATURE_CROSS_CONT_FEATURE_RSI_ROLLOVER_DROP_PCT", 5.00),
 
+  // v2g: fee-aware micro-trails. These are intentionally setup-specific and
+  // do not change DEEP_WASHOUT or FEATURE_CROSS_CONTINUATION behaviour.
+  // They can exit once a small gross edge remains above round-trip costs,
+  // rather than allowing a previously positive fast move to return to hard-stop.
+  FVVO_CROSS_FEATURE_FEE_TRAIL_ENABLED: envBool("FVVO_CROSS_FEATURE_FEE_TRAIL_ENABLED", true),
+  FVVO_CROSS_FEATURE_FEE_TRAIL_ARM_PCT: envNum("FVVO_CROSS_FEATURE_FEE_TRAIL_ARM_PCT", 0.20),
+  FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_GIVEBACK_PCT", 0.06),
+  FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_EXIT_GROSS_PCT: envNum("FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_EXIT_GROSS_PCT", 0.16),
+  FVVO_PINK_IMPULSE_FEE_TRAIL_ENABLED: envBool("FVVO_PINK_IMPULSE_FEE_TRAIL_ENABLED", true),
+  FVVO_PINK_IMPULSE_FEE_TRAIL_ARM_PCT: envNum("FVVO_PINK_IMPULSE_FEE_TRAIL_ARM_PCT", 0.20),
+  FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_EXIT_GROSS_PCT: envNum("FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_EXIT_GROSS_PCT", 0.15),
+
+  // v2h: setup-specific early failure exits. They do not change entries.
+  // A trade must fail to show even a small run-up, then deteriorate under a setup-specific condition.
+  FVVO_CROSS_FEATURE_NO_PROGRESS_ENABLED: envBool("FVVO_CROSS_FEATURE_NO_PROGRESS_ENABLED", true),
+  FVVO_CROSS_FEATURE_NO_PROGRESS_CHECK_AFTER_SEC: envNum("FVVO_CROSS_FEATURE_NO_PROGRESS_CHECK_AFTER_SEC", 60),
+  FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_RUNUP_PCT: envNum("FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_RUNUP_PCT", 0.05),
+  FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_GROSS_LOSS_PCT: envNum("FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_GROSS_LOSS_PCT", -0.02),
+  FVVO_CROSS_FEATURE_NO_PROGRESS_REQUIRE_ALL_RAY_NOT_BULL: envBool("FVVO_CROSS_FEATURE_NO_PROGRESS_REQUIRE_ALL_RAY_NOT_BULL", true),
+
+  FVVO_PINK_IMPULSE_NO_PROGRESS_ENABLED: envBool("FVVO_PINK_IMPULSE_NO_PROGRESS_ENABLED", true),
+  FVVO_PINK_IMPULSE_NO_PROGRESS_CHECK_AFTER_SEC: envNum("FVVO_PINK_IMPULSE_NO_PROGRESS_CHECK_AFTER_SEC", 60),
+  FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_RUNUP_PCT: envNum("FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_RUNUP_PCT", 0.05),
+  FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_GROSS_LOSS_PCT: envNum("FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_GROSS_LOSS_PCT", -0.02),
+  FVVO_PINK_IMPULSE_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8: envBool("FVVO_PINK_IMPULSE_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8", true),
+
+  FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_ENABLED: envBool("FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_ENABLED", true),
+  FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_CHECK_AFTER_SEC: envNum("FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_CHECK_AFTER_SEC", 180),
+  FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_RUNUP_PCT: envNum("FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_RUNUP_PCT", 0.10),
+  FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_GROSS_LOSS_PCT: envNum("FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_GROSS_LOSS_PCT", -0.06),
+  FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8: envBool("FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8", true),
+  FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_SLOPE: envNum("FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_SLOPE", -0.10),
+
+  // v2h: protect a recorded fee-safe run only when the characteristic setup failure is visible.
+  FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ENABLED: envBool("FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ENABLED", true),
+  FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ARM_PCT: envNum("FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ARM_PCT", 0.25),
+  FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_GIVEBACK_PCT", 0.04),
+  FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_EXIT_GROSS_PCT: envNum("FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_EXIT_GROSS_PCT", 0.25),
+  FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_REQUIRE_PRICE_BELOW_EMA8: envBool("FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_REQUIRE_PRICE_BELOW_EMA8", true),
+  FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MAX_SLOPE: envNum("FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MAX_SLOPE", -0.25),
+
+  FVVO_DEEP_WASHOUT_FEE_TRAIL_ENABLED: envBool("FVVO_DEEP_WASHOUT_FEE_TRAIL_ENABLED", true),
+  FVVO_DEEP_WASHOUT_FEE_TRAIL_ARM_PCT: envNum("FVVO_DEEP_WASHOUT_FEE_TRAIL_ARM_PCT", 0.20),
+  FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT: envNum("FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT", 0.10),
+  FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT: envNum("FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT", 0.20),
+  FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE: envNum("FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE", -0.90),
+
   FVVO_GREEN_PULSE_MEMORY_BARS: envNum("FVVO_GREEN_PULSE_MEMORY_BARS", 18),
   FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED: envBool("FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED", true),
   FVVO_GREEN_PULSE_CROSS_MIN_RSI: envNum("FVVO_GREEN_PULSE_CROSS_MIN_RSI", 55),
@@ -866,6 +917,8 @@ const state = {
     featureTickLegExitSignals: 0,
     featureTickLegHardStopExits: 0,
     featureTickLegBreakevenExits: 0,
+    featureTickLegFeeTrailExits: 0,
+    featureTickLegNoProgressExits: 0,
     featureTickLegDynamicTrailExits: 0,
     featureTickLegWeaknessExits: 0,
     cPointSignals: 0,
@@ -2792,6 +2845,8 @@ function logScorecard() {
     `featureTickLegExits=${state.stats.featureTickLegExitSignals}`,
     `featureTickLegHardStops=${state.stats.featureTickLegHardStopExits}`,
     `featureTickLegBreakevens=${state.stats.featureTickLegBreakevenExits}`,
+    `featureTickLegFeeTrails=${state.stats.featureTickLegFeeTrailExits}`,
+    `featureTickLegNoProgress=${state.stats.featureTickLegNoProgressExits}`,
     `featureTickLegDynamicTrails=${state.stats.featureTickLegDynamicTrailExits}`,
     `featureTickLegWeaknessExits=${state.stats.featureTickLegWeaknessExits}`,
     `riskGuardBlocks=${state.stats.riskGuardBlocks}`,
@@ -2905,6 +2960,15 @@ function featureExitProfile(setup) {
       trailStartGivebackPct: CFG.FVVO_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT,
       trailMinGivebackPct: CFG.FVVO_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
       trailTightenPer1Pct: CFG.FVVO_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      feeTrailEnabled: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_ENABLED,
+      feeTrailArmPct: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_ARM_PCT,
+      feeTrailMinGivebackPct: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_GIVEBACK_PCT,
+      feeTrailMinExitGrossPct: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_EXIT_GROSS_PCT,
+      noProgressEnabled: CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_ENABLED,
+      noProgressCheckAfterSec: CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_CHECK_AFTER_SEC,
+      noProgressMaxRunupPct: CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_RUNUP_PCT,
+      noProgressMaxGrossLossPct: CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_GROSS_LOSS_PCT,
+      noProgressRequireAllRayNotBull: CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_REQUIRE_ALL_RAY_NOT_BULL,
       weaknessEnabled: CFG.FVVO_CROSS_FEATURE_WEAKNESS_ENABLED,
       weaknessConfirmTicks: CFG.FVVO_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS,
       redExitMinProfitPct: CFG.FVVO_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
@@ -2954,6 +3018,15 @@ function featureExitProfile(setup) {
       trailMinGivebackPct: CFG.FVVO_POST_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
       trailTightenPer1Pct: CFG.FVVO_POST_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
       minExitGrossPct: pinkMinExit,
+      feeTrailEnabled: CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_ENABLED,
+      feeTrailArmPct: CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_ARM_PCT,
+      feeTrailMinGivebackPct: CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_GIVEBACK_PCT,
+      feeTrailMinExitGrossPct: CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_EXIT_GROSS_PCT,
+      noProgressEnabled: CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_ENABLED,
+      noProgressCheckAfterSec: CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_CHECK_AFTER_SEC,
+      noProgressMaxRunupPct: CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_RUNUP_PCT,
+      noProgressMaxGrossLossPct: CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_GROSS_LOSS_PCT,
+      noProgressRequirePriceBelowEma8: CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8,
       weaknessEnabled: CFG.FVVO_POST_CROSS_FEATURE_WEAKNESS_ENABLED,
       weaknessConfirmTicks: CFG.FVVO_POST_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS,
       redExitMinProfitPct: Math.max(CFG.FVVO_POST_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT, pinkBackupMin),
@@ -2977,6 +3050,18 @@ function featureExitProfile(setup) {
       trailStartGivebackPct: CFG.FVVO_FEATURE_CROSS_CONT_FEATURE_TRAIL_START_GIVEBACK_PCT,
       trailMinGivebackPct: CFG.FVVO_FEATURE_CROSS_CONT_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
       trailTightenPer1Pct: CFG.FVVO_FEATURE_CROSS_CONT_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      feeTrailEnabled: CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ENABLED,
+      feeTrailArmPct: CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ARM_PCT,
+      feeTrailMinGivebackPct: CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_GIVEBACK_PCT,
+      feeTrailMinExitGrossPct: CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_EXIT_GROSS_PCT,
+      feeTrailRequirePriceBelowEma8: CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_REQUIRE_PRICE_BELOW_EMA8,
+      feeTrailMaxSlope: CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MAX_SLOPE,
+      noProgressEnabled: CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_ENABLED,
+      noProgressCheckAfterSec: CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_CHECK_AFTER_SEC,
+      noProgressMaxRunupPct: CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_RUNUP_PCT,
+      noProgressMaxGrossLossPct: CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_GROSS_LOSS_PCT,
+      noProgressRequirePriceBelowEma8: CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8,
+      noProgressMaxSlope: CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_SLOPE,
       weaknessEnabled: CFG.FVVO_FEATURE_CROSS_CONT_FEATURE_WEAKNESS_ENABLED,
       weaknessConfirmTicks: CFG.FVVO_FEATURE_CROSS_CONT_FEATURE_WEAKNESS_CONFIRM_TICKS,
       redExitMinProfitPct: CFG.FVVO_FEATURE_CROSS_CONT_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
@@ -3046,6 +3131,11 @@ function featureExitProfile(setup) {
       trailStartGivebackPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_START_GIVEBACK_PCT,
       trailMinGivebackPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
       trailTightenPer1Pct: CFG.FVVO_DEEP_WASHOUT_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      feeTrailEnabled: CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_ENABLED,
+      feeTrailArmPct: CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_ARM_PCT,
+      feeTrailMinGivebackPct: CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT,
+      feeTrailMinExitGrossPct: CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT,
+      feeTrailMaxSlope: CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE,
       weaknessEnabled: CFG.FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_ENABLED,
       weaknessConfirmTicks: CFG.FVVO_DEEP_WASHOUT_FEATURE_WEAKNESS_CONFIRM_TICKS,
       redExitMinProfitPct: CFG.FVVO_DEEP_WASHOUT_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
@@ -3060,32 +3150,49 @@ function featureExitProfile(setup) {
   return null;
 }
 
-function calcFeatureProfileTrail(profile, perf) {
+function calcFeatureFeeTrail(profile, p, perf) {
+  const enabled = Boolean(profile && profile.feeTrailEnabled);
+  const armPct = Math.max(0, Number(profile && profile.feeTrailArmPct) || 0);
+  const minGivebackPct = Math.max(0, Number(profile && profile.feeTrailMinGivebackPct) || 0);
+  const minExitGrossPct = Math.max(0, Number(profile && profile.feeTrailMinExitGrossPct) || 0);
   const peak = Number(perf && perf.peakPnlPct);
   const current = Number(perf && perf.currentPnlPct);
-  if (!profile || !Number.isFinite(peak) || !Number.isFinite(current)) {
-    return { enabled: false, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null };
-  }
-  if (peak < profile.trailArmPct) {
-    return { enabled: true, armed: false, exit: false, allowedGivebackPct: null, exitLinePct: null };
-  }
-  const tighten = Math.max(0, (peak - profile.trailArmPct) * Math.abs(profile.trailTightenPer1Pct));
-  const allowedGivebackPct = clampNum(profile.trailStartGivebackPct - tighten, profile.trailMinGivebackPct, profile.trailStartGivebackPct);
-  const exitLinePct = peak - allowedGivebackPct;
-  const givebackPct = peak - current;
-  const exit = givebackPct >= allowedGivebackPct && current >= CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT;
-  return { enabled: true, armed: true, exit, allowedGivebackPct, exitLinePct, givebackPct, profile };
+  const giveback = Number(perf && perf.givebackPct);
+  const priceBelowEma8 = Boolean(p && Number.isFinite(Number(p.close)) && Number.isFinite(Number(p.ema8)) && Number(p.close) < Number(p.ema8));
+  const maxSlopeRaw = Number(profile && profile.feeTrailMaxSlope);
+  const hasSlopeLimit = Number.isFinite(maxSlopeRaw);
+  const slope = Number(p && p.fvvoSlope);
+  const slopeOk = !hasSlopeLimit || (Number.isFinite(slope) && slope <= maxSlopeRaw);
+  const priceOk = !Boolean(profile && profile.feeTrailRequirePriceBelowEma8) || priceBelowEma8;
+  const conditionOk = priceOk && slopeOk;
+  const armed = enabled && Number.isFinite(peak) && peak >= armPct;
+  const exit = armed && Number.isFinite(current) && Number.isFinite(giveback) &&
+    giveback >= minGivebackPct && current >= minExitGrossPct && conditionOk;
+  return { enabled, armed, exit, armPct, minGivebackPct, minExitGrossPct, peakPnlPct: peak, currentPnlPct: current, givebackPct: giveback, priceBelowEma8, hasSlopeLimit, slope, maxSlope: hasSlopeLimit ? maxSlopeRaw : null, conditionOk };
 }
 
-function bumpFeatureWeakness(symbol, setup, name, condition) {
-  const key = `${symbol}|${setup}|${name}`;
-  if (!condition) {
-    state.featureExitWeakness.delete(key);
-    return 0;
-  }
-  const next = (state.featureExitWeakness.get(key) || 0) + 1;
-  state.featureExitWeakness.set(key, next);
-  return next;
+function calcFeatureNoProgressExit(profile, p, perf, elapsedSec) {
+  const enabled = Boolean(profile && profile.noProgressEnabled);
+  const checkAfterSec = Math.max(0, Number(profile && profile.noProgressCheckAfterSec) || 0);
+  const maxRunupPct = Math.max(0, Number(profile && profile.noProgressMaxRunupPct) || 0);
+  const maxGrossLossPct = Number(profile && profile.noProgressMaxGrossLossPct);
+  const peak = Number(perf && perf.peakPnlPct);
+  const current = Number(perf && perf.currentPnlPct);
+  const priceBelowEma8 = Boolean(p && Number.isFinite(Number(p.close)) && Number.isFinite(Number(p.ema8)) && Number(p.close) < Number(p.ema8));
+  const priceOk = !Boolean(profile && profile.noProgressRequirePriceBelowEma8) || priceBelowEma8;
+  const payloadRay = classifyRayRegimeFromPayload(p || {});
+  const gateRay = classifyRayRegime(p || {});
+  const allRayNotBull = payloadRay.regime !== "RAY_BULL" && gateRay.regime !== "RAY_BULL";
+  const rayOk = !Boolean(profile && profile.noProgressRequireAllRayNotBull) || allRayNotBull;
+  const maxSlopeRaw = Number(profile && profile.noProgressMaxSlope);
+  const hasSlopeLimit = Number.isFinite(maxSlopeRaw);
+  const slope = Number(p && p.fvvoSlope);
+  const slopeOk = !hasSlopeLimit || (Number.isFinite(slope) && slope <= maxSlopeRaw);
+  const elapsedOk = Number.isFinite(elapsedSec) && elapsedSec >= checkAfterSec;
+  const noProgress = Number.isFinite(peak) && peak < maxRunupPct;
+  const currentLossOk = Number.isFinite(current) && Number.isFinite(maxGrossLossPct) && current <= maxGrossLossPct;
+  const exit = enabled && elapsedOk && noProgress && currentLossOk && priceOk && rayOk && slopeOk;
+  return { enabled, exit, checkAfterSec, maxRunupPct, maxGrossLossPct, elapsedSec, peakPnlPct: peak, currentPnlPct: current, priceBelowEma8, priceOk, payloadRayRegime: payloadRay.regime, gateRayRegime: gateRay.regime, allRayNotBull, rayOk, hasSlopeLimit, slope, maxSlope: hasSlopeLimit ? maxSlopeRaw : null, slopeOk };
 }
 
 function clearFeatureWeaknessForPosition(pos) {
@@ -3117,6 +3224,11 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
     return { exit: false, reason: `FEATURE_${label}_HOLD_MIN_HOLD`, backupUsed: false, exitPrice: null, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
   }
 
+  const noProgress = calcFeatureNoProgressExit(profile, p, perf, elapsedSec);
+  if (noProgress.enabled && noProgress.exit) {
+    return { exit: true, reason: `FVVO_FEATURE_${label}_NO_PROGRESS`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, noProgress, featureExitProfile: profile };
+  }
+
   const minExitGrossPct = Number.isFinite(Number(profile.minExitGrossPct)) ? Number(profile.minExitGrossPct) : -Infinity;
   const beExitRaw = profile.beArmPct > 0 &&
     peakPnlPct >= profile.beArmPct &&
@@ -3128,6 +3240,11 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
   }
   if (beExit) {
     return { exit: true, reason: `FVVO_FEATURE_${label}_BREAKEVEN`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
+  }
+
+  const feeTrail = calcFeatureFeeTrail(profile, p, perf);
+  if (feeTrail.armed && feeTrail.exit) {
+    return { exit: true, reason: `FVVO_FEATURE_${label}_FEE_TRAIL`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, feeTrail, featureExitProfile: profile };
   }
 
   const dynamicTrail = calcFeatureProfileTrail(profile, perf);
@@ -3223,6 +3340,11 @@ function evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec) {
 
   if (elapsedSec < profile.minHoldSec) return null;
 
+  const noProgress = calcFeatureNoProgressExit(profile, tick, perf, elapsedSec);
+  if (noProgress.enabled && noProgress.exit) {
+    return { reason: `FVVO_FEATURE_${label}_NO_PROGRESS`, exitPrice: price, dynamicTrail: null, noProgress };
+  }
+
   const minExitGrossPct = Number.isFinite(Number(profile.minExitGrossPct)) ? Number(profile.minExitGrossPct) : -Infinity;
   const beExitRaw = profile.beArmPct > 0 &&
     peakPnlPct >= profile.beArmPct &&
@@ -3231,6 +3353,11 @@ function evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec) {
   const beExit = beExitRaw && currentPnlPct >= minExitGrossPct;
   if (beExit) {
     return { reason: `FVVO_FEATURE_${label}_BREAKEVEN`, exitPrice: price, dynamicTrail: null };
+  }
+
+  const feeTrail = calcFeatureFeeTrail(profile, tick, perf);
+  if (feeTrail.armed && feeTrail.exit) {
+    return { reason: `FVVO_FEATURE_${label}_FEE_TRAIL`, exitPrice: price, dynamicTrail: null, feeTrail };
   }
 
   const dynamicTrail = calcFeatureProfileTrail(profile, perf);
@@ -3299,6 +3426,8 @@ function countFeatureLegExitReason(reason) {
   state.stats.featureTickLegExitSignals += 1;
   if (String(reason).includes("HARD_STOP")) state.stats.featureTickLegHardStopExits += 1;
   if (String(reason).includes("BREAKEVEN")) state.stats.featureTickLegBreakevenExits += 1;
+  if (String(reason).includes("FEE_TRAIL")) state.stats.featureTickLegFeeTrailExits += 1;
+  if (String(reason).includes("NO_PROGRESS")) state.stats.featureTickLegNoProgressExits += 1;
   if (String(reason).includes("DYNAMIC_TRAIL")) state.stats.featureTickLegDynamicTrailExits += 1;
   if (String(reason).includes("WEAKNESS")) state.stats.featureTickLegWeaknessExits += 1;
 }
@@ -5902,12 +6031,47 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_PINK_IMPULSE_STRICT_FORWARD_REQUIRE_TICK_RAY_BULL=${CFG.FVVO_PINK_IMPULSE_STRICT_FORWARD_REQUIRE_TICK_RAY_BULL}`);
   console.log(`FVVO_PINK_IMPULSE_MAX_FORWARD_FVVO=${CFG.FVVO_PINK_IMPULSE_MAX_FORWARD_FVVO}`);
   console.log(`FVVO_PINK_IMPULSE_MAX_FORWARD_RSI=${CFG.FVVO_PINK_IMPULSE_MAX_FORWARD_RSI}`);
+  console.log(`FVVO_PINK_IMPULSE_FEE_TRAIL_ENABLED=${CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_ENABLED}`);
+  console.log(`FVVO_PINK_IMPULSE_FEE_TRAIL_ARM_PCT=${CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_ARM_PCT}`);
+  console.log(`FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_GIVEBACK_PCT}`);
+  console.log(`FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_PINK_IMPULSE_FEE_TRAIL_MIN_EXIT_GROSS_PCT}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_GUARD_ENABLED=${CFG.FVVO_CROSS_NEUTRAL_RAY_GUARD_ENABLED}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MIN_ADX=${CFG.FVVO_CROSS_NEUTRAL_RAY_MIN_ADX}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MIN_RSI=${CFG.FVVO_CROSS_NEUTRAL_RAY_MIN_RSI}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MIN_FVVO=${CFG.FVVO_CROSS_NEUTRAL_RAY_MIN_FVVO}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MIN_SLOPE=${CFG.FVVO_CROSS_NEUTRAL_RAY_MIN_SLOPE}`);
   console.log(`FVVO_CROSS_NEUTRAL_RAY_MAX_FVVO=${CFG.FVVO_CROSS_NEUTRAL_RAY_MAX_FVVO}`);
+  console.log(`FVVO_CROSS_FEATURE_FEE_TRAIL_ENABLED=${CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_ENABLED}`);
+  console.log(`FVVO_CROSS_FEATURE_FEE_TRAIL_ARM_PCT=${CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_ARM_PCT}`);
+  console.log(`FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_GIVEBACK_PCT}`);
+  console.log(`FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_EXIT_GROSS_PCT}`);
+  console.log(`FVVO_CROSS_FEATURE_NO_PROGRESS_ENABLED=${CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_ENABLED}`);
+  console.log(`FVVO_CROSS_FEATURE_NO_PROGRESS_CHECK_AFTER_SEC=${CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_CHECK_AFTER_SEC}`);
+  console.log(`FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_RUNUP_PCT=${CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_RUNUP_PCT}`);
+  console.log(`FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_GROSS_LOSS_PCT=${CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_MAX_GROSS_LOSS_PCT}`);
+  console.log(`FVVO_CROSS_FEATURE_NO_PROGRESS_REQUIRE_ALL_RAY_NOT_BULL=${CFG.FVVO_CROSS_FEATURE_NO_PROGRESS_REQUIRE_ALL_RAY_NOT_BULL}`);
+  console.log(`FVVO_PINK_IMPULSE_NO_PROGRESS_ENABLED=${CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_ENABLED}`);
+  console.log(`FVVO_PINK_IMPULSE_NO_PROGRESS_CHECK_AFTER_SEC=${CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_CHECK_AFTER_SEC}`);
+  console.log(`FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_RUNUP_PCT=${CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_RUNUP_PCT}`);
+  console.log(`FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_GROSS_LOSS_PCT=${CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_MAX_GROSS_LOSS_PCT}`);
+  console.log(`FVVO_PINK_IMPULSE_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8=${CFG.FVVO_PINK_IMPULSE_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_ENABLED=${CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_ENABLED}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_CHECK_AFTER_SEC=${CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_CHECK_AFTER_SEC}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_RUNUP_PCT=${CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_RUNUP_PCT}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_GROSS_LOSS_PCT=${CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_GROSS_LOSS_PCT}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8=${CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_REQUIRE_PRICE_BELOW_EMA8}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_SLOPE=${CFG.FVVO_FEATURE_CROSS_CONT_NO_PROGRESS_MAX_SLOPE}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ENABLED=${CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ENABLED}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ARM_PCT=${CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_ARM_PCT}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_GIVEBACK_PCT}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MIN_EXIT_GROSS_PCT}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_REQUIRE_PRICE_BELOW_EMA8=${CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_REQUIRE_PRICE_BELOW_EMA8}`);
+  console.log(`FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MAX_SLOPE=${CFG.FVVO_FEATURE_CROSS_CONT_FEE_TRAIL_MAX_SLOPE}`);
+  console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_ENABLED=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_ENABLED}`);
+  console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_ARM_PCT=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_ARM_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_GIVEBACK_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MIN_EXIT_GROSS_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE=${CFG.FVVO_DEEP_WASHOUT_FEE_TRAIL_MAX_SLOPE}`);
   console.log(`FVVO_RAY_BULL_EXIT_HOLD_ENABLED=${CFG.FVVO_RAY_BULL_EXIT_HOLD_ENABLED}`);
   console.log(`FVVO_CROSS_RAY_BULL_HOLD_SEC=${CFG.FVVO_CROSS_RAY_BULL_HOLD_SEC}`);
   console.log(`FVVO_FEATURE_CROSS_CONT_RAY_BULL_HOLD_SEC=${CFG.FVVO_FEATURE_CROSS_CONT_RAY_BULL_HOLD_SEC}`);
