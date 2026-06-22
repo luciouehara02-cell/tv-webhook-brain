@@ -70,7 +70,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2j_NONBLOCKING_SHADOW_LEDGER_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2k_FEATURE_EXIT_HOTFIX_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -3365,7 +3365,11 @@ function updateAdaptiveAtrMfeTrailPrices(holder, rawPrice) {
 function calcAdaptiveAtrMfeTrail(holder, p, perf) {
   const setup = String(holder && holder.setup || "").toUpperCase();
   const enabled = Boolean(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ENABLED) && adaptiveAtrMfeTrailSetupEnabled(setup);
-  const tickAtr = updateAdaptiveAtrMfeTrailPrices(holder, p && p.close);
+  // Use volatility already observed before the current exit tick. Including the
+  // current adverse move would make the adaptive threshold self-referential and
+  // can mathematically prevent a trail from ever firing when the multiplier is large.
+  const tickAtr = calcStoredAdaptiveTickAtr(holder);
+  updateAdaptiveAtrMfeTrailPrices(holder, p && p.close);
   const armPct = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ARM_PCT) || 0);
   const minGivebackPct = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT) || 0);
   const atrMult = Math.max(0, Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT) || 0);
@@ -3395,6 +3399,84 @@ function calcAdaptiveAtrMfeTrail(holder, p, perf) {
     tickAtrPct: tickAtr.atrPct,
     tickAtrSamples: tickAtr.sampleCount
   };
+}
+
+function calcFeatureProfileTrail(profile, perf) {
+  const peak = Number(perf && perf.peakPnlPct);
+  const current = Number(perf && perf.currentPnlPct);
+  const armPct = Math.max(0, Number(profile && profile.trailArmPct) || 0);
+  const startGivebackPct = Math.max(0, Number(profile && profile.trailStartGivebackPct) || 0);
+  const minGivebackPct = Math.max(0, Number(profile && profile.trailMinGivebackPct) || 0);
+  const tightenPer1Pct = Math.max(0, Math.abs(Number(profile && profile.trailTightenPer1Pct) || 0));
+  // Preserve the established profile-trail behaviour: profile dynamic trails
+  // only exit above the global fee-safe soft-exit floor. Setup-specific fee
+  // floors are handled separately by the fee-trail branches.
+  const minExitGrossPct = CFG.FVVO_SOFT_EXIT_MIN_PROFIT_PCT;
+
+  if (!profile || !Number.isFinite(peak) || !Number.isFinite(current) || armPct <= 0 || startGivebackPct <= 0) {
+    return {
+      enabled: false,
+      armed: false,
+      exit: false,
+      allowedGivebackPct: null,
+      exitLinePct: null,
+      givebackPct: null,
+      minExitGrossPct,
+      profile
+    };
+  }
+
+  if (peak < armPct) {
+    return {
+      enabled: true,
+      armed: false,
+      exit: false,
+      allowedGivebackPct: null,
+      exitLinePct: null,
+      givebackPct: peak - current,
+      minExitGrossPct,
+      profile
+    };
+  }
+
+  const tighten = Math.max(0, (peak - armPct) * tightenPer1Pct);
+  const allowedGivebackPct = clampNum(startGivebackPct - tighten, minGivebackPct, startGivebackPct);
+  const exitLinePct = peak - allowedGivebackPct;
+  const givebackPct = peak - current;
+  const exit = givebackPct >= allowedGivebackPct && current >= minExitGrossPct;
+
+  return {
+    enabled: true,
+    armed: true,
+    exit,
+    allowedGivebackPct,
+    exitLinePct,
+    givebackPct,
+    minExitGrossPct,
+    profile
+  };
+}
+
+function calcStoredAdaptiveTickAtr(holder) {
+  const lookback = Math.max(1, Math.floor(Number(CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS) || 4));
+  const fallback = Number.isFinite(Number(holder && holder.entryPrice)) && Number(holder.entryPrice) > 0
+    ? [Number(holder.entryPrice)]
+    : [];
+  const arr = Array.isArray(holder && holder.featureExitAtrPrices)
+    ? holder.featureExitAtrPrices.slice(-(lookback + 1))
+    : fallback;
+  if (arr.length < lookback + 1) return { ready: false, atrPct: null, sampleCount: Math.max(0, arr.length - 1) };
+
+  let total = 0;
+  let count = 0;
+  for (let i = 1; i < arr.length; i += 1) {
+    const prev = Number(arr[i - 1]);
+    const curr = Number(arr[i]);
+    if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev <= 0) continue;
+    total += Math.abs((curr / prev - 1) * 100);
+    count += 1;
+  }
+  return { ready: count >= lookback, atrPct: count > 0 ? total / count : null, sampleCount: count };
 }
 
 function calcFeatureFeeTrail(profile, p, perf) {
@@ -3442,12 +3524,43 @@ function calcFeatureNoProgressExit(profile, p, perf, elapsedSec) {
   return { enabled, exit, checkAfterSec, maxRunupPct, maxGrossLossPct, elapsedSec, peakPnlPct: peak, currentPnlPct: current, priceBelowEma8, priceOk, payloadRayRegime: payloadRay.regime, gateRayRegime: gateRay.regime, allRayNotBull, rayOk, hasSlopeLimit, slope, maxSlope: hasSlopeLimit ? maxSlopeRaw : null, slopeOk };
 }
 
+function bumpFeatureWeakness(symbol, setup, name, condition) {
+  const key = `${symbol}|${setup}|${name}`;
+  if (!condition) {
+    state.featureExitWeakness.delete(key);
+    return 0;
+  }
+  const next = (state.featureExitWeakness.get(key) || 0) + 1;
+  state.featureExitWeakness.set(key, next);
+  return next;
+}
+
 function clearFeatureWeaknessForPosition(pos) {
   if (!pos) return;
   const prefix = `${pos.symbol}|${pos.setup}|`;
   for (const key of Array.from(state.featureExitWeakness.keys())) {
     if (key.startsWith(prefix)) state.featureExitWeakness.delete(key);
   }
+}
+
+function featureExitTrailTelemetryFields(decision) {
+  const dynamic = decision && decision.dynamicTrail;
+  const adaptive = decision && decision.adaptiveAtrMfeTrail;
+  const out = [];
+  if (dynamic) {
+    out.push(`profileTrailEnabled=${boolStr(dynamic.enabled)}`);
+    out.push(`profileTrailArmed=${boolStr(dynamic.armed)}`);
+    out.push(`profileTrailAllowedGiveback=${Number.isFinite(dynamic.allowedGivebackPct) ? pct(dynamic.allowedGivebackPct) : "na"}`);
+    out.push(`profileTrailExitLine=${Number.isFinite(dynamic.exitLinePct) ? pct(dynamic.exitLinePct) : "na"}`);
+  }
+  if (adaptive) {
+    out.push(`adaptiveEnabled=${boolStr(adaptive.enabled)}`);
+    out.push(`adaptiveArmed=${boolStr(adaptive.armed)}`);
+    out.push(`tickAtrPct=${Number.isFinite(adaptive.tickAtrPct) ? pct(adaptive.tickAtrPct) : "na"}`);
+    out.push(`tickAtrSamples=${Number.isFinite(adaptive.tickAtrSamples) ? adaptive.tickAtrSamples : "na"}`);
+    out.push(`adaptiveGiveback=${Number.isFinite(adaptive.dynamicGivebackPct) ? pct(adaptive.dynamicGivebackPct) : "na"}`);
+  }
+  return out;
 }
 
 function evaluateFeatureTickLegExit(pos, p, perf) {
@@ -5398,6 +5511,7 @@ async function handleFeatureTick(p) {
         `netAfterFee=${pct(perf.currentPnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)}`,
         `peak=${pct(perf.peakPnlPct)}`,
         `giveback=${pct(perf.givebackPct)}`,
+        ...featureExitTrailTelemetryFields(exitDecision),
         ...rayBullExitHoldLogFields(exitDecision.rayBullHold),
         `reason=${exitDecision.reason}`,
         `rsi=${n(p.rsi, 2)}`,
@@ -6358,6 +6472,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_GIVEBACK_PCT}`);
   console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_ATR_MULT}`);
   console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT=${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_MIN_EXIT_GROSS_PCT}`);
+  console.log(`FVVO_ADAPTIVE_ATR_MFE_TRAIL_VOLATILITY_SOURCE=PRIOR_${CFG.FVVO_ADAPTIVE_ATR_MFE_TRAIL_LOOKBACK_TICKS}_TICK_RETURNS`);
   console.log(`FVVO_OBSERVATION_SHADOW_LEDGER_ENABLED=${CFG.FVVO_OBSERVATION_SHADOW_LEDGER_ENABLED}`);
   console.log(`FVVO_OBSERVATION_SHADOW_MAX_PER_SYMBOL=${CFG.FVVO_OBSERVATION_SHADOW_MAX_PER_SYMBOL}`);
   console.log(`FVVO_RAY_BULL_EXIT_HOLD_ENABLED=${CFG.FVVO_RAY_BULL_EXIT_HOLD_ENABLED}`);
