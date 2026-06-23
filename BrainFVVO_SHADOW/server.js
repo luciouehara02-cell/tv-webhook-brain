@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2n_CROSS_DEEP_ONLY_DEMO
+// BrainFVVO_v2o_CROSS_EXIT_FLOOR_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -39,6 +39,8 @@
 //   brain-managed exits without sending a duplicate entry order.
 // - v2n narrows automatic DEMO entries to CROSS_UP_CONFIRM and DEEP_WASHOUT_SLOW_RECOVERY;
 //   it ports the v2l Deep recovery-of-drop ceiling so late recovery entries are blocked.
+// - v2o is a DEMO-only Cross exit-floor observation update: it keeps v2n entry gating
+//   and raises only the Cross fee-trail minimum gross exit floor from 0.20% to 0.25%.
 // ============================================================
 
 const express = require("express");
@@ -75,7 +77,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2n_CROSS_DEEP_ONLY_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2o_CROSS_EXIT_FLOOR_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
