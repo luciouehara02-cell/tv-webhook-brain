@@ -1,6 +1,21 @@
 //############### LIVE PowerShell ################
 brainfvvoshadwlive-production.up.railway.app
 
+0. Status check
+
+$body = @{
+  secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
+  action = "status"
+  symbol = "BINANCE:SOLUSDT"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
 1. Manual entry — start deal now (START)
 
 $body = @{
