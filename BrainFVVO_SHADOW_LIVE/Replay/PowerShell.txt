@@ -4,7 +4,7 @@ brainfvvoshadwlive-production.up.railway.app
 1. Manual entry — start deal now (START)
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "enter_long"
   symbol = "BINANCE:SOLUSDT"
   profile = "FEATURE_CROSS_CONTINUATION"
@@ -21,7 +21,7 @@ Invoke-RestMethod `
 This sends exit_long to 3Commas immediately.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "exit_long"
   symbol = "BINANCE:SOLUSDT"
   reason = "manual_exit"
@@ -37,7 +37,7 @@ Invoke-RestMethod `
 Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "handoff_manual"
   symbol = "BINANCE:SOLUSDT"
   reason = "user_will_manage_exit"
@@ -53,7 +53,7 @@ Invoke-RestMethod `
 Use this only after the deal is already closed manually.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "clear_handoff"
   symbol = "BINANCE:SOLUSDT"
   reason = "manual_deal_closed"
