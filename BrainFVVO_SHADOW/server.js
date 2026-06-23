@@ -34,6 +34,9 @@
 // - v2j separates non-forwarded entry candidates into a non-blocking observation ledger.
 //   Shadow-only, forwarding-disabled, dry-run, skipped, and failed-forward candidates can be analyzed
 //   without occupying state.positions or blocking an eligible real Deep Washout entry.
+// - v2m adds fail-closed manual trading: explicit-price/manual-feed freshness checks,
+//   secure manual status, and adopt_long to attach a 3Commas UI-started deal to
+//   brain-managed exits without sending a duplicate entry order.
 // ============================================================
 
 const express = require("express");
@@ -70,7 +73,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2k_FEATURE_EXIT_HOTFIX_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2m_MANUAL_ADOPT_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -113,6 +116,14 @@ const CFG = {
   MANUAL_ALLOW_CLEAR_HANDOFF: envBool("MANUAL_ALLOW_CLEAR_HANDOFF", true),
   MANUAL_ENTRY_DEFAULT_PROFILE: envStr("MANUAL_ENTRY_DEFAULT_PROFILE", "FEATURE_CROSS_CONTINUATION"),
   MANUAL_ENTRY_REQUIRE_NO_OPEN_POSITION: envBool("MANUAL_ENTRY_REQUIRE_NO_OPEN_POSITION", true),
+  // v2m: manual operations must use fresh market context. `adopt_long` attaches an
+  // already-open 3Commas UI deal without sending another entry order.
+  MANUAL_ALLOW_ADOPT: envBool("MANUAL_ALLOW_ADOPT", true),
+  MANUAL_ALLOW_STATUS: envBool("MANUAL_ALLOW_STATUS", true),
+  MANUAL_ENTRY_REQUIRE_EXPLICIT_PRICE: envBool("MANUAL_ENTRY_REQUIRE_EXPLICIT_PRICE", true),
+  MANUAL_ADOPT_REQUIRE_EXPLICIT_ENTRY_PRICE: envBool("MANUAL_ADOPT_REQUIRE_EXPLICIT_ENTRY_PRICE", true),
+  MANUAL_REQUIRE_FRESH_FEATURE_TICK: envBool("MANUAL_REQUIRE_FRESH_FEATURE_TICK", true),
+  MANUAL_MAX_MARK_PRICE_DEVIATION_PCT: envNum("MANUAL_MAX_MARK_PRICE_DEVIATION_PCT", 0.50),
 
   // v1s: explicit live/demo forwarding guards. LIVE_FORWARD_ALLOWED can now be true,
   // but new live entries are still protected by confirmation, stale-feed checks,
@@ -965,7 +976,9 @@ const state = {
     staleFeatureEntryBlocks: 0,
     manualCommands: 0,
     manualEntries: 0,
+    manualAdopts: 0,
     manualExits: 0,
+    manualStatusRequests: 0,
     manualHandoffs: 0,
     manualClearHandoffs: 0
   }
@@ -6039,6 +6052,8 @@ app.get("/health", (req, res) => {
       stopPrice: p.stopPrice,
       entryTime: p.entryTime,
       entryReason: p.entryReason,
+      manualEntry: Boolean(p.manualEntry),
+      manualAdopted: Boolean(p.manualAdopted),
       entryMomentumOverride: p.entryMomentumOverride,
       barsHeld: p.barsHeld,
       peakPnlPct: p.peakPnlPct,
@@ -6053,6 +6068,7 @@ app.get("/health", (req, res) => {
 });
 
 
+
 const MANUAL_ENTRY_PROFILES = new Set([
   "FEATURE_CROSS_CONTINUATION",
   "CROSS_UP_CONFIRM",
@@ -6062,12 +6078,63 @@ const MANUAL_ENTRY_PROFILES = new Set([
 ]);
 
 function normalizeManualProfile(profile) {
-  const p = String(profile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE || "FEATURE_CROSS_CONTINUATION").trim().toUpperCase();
-  return MANUAL_ENTRY_PROFILES.has(p) ? p : "FEATURE_CROSS_CONTINUATION";
+  const requested = String(profile || "").trim().toUpperCase();
+  if (MANUAL_ENTRY_PROFILES.has(requested)) return requested;
+  const configuredDefault = String(CFG.MANUAL_ENTRY_DEFAULT_PROFILE || "FEATURE_CROSS_CONTINUATION").trim().toUpperCase();
+  return MANUAL_ENTRY_PROFILES.has(configuredDefault) ? configuredDefault : "FEATURE_CROSS_CONTINUATION";
 }
 
 function latestKnownMarket(symbol) {
   return state.lastFeatureTick.get(symbol) || state.lastFeature.get(symbol) || null;
+}
+
+function rawHasExplicitPrice(raw = {}) {
+  return Number.isFinite(safeNum(raw.price, null)) || Number.isFinite(safeNum(raw.close, null));
+}
+
+function rawManualEntryPrice(raw = {}) {
+  return safeNum(
+    raw.entryPrice,
+    safeNum(raw.entry_price, safeNum(raw.filledEntryPrice, safeNum(raw.filled_entry_price, null)))
+  );
+}
+
+function manualMarketAgeSec(symbol) {
+  const latest = latestKnownMarket(symbol);
+  if (!latest) return null;
+  const ms = timeToMs(latest.receivedAt) || timeToMs(latest.time);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return Math.max(0, (Date.now() - ms) / 1000);
+}
+
+function manualMarketPreflight(raw, p, action) {
+  const isEntryOrAdopt = action === "enter_long" || action === "adopt_long";
+  if (!isEntryOrAdopt) {
+    if (!Number.isFinite(p.close) || p.close <= 0) return "MISSING_MANUAL_PRICE_OR_MARKET_CONTEXT";
+    return "";
+  }
+
+  if (CFG.MANUAL_ENTRY_REQUIRE_EXPLICIT_PRICE && !rawHasExplicitPrice(raw)) return "MANUAL_PRICE_REQUIRED";
+  if (!Number.isFinite(p.close) || p.close <= 0) return "MISSING_MANUAL_PRICE_OR_MARKET_CONTEXT";
+
+  const latest = latestKnownMarket(p.symbol);
+  if (CFG.MANUAL_REQUIRE_FRESH_FEATURE_TICK) {
+    const ageSec = manualMarketAgeSec(p.symbol);
+    if (!latest || ageSec === null || ageSec > CFG.FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC) return "MANUAL_MARKET_CONTEXT_STALE";
+  }
+
+  const latestPrice = latest ? safeNum(latest.close, null) : null;
+  const maxDeviation = Math.max(0, Number(CFG.MANUAL_MAX_MARK_PRICE_DEVIATION_PCT) || 0);
+  if (maxDeviation > 0 && Number.isFinite(latestPrice) && latestPrice > 0) {
+    const deviationPct = Math.abs((p.close / latestPrice - 1) * 100);
+    if (deviationPct > maxDeviation) return "MANUAL_PRICE_TOO_FAR_FROM_LATEST_MARKET";
+  }
+
+  if (action === "adopt_long" && CFG.MANUAL_ADOPT_REQUIRE_EXPLICIT_ENTRY_PRICE) {
+    const entryPrice = rawManualEntryPrice(raw);
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) return "MANUAL_ADOPT_ENTRY_PRICE_REQUIRED";
+  }
+  return "";
 }
 
 function buildManualMarketPayload(raw = {}) {
@@ -6116,19 +6183,33 @@ function buildManualMarketPayload(raw = {}) {
   };
 }
 
-function createManualPosition(p, profile, reason) {
+function manualProfileStopPrice(profile, entryPrice) {
+  const profileCfg = featureExitProfile(profile);
+  const configuredStop = profileCfg && Number.isFinite(Number(profileCfg.hardStopPct))
+    ? Math.abs(Number(profileCfg.hardStopPct))
+    : Math.abs(Number(CFG.FVVO_MAX_LOSS_EXIT_PCT) || 0);
+  return configuredStop > 0 ? Number(entryPrice) * (1 - configuredStop / 100) : null;
+}
+
+function createManualPosition(p, profile, reason, options = {}) {
+  const entryPrice = safeNum(options.entryPrice, p.close);
+  const entryTime = strFromPayload(options.entryTime, p.time);
+  const adopted = Boolean(options.adopted);
+  const forwardedEntry = Boolean(options.forwardedEntry);
+  const forwardEntryStatus = strFromPayload(options.forwardEntryStatus, forwardedEntry ? "FORWARDED" : (adopted ? "ADOPTED_EXTERNAL" : "NOT_FORWARDED"));
   return {
     side: "LONG",
     setup: profile,
     manualEntry: true,
+    manualAdopted: adopted,
     symbol: p.symbol,
     tf: p.tf,
     entryBarNo: state.barIndex.get(p.symbol) || 0,
-    entryPrice: p.close,
-    entryTime: p.time,
-    entryMs: timeToMs(p.time),
+    entryPrice,
+    entryTime,
+    entryMs: timeToMs(entryTime),
     entryReceivedAt: nowIso(),
-    entryReason: reason || "MANUAL_ENTER",
+    entryReason: reason || (adopted ? "MANUAL_ADOPT" : "MANUAL_ENTER"),
     entryMomentumOverride: false,
     entryFvvoValue: p.fvvoValue,
     entryFvvoSignal: p.fvvoSignal,
@@ -6138,18 +6219,56 @@ function createManualPosition(p, profile, reason) {
     entryEma8: p.ema8,
     entryEma18: p.ema18,
     barsHeld: 0,
-    maxPrice: p.close,
-    minPrice: p.close,
+    maxPrice: entryPrice,
+    minPrice: entryPrice,
     peakPnlPct: 0,
     maxDrawdownPct: 0,
-    stopPrice: CFG.FVVO_MAX_LOSS_EXIT_PCT > 0 ? p.close * (1 - Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT) / 100) : null,
+    stopPrice: manualProfileStopPrice(profile, entryPrice),
     redDotSeen: false,
     greenDotAtEntry: p.fvvoGreenDot,
     greenPulseMemoryAtEntry: false,
     greenPulseAssistAtEntry: false,
-    forwardedEntry: false,
-    forwardEntryStatus: "NOT_FORWARDED",
+    forwardedEntry,
+    forwardEntryStatus,
     backupUsed: false
+  };
+}
+
+function manualPositionSnapshot(symbol) {
+  const pos = state.positions.get(symbol) || null;
+  const deal = state.externalDeals.get(symbol) || null;
+  const handoff = state.manualHandoffs.get(symbol) || null;
+  const latest = latestKnownMarket(symbol) || null;
+  const markPrice = latest ? safeNum(latest.close, null) : null;
+  const pnlPct = pos && Number.isFinite(markPrice) ? calcPct(markPrice, pos.entryPrice) : null;
+  return {
+    symbol,
+    brainWillManageExit: Boolean(pos),
+    manualEntryTracked: Boolean(pos && pos.manualEntry),
+    manualAdopted: Boolean(pos && pos.manualAdopted),
+    externalDealLockActive: Boolean(deal),
+    manualHandoffActive: Boolean(handoff),
+    setup: pos ? pos.setup : (deal ? deal.setup : null),
+    entryPrice: pos ? pos.entryPrice : (deal ? deal.entryPrice : null),
+    entryTime: pos ? pos.entryTime : (deal ? deal.entryTime : null),
+    stopPrice: pos ? pos.stopPrice : null,
+    forwardedEntry: Boolean(pos && pos.forwardedEntry),
+    forwardEntryStatus: pos ? pos.forwardEntryStatus : null,
+    latestFeaturePrice: markPrice,
+    latestFeatureAgeSec: manualMarketAgeSec(symbol),
+    estimatedPnlPct: pnlPct,
+    recoveryInstruction: pos ? null : "Use action=adopt_long only when an existing 3Commas long deal was started outside this brain and you want BrainFVVO to manage its exit."
+  };
+}
+
+function manualActionResponse(action, symbol, extra = {}) {
+  return {
+    ok: true,
+    action,
+    symbol,
+    manual: manualPositionSnapshot(symbol),
+    risk: riskSnapshot(),
+    ...extra
   };
 }
 
@@ -6167,9 +6286,21 @@ async function handleManualControl(req, res) {
   const symbol = strFromPayload(raw.symbol, CFG.SYMBOL);
   const reason = strFromPayload(raw.reason, action || "manual_control");
   const p = buildManualMarketPayload(raw);
-  if (!Number.isFinite(p.close) || p.close <= 0) return res.status(400).json({ ok: false, reason: "MISSING_MANUAL_PRICE_OR_MARKET_CONTEXT" });
 
   try {
+    if (action === "status") {
+      if (!CFG.MANUAL_ALLOW_STATUS) return res.status(403).json({ ok: false, reason: "MANUAL_STATUS_DISABLED" });
+      state.stats.manualStatusRequests += 1;
+      logLine("MANUAL_STATUS", `symbol=${symbol} | tracked=${boolStr(state.positions.has(symbol))} | externalDealLock=${boolStr(state.externalDeals.has(symbol))} | handoff=${boolStr(state.manualHandoffs.has(symbol))}`);
+      return res.json(manualActionResponse(action, symbol));
+    }
+
+    const marketPreflight = manualMarketPreflight(raw, p, action);
+    if (marketPreflight) {
+      logLine("MANUAL_CONTROL_BLOCK", `action=${action} | symbol=${symbol} | reason=${marketPreflight}`);
+      return res.status(409).json({ ok: false, action, symbol, reason: marketPreflight, manual: manualPositionSnapshot(symbol), risk: riskSnapshot() });
+    }
+
     if (action === "enter_long") {
       if (!CFG.MANUAL_ALLOW_ENTER) return res.status(403).json({ ok: false, reason: "MANUAL_ENTER_DISABLED" });
       const profile = normalizeManualProfile(raw.profile || raw.manualProfile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE);
@@ -6188,7 +6319,7 @@ async function handleManualControl(req, res) {
       state.positions.set(symbol, position);
       state.stats.virtualLongOpens += 1;
       state.stats.manualEntries += 1;
-      logLine("MANUAL_LONG_OPEN", `🟢 symbol=${symbol} | profile=${profile} | price=${n(p.close,4)} | stop=${position.stopPrice === null ? "na" : n(position.stopPrice,4)} | brainWillManageExit=true`);
+      logLine("MANUAL_LONG_OPEN", `🟢 symbol=${symbol} | profile=${profile} | price=${n(p.close,4)} | stop=${position.stopPrice === null ? "na" : n(position.stopPrice,4)} | brainWillManageExit=true | entryMethod=BRAIN_WEBHOOK`);
       const forwardResult = await forwardTo3Commas("enter_long", p, { setup: profile, reason: "MANUAL_ENTER", momentumOverride: false, manual: true });
       if (!forwardResult.ok && !forwardResult.dryRun) {
         state.positions.delete(symbol);
@@ -6198,15 +6329,58 @@ async function handleManualControl(req, res) {
       position.forwardedEntry = forwardResult.ok === true && !forwardResult.dryRun;
       position.forwardEntryStatus = forwardResult.ok ? (forwardResult.dryRun ? "DRY_RUN" : "FORWARDED") : "ERROR";
       if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && position.forwardedEntry) {
-        state.externalDeals.set(symbol, { symbol, setup: profile, entryPrice: p.close, entryTime: p.time, openedAt: nowIso(), brain: CFG.BRAIN_NAME, manual: true });
+        state.externalDeals.set(symbol, { symbol, setup: profile, entryPrice: p.close, entryTime: p.time, openedAt: nowIso(), brain: CFG.BRAIN_NAME, manual: true, adopted: false });
         logLine("FVVO_EXTERNAL_DEAL_LOCK_SET", `symbol=${symbol} | setup=${profile} | entry=${n(p.close,4)} | reason=MANUAL_ENTER`);
       }
-      return res.json({ ok: true, action, profile, symbol, price: p.close, forwarded: position.forwardedEntry, forwardEntryStatus: position.forwardEntryStatus, brainWillManageExit: true, risk: riskSnapshot() });
+      return res.json(manualActionResponse(action, symbol, {
+        profile,
+        price: p.close,
+        forwarded: position.forwardedEntry,
+        forwardEntryStatus: position.forwardEntryStatus,
+        brainWillManageExit: true,
+        executionNote: "3Commas webhook accepted. Confirm the deal appears in 3Commas before assuming exchange fill."
+      }));
+    }
+
+    if (action === "adopt_long") {
+      if (!CFG.MANUAL_ALLOW_ADOPT) return res.status(403).json({ ok: false, reason: "MANUAL_ADOPT_DISABLED" });
+      const profile = normalizeManualProfile(raw.profile || raw.manualProfile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE);
+      const entryPrice = rawManualEntryPrice(raw);
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) return res.status(400).json({ ok: false, reason: "MANUAL_ADOPT_ENTRY_PRICE_REQUIRED" });
+      if (CFG.MANUAL_ENTRY_REQUIRE_NO_OPEN_POSITION && state.positions.has(symbol)) return res.status(409).json({ ok: false, reason: "OPEN_POSITION_EXISTS" });
+      if (state.manualHandoffs.has(symbol)) return res.status(409).json({ ok: false, reason: "MANUAL_HANDOFF_ACTIVE" });
+      if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && state.externalDeals.has(symbol)) return res.status(409).json({ ok: false, reason: "EXTERNAL_DEAL_LOCK_ACTIVE" });
+
+      const entryTime = strFromPayload(raw.entryTime, strFromPayload(raw.entry_time, p.time));
+      const position = createManualPosition(p, profile, "MANUAL_ADOPT", {
+        entryPrice,
+        entryTime,
+        adopted: true,
+        forwardedEntry: true,
+        forwardEntryStatus: "ADOPTED_EXTERNAL"
+      });
+      state.positions.set(symbol, position);
+      state.stats.virtualLongOpens += 1;
+      state.stats.manualAdopts += 1;
+      if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED) {
+        state.externalDeals.set(symbol, { symbol, setup: profile, entryPrice, entryTime, openedAt: nowIso(), brain: CFG.BRAIN_NAME, manual: true, adopted: true });
+      }
+      logLine("MANUAL_LONG_ADOPT", `🟠 symbol=${symbol} | profile=${profile} | entry=${n(entryPrice,4)} | mark=${n(p.close,4)} | stop=${position.stopPrice === null ? "na" : n(position.stopPrice,4)} | brainWillManageExit=true | noEntryForwardSent=true`);
+      logLine("FVVO_EXTERNAL_DEAL_LOCK_SET", `symbol=${symbol} | setup=${profile} | entry=${n(entryPrice,4)} | reason=MANUAL_ADOPT`);
+      return res.json(manualActionResponse(action, symbol, {
+        profile,
+        entryPrice,
+        markPrice: p.close,
+        adopted: true,
+        noEntryForwardSent: true,
+        brainWillManageExit: true
+      }));
     }
 
     if (action === "exit_long") {
       if (!CFG.MANUAL_ALLOW_EXIT) return res.status(403).json({ ok: false, reason: "MANUAL_EXIT_DISABLED" });
       const pos = state.positions.get(symbol) || null;
+      const wasTracked = Boolean(pos);
       const setup = pos ? pos.setup : "MANUAL_EXIT";
       const forwardResult = await forwardTo3Commas("exit_long", p, { setup, reason: reason || "MANUAL_EXIT", momentumOverride: pos ? pos.entryMomentumOverride : false, manual: true });
       if (!forwardResult.ok && !forwardResult.dryRun) return res.status(502).json({ ok: false, reason: forwardResult.reason || forwardResult.error || "FORWARD_FAILED" });
@@ -6220,8 +6394,8 @@ async function handleManualControl(req, res) {
       state.externalDeals.delete(symbol);
       state.manualHandoffs.delete(symbol);
       state.stats.manualExits += 1;
-      logLine("MANUAL_LONG_EXIT", `🔴 symbol=${symbol} | setup=${setup} | price=${n(p.close,4)} | pnl=${pnlPct === null ? "na" : pct(pnlPct)} | netAfterFee=${pnlPct === null ? "na" : pct(pnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)} | reason=${reason}`);
-      return res.json({ ok: true, action, symbol, price: p.close, pnlPct, risk: riskSnapshot() });
+      logLine("MANUAL_LONG_EXIT", `🔴 symbol=${symbol} | setup=${setup} | price=${n(p.close,4)} | pnl=${pnlPct === null ? "na" : pct(pnlPct)} | netAfterFee=${pnlPct === null ? "na" : pct(pnlPct - CFG.FVVO_FEE_ROUND_TRIP_PCT)} | tracked=${boolStr(wasTracked)} | reason=${reason}`);
+      return res.json(manualActionResponse(action, symbol, { price: p.close, pnlPct, wasTracked, exitForwarded: forwardResult.ok === true && !forwardResult.dryRun }));
     }
 
     if (action === "handoff_manual") {
@@ -6235,7 +6409,7 @@ async function handleManualControl(req, res) {
       state.manualHandoffs.set(symbol, handoff);
       state.stats.manualHandoffs += 1;
       logLine("MANUAL_HANDOFF_ACTIVE", `symbol=${symbol} | price=${n(p.close,4)} | hadBrainPosition=${boolStr(Boolean(pos))} | blockNewEntries=true | reason=${reason}`);
-      return res.json({ ok: true, action, symbol, handoff, exitSent: false, newEntriesBlocked: true });
+      return res.json(manualActionResponse(action, symbol, { handoff, exitSent: false, newEntriesBlocked: true }));
     }
 
     if (action === "clear_handoff") {
@@ -6245,10 +6419,10 @@ async function handleManualControl(req, res) {
       state.positions.delete(symbol);
       state.stats.manualClearHandoffs += 1;
       logLine("MANUAL_HANDOFF_CLEAR", `symbol=${symbol} | existed=${boolStr(existed)} | reason=${reason} | newEntriesAllowed=true`);
-      return res.json({ ok: true, action, symbol, existed, newEntriesAllowed: true });
+      return res.json(manualActionResponse(action, symbol, { existed, newEntriesAllowed: true }));
     }
 
-    return res.status(400).json({ ok: false, reason: "UNKNOWN_MANUAL_ACTION", allowed: ["enter_long", "exit_long", "handoff_manual", "clear_handoff"] });
+    return res.status(400).json({ ok: false, reason: "UNKNOWN_MANUAL_ACTION", allowed: ["status", "enter_long", "adopt_long", "exit_long", "handoff_manual", "clear_handoff"] });
   } catch (err) {
     logLine("MANUAL_CONTROL_ERROR", err.stack || err.message);
     return res.status(500).json({ ok: false, reason: "MANUAL_CONTROL_ERROR", error: err.message });
@@ -6361,6 +6535,12 @@ app.listen(CFG.PORT, () => {
   console.log(`MANUAL_WEBHOOK_PATH=${CFG.MANUAL_WEBHOOK_PATH}`);
   console.log(`MANUAL_WEBHOOK_SECRET_SET=${Boolean(CFG.MANUAL_WEBHOOK_SECRET && CFG.MANUAL_WEBHOOK_SECRET !== "CHANGE_ME_RANDOM_40_CHARS")}`);
   console.log(`MANUAL_ENTRY_DEFAULT_PROFILE=${CFG.MANUAL_ENTRY_DEFAULT_PROFILE}`);
+  console.log(`MANUAL_ALLOW_ADOPT=${CFG.MANUAL_ALLOW_ADOPT}`);
+  console.log(`MANUAL_ALLOW_STATUS=${CFG.MANUAL_ALLOW_STATUS}`);
+  console.log(`MANUAL_ENTRY_REQUIRE_EXPLICIT_PRICE=${CFG.MANUAL_ENTRY_REQUIRE_EXPLICIT_PRICE}`);
+  console.log(`MANUAL_ADOPT_REQUIRE_EXPLICIT_ENTRY_PRICE=${CFG.MANUAL_ADOPT_REQUIRE_EXPLICIT_ENTRY_PRICE}`);
+  console.log(`MANUAL_REQUIRE_FRESH_FEATURE_TICK=${CFG.MANUAL_REQUIRE_FRESH_FEATURE_TICK}`);
+  console.log(`MANUAL_MAX_MARK_PRICE_DEVIATION_PCT=${CFG.MANUAL_MAX_MARK_PRICE_DEVIATION_PCT}`);
   console.log(`FVVO_LIVE_CONFIRM_REQUIRED=${CFG.FVVO_LIVE_CONFIRM_REQUIRED}`);
   console.log(`FVVO_LIVE_CONFIRM_OK=${liveConfirmOk()}`);
   console.log(`FVVO_EMERGENCY_DISABLE_ALL_FORWARDS=${CFG.FVVO_EMERGENCY_DISABLE_ALL_FORWARDS}`);
