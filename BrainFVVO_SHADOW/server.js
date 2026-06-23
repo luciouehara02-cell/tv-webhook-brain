@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2h_EXIT_PROTECTION_REPLAY_TUNED_DEMO
+// BrainFVVO_v2n_CROSS_DEEP_ONLY_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -37,6 +37,8 @@
 // - v2m adds fail-closed manual trading: explicit-price/manual-feed freshness checks,
 //   secure manual status, and adopt_long to attach a 3Commas UI-started deal to
 //   brain-managed exits without sending a duplicate entry order.
+// - v2n narrows automatic DEMO entries to CROSS_UP_CONFIRM and DEEP_WASHOUT_SLOW_RECOVERY;
+//   it ports the v2l Deep recovery-of-drop ceiling so late recovery entries are blocked.
 // ============================================================
 
 const express = require("express");
@@ -73,7 +75,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2m_MANUAL_ADOPT_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2n_CROSS_DEEP_ONLY_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -321,6 +323,8 @@ const CFG = {
   FVVO_DEEP_WASHOUT_MAX_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_DROP_PCT", 3.25),
   FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT: envNum("FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT", 1.00),
   FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT", 1.50),
+  // v2n: block Deep entries that occur too late in the recovery leg. 0 disables the cap.
+  FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT: envNum("FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT", 0),
   FVVO_DEEP_WASHOUT_NO_FRESH_LOW_SEC: envNum("FVVO_DEEP_WASHOUT_NO_FRESH_LOW_SEC", 180),
   FVVO_DEEP_WASHOUT_MIN_HIGHER_LOW_COUNT: envNum("FVVO_DEEP_WASHOUT_MIN_HIGHER_LOW_COUNT", 3),
   FVVO_DEEP_WASHOUT_MIN_RSI: envNum("FVVO_DEEP_WASHOUT_MIN_RSI", 52),
@@ -4776,6 +4780,8 @@ function evaluateDeepWashoutCandidate(tick) {
 
   const dropOk = structure.dropPct >= CFG.FVVO_DEEP_WASHOUT_MIN_DROP_PCT && structure.dropPct <= CFG.FVVO_DEEP_WASHOUT_MAX_DROP_PCT;
   const bounceOk = structure.bounceFromBottomPct >= CFG.FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT && structure.bounceFromBottomPct <= CFG.FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT;
+  const recoveryCapEnabled = Number.isFinite(CFG.FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT) && CFG.FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT > 0;
+  const recoveryOfDropOk = !recoveryCapEnabled || (Number.isFinite(structure.recoveryOfDropPct) && structure.recoveryOfDropPct <= CFG.FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT);
   const noFreshLowOk = structure.noFreshLowSec >= CFG.FVVO_DEEP_WASHOUT_NO_FRESH_LOW_SEC;
   const higherLowOk = structure.higherLowCount >= CFG.FVVO_DEEP_WASHOUT_MIN_HIGHER_LOW_COUNT;
 
@@ -4813,7 +4819,7 @@ function evaluateDeepWashoutCandidate(tick) {
   const lastCloseMs = state.lastDeepWashoutCloseMs.get(tick.symbol) || 0;
   const cooldownOk = CFG.FVVO_DEEP_WASHOUT_COOLDOWN_SEC <= 0 || (timeToMs(tick.time) - lastCloseMs) / 1000 >= CFG.FVVO_DEEP_WASHOUT_COOLDOWN_SEC;
 
-  const ok = dropOk && bounceOk && noFreshLowOk && higherLowOk &&
+  const ok = dropOk && bounceOk && recoveryOfDropOk && noFreshLowOk && higherLowOk &&
     rsiOk && rsiRising && slopeOk && slopeImproving && fvvoOk && priceNearEma8Ok &&
     !overheatBlock && !adxRisingBearReject && !recentRedPulseBlocked && !dealBlock && cooldownOk;
 
@@ -4822,6 +4828,10 @@ function evaluateDeepWashoutCandidate(tick) {
     structure,
     dropOk,
     bounceOk,
+    recoveryCapEnabled,
+    recoveryCap: recoveryCapEnabled ? CFG.FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT : null,
+    recoveryOfDropPct: structure.recoveryOfDropPct,
+    recoveryOfDropOk,
     noFreshLowOk,
     higherLowOk,
     rsiOk,
@@ -4859,6 +4869,7 @@ function evaluateDeepWashoutCandidate(tick) {
     const failed = [];
     if (!dropOk) failed.push("DEEP_DROP_NOT_IN_RANGE");
     if (!bounceOk) failed.push("DEEP_BOUNCE_NOT_IN_RANGE");
+    if (!recoveryOfDropOk) failed.push("DEEP_RECOVERY_TOO_LATE");
     if (!noFreshLowOk) failed.push("DEEP_FRESH_LOW_TOO_RECENT");
     if (!higherLowOk) failed.push("DEEP_NOT_ENOUGH_HIGHER_TICKS");
     if (!rsiOk) failed.push("DEEP_RSI_TOO_LOW");
@@ -6772,6 +6783,7 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_DEEP_WASHOUT_MAX_DROP_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_DROP_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_DEEP_WASHOUT_MIN_BOUNCE_FROM_BOTTOM_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_BOUNCE_FROM_BOTTOM_PCT}`);
+  console.log(`FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT=${CFG.FVVO_DEEP_WASHOUT_MAX_RECOVERY_OF_DROP_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_MIN_RSI=${CFG.FVVO_DEEP_WASHOUT_MIN_RSI}`);
   console.log(`FVVO_DEEP_WASHOUT_SHADOW_TP_PCT=${CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT}`);
   console.log(`FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED=${CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED}`);
