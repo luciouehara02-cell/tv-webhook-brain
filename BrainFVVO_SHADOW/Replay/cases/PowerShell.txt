@@ -1,22 +1,23 @@
 //############### DEMO PowerShell ################
 
-0. Status check
+#####  0. Status check
+
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_DEMO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
   action = "status"
   symbol = "BINANCE:SOLUSDT"
 } | ConvertTo-Json
-
 Invoke-RestMethod `
   -Method Post `
   -Uri "https://braindemolong-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
 
-1. Manual entry — start deal now (START)
+
+#####  1. Manual entry — start deal now (START)
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_DEMO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
   action = "enter_long"
   symbol = "BINANCE:SOLUSDT"
   profile = "FEATURE_CROSS_CONTINUATION"
@@ -29,11 +30,11 @@ Invoke-RestMethod `
   -Body $body
 
 
-2. Manual exit — close deal now (STOP)
+#####  2. Manual exit — close deal now (STOP)
 This sends exit_long to 3Commas immediately.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_DEMO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
   action = "exit_long"
   symbol = "BINANCE:SOLUSDT"
   reason = "manual_exit"
@@ -45,11 +46,11 @@ Invoke-RestMethod `
   -Body $body
 
 
-3) Handoff / reset control when BOT already in trade (Take OVER by Manual BOT EXIT)
+#####   3) Handoff / reset control when BOT already in trade (Take OVER by Manual BOT EXIT)
 Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_DEMO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
   action = "handoff_manual"
   symbol = "BINANCE:SOLUSDT"
   reason = "user_will_manage_exit"
@@ -61,11 +62,11 @@ Invoke-RestMethod `
   -Body $body
 
 
-4) Clear handoff after you manually close in 3Commas (CLEAR MEMORY)
+#####   4) Clear handoff after you manually close in 3Commas (CLEAR MEMORY)
 Use this only after the deal is already closed manually.
 
 $body = @{
-  secret = "BrainFVVO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+  secret = "BrainFVVO_DEMO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
   action = "clear_handoff"
   symbol = "BINANCE:SOLUSDT"
   reason = "manual_deal_closed"
@@ -73,5 +74,28 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+
+#####   5. adopt_long (Take control of EXIT by Brain)
+It is a recovery function for a rare situation where a real deal exists but BrainFVVO is no longer tracking it and want Brain take control of EXIT
+
+
+$manualSecret = "BrainFVVO_DEMO_MANUAL_3h2l9a7m6i3s8q7z9k1ll"
+$manualUrl = "https://braindemolong-production.up.railway.app/manual"
+$actual3CommasEntryPrice = 68.96
+$body = @{
+  secret = $manualSecret
+  action = "adopt_long"
+  symbol = "BINANCE:SOLUSDT"
+  entryPrice = $actual3CommasEntryPrice
+  profile = "CROSS_UP_CONFIRM"
+  reason = "demo_adopt_existing_3commas_deal"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri $manualUrl `
   -ContentType "application/json" `
   -Body $body
