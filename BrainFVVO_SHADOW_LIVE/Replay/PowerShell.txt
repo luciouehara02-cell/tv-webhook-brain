@@ -11,7 +11,7 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "https://braindemolong-production.up.railway.app/manual" `
+  -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
 
@@ -22,7 +22,7 @@ $body = @{
   secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "enter_long"
   symbol = "BINANCE:SOLUSDT"
-  profile = "FEATURE_CROSS_CONTINUATION"
+  profile = "DEEP_WASHOUT_SLOW_RECOVERY"
   reason = "manual_entry_latest_price"
 } | ConvertTo-Json
 Invoke-RestMethod `
