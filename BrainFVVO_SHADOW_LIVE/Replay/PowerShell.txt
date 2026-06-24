@@ -1,14 +1,12 @@
 //############### LIVE PowerShell ################
-brainfvvoshadwlive-production.up.railway.app
 
-0. Status check
+#####  0. Status check
 
 $body = @{
   secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "status"
   symbol = "BINANCE:SOLUSDT"
 } | ConvertTo-Json
-
 Invoke-RestMethod `
   -Method Post `
   -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
@@ -16,13 +14,13 @@ Invoke-RestMethod `
   -Body $body
 
 
-1. Manual entry — start deal now (START)
+#####  1. Manual entry — start deal now (START)
 
 $body = @{
   secret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
   action = "enter_long"
   symbol = "BINANCE:SOLUSDT"
-  profile = "DEEP_WASHOUT_SLOW_RECOVERY"
+  profile = "CROSS_UP_CONFIRM"
   reason = "manual_entry_latest_price"
 } | ConvertTo-Json
 Invoke-RestMethod `
@@ -32,7 +30,7 @@ Invoke-RestMethod `
   -Body $body
 
 
-2. Manual exit — close deal now (STOP)
+#####  2. Manual exit — close deal now (STOP)
 This sends exit_long to 3Commas immediately.
 
 $body = @{
@@ -48,7 +46,7 @@ Invoke-RestMethod `
   -Body $body
 
 
-3) Handoff / reset control when BOT already in trade (Take OVER by Manual BOT EXIT)
+#####   3) Handoff / reset control when BOT already in trade (Take OVER by Manual BOT EXIT)
 Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
 
 $body = @{
@@ -64,7 +62,7 @@ Invoke-RestMethod `
   -Body $body
 
 
-4) Clear handoff after you manually close in 3Commas (CLEAR MEMORY)
+#####   4) Clear handoff after you manually close in 3Commas (CLEAR MEMORY)
 Use this only after the deal is already closed manually.
 
 $body = @{
@@ -76,5 +74,28 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri "https://brainfvvoshadwlive-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+
+#####   5. adopt_long (Take control of EXIT by Brain)
+It is a recovery function for a rare situation where a real deal exists but BrainFVVO is no longer tracking it and want Brain take control of EXIT
+
+
+$manualSecret = "BrainFVVO_LIVE_MANUAL_3h2l9a7m6i3s8q7z999k1ll"
+$manualUrl = "https://brainfvvoshadwlive-production.up.railway.app/manual"
+$actual3CommasEntryPrice = 68.96
+$body = @{
+  secret = $manualSecret
+  action = "adopt_long"
+  symbol = "BINANCE:SOLUSDT"
+  entryPrice = $actual3CommasEntryPrice
+  profile = "CROSS_UP_CONFIRM"
+  reason = "demo_adopt_existing_3commas_deal"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri $manualUrl `
   -ContentType "application/json" `
   -Body $body
