@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2o_CROSS_EXIT_FLOOR_DEMO
+// BrainFVVO_v2p_LAUNCH_15S_SHADOW_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -41,6 +41,11 @@
 //   it ports the v2l Deep recovery-of-drop ceiling so late recovery entries are blocked.
 // - v2o is a DEMO-only Cross exit-floor observation update: it keeps v2n entry gating
 //   and raises only the Cross fee-trail minimum gross exit floor from 0.20% to 0.25%.
+// - v2p adds two mutually exclusive early-launch observers fed from confirmed 5m context
+//   and point-in-time rolling 15s ticks: LAUNCH_15S_MICRO_BREAKOUT and
+//   LAUNCH_15S_ZERO_CONFIRM. Both are shadow-only by default; no existing live/demo
+//   forwarding scope changes are made. A fast launch-thesis-failure exit is added only
+//   to those new launch profiles for replay-safe downside containment.
 // ============================================================
 
 const express = require("express");
@@ -77,7 +82,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2o_CROSS_EXIT_FLOOR_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2p_LAUNCH_15S_SHADOW_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -97,6 +102,59 @@ const CFG = {
   FVVO_FEATURE_TICK_EXIT_ENABLED: envBool("FVVO_FEATURE_TICK_EXIT_ENABLED", true),
   FVVO_FEATURE_TICK_ENTRY_ENABLED: envBool("FVVO_FEATURE_TICK_ENTRY_ENABLED", true),
   FVVO_FEATURE_TICK_MIN_INTERVAL_MS: envNum("FVVO_FEATURE_TICK_MIN_INTERVAL_MS", 8000),
+
+
+  // v2p: early-launch entry observers. The confirmed 5m bar arms the environment;
+  // the 15s FEATURE_TICK_FVVO stream reconstructs rolling 1-minute expansion and
+  // executes only before the move becomes overextended. Both legs are shadow-only by default.
+  FVVO_LAUNCH_ENTRY_ENABLED: envBool("FVVO_LAUNCH_ENTRY_ENABLED", true),
+  FVVO_LAUNCH_ARM_WINDOW_SEC: envNum("FVVO_LAUNCH_ARM_WINDOW_SEC", 360),
+  FVVO_LAUNCH_5M_REQUIRE_CLOSE_ABOVE_EMA8: envBool("FVVO_LAUNCH_5M_REQUIRE_CLOSE_ABOVE_EMA8", true),
+  FVVO_LAUNCH_5M_REQUIRE_EMA8_ABOVE_EMA18: envBool("FVVO_LAUNCH_5M_REQUIRE_EMA8_ABOVE_EMA18", true),
+  FVVO_LAUNCH_5M_MIN_RSI: envNum("FVVO_LAUNCH_5M_MIN_RSI", 56),
+  FVVO_LAUNCH_5M_MIN_ADX: envNum("FVVO_LAUNCH_5M_MIN_ADX", 22),
+  FVVO_LAUNCH_5M_MIN_FVVO_SLOPE: envNum("FVVO_LAUNCH_5M_MIN_FVVO_SLOPE", 0.20),
+  // Require the confirmed 5m close to still be advancing so a launch arm is not
+  // created on a late red pullback inside an already-mature surge.
+  FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE: envBool("FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE", true),
+  FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT: envNum("FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT", 0.05),
+  FVVO_LAUNCH_ROLLING_WINDOW_SEC: envNum("FVVO_LAUNCH_ROLLING_WINDOW_SEC", 60),
+  FVVO_LAUNCH_MIN_HISTORY_SEC: envNum("FVVO_LAUNCH_MIN_HISTORY_SEC", 45),
+  FVVO_LAUNCH_BREAKOUT_LOOKBACK_SEC: envNum("FVVO_LAUNCH_BREAKOUT_LOOKBACK_SEC", 45),
+  FVVO_LAUNCH_BREAKOUT_MARGIN_PCT: envNum("FVVO_LAUNCH_BREAKOUT_MARGIN_PCT", 0.04),
+  FVVO_LAUNCH_MAX_OBSERVATION_PER_ARM: envNum("FVVO_LAUNCH_MAX_OBSERVATION_PER_ARM", 1),
+  FVVO_LAUNCH_LOG_NEAR_MISS: envBool("FVVO_LAUNCH_LOG_NEAR_MISS", true),
+
+  // Primary early entry: controlled 1-minute expansion plus 15s acceleration.
+  FVVO_LAUNCH_MICRO_BREAKOUT_ENABLED: envBool("FVVO_LAUNCH_MICRO_BREAKOUT_ENABLED", true),
+  FVVO_LAUNCH_MICRO_BREAKOUT_SHADOW_ONLY: envBool("FVVO_LAUNCH_MICRO_BREAKOUT_SHADOW_ONLY", true),
+  FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED: envBool("FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED", false),
+  FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT: envNum("FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT", 0.28),
+  FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT: envNum("FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT", 0.60),
+  FVVO_LAUNCH_MICRO_MIN_RSI: envNum("FVVO_LAUNCH_MICRO_MIN_RSI", 52),
+  FVVO_LAUNCH_MICRO_MIN_FVVO: envNum("FVVO_LAUNCH_MICRO_MIN_FVVO", -1.00),
+  FVVO_LAUNCH_MICRO_MIN_FVVO_SLOPE: envNum("FVVO_LAUNCH_MICRO_MIN_FVVO_SLOPE", 0.15),
+  FVVO_LAUNCH_MICRO_MAX_EXT_EMA8_PCT: envNum("FVVO_LAUNCH_MICRO_MAX_EXT_EMA8_PCT", 0.30),
+
+  // Fallback: wait for fresh 15s FVVO zero-cross only if Micro Breakout did not consume the arm.
+  FVVO_LAUNCH_ZERO_CONFIRM_ENABLED: envBool("FVVO_LAUNCH_ZERO_CONFIRM_ENABLED", true),
+  FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY: envBool("FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY", true),
+  FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED: envBool("FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED", false),
+  FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT: envNum("FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT", 0.20),
+  FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT: envNum("FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT", 0.75),
+  FVVO_LAUNCH_ZERO_MIN_RSI: envNum("FVVO_LAUNCH_ZERO_MIN_RSI", 54),
+  FVVO_LAUNCH_ZERO_MIN_FVVO_SLOPE: envNum("FVVO_LAUNCH_ZERO_MIN_FVVO_SLOPE", 0.75),
+  FVVO_LAUNCH_ZERO_MAX_EXT_EMA8_PCT: envNum("FVVO_LAUNCH_ZERO_MAX_EXT_EMA8_PCT", 0.38),
+
+  // Launch-specific early failure protection. This is intentionally only for the
+  // new launch profiles and ignores stale 5m Bull context when all live tick
+  // conditions have invalidated the launch thesis.
+  FVVO_LAUNCH_FEATURE_EXIT_ENABLED: envBool("FVVO_LAUNCH_FEATURE_EXIT_ENABLED", true),
+  FVVO_LAUNCH_FEATURE_HARD_STOP_PCT: envNum("FVVO_LAUNCH_FEATURE_HARD_STOP_PCT", 0.25),
+  FVVO_LAUNCH_THESIS_FAILURE_ENABLED: envBool("FVVO_LAUNCH_THESIS_FAILURE_ENABLED", true),
+  FVVO_LAUNCH_THESIS_FAILURE_MIN_HOLD_SEC: envNum("FVVO_LAUNCH_THESIS_FAILURE_MIN_HOLD_SEC", 15),
+  FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT: envNum("FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT", -0.08),
+  FVVO_LAUNCH_THESIS_FAILURE_CONFIRM_TICKS: envNum("FVVO_LAUNCH_THESIS_FAILURE_CONFIRM_TICKS", 2),
 
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -716,7 +774,9 @@ const CFG = {
   FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT: envNum("FVVO_CROSS_ALLOW_EMA8_BELOW_EMA18_PCT", 0.10),
   FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS: envNum("FVVO_CROSS_RECENT_REDDOT_BLOCK_BARS", 2),
 
-  FVVO_CROSS_MOMO_OVERRIDE_ENABLED: envBool("FVVO_CROSS_MOMO_OVERRIDE_ENABLED", true),
+  // v2p: keep the legacy 5m Momentum Override off by default. It was designed to widen
+  // late-entry tolerance, which conflicts with the new earlier/no-chase launch observer.
+  FVVO_CROSS_MOMO_OVERRIDE_ENABLED: envBool("FVVO_CROSS_MOMO_OVERRIDE_ENABLED", false),
   FVVO_CROSS_MOMO_MIN_SLOPE: envNum("FVVO_CROSS_MOMO_MIN_SLOPE", 1.20),
   FVVO_CROSS_MOMO_MIN_RSI: envNum("FVVO_CROSS_MOMO_MIN_RSI", 60),
   FVVO_CROSS_MOMO_MAX_RSI: envNum("FVVO_CROSS_MOMO_MAX_RSI", 74),
@@ -856,6 +916,8 @@ const state = {
   manualHandoffs: new Map(),
   lastFastTickAt: new Map(),
   tickBuffers: new Map(),
+  launchTickBuffers: new Map(),
+  launchArms: new Map(),
   tickWashoutShadow: new Map(),
   deepWashoutShadow: new Map(),
   observationShadows: new Map(),
@@ -960,6 +1022,11 @@ const state = {
     postCrossExits: 0,
     postCrossPnlPct: 0,
     postCrossMemorySets: 0,
+    launchArms: 0,
+    launchMicroSignals: 0,
+    launchZeroSignals: 0,
+    launchNoChaseBlocks: 0,
+    launchThesisFailureExits: 0,
     featureTicksReceived: 0,
     featureTicksAccepted: 0,
     featureTickExitSignals: 0,
@@ -1427,6 +1494,8 @@ function logEntryForwardPreflightBlock(p, setup, reason) {
 }
 
 function shouldForwardSetup(setup) {
+  if (setup === "LAUNCH_15S_MICRO_BREAKOUT") return CFG.FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED && !CFG.FVVO_LAUNCH_MICRO_BREAKOUT_SHADOW_ONLY;
+  if (setup === "LAUNCH_15S_ZERO_CONFIRM") return CFG.FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED && !CFG.FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY;
   if (setup === "CROSS_UP_CONFIRM") return CFG.FVVO_FORWARD_CROSS_ENABLED;
   if (setup === "WASHOUT_REVERSAL") return CFG.FVVO_FORWARD_WASHOUT_ENABLED;
   if (setup === "RISING_CONTINUATION") return CFG.FVVO_FORWARD_RISING_ENABLED;
@@ -2021,6 +2090,8 @@ function setupPrefix(setup) {
   if (setup === "WASHOUT_REVERSAL") return "FVVO_WASHOUT";
   if (setup === "TICK_WASHOUT_RECOVERY") return "FVVO_TICK_WASHOUT";
   if (setup === "DEEP_WASHOUT_SLOW_RECOVERY") return "FVVO_DEEP_WASHOUT";
+  if (setup === "LAUNCH_15S_MICRO_BREAKOUT") return "FVVO_LAUNCH_MICRO";
+  if (setup === "LAUNCH_15S_ZERO_CONFIRM") return "FVVO_LAUNCH_ZERO";
   if (setup === "CROSS_UP_CONFIRM") return "FVVO_CROSS";
   if (setup === "POST_CROSS_RECLAIM") return "FVVO_POST_CROSS";
   if (setup === "C_POINT_IMPULSE") return "FVVO_C_POINT";
@@ -2121,6 +2192,7 @@ function openObservationShadow(p, decision, barNo, status = "SETUP_NOT_FORWARD_E
   logLine("FVVO_OBSERVATION_SHADOW_OPEN", [
     `🟣 setup=${decision.setup}`,
     `symbol=${p.symbol}`,
+    `entryTime=${p.time || "na"}`,
     `price=${n(p.close, 4)}`,
     `stop=${shadow.stopPrice === null ? "na" : n(shadow.stopPrice, 4)}`,
     `reason=${decision.reason}`,
@@ -2161,6 +2233,8 @@ async function updateObservationShadows(p, barNo) {
     logLine("FVVO_OBSERVATION_SHADOW_EXIT", [
       `🟣 setup=${shadow.setup}`,
       `symbol=${p.symbol}`,
+      `entryTime=${shadow.entryTime || "na"}`,
+      `exitTime=${p.time || "na"}`,
       `entry=${n(shadow.entryPrice, 4)}`,
       `exit=${n(exitPrice, 4)}`,
       `pnl=${pct(pnlPct)}`,
@@ -2176,6 +2250,8 @@ async function updateObservationShadows(p, barNo) {
     logLine("FVVO_OBSERVATION_SHADOW_RESULT", [
       `📊 setup=${shadow.setup}`,
       `symbol=${p.symbol}`,
+      `entryTime=${shadow.entryTime || "na"}`,
+      `exitTime=${p.time || "na"}`,
       `entry=${n(shadow.entryPrice, 4)}`,
       `exit=${n(exitPrice, 4)}`,
       `pnl=${pct(pnlPct)}`,
@@ -3133,6 +3209,8 @@ function evaluateFastExit(pos, p, perf) {
 
 function featureExitLabel(setup) {
   const s = String(setup || "").toUpperCase();
+  if (s === "LAUNCH_15S_MICRO_BREAKOUT") return "LAUNCH_MICRO";
+  if (s === "LAUNCH_15S_ZERO_CONFIRM") return "LAUNCH_ZERO";
   if (s === "CROSS_UP_CONFIRM") return "CROSS";
   if (s === "POST_CROSS_RECLAIM") return "POST_CROSS";
   if (s === "C_POINT_IMPULSE") return "C_POINT";
@@ -3147,6 +3225,36 @@ function featureExitProfile(setup) {
   if (!CFG.FVVO_FEATURE_EXIT_LEG_PROFILES_ENABLED) return null;
   const s = String(setup || "").toUpperCase();
   const minHoldSec = Math.max(0, CFG.FVVO_FEATURE_EXIT_MIN_HOLD_SEC);
+  if (s === "LAUNCH_15S_MICRO_BREAKOUT" || s === "LAUNCH_15S_ZERO_CONFIRM") {
+    return {
+      enabled: CFG.FVVO_LAUNCH_FEATURE_EXIT_ENABLED,
+      label: s === "LAUNCH_15S_MICRO_BREAKOUT" ? "LAUNCH_MICRO" : "LAUNCH_ZERO",
+      hardStopPct: CFG.FVVO_LAUNCH_FEATURE_HARD_STOP_PCT,
+      // Reuse v2o's fee-aware Cross protection, but launch entries have a separate
+      // thesis-failure branch below to cut a confirmed failed breakout earlier.
+      beArmPct: CFG.FVVO_CROSS_FEATURE_BE_ARM_PCT,
+      beLockPct: CFG.FVVO_CROSS_FEATURE_BE_LOCK_PCT,
+      beMinGivebackPct: CFG.FVVO_CROSS_FEATURE_BE_MIN_GIVEBACK_PCT,
+      trailArmPct: CFG.FVVO_CROSS_FEATURE_TRAIL_ARM_PCT,
+      trailStartGivebackPct: CFG.FVVO_CROSS_FEATURE_TRAIL_START_GIVEBACK_PCT,
+      trailMinGivebackPct: CFG.FVVO_CROSS_FEATURE_TRAIL_MIN_GIVEBACK_PCT,
+      trailTightenPer1Pct: CFG.FVVO_CROSS_FEATURE_TRAIL_TIGHTEN_PER_1PCT,
+      feeTrailEnabled: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_ENABLED,
+      feeTrailArmPct: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_ARM_PCT,
+      feeTrailMinGivebackPct: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_GIVEBACK_PCT,
+      feeTrailMinExitGrossPct: CFG.FVVO_CROSS_FEATURE_FEE_TRAIL_MIN_EXIT_GROSS_PCT,
+      noProgressEnabled: false,
+      weaknessEnabled: CFG.FVVO_CROSS_FEATURE_WEAKNESS_ENABLED,
+      weaknessConfirmTicks: CFG.FVVO_CROSS_FEATURE_WEAKNESS_CONFIRM_TICKS,
+      redExitMinProfitPct: CFG.FVVO_CROSS_FEATURE_RED_EXIT_MIN_PROFIT_PCT,
+      slopeFailMax: CFG.FVVO_CROSS_FEATURE_SLOPE_FAIL_MAX,
+      slopeExitMinProfitPct: CFG.FVVO_CROSS_FEATURE_SLOPE_EXIT_MIN_PROFIT_PCT,
+      ema8LossMinProfitPct: CFG.FVVO_CROSS_FEATURE_EMA8_LOSS_MIN_PROFIT_PCT,
+      rsiRolloverMinProfitPct: CFG.FVVO_CROSS_FEATURE_RSI_ROLLOVER_MIN_PROFIT_PCT,
+      rsiRolloverDropPct: CFG.FVVO_CROSS_FEATURE_RSI_ROLLOVER_DROP_PCT,
+      minHoldSec
+    };
+  }
   if (s === "CROSS_UP_CONFIRM") {
     return {
       enabled: CFG.FVVO_CROSS_FEATURE_EXIT_ENABLED,
@@ -3603,6 +3711,12 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
     return { exit: false, reason: `FEATURE_${label}_HOLD_MIN_HOLD`, backupUsed: false, exitPrice: null, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
   }
 
+  const launchFailure = calcLaunchThesisFailureExit(pos, p, perf, elapsedSec);
+  if (launchFailure && launchFailure.exit) {
+    state.stats.launchThesisFailureExits += 1;
+    return { exit: true, reason: launchFailure.reason, backupUsed: true, exitPrice: launchFailure.exitPrice, strongTrendHold: false, elapsedSec, launchFailure, featureExitProfile: profile };
+  }
+
   const noProgress = calcFeatureNoProgressExit(profile, p, perf, elapsedSec);
   if (noProgress.enabled && noProgress.exit) {
     return { exit: true, reason: `FVVO_FEATURE_${label}_NO_PROGRESS`, backupUsed: true, exitPrice: p.close, strongTrendHold: false, elapsedSec, noProgress, featureExitProfile: profile };
@@ -3723,6 +3837,11 @@ function evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec) {
   }
 
   if (elapsedSec < profile.minHoldSec) return null;
+
+  const launchFailure = calcLaunchThesisFailureExit(shadow, tick, perf, elapsedSec);
+  if (launchFailure && launchFailure.exit) {
+    return { reason: launchFailure.reason, exitPrice: launchFailure.exitPrice, dynamicTrail: null, launchFailure };
+  }
 
   const noProgress = calcFeatureNoProgressExit(profile, tick, perf, elapsedSec);
   if (noProgress.enabled && noProgress.exit) {
@@ -4192,7 +4311,7 @@ function isReversalSetup(setup) {
 }
 
 function isContinuationSetup(setup) {
-  return setup === "CROSS_UP_CONFIRM" || setup === "POST_CROSS_RECLAIM" || setup === "FEATURE_CROSS_CONTINUATION" || setup === "PINK_IMPULSE_RECLAIM" || setup === "RISING_CONTINUATION";
+  return setup === "CROSS_UP_CONFIRM" || setup === "LAUNCH_15S_MICRO_BREAKOUT" || setup === "LAUNCH_15S_ZERO_CONFIRM" || setup === "POST_CROSS_RECLAIM" || setup === "FEATURE_CROSS_CONTINUATION" || setup === "PINK_IMPULSE_RECLAIM" || setup === "RISING_CONTINUATION";
 }
 
 function applyRayRegimeGate(decision, p) {
@@ -4611,6 +4730,7 @@ async function openTickWashoutShadow(tick, decision) {
   logLine("FVVO_TICK_WASHOUT_SHADOW_OPEN", [
     `🧪 setup=${decision.setup}`,
     `symbol=${tick.symbol}`,
+    `entryTime=${tick.time || "na"}`,
     `entry=${n(entryPrice, 4)}`,
     `stop=${n(stopPrice, 4)}`,
     `A=${n(s.recentHigh, 4)}`,
@@ -4709,6 +4829,8 @@ async function updateTickWashoutShadow(tick) {
 
   logLine("FVVO_TICK_WASHOUT_SHADOW_RESULT", [
     `symbol=${tick.symbol}`,
+    `entryTime=${shadow.entryTime || "na"}`,
+    `exitTime=${tick.time || "na"}`,
     `entry=${n(shadow.entryPrice, 4)}`,
     `exit=${n(exitPrice, 4)}`,
     `pnl=${pct(exitPnlPct)}`,
@@ -4957,6 +5079,7 @@ async function openDeepWashoutShadow(tick, decision) {
   logLine("FVVO_DEEP_WASHOUT_SHADOW_OPEN", [
     `🧪 setup=${decision.setup}`,
     `symbol=${tick.symbol}`,
+    `entryTime=${tick.time || "na"}`,
     `entry=${n(entryPrice, 4)}`,
     `stop=${n(stopPrice, 4)}`,
     `A=${n(s.recentHigh, 4)}`,
@@ -5053,6 +5176,8 @@ async function updateDeepWashoutShadow(tick) {
 
   logLine("FVVO_DEEP_WASHOUT_SHADOW_RESULT", [
     `symbol=${tick.symbol}`,
+    `entryTime=${shadow.entryTime || "na"}`,
+    `exitTime=${tick.time || "na"}`,
     `entry=${n(shadow.entryPrice, 4)}`,
     `exit=${n(exitPrice, 4)}`,
     `pnl=${pct(exitPnlPct)}`,
@@ -5478,6 +5603,423 @@ function evaluatePinkImpulseReclaimEntry(p) {
   return { ok: false, setup, reason: failed.join("+") || "NO_PINK_IMPULSE_RECLAIM", momentumOverride: false, checks };
 }
 
+
+// ============================================================
+// v2p early-launch observer: confirmed 5m environment + rolling 15s execution
+// ============================================================
+
+function isLaunchSetup(setup) {
+  const s = String(setup || "").toUpperCase();
+  return s === "LAUNCH_15S_MICRO_BREAKOUT" || s === "LAUNCH_15S_ZERO_CONFIRM";
+}
+
+function pushLaunchTick(tick) {
+  const symbol = tick && tick.symbol;
+  const price = Number(tick && tick.close);
+  const ms = timeToMs(tick && tick.time);
+  if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ms)) return [];
+
+  const arr = state.launchTickBuffers.get(symbol) || [];
+  arr.push({
+    ms,
+    time: tick.time,
+    price,
+    ema8: Number(tick.ema8),
+    ema18: Number(tick.ema18),
+    rsi: Number(tick.rsi),
+    adx: Number(tick.adx),
+    fvvoValue: Number(tick.fvvoValue),
+    fvvoSlope: Number(tick.fvvoSlope),
+    fvvoAboveZero: Boolean(tick.fvvoAboveZero),
+    fvvoCrossUp: Boolean(tick.fvvoCrossUp),
+    rayBear: tick.rayBear === true || String(tick.rayRegime || "").toUpperCase() === "RAY_BEAR"
+  });
+
+  const maxWindowMs = Math.max(
+    120,
+    Number(CFG.FVVO_LAUNCH_ROLLING_WINDOW_SEC) || 60,
+    Number(CFG.FVVO_LAUNCH_BREAKOUT_LOOKBACK_SEC) || 45
+  ) * 1000;
+  const cutoff = ms - Math.max(maxWindowMs * 3, 10 * 60 * 1000);
+  while (arr.length && arr[0].ms < cutoff) arr.shift();
+  while (arr.length > 1000) arr.shift();
+  state.launchTickBuffers.set(symbol, arr);
+  return arr;
+}
+
+function launchArmChecks(p) {
+  const close = Number(p && p.close);
+  const ema8 = Number(p && p.ema8);
+  const ema18 = Number(p && p.ema18);
+  const rsi = Number(p && p.rsi);
+  const adx = Number(p && p.adx);
+  const slope = Number(p && p.fvvoSlope);
+  const previous = p && p.symbol ? state.lastFeature.get(p.symbol) : null;
+  const previousClose = Number(previous && previous.close);
+  const closeAdvancePct = calcPct(close, previousClose);
+
+  const closeAboveEma8 = !CFG.FVVO_LAUNCH_5M_REQUIRE_CLOSE_ABOVE_EMA8 ||
+    (Number.isFinite(close) && Number.isFinite(ema8) && close > ema8);
+  const emaStackBull = !CFG.FVVO_LAUNCH_5M_REQUIRE_EMA8_ABOVE_EMA18 ||
+    (Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18);
+  const rsiOk = Number.isFinite(rsi) && rsi >= CFG.FVVO_LAUNCH_5M_MIN_RSI;
+  const adxOk = Number.isFinite(adx) && adx >= CFG.FVVO_LAUNCH_5M_MIN_ADX;
+  const slopeOk = Number.isFinite(slope) && slope >= CFG.FVVO_LAUNCH_5M_MIN_FVVO_SLOPE;
+  const closeAdvanceOk = !CFG.FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE ||
+    (Number.isFinite(closeAdvancePct) && closeAdvancePct >= CFG.FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT);
+  return {
+    closeAboveEma8, emaStackBull, rsiOk, adxOk, slopeOk, closeAdvanceOk,
+    close, ema8, ema18, rsi, adx, slope, previousClose, closeAdvancePct,
+    ok: closeAboveEma8 && emaStackBull && rsiOk && adxOk && slopeOk && closeAdvanceOk
+  };
+}
+
+function updateLaunchArm(p) {
+  if (!CFG.FVVO_LAUNCH_ENTRY_ENABLED || !p || p.event !== "FEATURE_5M_FVVO") return null;
+  const checks = launchArmChecks(p);
+  const key = p.symbol;
+  const eventMs = timeToMs(p.time);
+  const prior = state.launchArms.get(key);
+
+  if (!checks.ok) {
+    if (prior && prior.armedAtMs <= eventMs) state.launchArms.delete(key);
+    return null;
+  }
+
+  // Preserve the first valid launch arm through its window. A later qualifying
+  // 5m bar must not refresh the clock or re-arm a breakout already consumed.
+  if (prior && eventMs >= prior.armedAtMs && (eventMs - prior.armedAtMs) / 1000 <= CFG.FVVO_LAUNCH_ARM_WINDOW_SEC) {
+    return prior;
+  }
+
+  const arm = {
+    symbol: key,
+    armedAtMs: eventMs,
+    armedAt: p.time,
+    consumed: false,
+    consumedSetup: "",
+    noChaseLogged: false,
+    nearMissLogged: false,
+    sourceClose: checks.close,
+    sourceEma8: checks.ema8,
+    sourceEma18: checks.ema18,
+    sourceRsi: checks.rsi,
+    sourceAdx: checks.adx,
+    sourceFvvoSlope: checks.slope,
+    sourcePreviousClose: checks.previousClose,
+    sourceCloseAdvancePct: checks.closeAdvancePct,
+    checks
+  };
+  state.launchArms.set(key, arm);
+  state.stats.launchArms += 1;
+
+  logLine("FVVO_LAUNCH_5M_ARMED", [
+    `🟦 symbol=${p.symbol}`,
+    `close=${n(checks.close, 4)}`,
+    `ema8=${n(checks.ema8, 4)}`,
+    `ema18=${n(checks.ema18, 4)}`,
+    `rsi=${n(checks.rsi, 2)}`,
+    `adx=${n(checks.adx, 2)}`,
+    `fvvoSlope=${n(checks.slope, 6)}`,
+    `prevClose=${n(checks.previousClose, 4)}`,
+    `closeAdvance=${pct(checks.closeAdvancePct)}`,
+    `windowSec=${n(CFG.FVVO_LAUNCH_ARM_WINDOW_SEC, 0)}`,
+    `microShadowOnly=${boolStr(CFG.FVVO_LAUNCH_MICRO_BREAKOUT_SHADOW_ONLY)}`,
+    `zeroShadowOnly=${boolStr(CFG.FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY)}`
+  ].join(" | "), checks);
+  return arm;
+}
+
+function getActiveLaunchArm(symbol, referenceMs) {
+  const arm = state.launchArms.get(symbol);
+  if (!arm) return null;
+  const now = Number.isFinite(referenceMs) ? referenceMs : Date.now();
+  const ageSec = Math.max(0, (now - arm.armedAtMs) / 1000);
+  if (ageSec > CFG.FVVO_LAUNCH_ARM_WINDOW_SEC) {
+    state.launchArms.delete(symbol);
+    return null;
+  }
+  return { ...arm, ageSec };
+}
+
+function calcLaunchRolling(symbol, referenceMs) {
+  const all = state.launchTickBuffers.get(symbol) || [];
+  const now = Number(referenceMs);
+  const rollingMs = Math.max(15, Number(CFG.FVVO_LAUNCH_ROLLING_WINDOW_SEC) || 60) * 1000;
+  const historyMs = Math.max(15, Number(CFG.FVVO_LAUNCH_MIN_HISTORY_SEC) || 45) * 1000;
+  const breakoutMs = Math.max(15, Number(CFG.FVVO_LAUNCH_BREAKOUT_LOOKBACK_SEC) || 45) * 1000;
+  const recent = all.filter((x) => x.ms >= now - rollingMs && x.ms <= now);
+  if (recent.length < 4) return { ok: false, reason: "NOT_ENOUGH_LAUNCH_TICKS", tickCount: recent.length };
+
+  const current = recent[recent.length - 1];
+  const elapsedSec = (current.ms - recent[0].ms) / 1000;
+  // elapsedSec is seconds; historyMs is milliseconds. Compare like-for-like.
+  if (elapsedSec < (historyMs / 1000)) return { ok: false, reason: "LAUNCH_HISTORY_TOO_SHORT", tickCount: recent.length, elapsedSec };
+
+  const baseline = recent[0];
+  const expansionPct = calcPct(current.price, baseline.price);
+  const priorBreakout = all.filter((x) => x.ms < current.ms && x.ms >= current.ms - breakoutMs);
+  if (!priorBreakout.length) return { ok: false, reason: "NO_PRIOR_BREAKOUT_WINDOW", tickCount: recent.length, elapsedSec };
+
+  const previousHigh = Math.max(...priorBreakout.map((x) => x.price));
+  const breakoutPct = calcPct(current.price, previousHigh);
+  const lowest = Math.min(...recent.map((x) => x.price));
+  const rangePct = calcPct(Math.max(...recent.map((x) => x.price)), lowest);
+  return {
+    ok: true,
+    tickCount: recent.length,
+    elapsedSec,
+    baselinePrice: baseline.price,
+    baselineTime: baseline.time,
+    currentPrice: current.price,
+    currentTime: current.time,
+    expansionPct,
+    previousHigh,
+    breakoutPct,
+    rangePct
+  };
+}
+
+function launchCommonTickChecks(tick, arm, rolling) {
+  const price = Number(tick.close);
+  const ema8 = Number(tick.ema8);
+  const ema18 = Number(tick.ema18);
+  const rsi = Number(tick.rsi);
+  const fvvo = Number(tick.fvvoValue);
+  const slope = Number(tick.fvvoSlope);
+  const extEma8Pct = calcPct(price, ema8);
+
+  const priceAboveEma8 = Number.isFinite(price) && Number.isFinite(ema8) && price >= ema8;
+  const emaStackBull = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18;
+  const tickRayNotBear = !(tick.rayBear === true || String(tick.rayRegime || "").toUpperCase() === "RAY_BEAR");
+  const breakoutOk = rolling.ok && Number.isFinite(rolling.breakoutPct) && rolling.breakoutPct >= CFG.FVVO_LAUNCH_BREAKOUT_MARGIN_PCT;
+
+  return {
+    armAgeSec: arm ? arm.ageSec : null,
+    eventTime: tick.time,
+    rolling,
+    price, ema8, ema18, rsi, fvvo, slope, extEma8Pct,
+    priceAboveEma8,
+    emaStackBull,
+    tickRayNotBear,
+    breakoutOk
+  };
+}
+
+function buildLaunchDecision(setup, ok, reason, checks) {
+  return { ok, setup, reason, momentumOverride: false, checks };
+}
+
+function evaluateLaunchMicroBreakout(tick) {
+  const setup = "LAUNCH_15S_MICRO_BREAKOUT";
+  if (!CFG.FVVO_LAUNCH_ENTRY_ENABLED) return buildLaunchDecision(setup, false, "LAUNCH_ENTRY_DISABLED", {});
+  if (!CFG.FVVO_LAUNCH_MICRO_BREAKOUT_ENABLED) return buildLaunchDecision(setup, false, "LAUNCH_MICRO_DISABLED", {});
+  if (!CFG.FVVO_LONG_ENABLED) return buildLaunchDecision(setup, false, "FVVO_LONG_DISABLED", {});
+
+  const arm = getActiveLaunchArm(tick.symbol, timeToMs(tick.time));
+  if (!arm) return buildLaunchDecision(setup, false, "NO_ACTIVE_LAUNCH_ARM", {});
+  if (arm.consumed) return buildLaunchDecision(setup, false, "LAUNCH_ARM_ALREADY_CONSUMED", { arm });
+
+  const rolling = calcLaunchRolling(tick.symbol, timeToMs(tick.time));
+  const common = launchCommonTickChecks(tick, arm, rolling);
+  const minExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct >= CFG.FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT;
+  const maxExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct <= CFG.FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT;
+  const rsiOk = Number.isFinite(common.rsi) && common.rsi >= CFG.FVVO_LAUNCH_MICRO_MIN_RSI;
+  const fvvoOk = Number.isFinite(common.fvvo) && common.fvvo >= CFG.FVVO_LAUNCH_MICRO_MIN_FVVO;
+  const slopeOk = Number.isFinite(common.slope) && common.slope >= CFG.FVVO_LAUNCH_MICRO_MIN_FVVO_SLOPE;
+  const extOk = Number.isFinite(common.extEma8Pct) && common.extEma8Pct <= CFG.FVVO_LAUNCH_MICRO_MAX_EXT_EMA8_PCT;
+
+  const checks = {
+    setup,
+    arm,
+    ...common,
+    minExpOk, maxExpOk, rsiOk, fvvoOk, slopeOk, extOk
+  };
+  const ok = common.priceAboveEma8 && common.emaStackBull && common.tickRayNotBear && common.breakoutOk &&
+    minExpOk && maxExpOk && rsiOk && fvvoOk && slopeOk && extOk;
+  if (ok) return buildLaunchDecision(setup, true, "FVVO_LAUNCH_MICRO_BREAKOUT", checks);
+
+  const failed = [];
+  if (!rolling.ok) failed.push(rolling.reason);
+  else {
+    if (!minExpOk) failed.push("LAUNCH_EXPANSION_TOO_SMALL");
+    if (!maxExpOk) failed.push("LAUNCH_REJECT_NO_CHASE");
+  }
+  if (!common.breakoutOk) failed.push("LAUNCH_NO_FRESH_BREAKOUT");
+  if (!common.priceAboveEma8) failed.push("PRICE_NOT_ABOVE_EMA8");
+  if (!common.emaStackBull) failed.push("EMA8_BELOW_EMA18");
+  if (!common.tickRayNotBear) failed.push("TICK_RAY_BEAR_CONFLICT");
+  if (!rsiOk) failed.push("RSI_TOO_LOW");
+  if (!fvvoOk) failed.push("FVVO_TOO_LOW");
+  if (!slopeOk) failed.push("FVVO_SLOPE_TOO_WEAK");
+  if (!extOk) failed.push("TOO_EXTENDED_EMA8");
+  return buildLaunchDecision(setup, false, failed.join("+") || "NO_LAUNCH_MICRO", checks);
+}
+
+function evaluateLaunchZeroConfirm(tick) {
+  const setup = "LAUNCH_15S_ZERO_CONFIRM";
+  if (!CFG.FVVO_LAUNCH_ENTRY_ENABLED) return buildLaunchDecision(setup, false, "LAUNCH_ENTRY_DISABLED", {});
+  if (!CFG.FVVO_LAUNCH_ZERO_CONFIRM_ENABLED) return buildLaunchDecision(setup, false, "LAUNCH_ZERO_DISABLED", {});
+  if (!CFG.FVVO_LONG_ENABLED) return buildLaunchDecision(setup, false, "FVVO_LONG_DISABLED", {});
+
+  const arm = getActiveLaunchArm(tick.symbol, timeToMs(tick.time));
+  if (!arm) return buildLaunchDecision(setup, false, "NO_ACTIVE_LAUNCH_ARM", {});
+  if (arm.consumed) return buildLaunchDecision(setup, false, "LAUNCH_ARM_ALREADY_CONSUMED", { arm });
+
+  const rolling = calcLaunchRolling(tick.symbol, timeToMs(tick.time));
+  const common = launchCommonTickChecks(tick, arm, rolling);
+  const ticks = state.launchTickBuffers.get(tick.symbol) || [];
+  const prev = ticks.length >= 2 ? ticks[ticks.length - 2] : null;
+  const freshZeroCross = Boolean(tick.fvvoCrossUp) ||
+    (prev && Number.isFinite(prev.fvvoValue) && prev.fvvoValue <= 0 && Number.isFinite(common.fvvo) && common.fvvo > 0);
+  const minExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct >= CFG.FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT;
+  const maxExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct <= CFG.FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT;
+  const rsiOk = Number.isFinite(common.rsi) && common.rsi >= CFG.FVVO_LAUNCH_ZERO_MIN_RSI;
+  const slopeOk = Number.isFinite(common.slope) && common.slope >= CFG.FVVO_LAUNCH_ZERO_MIN_FVVO_SLOPE;
+  const extOk = Number.isFinite(common.extEma8Pct) && common.extEma8Pct <= CFG.FVVO_LAUNCH_ZERO_MAX_EXT_EMA8_PCT;
+
+  const checks = {
+    setup,
+    arm,
+    ...common,
+    freshZeroCross, minExpOk, maxExpOk, rsiOk, slopeOk, extOk
+  };
+  const ok = common.priceAboveEma8 && common.emaStackBull && common.tickRayNotBear && common.breakoutOk &&
+    freshZeroCross && minExpOk && maxExpOk && rsiOk && slopeOk && extOk;
+  if (ok) return buildLaunchDecision(setup, true, "FVVO_LAUNCH_ZERO_CONFIRM", checks);
+
+  const failed = [];
+  if (!rolling.ok) failed.push(rolling.reason);
+  else {
+    if (!minExpOk) failed.push("LAUNCH_EXPANSION_TOO_SMALL");
+    if (!maxExpOk) failed.push("LAUNCH_REJECT_NO_CHASE");
+  }
+  if (!common.breakoutOk) failed.push("LAUNCH_NO_FRESH_BREAKOUT");
+  if (!freshZeroCross) failed.push("NO_FRESH_FVVO_ZERO_CROSS");
+  if (!common.priceAboveEma8) failed.push("PRICE_NOT_ABOVE_EMA8");
+  if (!common.emaStackBull) failed.push("EMA8_BELOW_EMA18");
+  if (!common.tickRayNotBear) failed.push("TICK_RAY_BEAR_CONFLICT");
+  if (!rsiOk) failed.push("RSI_TOO_LOW");
+  if (!slopeOk) failed.push("FVVO_SLOPE_TOO_WEAK");
+  if (!extOk) failed.push("TOO_EXTENDED_EMA8");
+  return buildLaunchDecision(setup, false, failed.join("+") || "NO_LAUNCH_ZERO", checks);
+}
+
+function markLaunchArmConsumed(symbol, setup) {
+  const arm = state.launchArms.get(symbol);
+  if (!arm) return;
+  arm.consumed = true;
+  arm.consumedSetup = setup;
+  arm.consumedAtMs = Date.now();
+  state.launchArms.set(symbol, arm);
+}
+
+function launchSignalLogFields(decision) {
+  const c = decision.checks || {};
+  const arm = c.arm || {};
+  const r = c.rolling || {};
+  return [
+    `symbol=${arm.symbol || "na"}`,
+    `eventTime=${c.eventTime || "na"}`,
+    `price=${n(c.price, 4)}`,
+    `reason=${decision.reason}`,
+    `armAgeSec=${c.armAgeSec === null || c.armAgeSec === undefined ? "na" : n(c.armAgeSec, 1)}`,
+    `arm5mRsi=${n(arm.sourceRsi, 2)}`,
+    `arm5mAdx=${n(arm.sourceAdx, 2)}`,
+    `arm5mSlope=${n(arm.sourceFvvoSlope, 6)}`,
+    `oneMinExpansion=${pct(r.expansionPct)}`,
+    `breakout=${pct(r.breakoutPct)}`,
+    `baseline=${n(r.baselinePrice, 4)}`,
+    `priorHigh=${n(r.previousHigh, 4)}`,
+    `extEma8=${pct(c.extEma8Pct)}`,
+    `rsi=${n(c.rsi, 2)}`,
+    `fvvo=${n(c.fvvo, 6)}`,
+    `slope=${n(c.slope, 6)}`,
+    `tickRayNotBear=${boolStr(c.tickRayNotBear)}`,
+    `forwardEligible=${boolStr(shouldForwardSetup(decision.setup))}`
+  ];
+}
+
+async function handleLaunchEntries(tick) {
+  if (!CFG.FVVO_LAUNCH_ENTRY_ENABLED || !CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED) return false;
+  if (state.positions.has(tick.symbol)) return false;
+  if (CFG.FVVO_EXTERNAL_DEAL_LOCK_ENABLED && state.externalDeals.has(tick.symbol)) return false;
+
+  const micro = evaluateLaunchMicroBreakout(tick);
+  if (micro.ok) {
+    state.stats.launchMicroSignals += 1;
+    markLaunchArmConsumed(tick.symbol, micro.setup);
+    logLine("FVVO_LAUNCH_MICRO_BREAKOUT_SIGNAL", `🟣 ${launchSignalLogFields(micro).join(" | ")}`, micro.checks || {});
+    const barNo = state.barIndex.get(tick.symbol) || 0;
+    await openVirtualLong(tick, micro, barNo);
+    return true;
+  }
+
+  const zero = evaluateLaunchZeroConfirm(tick);
+  if (zero.ok) {
+    state.stats.launchZeroSignals += 1;
+    markLaunchArmConsumed(tick.symbol, zero.setup);
+    logLine("FVVO_LAUNCH_ZERO_CONFIRM_SIGNAL", `🟣 ${launchSignalLogFields(zero).join(" | ")}`, zero.checks || {});
+    const barNo = state.barIndex.get(tick.symbol) || 0;
+    await openVirtualLong(tick, zero, barNo);
+    return true;
+  }
+
+  const activeArm = getActiveLaunchArm(tick.symbol, timeToMs(tick.time));
+  const noChase = String(micro.reason || "").includes("LAUNCH_REJECT_NO_CHASE") || String(zero.reason || "").includes("LAUNCH_REJECT_NO_CHASE");
+  if (activeArm && noChase && !activeArm.noChaseLogged) {
+    const r = micro.checks && micro.checks.rolling ? micro.checks.rolling : (zero.checks && zero.checks.rolling ? zero.checks.rolling : {});
+    activeArm.noChaseLogged = true;
+    state.launchArms.set(tick.symbol, activeArm);
+    state.stats.launchNoChaseBlocks += 1;
+    logLine("FVVO_LAUNCH_REJECT_NO_CHASE", [
+      `symbol=${tick.symbol}`,
+      `price=${n(tick.close, 4)}`,
+      `oneMinExpansion=${pct(r.expansionPct)}`,
+      `microMax=${pct(CFG.FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT)}`,
+      `zeroMax=${pct(CFG.FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT)}`,
+      `armAgeSec=${n(activeArm.ageSec, 1)}`
+    ].join(" | "));
+  } else if (activeArm && CFG.FVVO_LAUNCH_LOG_NEAR_MISS && !activeArm.nearMissLogged) {
+    const r = micro.checks && micro.checks.rolling;
+    if (r && r.ok && Number.isFinite(r.expansionPct) && r.expansionPct >= CFG.FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT) {
+      activeArm.nearMissLogged = true;
+      state.launchArms.set(tick.symbol, activeArm);
+      logLine("FVVO_LAUNCH_NEAR_MISS", [
+        `symbol=${tick.symbol}`,
+        `price=${n(tick.close, 4)}`,
+        `microReason=${micro.reason}`,
+        `zeroReason=${zero.reason}`,
+        `oneMinExpansion=${pct(r.expansionPct)}`,
+        `breakout=${pct(r.breakoutPct)}`
+      ].join(" | "));
+    }
+  }
+  return false;
+}
+
+function calcLaunchThesisFailureExit(holder, p, perf, elapsedSec) {
+  if (!holder || !isLaunchSetup(holder.setup) || !CFG.FVVO_LAUNCH_THESIS_FAILURE_ENABLED) return null;
+  if (!Number.isFinite(elapsedSec) || elapsedSec < CFG.FVVO_LAUNCH_THESIS_FAILURE_MIN_HOLD_SEC) return null;
+  const currentPnlPct = Number(perf && perf.currentPnlPct);
+  const priceBelowEma8 = Number.isFinite(Number(p.close)) && Number.isFinite(Number(p.ema8)) && Number(p.close) < Number(p.ema8);
+  const emaBear = Number.isFinite(Number(p.ema8)) && Number.isFinite(Number(p.ema18)) && Number(p.ema8) < Number(p.ema18);
+  const fvvoBelowZero = Number.isFinite(Number(p.fvvoValue)) && Number(p.fvvoValue) < 0;
+  const payloadRay = classifyRayRegimeFromPayload(p || {});
+  const tickRayBear = payloadRay.regime === "RAY_BEAR";
+  const lossHit = Number.isFinite(currentPnlPct) && currentPnlPct <= CFG.FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT;
+  const invalid = lossHit && priceBelowEma8 && emaBear && fvvoBelowZero && tickRayBear;
+  const count = bumpFeatureWeakness(p.symbol, holder.setup, "launch_thesis_failure", invalid);
+  if (count < Math.max(1, Math.floor(CFG.FVVO_LAUNCH_THESIS_FAILURE_CONFIRM_TICKS))) return null;
+  return {
+    exit: true,
+    reason: "FVVO_LAUNCH_THESIS_FAILURE",
+    exitPrice: p.close,
+    count,
+    checks: { lossHit, priceBelowEma8, emaBear, fvvoBelowZero, tickRayBear, currentPnlPct }
+  };
+}
+
 async function handleFeatureTick(p) {
   state.stats.accepted += 1;
   state.stats.featureTicksReceived += 1;
@@ -5493,6 +6035,8 @@ async function handleFeatureTick(p) {
   state.lastFeatureTickAt.set(p.symbol, nowMs);
   state.lastFeatureTick.set(p.symbol, p);
   state.stats.featureTicksAccepted += 1;
+  // Keep launch rolling state independent of the legacy tick-washout buffer.
+  pushLaunchTick(p);
 
   if (CFG.FVVO_FEATURE_TICK_LOG_ENABLED) {
     logLine("FEATURE_TICK_FVVO", [
@@ -5565,6 +6109,9 @@ async function handleFeatureTick(p) {
     logLine("FVVO_C_POINT_IMPULSE_NO_ENTRY", `symbol=${p.symbol} | price=${n(p.close, 4)} | reason=${staleFeatureEntry.status.reason} | featureTickAgeSec=${staleFeatureEntry.status.ageSec === null ? "na" : n(staleFeatureEntry.status.ageSec, 1)}`);
     return;
   }
+
+  const launchTaken = await handleLaunchEntries(p);
+  if (launchTaken) return;
 
   const decision = applyRayRegimeGate(evaluateCPointImpulseEntry(p), p);
   if (decision.ok) {
@@ -5691,6 +6238,7 @@ async function handleFeature(p) {
   state.stats.accepted += 1;
   const barNo = nextBarNumber(p.symbol);
   updateRay5mContext(p);
+  updateLaunchArm(p);
 
   if (CFG.DEBUG) {
     logLine("FEATURE_5M_FVVO", [
@@ -6576,6 +7124,28 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FEATURE_TICK_EXIT_ENABLED=${CFG.FVVO_FEATURE_TICK_EXIT_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_ENTRY_ENABLED=${CFG.FVVO_FEATURE_TICK_ENTRY_ENABLED}`);
   console.log(`FVVO_FEATURE_TICK_MIN_INTERVAL_MS=${CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS}`);
+
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_LAUNCH_ENTRY_ENABLED=${CFG.FVVO_LAUNCH_ENTRY_ENABLED}`);
+  console.log(`FVVO_LAUNCH_ARM_WINDOW_SEC=${CFG.FVVO_LAUNCH_ARM_WINDOW_SEC}`);
+  console.log(`FVVO_LAUNCH_5M_MIN_RSI=${CFG.FVVO_LAUNCH_5M_MIN_RSI}`);
+  console.log(`FVVO_LAUNCH_5M_MIN_ADX=${CFG.FVVO_LAUNCH_5M_MIN_ADX}`);
+  console.log(`FVVO_LAUNCH_5M_MIN_FVVO_SLOPE=${CFG.FVVO_LAUNCH_5M_MIN_FVVO_SLOPE}`);
+  console.log(`FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE=${CFG.FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE}`);
+  console.log(`FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT=${CFG.FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT}`);
+  console.log(`FVVO_LAUNCH_MICRO_BREAKOUT_ENABLED=${CFG.FVVO_LAUNCH_MICRO_BREAKOUT_ENABLED}`);
+  console.log(`FVVO_LAUNCH_MICRO_BREAKOUT_SHADOW_ONLY=${CFG.FVVO_LAUNCH_MICRO_BREAKOUT_SHADOW_ONLY}`);
+  console.log(`FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED=${CFG.FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED}`);
+  console.log(`FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT=${CFG.FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT}`);
+  console.log(`FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT=${CFG.FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT}`);
+  console.log(`FVVO_LAUNCH_ZERO_CONFIRM_ENABLED=${CFG.FVVO_LAUNCH_ZERO_CONFIRM_ENABLED}`);
+  console.log(`FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY=${CFG.FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY}`);
+  console.log(`FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED=${CFG.FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED}`);
+  console.log(`FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT=${CFG.FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT}`);
+  console.log(`FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT=${CFG.FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT}`);
+  console.log(`FVVO_LAUNCH_FEATURE_EXIT_ENABLED=${CFG.FVVO_LAUNCH_FEATURE_EXIT_ENABLED}`);
+  console.log(`FVVO_LAUNCH_THESIS_FAILURE_ENABLED=${CFG.FVVO_LAUNCH_THESIS_FAILURE_ENABLED}`);
+  console.log(`FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT=${CFG.FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT}`);
   console.log(`FVVO_RAY_REGIME_FILTER_ENABLED=${CFG.FVVO_RAY_REGIME_FILTER_ENABLED}`);
   console.log(`FVVO_RAY_REGIME_USE_EXTERNAL=${CFG.FVVO_RAY_REGIME_USE_EXTERNAL}`);
   console.log(`FVVO_RAY_REGIME_USE_5M_CONTEXT=${CFG.FVVO_RAY_REGIME_USE_5M_CONTEXT}`);
