@@ -1,14 +1,17 @@
 {
-  "name": "brainray-continuation-v6-7l-ray-fvvo-shadow-sync-10s-tp-opt-live-smoke",
-  "version": "6.7.12",
-  "type": "module",
+  "name": "brainfvvo-manualexit-v1b-two-level-washout-demo",
+  "version": "1.1.0",
   "private": true,
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "check:all": "node --check server.js && node --check src/config.js && node --check src/utils.js && node --check src/stateStore.js && node --check src/executionRouter.js && node --check src/brain.js && node --check src/tradeEngine.js"
+    "validate": "node replay_validation.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.21.2"
   }
 }
