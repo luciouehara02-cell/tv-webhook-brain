@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2p_LAUNCH_15S_SHADOW_DEMO
+// BrainFVVO_v2q_TICK_EXECUTION_AUTHORITY_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -82,7 +82,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2p_LAUNCH_15S_SHADOW_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2q_TICK_EXECUTION_AUTHORITY_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
@@ -117,7 +117,7 @@ const CFG = {
   // Require the confirmed 5m close to still be advancing so a launch arm is not
   // created on a late red pullback inside an already-mature surge.
   FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE: envBool("FVVO_LAUNCH_5M_REQUIRE_CLOSE_ADVANCE", true),
-  FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT: envNum("FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT", 0.05),
+  FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT: envNum("FVVO_LAUNCH_5M_MIN_CLOSE_ADVANCE_PCT", 0.10),
   FVVO_LAUNCH_ROLLING_WINDOW_SEC: envNum("FVVO_LAUNCH_ROLLING_WINDOW_SEC", 60),
   FVVO_LAUNCH_MIN_HISTORY_SEC: envNum("FVVO_LAUNCH_MIN_HISTORY_SEC", 45),
   FVVO_LAUNCH_BREAKOUT_LOOKBACK_SEC: envNum("FVVO_LAUNCH_BREAKOUT_LOOKBACK_SEC", 45),
@@ -155,6 +155,19 @@ const CFG = {
   FVVO_LAUNCH_THESIS_FAILURE_MIN_HOLD_SEC: envNum("FVVO_LAUNCH_THESIS_FAILURE_MIN_HOLD_SEC", 15),
   FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT: envNum("FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT", -0.08),
   FVVO_LAUNCH_THESIS_FAILURE_CONFIRM_TICKS: envNum("FVVO_LAUNCH_THESIS_FAILURE_CONFIRM_TICKS", 2),
+  // v2q: the 15s stream is authoritative for execution. Confirmed 5m remains
+  // context/permission only and must never apply a pre-entry candle extreme.
+  FVVO_TICK_EXECUTION_AUTHORITY_ENABLED: envBool("FVVO_TICK_EXECUTION_AUTHORITY_ENABLED", true),
+  FVVO_OBSERVED_5M_ENABLED: envBool("FVVO_OBSERVED_5M_ENABLED", true),
+  FVVO_OBSERVED_5M_LOG_ENABLED: envBool("FVVO_OBSERVED_5M_LOG_ENABLED", true),
+  // v2q: a no-chase breach invalidates the whole current arm, not just one rolling window.
+  FVVO_LAUNCH_INVALIDATE_ARM_ON_NO_CHASE: envBool("FVVO_LAUNCH_INVALIDATE_ARM_ON_NO_CHASE", true),
+  FVVO_LAUNCH_MAX_DISTANCE_FROM_ARM_CLOSE_PCT: envNum("FVVO_LAUNCH_MAX_DISTANCE_FROM_ARM_CLOSE_PCT", 0.55),
+  FVVO_LAUNCH_MICRO_MAX_RSI: envNum("FVVO_LAUNCH_MICRO_MAX_RSI", 82),
+  FVVO_LAUNCH_ZERO_MIN_ADX: envNum("FVVO_LAUNCH_ZERO_MIN_ADX", 22),
+  FVVO_LAUNCH_ZERO_MIN_BREAKOUT_PCT: envNum("FVVO_LAUNCH_ZERO_MIN_BREAKOUT_PCT", 0.12),
+  FVVO_LAUNCH_ZERO_MAX_RSI: envNum("FVVO_LAUNCH_ZERO_MAX_RSI", 78),
+  FVVO_LAUNCH_THESIS_FAILURE_REQUIRE_EMA_BEAR: envBool("FVVO_LAUNCH_THESIS_FAILURE_REQUIRE_EMA_BEAR", false),
 
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -164,6 +177,9 @@ const CFG = {
   DEMO_FORWARD_ALLOWED: envBool("DEMO_FORWARD_ALLOWED", false),
   LIVE_FORWARD_ALLOWED: envBool("LIVE_FORWARD_ALLOWED", false),
   C3_DRY_RUN: envBool("C3_DRY_RUN", false),
+  // Offline replay harness only. It simulates an accepted 3Commas webhook without
+  // network I/O and must remain false in any deployed service.
+  FVVO_REPLAY_SIMULATE_FORWARD: envBool("FVVO_REPLAY_SIMULATE_FORWARD", false),
 
   // v2b: secure manual-control endpoint. Manual enter starts a market deal and
   // lets brain exit logic manage it. Manual exit sends market exit immediately.
@@ -873,6 +889,7 @@ const CFG = {
 
   BAR_DEDUP_ENABLED: envBool("BAR_DEDUP_ENABLED", true),
   HISTORY_MAX_BARS: envNum("HISTORY_MAX_BARS", 120),
+  FVVO_REPLAY_MINIMAL_LOG: envBool("FVVO_REPLAY_MINIMAL_LOG", false),
   ENABLE_REPLAY_BATCH: envBool("ENABLE_REPLAY_BATCH", false)
 };
 
@@ -918,6 +935,9 @@ const state = {
   tickBuffers: new Map(),
   launchTickBuffers: new Map(),
   launchArms: new Map(),
+  // v2q chronological 5-minute bars built only from accepted 15s feature ticks.
+  observed5m: new Map(),
+  observed5mLastCompleted: new Map(),
   tickWashoutShadow: new Map(),
   deepWashoutShadow: new Map(),
   observationShadows: new Map(),
@@ -1027,6 +1047,9 @@ const state = {
     launchZeroSignals: 0,
     launchNoChaseBlocks: 0,
     launchThesisFailureExits: 0,
+    launchNoChaseArmInvalidations: 0,
+    observed5mRolls: 0,
+    tickExecutionAuthorityExits: 0,
     featureTicksReceived: 0,
     featureTicksAccepted: 0,
     featureTickExitSignals: 0,
@@ -1107,11 +1130,14 @@ function calcPct(a, b) {
 }
 
 
+function isTickExecutionPayload(p) {
+  const event = String(p && p.event || "");
+  return event === CFG.FVVO_FEATURE_TICK_EVENT || event === CFG.FVVO_FAST_EXIT_EVENT;
+}
+
 function calcLongPerformance(pos, p) {
   const entry = Number(pos && pos.entryPrice);
   const close = Number(p && p.close);
-  const high = Number(p && p.high);
-  const low = Number(p && p.low);
 
   if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(close) || close <= 0) {
     return {
@@ -1122,16 +1148,25 @@ function calcLongPerformance(pos, p) {
     };
   }
 
-  // For 5m candles, p.high/p.low are the bar extremes.
-  // For fast ticks, p.high/p.low are normally equal to the tick price.
-  const observedHigh = Number.isFinite(high) && high > 0 ? high : close;
-  const observedLow = Number.isFinite(low) && low > 0 ? low : close;
+  // v2q correctness rule: execution state is updated with prices observed after
+  // entry, in arrival order. A confirmed 5m event may describe a low/high that
+  // happened before the trade existed, so candle extremes are never inherited.
+  const useCloseOnly = CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED || isTickExecutionPayload(p);
+  const rawHigh = Number(p && p.high);
+  const rawLow = Number(p && p.low);
+  const observedHigh = useCloseOnly ? close : (Number.isFinite(rawHigh) && rawHigh > 0 ? rawHigh : close);
+  const observedLow = useCloseOnly ? close : (Number.isFinite(rawLow) && rawLow > 0 ? rawLow : close);
 
   if (!Number.isFinite(pos.maxPrice) || pos.maxPrice <= 0) pos.maxPrice = entry;
   if (!Number.isFinite(pos.minPrice) || pos.minPrice <= 0) pos.minPrice = entry;
+  if (!Number.isFinite(pos.executionHigh) || pos.executionHigh <= 0) pos.executionHigh = entry;
+  if (!Number.isFinite(pos.executionLow) || pos.executionLow <= 0) pos.executionLow = entry;
 
   if (observedHigh > pos.maxPrice) pos.maxPrice = observedHigh;
   if (observedLow < pos.minPrice) pos.minPrice = observedLow;
+  if (observedHigh > pos.executionHigh) pos.executionHigh = observedHigh;
+  if (observedLow < pos.executionLow) pos.executionLow = observedLow;
+  if (isTickExecutionPayload(p)) pos.executionTickCount = (Number(pos.executionTickCount) || 0) + 1;
 
   const currentPnlPct = calcPct(close, entry) || 0;
   const peakPnlPct = calcPct(pos.maxPrice, entry) || 0;
@@ -1240,6 +1275,15 @@ function formatLogBadge(type, msg) {
 }
 
 function logLine(type, msg, obj = null) {
+  // Replay keeps only decision/result records so long historical replays do not
+  // consume memory on per-tick telemetry. Runtime logging is unchanged.
+  if (CFG.FVVO_REPLAY_MINIMAL_LOG) {
+    const noise = type === "FEATURE_TICK_FVVO" || type === "FVVO_RAW_LONG_NO_ENTRY" ||
+      type === "FVVO_FEATURE_CROSS_CONT_NO_ENTRY" || type === "FVVO_TICK_WASHOUT_NO_ENTRY" ||
+      type === "FVVO_DEEP_WASHOUT_NO_ENTRY" || type.endsWith("_5M_CONTEXT_HOLD") ||
+      type === "FVVO_OBSERVED_5M_CLOSE" || type === "FVVO_TICK_WASHOUT_SUMMARY";
+    if (noise) return;
+  }
   // v1u log layout: timestamp | BADGE | brain | RAW_EVENT_TYPE | message
   // This puts the emoji near the left side of the Railway log row while keeping the raw event type searchable.
   const badge = formatLogBadge(type, msg);
@@ -1563,6 +1607,13 @@ async function forwardTo3Commas(action, p, extra = {}) {
     noteForwardBlock(safetyBlock);
     logLine("C3_FORWARD_SKIP", `reason=${safetyBlock} | action=${action} | setup=${setup} | demoAllowed=${CFG.DEMO_FORWARD_ALLOWED} | liveAllowed=${CFG.LIVE_FORWARD_ALLOWED} | risk=${JSON.stringify(riskSnapshot())}`);
     return { ok: false, skipped: true, reason: safetyBlock };
+  }
+
+  if (CFG.FVVO_REPLAY_SIMULATE_FORWARD) {
+    state.stats.forwardAttempts += 1;
+    state.stats.forwardSuccess += 1;
+    logLine("C3_FORWARD_REPLAY_SIMULATED", `action=${action} | setup=${setup} | reason=${reason} | symbol=${p.symbol} | price=${n(p.close, 4)}`);
+    return { ok: true, dryRun: false, replaySimulated: true };
   }
 
   if (!CFG.C3_SIGNAL_SECRET) {
@@ -2110,6 +2161,7 @@ function buildManagedLongPosition(p, decision, barNo, overrides = {}) {
     entryPrice: p.close,
     entryTime: p.time,
     entryMs: timeToMs(p.time),
+    entryObserved5mBucketMs: observed5mBucketStart(timeToMs(p.time)),
     entryReceivedAt: nowIso(),
     entryReason: decision.reason,
     entryMomentumOverride: Boolean(decision.momentumOverride),
@@ -2123,6 +2175,9 @@ function buildManagedLongPosition(p, decision, barNo, overrides = {}) {
     barsHeld: 0,
     maxPrice: p.close,
     minPrice: p.close,
+    executionHigh: p.close,
+    executionLow: p.close,
+    executionTickCount: 0,
     peakPnlPct: 0,
     maxDrawdownPct: 0,
     featureExitAtrPrices: [p.close],
@@ -2209,6 +2264,7 @@ function openObservationShadow(p, decision, barNo, status = "SETUP_NOT_FORWARD_E
 }
 
 async function updateObservationShadows(p, barNo) {
+  if (CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED && !isTickExecutionPayload(p)) return;
   const shadows = Array.from(state.observationShadows.entries()).filter(([, shadow]) => shadow && shadow.symbol === p.symbol);
   for (const [key, shadow] of shadows) {
     const perf = updatePositionStats(shadow, p);
@@ -2359,16 +2415,12 @@ async function openVirtualLong(p, decision, barNo) {
 }
 
 function updatePositionStats(pos, p) {
-  pos.barsHeld += 1;
-  if (Number.isFinite(p.high) && p.high > pos.maxPrice) pos.maxPrice = p.high;
-  if (Number.isFinite(p.low) && p.low < pos.minPrice) pos.minPrice = p.low;
-  const currentPnlPct = calcPct(p.close, pos.entryPrice) || 0;
-  const peakPnlPct = calcPct(pos.maxPrice, pos.entryPrice) || 0;
-  const drawdownPct = calcPct(pos.minPrice, pos.entryPrice) || 0;
-  pos.peakPnlPct = Math.max(pos.peakPnlPct, peakPnlPct);
-  pos.maxDrawdownPct = Math.min(pos.maxDrawdownPct, drawdownPct);
+  // Bars are 5m confirmation bars. Tick performance is tracked separately by
+  // calcLongPerformance and does not inflate the historical bars-held counter.
+  if (String(p && p.event || "") === "FEATURE_5M_FVVO") pos.barsHeld += 1;
+  const perf = calcLongPerformance(pos, p);
   if (p.fvvoRedDot) pos.redDotSeen = true;
-  return { currentPnlPct, peakPnlPct: pos.peakPnlPct, givebackPct: pos.peakPnlPct - currentPnlPct, drawdownPct: pos.maxDrawdownPct };
+  return perf;
 }
 
 function isStrongTrendHold(pos, p, perf) {
@@ -2786,7 +2838,8 @@ function evaluateLongExit(pos, p, perf, options = {}) {
   const rayBullHold = rayBullExitHold(pos, p, perf);
   const crossSqueezeHold = crossSqueezeExitHold(pos, p, perf);
 
-  const intrabarHardStopHit = CFG.FVVO_INTRABAR_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && Number.isFinite(p.low) && p.low <= pos.stopPrice;
+  const observedStopPrice = CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED ? p.close : p.low;
+  const intrabarHardStopHit = CFG.FVVO_INTRABAR_HARD_STOP_ENABLED && Number.isFinite(pos.stopPrice) && Number.isFinite(observedStopPrice) && observedStopPrice <= pos.stopPrice;
   const closeMaxLossHit = currentPnlPct <= -Math.abs(CFG.FVVO_MAX_LOSS_EXIT_PCT);
   const dynamicTrail = calcDynamicTrail(pos.setup, perf);
   const dynamicTrailActive = CFG.FVVO_DYNAMIC_TRAIL_ENABLED && dynamicTrail.enabled && dynamicTrail.armed;
@@ -2811,7 +2864,7 @@ function evaluateLongExit(pos, p, perf, options = {}) {
   const ema8LossProfitExit = closeLostEma8 && currentPnlPct >= CFG.FVVO_BACKUP_EXIT_REQUIRE_PROFIT_PCT && givebackPct >= CFG.FVVO_GIVEBACK_ARM1_DROP_PCT;
   const maxHoldExit = CFG.FVVO_MAX_HOLD_BARS > 0 && pos.barsHeld >= CFG.FVVO_MAX_HOLD_BARS;
 
-  if (intrabarHardStopHit) return { exit: true, reason: "FVVO_INTRABAR_HARD_STOP", backupUsed: true, exitPrice: pos.stopPrice, strongTrendHold };
+  if (intrabarHardStopHit) return { exit: true, reason: CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED ? "FVVO_TICK_EXECUTION_HARD_STOP" : "FVVO_INTRABAR_HARD_STOP", backupUsed: false, exitPrice: p.close, strongTrendHold };
   if (trackStats && p.fvvoRedPulse && CFG.FVVO_RED_PULSE_EXIT_ENABLED) state.stats.redPulseWarnings += 1;
   if (redPulseProfitExit && crossSqueezeHold.hold) {
     return { exit: false, reason: "HOLD_CROSS_SQUEEZE_BLOCKED_RED_PULSE", backupUsed: false, exitPrice: null, strongTrendHold: true, crossSqueezeHold };
@@ -3186,7 +3239,7 @@ function evaluateFastExit(pos, p, perf) {
     currentPnlPct >= CFG.FVVO_FAST_EXIT_SOFT_MIN_PROFIT_PCT;
 
   if (hardStopHit) {
-    return { exit: true, reason: "FVVO_FAST_TICK_HARD_STOP", backupUsed: true, exitPrice: pos.stopPrice, strongTrendHold: false, elapsedSec };
+    return { exit: true, reason: "FVVO_FAST_TICK_HARD_STOP", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, executionSource: "FAST_TICK" };
   }
   if (quickTpHit) {
     return { exit: true, reason: "FVVO_FAST_TICK_QUICK_TP", backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec };
@@ -3704,7 +3757,7 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
   const hardStopPrice = pos.entryPrice * (1 - Math.abs(profile.hardStopPct) / 100);
   const hardStopHit = profile.hardStopPct > 0 && (currentPnlPct <= -Math.abs(profile.hardStopPct) || p.close <= hardStopPrice);
   if (hardStopHit) {
-    return { exit: true, reason: `FVVO_FEATURE_${label}_HARD_STOP`, backupUsed: true, exitPrice: p.close <= hardStopPrice ? hardStopPrice : p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile };
+    return { exit: true, reason: `FVVO_FEATURE_${label}_TICK_HARD_STOP`, backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, executionSource: "FEATURE_TICK_15S" };
   }
 
   if (!minHoldOk) {
@@ -5605,8 +5658,74 @@ function evaluatePinkImpulseReclaimEntry(p) {
 
 
 // ============================================================
-// v2p early-launch observer: confirmed 5m environment + rolling 15s execution
+// v2q early-launch observer: confirmed 5m environment + rolling 15s execution
 // ============================================================
+
+function observed5mBucketStart(ms) {
+  const t = Number(ms);
+  return Number.isFinite(t) ? Math.floor(t / 300000) * 300000 : 0;
+}
+
+function formatObserved5m(bar) {
+  if (!bar) return null;
+  return {
+    startMs: bar.startMs,
+    endMs: bar.startMs + 300000,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    tickCount: bar.tickCount,
+    firstTickMs: bar.firstTickMs,
+    lastTickMs: bar.lastTickMs,
+    source: "OBSERVED_15S_TICKS"
+  };
+}
+
+function updateObserved5mFromTick(tick) {
+  if (!CFG.FVVO_OBSERVED_5M_ENABLED || !tick) return null;
+  const symbol = tick.symbol;
+  const price = Number(tick.close);
+  const ms = timeToMs(tick.time);
+  if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ms)) return null;
+
+  const bucket = observed5mBucketStart(ms);
+  const prior = state.observed5m.get(symbol);
+  if (!prior || prior.startMs !== bucket) {
+    if (prior) {
+      state.observed5mLastCompleted.set(symbol, { ...prior });
+      state.stats.observed5mRolls += 1;
+      if (CFG.FVVO_OBSERVED_5M_LOG_ENABLED) {
+        logLine("FVVO_OBSERVED_5M_CLOSE", [
+          `symbol=${symbol}`,
+          `start=${new Date(prior.startMs).toISOString()}`,
+          `end=${new Date(prior.startMs + 300000).toISOString()}`,
+          `open=${n(prior.open, 4)}`,
+          `highObserved=${n(prior.high, 4)}`,
+          `lowObserved=${n(prior.low, 4)}`,
+          `close=${n(prior.close, 4)}`,
+          `ticks=${prior.tickCount}`,
+          `source=OBSERVED_15S_TICKS`
+        ].join(" | "));
+      }
+    }
+    const next = { symbol, startMs: bucket, open: price, high: price, low: price, close: price, tickCount: 1, firstTickMs: ms, lastTickMs: ms, source: "OBSERVED_15S_TICKS" };
+    state.observed5m.set(symbol, next);
+    return next;
+  }
+
+  prior.high = Math.max(prior.high, price);
+  prior.low = Math.min(prior.low, price);
+  prior.close = price;
+  prior.tickCount += 1;
+  prior.lastTickMs = ms;
+  state.observed5m.set(symbol, prior);
+  return prior;
+}
+
+function observed5mForSymbol(symbol) {
+  return formatObserved5m(state.observed5m.get(symbol) || null);
+}
 
 function isLaunchSetup(setup) {
   const s = String(setup || "").toUpperCase();
@@ -5688,7 +5807,7 @@ function updateLaunchArm(p) {
 
   // Preserve the first valid launch arm through its window. A later qualifying
   // 5m bar must not refresh the clock or re-arm a breakout already consumed.
-  if (prior && eventMs >= prior.armedAtMs && (eventMs - prior.armedAtMs) / 1000 <= CFG.FVVO_LAUNCH_ARM_WINDOW_SEC) {
+  if (prior && !prior.invalidatedNoChase && eventMs >= prior.armedAtMs && (eventMs - prior.armedAtMs) / 1000 <= CFG.FVVO_LAUNCH_ARM_WINDOW_SEC) {
     return prior;
   }
 
@@ -5699,6 +5818,8 @@ function updateLaunchArm(p) {
     consumed: false,
     consumedSetup: "",
     noChaseLogged: false,
+    invalidatedNoChase: false,
+    invalidatedNoChaseAtMs: 0,
     nearMissLogged: false,
     sourceClose: checks.close,
     sourceEma8: checks.ema8,
@@ -5739,6 +5860,7 @@ function getActiveLaunchArm(symbol, referenceMs) {
     state.launchArms.delete(symbol);
     return null;
   }
+  if (arm.invalidatedNoChase) return null;
   return { ...arm, ageSec };
 }
 
@@ -5788,6 +5910,8 @@ function launchCommonTickChecks(tick, arm, rolling) {
   const fvvo = Number(tick.fvvoValue);
   const slope = Number(tick.fvvoSlope);
   const extEma8Pct = calcPct(price, ema8);
+  const armDistancePct = arm ? calcPct(price, arm.sourceClose) : null;
+  const armDistanceOk = !Number.isFinite(armDistancePct) || armDistancePct <= CFG.FVVO_LAUNCH_MAX_DISTANCE_FROM_ARM_CLOSE_PCT;
 
   const priceAboveEma8 = Number.isFinite(price) && Number.isFinite(ema8) && price >= ema8;
   const emaStackBull = Number.isFinite(ema8) && Number.isFinite(ema18) && ema8 >= ema18;
@@ -5798,7 +5922,7 @@ function launchCommonTickChecks(tick, arm, rolling) {
     armAgeSec: arm ? arm.ageSec : null,
     eventTime: tick.time,
     rolling,
-    price, ema8, ema18, rsi, fvvo, slope, extEma8Pct,
+    price, ema8, ema18, rsi, fvvo, slope, extEma8Pct, armDistancePct, armDistanceOk,
     priceAboveEma8,
     emaStackBull,
     tickRayNotBear,
@@ -5825,6 +5949,7 @@ function evaluateLaunchMicroBreakout(tick) {
   const minExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct >= CFG.FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT;
   const maxExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct <= CFG.FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT;
   const rsiOk = Number.isFinite(common.rsi) && common.rsi >= CFG.FVVO_LAUNCH_MICRO_MIN_RSI;
+  const rsiNotOverheated = !Number.isFinite(CFG.FVVO_LAUNCH_MICRO_MAX_RSI) || CFG.FVVO_LAUNCH_MICRO_MAX_RSI <= 0 || common.rsi <= CFG.FVVO_LAUNCH_MICRO_MAX_RSI;
   const fvvoOk = Number.isFinite(common.fvvo) && common.fvvo >= CFG.FVVO_LAUNCH_MICRO_MIN_FVVO;
   const slopeOk = Number.isFinite(common.slope) && common.slope >= CFG.FVVO_LAUNCH_MICRO_MIN_FVVO_SLOPE;
   const extOk = Number.isFinite(common.extEma8Pct) && common.extEma8Pct <= CFG.FVVO_LAUNCH_MICRO_MAX_EXT_EMA8_PCT;
@@ -5833,10 +5958,10 @@ function evaluateLaunchMicroBreakout(tick) {
     setup,
     arm,
     ...common,
-    minExpOk, maxExpOk, rsiOk, fvvoOk, slopeOk, extOk
+    minExpOk, maxExpOk, rsiOk, rsiNotOverheated, fvvoOk, slopeOk, extOk
   };
-  const ok = common.priceAboveEma8 && common.emaStackBull && common.tickRayNotBear && common.breakoutOk &&
-    minExpOk && maxExpOk && rsiOk && fvvoOk && slopeOk && extOk;
+  const ok = common.priceAboveEma8 && common.emaStackBull && common.tickRayNotBear && common.breakoutOk && common.armDistanceOk &&
+    minExpOk && maxExpOk && rsiOk && rsiNotOverheated && fvvoOk && slopeOk && extOk;
   if (ok) return buildLaunchDecision(setup, true, "FVVO_LAUNCH_MICRO_BREAKOUT", checks);
 
   const failed = [];
@@ -5850,6 +5975,8 @@ function evaluateLaunchMicroBreakout(tick) {
   if (!common.emaStackBull) failed.push("EMA8_BELOW_EMA18");
   if (!common.tickRayNotBear) failed.push("TICK_RAY_BEAR_CONFLICT");
   if (!rsiOk) failed.push("RSI_TOO_LOW");
+  if (!rsiNotOverheated) failed.push("RSI_OVERHEATED");
+  if (!common.armDistanceOk) failed.push("ARM_DISTANCE_TOO_EXTENDED");
   if (!fvvoOk) failed.push("FVVO_TOO_LOW");
   if (!slopeOk) failed.push("FVVO_SLOPE_TOO_WEAK");
   if (!extOk) failed.push("TOO_EXTENDED_EMA8");
@@ -5875,6 +6002,9 @@ function evaluateLaunchZeroConfirm(tick) {
   const minExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct >= CFG.FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT;
   const maxExpOk = rolling.ok && Number.isFinite(rolling.expansionPct) && rolling.expansionPct <= CFG.FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT;
   const rsiOk = Number.isFinite(common.rsi) && common.rsi >= CFG.FVVO_LAUNCH_ZERO_MIN_RSI;
+  const rsiNotOverheated = !Number.isFinite(CFG.FVVO_LAUNCH_ZERO_MAX_RSI) || CFG.FVVO_LAUNCH_ZERO_MAX_RSI <= 0 || common.rsi <= CFG.FVVO_LAUNCH_ZERO_MAX_RSI;
+  const adxOk = Number.isFinite(tick.adx) && tick.adx >= CFG.FVVO_LAUNCH_ZERO_MIN_ADX;
+  const breakoutStrongOk = rolling.ok && Number.isFinite(rolling.breakoutPct) && rolling.breakoutPct >= CFG.FVVO_LAUNCH_ZERO_MIN_BREAKOUT_PCT;
   const slopeOk = Number.isFinite(common.slope) && common.slope >= CFG.FVVO_LAUNCH_ZERO_MIN_FVVO_SLOPE;
   const extOk = Number.isFinite(common.extEma8Pct) && common.extEma8Pct <= CFG.FVVO_LAUNCH_ZERO_MAX_EXT_EMA8_PCT;
 
@@ -5882,10 +6012,10 @@ function evaluateLaunchZeroConfirm(tick) {
     setup,
     arm,
     ...common,
-    freshZeroCross, minExpOk, maxExpOk, rsiOk, slopeOk, extOk
+    freshZeroCross, minExpOk, maxExpOk, rsiOk, rsiNotOverheated, adxOk, breakoutStrongOk, slopeOk, extOk
   };
-  const ok = common.priceAboveEma8 && common.emaStackBull && common.tickRayNotBear && common.breakoutOk &&
-    freshZeroCross && minExpOk && maxExpOk && rsiOk && slopeOk && extOk;
+  const ok = common.priceAboveEma8 && common.emaStackBull && common.tickRayNotBear && common.breakoutOk && common.armDistanceOk &&
+    freshZeroCross && minExpOk && maxExpOk && rsiOk && rsiNotOverheated && adxOk && breakoutStrongOk && slopeOk && extOk;
   if (ok) return buildLaunchDecision(setup, true, "FVVO_LAUNCH_ZERO_CONFIRM", checks);
 
   const failed = [];
@@ -5900,6 +6030,10 @@ function evaluateLaunchZeroConfirm(tick) {
   if (!common.emaStackBull) failed.push("EMA8_BELOW_EMA18");
   if (!common.tickRayNotBear) failed.push("TICK_RAY_BEAR_CONFLICT");
   if (!rsiOk) failed.push("RSI_TOO_LOW");
+  if (!rsiNotOverheated) failed.push("RSI_OVERHEATED");
+  if (!adxOk) failed.push("ADX_TOO_LOW");
+  if (!breakoutStrongOk) failed.push("ZERO_BREAKOUT_TOO_WEAK");
+  if (!common.armDistanceOk) failed.push("ARM_DISTANCE_TOO_EXTENDED");
   if (!slopeOk) failed.push("FVVO_SLOPE_TOO_WEAK");
   if (!extOk) failed.push("TOO_EXTENDED_EMA8");
   return buildLaunchDecision(setup, false, failed.join("+") || "NO_LAUNCH_ZERO", checks);
@@ -5931,6 +6065,7 @@ function launchSignalLogFields(decision) {
     `breakout=${pct(r.breakoutPct)}`,
     `baseline=${n(r.baselinePrice, 4)}`,
     `priorHigh=${n(r.previousHigh, 4)}`,
+    `armDistance=${pct(c.armDistancePct)}`,
     `extEma8=${pct(c.extEma8Pct)}`,
     `rsi=${n(c.rsi, 2)}`,
     `fvvo=${n(c.fvvo, 6)}`,
@@ -5966,10 +6101,22 @@ async function handleLaunchEntries(tick) {
   }
 
   const activeArm = getActiveLaunchArm(tick.symbol, timeToMs(tick.time));
-  const noChase = String(micro.reason || "").includes("LAUNCH_REJECT_NO_CHASE") || String(zero.reason || "").includes("LAUNCH_REJECT_NO_CHASE");
+  // Either a rolling-1m overextension or excessive distance from the original
+  // 5m arm close means the launch is mature.  Invalidate the whole arm so a
+  // rolling-window reset cannot re-admit a late continuation entry.
+  const noChase = String(micro.reason || "").includes("LAUNCH_REJECT_NO_CHASE") ||
+    String(zero.reason || "").includes("LAUNCH_REJECT_NO_CHASE") ||
+    String(micro.reason || "").includes("ARM_DISTANCE_TOO_EXTENDED") ||
+    String(zero.reason || "").includes("ARM_DISTANCE_TOO_EXTENDED");
   if (activeArm && noChase && !activeArm.noChaseLogged) {
     const r = micro.checks && micro.checks.rolling ? micro.checks.rolling : (zero.checks && zero.checks.rolling ? zero.checks.rolling : {});
     activeArm.noChaseLogged = true;
+    if (CFG.FVVO_LAUNCH_INVALIDATE_ARM_ON_NO_CHASE) {
+      activeArm.invalidatedNoChase = true;
+      activeArm.invalidatedNoChaseAtMs = timeToMs(tick.time);
+      activeArm.invalidatedNoChasePrice = Number(tick.close);
+      state.stats.launchNoChaseArmInvalidations += 1;
+    }
     state.launchArms.set(tick.symbol, activeArm);
     state.stats.launchNoChaseBlocks += 1;
     logLine("FVVO_LAUNCH_REJECT_NO_CHASE", [
@@ -5978,7 +6125,10 @@ async function handleLaunchEntries(tick) {
       `oneMinExpansion=${pct(r.expansionPct)}`,
       `microMax=${pct(CFG.FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT)}`,
       `zeroMax=${pct(CFG.FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT)}`,
-      `armAgeSec=${n(activeArm.ageSec, 1)}`
+      `armDistance=${pct(micro.checks && micro.checks.armDistancePct)}`,
+      `armMaxDistance=${pct(CFG.FVVO_LAUNCH_MAX_DISTANCE_FROM_ARM_CLOSE_PCT)}`,
+      `armAgeSec=${n(activeArm.ageSec, 1)}`,
+      `armInvalidated=${boolStr(Boolean(activeArm.invalidatedNoChase))}`
     ].join(" | "));
   } else if (activeArm && CFG.FVVO_LAUNCH_LOG_NEAR_MISS && !activeArm.nearMissLogged) {
     const r = micro.checks && micro.checks.rolling;
@@ -6008,7 +6158,8 @@ function calcLaunchThesisFailureExit(holder, p, perf, elapsedSec) {
   const payloadRay = classifyRayRegimeFromPayload(p || {});
   const tickRayBear = payloadRay.regime === "RAY_BEAR";
   const lossHit = Number.isFinite(currentPnlPct) && currentPnlPct <= CFG.FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT;
-  const invalid = lossHit && priceBelowEma8 && emaBear && fvvoBelowZero && tickRayBear;
+  const emaGateOk = !CFG.FVVO_LAUNCH_THESIS_FAILURE_REQUIRE_EMA_BEAR || emaBear;
+  const invalid = lossHit && priceBelowEma8 && emaGateOk && fvvoBelowZero && tickRayBear;
   const count = bumpFeatureWeakness(p.symbol, holder.setup, "launch_thesis_failure", invalid);
   if (count < Math.max(1, Math.floor(CFG.FVVO_LAUNCH_THESIS_FAILURE_CONFIRM_TICKS))) return null;
   return {
@@ -6016,7 +6167,7 @@ function calcLaunchThesisFailureExit(holder, p, perf, elapsedSec) {
     reason: "FVVO_LAUNCH_THESIS_FAILURE",
     exitPrice: p.close,
     count,
-    checks: { lossHit, priceBelowEma8, emaBear, fvvoBelowZero, tickRayBear, currentPnlPct }
+    checks: { lossHit, priceBelowEma8, emaBear, emaGateOk, fvvoBelowZero, tickRayBear, currentPnlPct }
   };
 }
 
@@ -6037,6 +6188,7 @@ async function handleFeatureTick(p) {
   state.stats.featureTicksAccepted += 1;
   // Keep launch rolling state independent of the legacy tick-washout buffer.
   pushLaunchTick(p);
+  const observed5m = updateObserved5mFromTick(p);
 
   if (CFG.FVVO_FEATURE_TICK_LOG_ENABLED) {
     logLine("FEATURE_TICK_FVVO", [
@@ -6053,6 +6205,10 @@ async function handleFeatureTick(p) {
       `redPulse=${boolStr(p.fvvoRedPulse)}`,
       `redActive=${boolStr(p.fvvoRedActive)}`,
       `greenPulse=${boolStr(p.fvvoGreenPulse)}`,
+      `observed5mStart=${observed5m ? new Date(observed5m.startMs).toISOString() : "na"}`,
+      `observed5mHigh=${observed5m ? n(observed5m.high, 4) : "na"}`,
+      `observed5mLow=${observed5m ? n(observed5m.low, 4) : "na"}`,
+      `observed5mTicks=${observed5m ? observed5m.tickCount : "na"}`,
       ...rayRegimeLogFields(p)
     ].join(" | "));
   }
@@ -6072,6 +6228,7 @@ async function handleFeatureTick(p) {
     const exitDecision = evaluateFeatureTickLegExit(openPos, p, perf);
     if (exitDecision.exit) {
       state.stats.featureTickExitSignals += 1;
+      if (CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED) state.stats.tickExecutionAuthorityExits += 1;
       countFeatureLegExitReason(exitDecision.reason);
       logLine("FVVO_FEATURE_TICK_EXIT_SIGNAL", [
         `⚡ symbol=${p.symbol}`,
@@ -6088,7 +6245,8 @@ async function handleFeatureTick(p) {
         `adx=${n(p.adx, 2)}`,
         `fvvo=${n(p.fvvoValue, 6)}`,
         `slope=${n(p.fvvoSlope, 6)}`,
-        `forwardedEntry=${boolStr(openPos.forwardedEntry)}`
+        `forwardedEntry=${boolStr(openPos.forwardedEntry)}`,
+        `executionSource=FEATURE_TICK_15S`
       ].join(" | "));
       const barNo = state.barIndex.get(p.symbol) || openPos.entryBarNo || 0;
       await closeVirtualLong(openPos, p, perf, exitDecision, barNo);
@@ -6274,40 +6432,36 @@ async function handleFeature(p) {
   compareTickWashoutToZeroCross(p);
 
   observeShortSignal(p);
-  // v2j: update non-blocking observations first. They never occupy state.positions.
-  await updateObservationShadows(p, barNo);
+  // v2q: non-blocking observations and real positions are managed from
+  // chronological 15s ticks. The confirmed 5m event remains context only.
+  if (!CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED) await updateObservationShadows(p, barNo);
   const openPos = state.positions.get(p.symbol);
 
   if (openPos) {
-    const perf = updatePositionStats(openPos, p);
-    const exitDecision = evaluateLongExit(openPos, p, perf);
-
-    if (exitDecision.exit) {
-      await closeVirtualLong(openPos, p, perf, exitDecision, barNo);
-    } else if (CFG.DEBUG) {
-      logLine(`${setupPrefix(openPos.setup)}_LONG_HOLD`, [
-        `🟡 setup=${openPos.setup}`,
+    if (CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED) {
+      openPos.barsHeld += 1;
+      const observed = observed5mForSymbol(p.symbol);
+      logLine(`${setupPrefix(openPos.setup)}_5M_CONTEXT_HOLD`, [
+        `setup=${openPos.setup}`,
         `symbol=${p.symbol}`,
-        `price=${n(p.close, 4)}`,
-        `low=${n(p.low, 4)}`,
+        `confirmed5mClose=${n(p.close, 4)}`,
+        `confirmed5mHighIgnored=${n(p.high, 4)}`,
+        `confirmed5mLowIgnored=${n(p.low, 4)}`,
         `stop=${openPos.stopPrice === null ? "na" : n(openPos.stopPrice, 4)}`,
-        `pnl=${pct(perf.currentPnlPct)}`,
-        `peak=${pct(perf.peakPnlPct)}`,
-        `giveback=${pct(perf.givebackPct)}`,
-        ...rayBullExitHoldLogFields(exitDecision.rayBullHold),
-        `barsHeld=${openPos.barsHeld}`,
-        `holdReason=${exitDecision.reason}`,
-        `strongTrendHold=${boolStr(exitDecision.strongTrendHold)}`,
-        `entryMomentumOverride=${boolStr(openPos.entryMomentumOverride)}`,
-        `forwardedEntry=${boolStr(openPos.forwardedEntry)}`,
-        `forwardEntryStatus=${openPos.forwardEntryStatus}`,
-        `fvvo=${n(p.fvvoValue, 6)}`,
-        `slope=${n(p.fvvoSlope, 6)}`,
-        `redDot=${boolStr(p.fvvoRedDot)}`,
-        `greenDot=${boolStr(p.fvvoGreenDot)}`
+        `executionHigh=${n(openPos.executionHigh, 4)}`,
+        `executionLow=${n(openPos.executionLow, 4)}`,
+        `executionTicks=${openPos.executionTickCount || 0}`,
+        `observed5m=${observed ? JSON.stringify(observed) : "na"}`,
+        `executionAuthority=FEATURE_TICK_15S`
       ].join(" | "));
+      state.lastFeature.set(p.symbol, p);
+      pushHistory(p);
+      return;
     }
 
+    const perf = updatePositionStats(openPos, p);
+    const exitDecision = evaluateLongExit(openPos, p, perf);
+    if (exitDecision.exit) await closeVirtualLong(openPos, p, perf, exitDecision, barNo);
     state.lastFeature.set(p.symbol, p);
     pushHistory(p);
     return;
@@ -7008,6 +7162,7 @@ if (CFG.ENABLE_REPLAY_BATCH) {
         if (!validation.ok) {
           state.stats.rejected += 1;
           rejected += 1;
+          logLine("REPLAY_EVENT_REJECT", `reason=${validation.reason} | event=${payload.event} | symbol=${payload.symbol} | time=${payload.time}`);
           continue;
         }
         if (isDuplicateBar(payload)) {
@@ -7025,6 +7180,7 @@ if (CFG.ENABLE_REPLAY_BATCH) {
       } catch (err) {
         rejected += 1;
         state.stats.rejected += 1;
+        logLine("REPLAY_EVENT_ERROR", `reason=${String(err && err.message || err).replace(/\s+/g, "_").slice(0,180)}`);
       }
     }
     res.json({ ok: true, processed, rejected, stats: state.stats, openPositions: Array.from(state.positions.values()) });
@@ -7126,6 +7282,10 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FEATURE_TICK_MIN_INTERVAL_MS=${CFG.FVVO_FEATURE_TICK_MIN_INTERVAL_MS}`);
 
   console.log("------------------------------------------------------------");
+  console.log(`FVVO_TICK_EXECUTION_AUTHORITY_ENABLED=${CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED}`);
+  console.log(`FVVO_OBSERVED_5M_ENABLED=${CFG.FVVO_OBSERVED_5M_ENABLED}`);
+  console.log(`FVVO_OBSERVED_5M_LOG_ENABLED=${CFG.FVVO_OBSERVED_5M_LOG_ENABLED}`);
+  console.log(`FVVO_REPLAY_SIMULATE_FORWARD=${CFG.FVVO_REPLAY_SIMULATE_FORWARD}`);
   console.log(`FVVO_LAUNCH_ENTRY_ENABLED=${CFG.FVVO_LAUNCH_ENTRY_ENABLED}`);
   console.log(`FVVO_LAUNCH_ARM_WINDOW_SEC=${CFG.FVVO_LAUNCH_ARM_WINDOW_SEC}`);
   console.log(`FVVO_LAUNCH_5M_MIN_RSI=${CFG.FVVO_LAUNCH_5M_MIN_RSI}`);
@@ -7138,14 +7298,21 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED=${CFG.FVVO_FORWARD_LAUNCH_MICRO_BREAKOUT_ENABLED}`);
   console.log(`FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT=${CFG.FVVO_LAUNCH_MICRO_MIN_EXPANSION_PCT}`);
   console.log(`FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT=${CFG.FVVO_LAUNCH_MICRO_MAX_EXPANSION_PCT}`);
+  console.log(`FVVO_LAUNCH_MAX_DISTANCE_FROM_ARM_CLOSE_PCT=${CFG.FVVO_LAUNCH_MAX_DISTANCE_FROM_ARM_CLOSE_PCT}`);
+  console.log(`FVVO_LAUNCH_MICRO_MAX_RSI=${CFG.FVVO_LAUNCH_MICRO_MAX_RSI}`);
+  console.log(`FVVO_LAUNCH_INVALIDATE_ARM_ON_NO_CHASE=${CFG.FVVO_LAUNCH_INVALIDATE_ARM_ON_NO_CHASE}`);
   console.log(`FVVO_LAUNCH_ZERO_CONFIRM_ENABLED=${CFG.FVVO_LAUNCH_ZERO_CONFIRM_ENABLED}`);
   console.log(`FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY=${CFG.FVVO_LAUNCH_ZERO_CONFIRM_SHADOW_ONLY}`);
   console.log(`FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED=${CFG.FVVO_FORWARD_LAUNCH_ZERO_CONFIRM_ENABLED}`);
   console.log(`FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT=${CFG.FVVO_LAUNCH_ZERO_MIN_EXPANSION_PCT}`);
   console.log(`FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT=${CFG.FVVO_LAUNCH_ZERO_MAX_EXPANSION_PCT}`);
+  console.log(`FVVO_LAUNCH_ZERO_MIN_ADX=${CFG.FVVO_LAUNCH_ZERO_MIN_ADX}`);
+  console.log(`FVVO_LAUNCH_ZERO_MIN_BREAKOUT_PCT=${CFG.FVVO_LAUNCH_ZERO_MIN_BREAKOUT_PCT}`);
+  console.log(`FVVO_LAUNCH_ZERO_MAX_RSI=${CFG.FVVO_LAUNCH_ZERO_MAX_RSI}`);
   console.log(`FVVO_LAUNCH_FEATURE_EXIT_ENABLED=${CFG.FVVO_LAUNCH_FEATURE_EXIT_ENABLED}`);
   console.log(`FVVO_LAUNCH_THESIS_FAILURE_ENABLED=${CFG.FVVO_LAUNCH_THESIS_FAILURE_ENABLED}`);
   console.log(`FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT=${CFG.FVVO_LAUNCH_THESIS_FAILURE_MAX_LOSS_PCT}`);
+  console.log(`FVVO_LAUNCH_THESIS_FAILURE_REQUIRE_EMA_BEAR=${CFG.FVVO_LAUNCH_THESIS_FAILURE_REQUIRE_EMA_BEAR}`);
   console.log(`FVVO_RAY_REGIME_FILTER_ENABLED=${CFG.FVVO_RAY_REGIME_FILTER_ENABLED}`);
   console.log(`FVVO_RAY_REGIME_USE_EXTERNAL=${CFG.FVVO_RAY_REGIME_USE_EXTERNAL}`);
   console.log(`FVVO_RAY_REGIME_USE_5M_CONTEXT=${CFG.FVVO_RAY_REGIME_USE_5M_CONTEXT}`);
