@@ -1,16 +1,17 @@
 {
-  "name": "brainfvvo-manualexit-v1e-explicit-market-entry-exit-demo",
-  "version": "1.4.0",
+  "name": "brainfvvo-manualexit-v1f-one-stop-target-full-exit-demo",
+  "version": "1.0.0",
   "private": true,
+  "description": "Dedicated SOLUSDT DEMO manual-entry brain with one stop price and full exits only.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
     "validate": "node replay_validation.js",
-    "test:c3-schema": "node c3_schema_probe_test.js"
+    "replay": "node replay_historical_feed.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "dependencies": {
     "express": "^4.21.2"
