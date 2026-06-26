@@ -1,15 +1,16 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1f_ONE_STOP_TARGET_FULL_EXIT_DEMO
+// BrainFVVO_ManualExit_v1g_DYNAMIC_PROFIT_FULL_EXIT_DEMO
 // SOLUSDT dedicated DEMO Signal Bot manual-entry / brain-exit service
 // ------------------------------------------------------------
-// v1f safety contract:
+// v1g safety and dynamic-profit contract:
 //   - No automatic entries. /manual enter_long only.
-//   - One absolute `stop_price` only: a confirmed breach sends exit_long 100%.
-//   - Optional absolute `profit_target_price`: a touch sends exit_long 100%.
-//   - No 50% exit, no first/final stop ladder, no recovery/trailing soft exits.
-//   - Entry stays explicit 800-USDT quote market order (configurable).
-//   - Every 3Commas request is canonical Custom Signal JSON with ISO time,
-//     trigger price, and redacted payload audit logging.
+//   - One absolute `stop_price`: a confirmed breach sends exit_long 100%.
+//   - Optional absolute `profit_target_price`: fixed ceiling, full 100% exit.
+//   - When peak gross PnL reaches the configured arm level (default +0.45%),
+//     a monotonic dynamic protected-profit floor is armed.
+//   - Dynamic floor breach, 15s thesis failure, or 5m thesis failure each
+//     send the SAME full 100% exit_long payload. No partial exits exist.
+//   - Entry stays explicit quote market order (configurable; default 800 USDT).
 //   - HTTP 200 from 3Commas is acceptance only. confirm_exit_closed is still
 //     required after the dedicated Signal Bot visibly shows the trade flat.
 // ============================================================
@@ -64,7 +65,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1f_ONE_STOP_TARGET_FULL_EXIT_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1g_DYNAMIC_PROFIT_FULL_EXIT_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -110,7 +111,7 @@ const CFG = {
   MANUAL_REQUIRE_FRESH_FEATURE_TICK: envBool("MANUAL_REQUIRE_FRESH_FEATURE_TICK", true),
   FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC: envNum("FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC", 60),
 
-  MANUAL_ENTRY_DEFAULT_PROFILE: envStr("MANUAL_ENTRY_DEFAULT_PROFILE", "MANUAL_ONE_STOP_TARGET_FULL_EXIT"),
+  MANUAL_ENTRY_DEFAULT_PROFILE: envStr("MANUAL_ENTRY_DEFAULT_PROFILE", "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT"),
   MANUAL_ALLOW_ENTER: envBool("MANUAL_ALLOW_ENTER", true),
   MANUAL_ALLOW_EXIT: envBool("MANUAL_ALLOW_EXIT", true),
   MANUAL_ALLOW_STATUS: envBool("MANUAL_ALLOW_STATUS", true),
@@ -121,18 +122,35 @@ const CFG = {
   MANUAL_FORCE_CLEAR_CONFIRM_PHRASE: envStr("MANUAL_FORCE_CLEAR_CONFIRM_PHRASE", "I_VERIFIED_DEDICATED_3COMMAS_DEMO_BOT_IS_FLAT"),
   MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT: envBool("MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT", true),
 
-  // v1f one-stop / target controls.
+  // v1g one-stop / optional fixed-target controls.
   MANUAL_ONE_STOP_PROFILE_ENABLED: envBool("MANUAL_ONE_STOP_PROFILE_ENABLED", true),
   MANUAL_ONE_STOP_PRICE_STEP: envNum("MANUAL_ONE_STOP_PRICE_STEP", 0.01),
-  MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT: envNum("MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT", 2.0),
-  MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT: envNum("MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT", 2.0),
+  MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT: envNum("MAX_STOP_DISTANCE_PCT", envNum("MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT", 2.0)),
+  MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT: envNum("MAX_PROFIT_TARGET_DISTANCE_PCT", envNum("MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT", 2.0)),
   MANUAL_ONE_STOP_TICK_CONFIRM_SEC: envNum("MANUAL_ONE_STOP_TICK_CONFIRM_SEC", 0),
   MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS: envNum("MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS", 1),
   MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE: envBool("MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE", true),
   MANUAL_ONE_STOP_TARGET_EXIT_ENABLED: envBool("MANUAL_ONE_STOP_TARGET_EXIT_ENABLED", true),
+
+  // v1g dynamic brain-managed profit exit. Every emitted close remains 100%.
+  DYNAMIC_PROFIT_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_EXIT_ENABLED", true),
+  DYNAMIC_PROFIT_ARM_MFE_PCT: envNum("DYNAMIC_PROFIT_ARM_MFE_PCT", 0.45),
+  DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT: envNum("DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT", 0.20),
+  DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT: envNum("DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT", 0.35),
+  DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT: envNum("DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT", 0.18),
+  DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT: envNum("DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT", 0.06),
+  DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC: envNum("DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC", 0),
+  DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS", 1),
+  DYNAMIC_PROFIT_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_THESIS_EXIT_ENABLED", true),
+  DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT: envNum("DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT", 0.25),
+  DYNAMIC_PROFIT_THESIS_SLOPE_MAX: envNum("DYNAMIC_PROFIT_THESIS_SLOPE_MAX", -0.10),
+  DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC", 0),
+  DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS", 2),
+  DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", true),
+  DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
 };
 
-const PROFILE = "MANUAL_ONE_STOP_TARGET_FULL_EXIT";
+const PROFILE = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT";
 const STATE_PATH = path.join(CFG.STATE_DIR, CFG.STATE_FILE_NAME);
 const STATE_BACKUP_PATH = `${STATE_PATH}.bak`;
 
@@ -156,7 +174,7 @@ let state = defaultState();
 
 function nowIso() { return new Date().toISOString(); }
 function nowMs() { return Date.now(); }
-function finite(value, fallback = null) { const number = Number(value); return Number.isFinite(number) ? number : fallback; }
+function finite(value, fallback = null) { if (value === null || value === undefined || value === "") return fallback; const number = Number(value); return Number.isFinite(number) ? number : fallback; }
 function firstFinite(...values) { for (const value of values) { const parsed = finite(value, null); if (parsed !== null) return parsed; } return null; }
 function round(value, digits = 6) { return Number(Number(value).toFixed(digits)); }
 function cleanSymbol(value) { return String(value || "").trim().toUpperCase(); }
@@ -190,7 +208,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -225,6 +243,28 @@ function normalizeState(raw) {
   p.profitTargetPrice = migratedTarget > 0 ? migratedTarget : 0;
   p.profitTargetPct = entry && p.profitTargetPrice > 0 ? round(percentPnl(entry, p.profitTargetPrice), 6) : 0;
   p.stop = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(p.stop || {}) };
+  const priorPeak = Math.max(0, finite(p.peakPnlPct, 0));
+  const priorDynamic = p.dynamicProfit && typeof p.dynamicProfit === "object" ? p.dynamicProfit : {};
+  const shouldBeArmed = Boolean(priorDynamic.armed) || (CFG.DYNAMIC_PROFIT_EXIT_ENABLED && priorPeak >= CFG.DYNAMIC_PROFIT_ARM_MFE_PCT);
+  p.dynamicProfit = {
+    armed: shouldBeArmed,
+    armedAtMs: finite(priorDynamic.armedAtMs, shouldBeArmed ? nowMs() : 0),
+    armedAtPrice: finite(priorDynamic.armedAtPrice, shouldBeArmed && entry ? entry * (1 + CFG.DYNAMIC_PROFIT_ARM_MFE_PCT / 100) : null),
+    armedAtPnlPct: finite(priorDynamic.armedAtPnlPct, shouldBeArmed ? CFG.DYNAMIC_PROFIT_ARM_MFE_PCT : 0),
+    peakPnlPct: Math.max(priorPeak, finite(priorDynamic.peakPnlPct, 0)),
+    peakPrice: finite(priorDynamic.peakPrice, entry || 0),
+    protectedPnlPct: Math.max(0, finite(priorDynamic.protectedPnlPct, 0)),
+    protectedPrice: finite(priorDynamic.protectedPrice, null),
+    lastLoggedProtectedPnlPct: Math.max(0, finite(priorDynamic.lastLoggedProtectedPnlPct, 0)),
+    floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(priorDynamic.floor || {}) },
+    thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, ...(priorDynamic.thesis || {}) },
+    lastThesisReason: priorDynamic.lastThesisReason || null,
+  };
+  if (p.dynamicProfit.armed && entry) {
+    const computedFloor = dynamicProfitFloorPnlPct(p.dynamicProfit.peakPnlPct);
+    p.dynamicProfit.protectedPnlPct = Math.max(p.dynamicProfit.protectedPnlPct, computedFloor);
+    p.dynamicProfit.protectedPrice = round(entry * (1 + p.dynamicProfit.protectedPnlPct / 100), 8);
+  }
   p.exitRequestedAt = p.exitRequestedAt || null;
   p.exitReason = p.exitReason || null;
   p.entryAcceptedAtMs = finite(p.entryAcceptedAtMs, 0);
@@ -238,7 +278,7 @@ function normalizeState(raw) {
 async function ensurePersistence() {
   try {
     await fsp.mkdir(CFG.STATE_DIR, { recursive: true });
-    const probe = path.join(CFG.STATE_DIR, `.brainfvvo-v1f-probe-${process.pid}-${Date.now()}-${crypto.randomUUID()}`);
+    const probe = path.join(CFG.STATE_DIR, `.brainfvvo-v1g-probe-${process.pid}-${Date.now()}-${crypto.randomUUID()}`);
     await fsp.writeFile(probe, "ok", { mode: 0o600 });
     await fsp.unlink(probe);
     persistenceReady = true;
@@ -316,6 +356,13 @@ function configProblems() {
   if (CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT < 0) problems.push("INVALID_MAX_TARGET_DISTANCE_PCT");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC < 0) problems.push("INVALID_STOP_CONFIRM_SEC");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_STOP_CONFIRM_OBSERVATIONS");
+  if (CFG.DYNAMIC_PROFIT_ARM_MFE_PCT <= 0) problems.push("INVALID_DYNAMIC_PROFIT_ARM_MFE_PCT");
+  if (CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT");
+  if (CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT <= 0) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT");
+  if (CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT <= 0 || CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT > CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT");
+  if (CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT");
+  if (CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_FLOOR_CONFIRM");
+  if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
   if (CFG.STATE_PERSISTENCE_REQUIRED && !persistenceReady) problems.push("PERSISTENCE_NOT_READY");
   return problems;
 }
@@ -424,6 +471,20 @@ function buildPosition(entryPrice, levels) {
     profitTargetPrice: levels.profitTargetPrice,
     profitTargetPct: levels.profitTargetPct,
     stop: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+    dynamicProfit: {
+      armed: false,
+      armedAtMs: 0,
+      armedAtPrice: null,
+      armedAtPnlPct: 0,
+      peakPnlPct: 0,
+      peakPrice: entryPrice,
+      protectedPnlPct: 0,
+      protectedPrice: null,
+      lastLoggedProtectedPnlPct: 0,
+      floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+      thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null },
+      lastThesisReason: null,
+    },
     latestPrice: entryPrice,
     latestPnlPct: 0,
     peakPnlPct: 0,
@@ -480,7 +541,7 @@ async function forward3Commas(action, price, reason, options = {}) {
   await persistState(`c3_${dedupeKey}_requested`);
 
   log("INFO", "C3_FORWARD_SEND", { action, reason, symbol: CFG.SYMBOL, price, requestId, c3Timestamp: body.timestamp, triggerPrice: body.trigger_price, hasOrder: Boolean(body.order), dryRun: CFG.C3_DRY_RUN });
-  if (CFG.C3_PAYLOAD_AUDIT_ENABLED) log("INFO", "C3_FORWARD_PAYLOAD_AUDIT", { requestId, action, reason, schema: "CUSTOM_SIGNAL_ISO8601_EXPLICIT_MARKET_ENTRY_ONE_STOP_FULL_EXIT", body: { ...body, secret: "REDACTED" } });
+  if (CFG.C3_PAYLOAD_AUDIT_ENABLED) log("INFO", "C3_FORWARD_PAYLOAD_AUDIT", { requestId, action, reason, schema: "CUSTOM_SIGNAL_ISO8601_EXPLICIT_MARKET_ENTRY_DYNAMIC_PROFIT_FULL_EXIT", body: { ...body, secret: "REDACTED" } });
 
   if (CFG.C3_DRY_RUN) return { ok: true, accepted: true, dryRun: true, requestId, status: 200, c3Timestamp: body.timestamp, triggerPrice: body.trigger_price };
 
@@ -530,6 +591,22 @@ function statusPayload() {
       tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS,
       fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE,
     },
+    dynamicProfitContract: {
+      enabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED,
+      armMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT,
+      minLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT,
+      trailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT,
+      trailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT,
+      trailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT,
+      floorConfirmSec: CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC,
+      floorConfirmObservations: CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS,
+      thesisExitEnabled: CFG.DYNAMIC_PROFIT_THESIS_EXIT_ENABLED,
+      thesisMinPnlPct: CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT,
+      thesisSlopeMax: CFG.DYNAMIC_PROFIT_THESIS_SLOPE_MAX,
+      thesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS,
+      fiveMinuteThesisExitEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED,
+      exitPercent: 100,
+    },
     forwarding: { allowed: isForwardAllowed(), dryRun: CFG.C3_DRY_RUN, c3PayloadAudit: CFG.C3_PAYLOAD_AUDIT_ENABLED },
     persistence: { ready: persistenceReady, error: persistenceError, statePath: STATE_PATH },
     latestFeature: state.lastFeature ? { price: state.lastFeature.price, ageSec: round(ageSec(state.lastFeature), 2), freshForManualEntry: isFeatureFresh(), receivedAt: state.lastFeature.receivedAt } : null,
@@ -549,6 +626,16 @@ function statusPayload() {
       latestPrice: state.position.latestPrice,
       latestPnlPct: state.position.latestPnlPct,
       peakPnlPct: state.position.peakPnlPct,
+      dynamicProfit: state.position.dynamicProfit ? {
+        armed: Boolean(state.position.dynamicProfit.armed),
+        armedAtPnlPct: state.position.dynamicProfit.armedAtPnlPct || 0,
+        peakPnlPct: state.position.dynamicProfit.peakPnlPct || 0,
+        protectedPnlPct: state.position.dynamicProfit.protectedPnlPct || 0,
+        protectedPrice: state.position.dynamicProfit.protectedPrice || null,
+        floorObservations: state.position.dynamicProfit.floor?.observations || 0,
+        thesisObservations: state.position.dynamicProfit.thesis?.observations || 0,
+        lastThesisReason: state.position.dynamicProfit.lastThesisReason || null,
+      } : null,
       exitReason: state.position.exitReason,
     } : null,
     externalDealLockActive: Boolean(state.externalDealLock?.active),
@@ -562,7 +649,7 @@ async function beginManualEnter(body) {
   if (issue) return { status: 503, body: { ok: false, error: issue } };
   if (!CFG.MANUAL_ALLOW_ENTER) return { status: 403, body: { ok: false, error: "MANUAL_ENTER_DISABLED" } };
   if (!CFG.MANUAL_ONE_STOP_PROFILE_ENABLED) return { status: 403, body: { ok: false, error: "MANUAL_ONE_STOP_PROFILE_DISABLED" } };
-  if (String(body.profile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE).trim().toUpperCase() !== PROFILE) return { status: 400, body: { ok: false, error: "ONLY_MANUAL_ONE_STOP_TARGET_FULL_EXIT_PROFILE_ALLOWED" } };
+  if (String(body.profile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE).trim().toUpperCase() !== PROFILE) return { status: 400, body: { ok: false, error: "ONLY_MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT_PROFILE_ALLOWED" } };
   if (["price", "entry_price", "entryPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { status: 400, body: { ok: false, error: "MANUAL_ENTRY_PRICE_FIELD_NOT_ALLOWED_USE_LATEST_FEATURE_PRICE" } };
   const block = stateBlocksNewEntry();
   if (block) return { status: 409, body: { ok: false, error: block, status: statusPayload() } };
@@ -577,7 +664,7 @@ async function beginManualEnter(body) {
   state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "enter_long", lastActionAt: nowIso() };
   if (!(await persistState("manual_enter_pre_forward"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_BEFORE_ENTRY" } };
 
-  log("INFO", "FVVO_TRADE_OPEN_PENDING", { profile: PROFILE, entryPriceReference: entry, stopPrice: levels.stopPrice, profitTargetPrice: levels.profitTargetPrice || null, stopExitPercent: 100, targetExitPercent: 100 });
+  log("INFO", "FVVO_TRADE_OPEN_PENDING", { profile: PROFILE, entryPriceReference: entry, stopPrice: levels.stopPrice, profitTargetPrice: levels.profitTargetPrice || null, stopExitPercent: 100, targetExitPercent: 100, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT });
   const result = await forward3Commas("enter_long", entry, "MANUAL_ONE_STOP_ENTER_LATEST_FEATURE_PRICE", { dedupeKey: "enter_long", stopPct: levels.stopPct });
   if (!result.ok) {
     state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
@@ -594,8 +681,8 @@ async function beginManualEnter(body) {
   state.position.entryForwardRequestId = result.requestId;
   state.externalDealLock.reason = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
   await persistState("manual_enter_accepted");
-  log("INFO", "FVVO_MANUAL_ONE_STOP_ENTRY_TRACKED", { entryPriceReference: entry, stopPrice: levels.stopPrice, stopDistancePct: levels.stopPct, profitTargetPrice: levels.profitTargetPrice || null, profitTargetDistancePct: levels.profitTargetPct, nativeStopSent: CFG.C3_NATIVE_STOP_ENABLED, requestId: result.requestId, fillVerified: false });
-  return { status: 200, body: { ok: true, forwarded: true, acceptedBy3CommasWebhook: true, exchangeFillVerified: false, brainWillManageExit: true, manualEntryTracked: true, externalDealLockActive: true, profile: PROFILE, entryPriceReference: entry, stopPrice: levels.stopPrice, stopDistancePct: levels.stopPct, profitTargetPrice: levels.profitTargetPrice || null, profitTargetDistancePct: levels.profitTargetPct, requestId: result.requestId } };
+  log("INFO", "FVVO_MANUAL_ONE_STOP_ENTRY_TRACKED", { entryPriceReference: entry, stopPrice: levels.stopPrice, stopDistancePct: levels.stopPct, profitTargetPrice: levels.profitTargetPrice || null, profitTargetDistancePct: levels.profitTargetPct, nativeStopSent: CFG.C3_NATIVE_STOP_ENABLED, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, requestId: result.requestId, fillVerified: false });
+  return { status: 200, body: { ok: true, forwarded: true, acceptedBy3CommasWebhook: true, exchangeFillVerified: false, brainWillManageExit: true, manualEntryTracked: true, externalDealLockActive: true, profile: PROFILE, entryPriceReference: entry, stopPrice: levels.stopPrice, stopDistancePct: levels.stopPct, profitTargetPrice: levels.profitTargetPrice || null, profitTargetDistancePct: levels.profitTargetPct, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, requestId: result.requestId } };
 }
 
 async function requestFullExit(reason, price, origin) {
@@ -644,6 +731,103 @@ function oneStopBreakConfirmed(position, feature, markPrice) {
   return { confirmed: observations >= CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS && elapsed >= CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, reason: "STOP_TICK_CONFIRM", observations, elapsedSec: elapsed };
 }
 
+function dynamicProfitFloorPnlPct(peakPnlPct) {
+  const peak = Math.max(0, finite(peakPnlPct, 0));
+  const excessAboveArm = Math.max(0, peak - CFG.DYNAMIC_PROFIT_ARM_MFE_PCT);
+  const allowedGiveback = Math.max(
+    CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT,
+    CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT - (excessAboveArm * CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT)
+  );
+  return round(Math.max(CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, peak - allowedGiveback), 6);
+}
+
+function dynamicProfitState(position) {
+  if (!position.dynamicProfit || typeof position.dynamicProfit !== "object") {
+    position.dynamicProfit = {
+      armed: false, armedAtMs: 0, armedAtPrice: null, armedAtPnlPct: 0,
+      peakPnlPct: 0, peakPrice: position.entryPriceReference,
+      protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0,
+      floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+      thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null },
+      lastThesisReason: null,
+    };
+  }
+  const d = position.dynamicProfit;
+  d.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.floor || {}) };
+  d.thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, ...(d.thesis || {}) };
+  return d;
+}
+
+function updateDynamicProfit(position, price, pnlPct) {
+  const d = dynamicProfitState(position);
+  const priorProtected = finite(d.protectedPnlPct, 0);
+  d.peakPnlPct = Math.max(finite(d.peakPnlPct, 0), pnlPct);
+  if (pnlPct >= d.peakPnlPct - 1e-9) d.peakPrice = price;
+  let armedNow = false;
+  if (CFG.DYNAMIC_PROFIT_EXIT_ENABLED && !d.armed && d.peakPnlPct >= CFG.DYNAMIC_PROFIT_ARM_MFE_PCT) {
+    d.armed = true;
+    d.armedAtMs = nowMs();
+    d.armedAtPrice = price;
+    d.armedAtPnlPct = round(d.peakPnlPct, 6);
+    armedNow = true;
+  }
+  if (!d.armed || !CFG.DYNAMIC_PROFIT_EXIT_ENABLED) return { armedNow, floorRaised: false, dynamic: d };
+  const calculated = dynamicProfitFloorPnlPct(d.peakPnlPct);
+  d.protectedPnlPct = Math.max(priorProtected, calculated);
+  d.protectedPrice = round(position.entryPriceReference * (1 + d.protectedPnlPct / 100), 8);
+  const floorRaised = d.protectedPnlPct > priorProtected + 1e-9;
+  return { armedNow, floorRaised, dynamic: d };
+}
+
+function dynamicFloorBreakConfirmed(position, markPrice, pnlPct) {
+  const d = dynamicProfitState(position);
+  if (!CFG.DYNAMIC_PROFIT_EXIT_ENABLED || !d.armed || !(finite(d.protectedPnlPct, 0) > 0)) return { confirmed: false, reason: "DYNAMIC_PROFIT_NOT_ARMED" };
+  if (pnlPct > d.protectedPnlPct + 1e-9 || markPrice > finite(d.protectedPrice, Infinity)) {
+    if (d.floor?.observations) d.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null };
+    return { confirmed: false, reason: "ABOVE_DYNAMIC_PROFIT_FLOOR" };
+  }
+  const current = nowMs();
+  if (!d.floor?.breachAtMs) d.floor = { breachAtMs: current, observations: 1, lastBreachPrice: markPrice };
+  else { d.floor.observations = Number(d.floor.observations || 0) + 1; d.floor.lastBreachPrice = markPrice; }
+  const elapsed = (current - d.floor.breachAtMs) / 1000;
+  const observations = Number(d.floor.observations || 0);
+  return { confirmed: observations >= CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS && elapsed >= CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC, reason: "DYNAMIC_PROFIT_FLOOR_CONFIRM", observations, elapsedSec: elapsed, protectedPnlPct: d.protectedPnlPct, protectedPrice: d.protectedPrice };
+}
+
+function tickThesisFailureConfirmed(position, feature, price, pnlPct) {
+  const d = dynamicProfitState(position);
+  if (!CFG.DYNAMIC_PROFIT_EXIT_ENABLED || !CFG.DYNAMIC_PROFIT_THESIS_EXIT_ENABLED || !d.armed || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { confirmed: false, reason: "TICK_THESIS_NOT_ELIGIBLE" };
+  const ema8 = finite(feature.ema8, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const conditions = pnlPct >= CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT &&
+    ema8 !== null && price < ema8 &&
+    slope !== null && slope <= CFG.DYNAMIC_PROFIT_THESIS_SLOPE_MAX &&
+    fvvo !== null && (fvvo <= 0 || feature.crossDown === true);
+  if (!conditions) {
+    if (d.thesis?.observations) d.thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null };
+    return { confirmed: false, reason: "TICK_THESIS_HEALTHY_OR_UNCONFIRMED" };
+  }
+  const current = nowMs();
+  if (!d.thesis?.breachAtMs) d.thesis = { breachAtMs: current, observations: 1, lastBreachPrice: price, lastFeatureKind: feature.kind };
+  else { d.thesis.observations = Number(d.thesis.observations || 0) + 1; d.thesis.lastBreachPrice = price; d.thesis.lastFeatureKind = feature.kind; }
+  d.lastThesisReason = "PRICE_BELOW_EMA8_AND_NEGATIVE_FVVO_SLOPE";
+  const elapsed = (current - d.thesis.breachAtMs) / 1000;
+  const observations = Number(d.thesis.observations || 0);
+  return { confirmed: observations >= CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS && elapsed >= CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC, reason: "TICK_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, ema8, fvvo, slope };
+}
+
+function fiveMinuteThesisFailure(position, feature, price, pnlPct) {
+  const d = dynamicProfitState(position);
+  if (!CFG.DYNAMIC_PROFIT_EXIT_ENABLED || !CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED || !d.armed || feature.kind !== CFG.FVVO_FEATURE_5M_EVENT) return { confirmed: false, reason: "FIVE_MINUTE_THESIS_NOT_ELIGIBLE" };
+  const close = finite(feature.close, price);
+  const ema8 = finite(feature.ema8, null);
+  const fvvo = finite(feature.fvvo, null);
+  const confirmed = pnlPct >= CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT && close !== null && ema8 !== null && close < ema8 && fvvo !== null && fvvo <= 0;
+  if (confirmed) d.lastThesisReason = "FIVE_MINUTE_CLOSE_BELOW_EMA8_AND_FVVO_NONPOSITIVE";
+  return { confirmed, reason: confirmed ? "FIVE_MINUTE_THESIS_FAILURE" : "FIVE_MINUTE_THESIS_HEALTHY_OR_UNCONFIRMED", close, ema8, fvvo };
+}
+
 async function manageExit(feature) {
   const p = state.position;
   if (!p || state.manual.handoffActive || String(p.lifecycle || "").startsWith("EXIT_")) return;
@@ -655,20 +839,56 @@ async function manageExit(feature) {
   p.peakPnlPct = Math.max(finite(p.peakPnlPct, 0), pnl);
   p.maxFavorableExcursionPct = Math.max(finite(p.maxFavorableExcursionPct, 0), pnl);
 
-  // Profit target is a full immediate exit, not a trailing threshold.
+  const dynamicUpdate = updateDynamicProfit(p, price, pnl);
+  const d = dynamicUpdate.dynamic;
+  if (dynamicUpdate.armedNow) {
+    log("INFO", "FVVO_DYNAMIC_PROFIT_ARMED", { entryPrice: p.entryPriceReference, armMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, armObservedPnlPct: d.armedAtPnlPct, protectedPnlPct: d.protectedPnlPct, protectedPrice: d.protectedPrice, price });
+  }
+  if (dynamicUpdate.floorRaised && d.protectedPnlPct >= finite(d.lastLoggedProtectedPnlPct, 0) + CFG.DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT - 1e-9) {
+    d.lastLoggedProtectedPnlPct = d.protectedPnlPct;
+    log("INFO", "FVVO_DYNAMIC_PROFIT_FLOOR_RAISED", { peakPnlPct: d.peakPnlPct, protectedPnlPct: d.protectedPnlPct, protectedPrice: d.protectedPrice, price, allowedGivebackPct: round(d.peakPnlPct - d.protectedPnlPct, 6) });
+  }
+
+  // Optional fixed ceiling remains available. profit_target_price=0 means no fixed ceiling.
   if (CFG.MANUAL_ONE_STOP_TARGET_EXIT_ENABLED && p.profitTargetPrice > 0 && price >= p.profitTargetPrice) {
     await persistState(`profit_target_${feature.kind}`);
     await requestFullExit("FVVO_MANUAL_PROFIT_TARGET_PRICE_HIT", price, feature.kind);
     return;
   }
 
+  // The manual absolute stop remains the primary downside invalidation.
   const stop = oneStopBreakConfirmed(p, feature, price);
   if (stop.confirmed) {
     await persistState(`stop_price_${feature.kind}`);
     await requestFullExit(`FVVO_MANUAL_STOP_PRICE_HIT_${stop.reason}`, price, feature.kind);
     return;
   }
-  await persistState(`one_stop_hold_${feature.kind}`);
+
+  // Profit floor is a hard protection after the +0.45% (default) arm threshold.
+  const floor = dynamicFloorBreakConfirmed(p, price, pnl);
+  if (floor.confirmed) {
+    await persistState(`dynamic_profit_floor_${feature.kind}`);
+    await requestFullExit(`FVVO_DYNAMIC_PROFIT_FLOOR_HIT_${floor.reason}`, price, feature.kind);
+    return;
+  }
+
+  // Faster 15s momentum/thesis failure; requires consecutive observations.
+  const tickThesis = tickThesisFailureConfirmed(p, feature, price, pnl);
+  if (tickThesis.confirmed) {
+    await persistState(`dynamic_profit_tick_thesis_${feature.kind}`);
+    await requestFullExit(`FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, price, feature.kind);
+    return;
+  }
+
+  // Slower 5m backup confirmation; only after protected profit is available.
+  const fiveMinuteThesis = fiveMinuteThesisFailure(p, feature, price, pnl);
+  if (fiveMinuteThesis.confirmed) {
+    await persistState(`dynamic_profit_5m_thesis_${feature.kind}`);
+    await requestFullExit(`FVVO_DYNAMIC_PROFIT_5M_THESIS_FAILURE_${fiveMinuteThesis.reason}`, price, feature.kind);
+    return;
+  }
+
+  await persistState(`one_stop_dynamic_profit_hold_${feature.kind}`);
 }
 
 async function manualExit(body) {
@@ -756,10 +976,10 @@ async function start() {
   await ensurePersistence();
   await loadState();
   const problems = configProblems();
-  log("INFO", "FVVO_MANUAL_ONE_STOP_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: false, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, persistenceReady, configurationProblems: problems });
+  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: false, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, buildC3Signal, validateOneStopCommand, normalizeState, defaultState };
+module.exports = { app, CFG, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, fiveMinuteThesisFailure };

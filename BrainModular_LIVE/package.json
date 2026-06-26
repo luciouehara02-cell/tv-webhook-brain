@@ -1,8 +1,7 @@
 {
-  "name": "brainfvvo-manualexit-v1f-one-stop-target-full-exit-demo",
-  "version": "1.0.0",
+  "name": "brainfvvo-manualexit-v1g-dynamic-profit-full-exit-demo",
+  "version": "1.7.0",
   "private": true,
-  "description": "Dedicated SOLUSDT DEMO manual-entry brain with one stop price and full exits only.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +10,7 @@
     "replay": "node replay_historical_feed.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18.20.0"
   },
   "dependencies": {
     "express": "^4.21.2"
