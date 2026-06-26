@@ -1,8 +1,15 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1c_ABSOLUTE_LEVELS_PERSIST_SAFE_DEMO
+// BrainFVVO_ManualExit_v1d_C3_CANONICAL_EXIT_AUDIT_DEMO
 // Isolated SOLUSDT DEMO-only manual-entry / brain-exit service
 // ------------------------------------------------------------
 // Technical lineage: BrainFVVO_v2o_CROSS_EXIT_FLOOR_DEMO
+//
+// v1d changes versus v1c:
+// - 3Commas Custom Signal payload now matches the generated schema exactly:
+//   ISO-8601 timestamp, trigger_price, explicit C3 payload audit, and
+//   configurable entry-size source while retaining position-percent exits.
+// - Adds force_clear_verified_flat for a verified external emergency close
+//   that happened outside the normal brain exit lifecycle.
 //
 // v1c changes versus v1b:
 // - Manual chart levels use absolute prices, never % inputs:
@@ -74,7 +81,7 @@ function parseJsonEnv(name, fallback) {
 const CFG = {
   BRAIN_NAME: envStr(
     "BRAIN_NAME",
-    "BrainFVVO_ManualExit_v1c_ABSOLUTE_LEVELS_PERSIST_SAFE_DEMO"
+    "BrainFVVO_ManualExit_v1d_C3_CANONICAL_EXIT_AUDIT_DEMO"
   ),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
@@ -107,7 +114,27 @@ const CFG = {
   C3_SIGNAL_SECRET: envStr("C3_SIGNAL_SECRET", ""),
   C3_BOT_UUID: envStr("C3_BOT_UUID", ""),
   SYMBOL_BOT_MAP: parseJsonEnv("SYMBOL_BOT_MAP", {}),
+
+  // C3_ORDER_AMOUNT_QUOTE is retained as a compatibility fallback. Prefer the
+  // explicit C3_ENTRY_ORDER_* variables below for a new deployment.
   C3_ORDER_AMOUNT_QUOTE: envNum("C3_ORDER_AMOUNT_QUOTE", 0),
+  C3_ENTRY_ORDER_AMOUNT: envNum(
+    "C3_ENTRY_ORDER_AMOUNT",
+    envNum("C3_ORDER_AMOUNT_QUOTE", 0)
+  ),
+  C3_ENTRY_ORDER_CURRENCY_TYPE: envStr(
+    "C3_ENTRY_ORDER_CURRENCY_TYPE",
+    "quote"
+  ).toLowerCase(),
+  C3_ENTRY_ORDER_TYPE: envStr("C3_ENTRY_ORDER_TYPE", "market").toLowerCase(),
+  C3_EXIT_INCLUDE_POSITION_ORDER: envBool(
+    "C3_EXIT_INCLUDE_POSITION_ORDER",
+    true
+  ),
+  C3_TRIGGER_PRICE_DECIMALS: Math.floor(
+    envNum("C3_TRIGGER_PRICE_DECIMALS", 8)
+  ),
+  C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", true),
   C3_REQUEST_TIMEOUT_MS: envNum("C3_REQUEST_TIMEOUT_MS", 10000),
   C3_MAX_LAG_SEC: envNum("C3_MAX_LAG_SEC", 300),
   C3_FORWARD_DEDUP_MS: envNum("C3_FORWARD_DEDUP_MS", 60000),
@@ -157,6 +184,14 @@ const CFG = {
     true
   ),
   MANUAL_ALLOW_CONFIRM_EXIT: envBool("MANUAL_ALLOW_CONFIRM_EXIT", true),
+  MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT: envBool(
+    "MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT",
+    true
+  ),
+  MANUAL_FORCE_CLEAR_CONFIRM_PHRASE: envStr(
+    "MANUAL_FORCE_CLEAR_CONFIRM_PHRASE",
+    "I_VERIFIED_DEDICATED_3COMMAS_DEMO_BOT_IS_FLAT"
+  ),
   MANUAL_ALLOW_ADOPT: envBool("MANUAL_ALLOW_ADOPT", false),
   MANUAL_ADOPT_REQUIRE_RECOVERY_LOCK: envBool(
     "MANUAL_ADOPT_REQUIRE_RECOVERY_LOCK",
@@ -582,6 +617,21 @@ function configProblems() {
   if (!CFG.MANUAL_WEBHOOK_SECRET) problems.push("MANUAL_WEBHOOK_SECRET_MISSING");
   if (!CFG.C3_SIGNAL_SECRET) problems.push("C3_SIGNAL_SECRET_MISSING");
   if (!getBotUuid()) problems.push("DEDICATED_C3_BOT_UUID_MISSING");
+  if (!Number.isInteger(CFG.C3_TRIGGER_PRICE_DECIMALS) || CFG.C3_TRIGGER_PRICE_DECIMALS < 0 || CFG.C3_TRIGGER_PRICE_DECIMALS > 12) {
+    problems.push("INVALID_C3_TRIGGER_PRICE_DECIMALS");
+  }
+  if (!Number.isFinite(CFG.C3_ENTRY_ORDER_AMOUNT) || CFG.C3_ENTRY_ORDER_AMOUNT < 0) {
+    problems.push("INVALID_C3_ENTRY_ORDER_AMOUNT");
+  }
+  if (!['quote', 'base', 'margin_percent'].includes(CFG.C3_ENTRY_ORDER_CURRENCY_TYPE)) {
+    problems.push("INVALID_C3_ENTRY_ORDER_CURRENCY_TYPE");
+  }
+  if (CFG.C3_ENTRY_ORDER_TYPE !== "market") {
+    problems.push("C3_ENTRY_ORDER_TYPE_MUST_BE_MARKET");
+  }
+  if (CFG.C3_PARTIAL_EXIT_ENABLED && !CFG.C3_EXIT_INCLUDE_POSITION_ORDER) {
+    problems.push("PARTIAL_EXIT_REQUIRES_C3_EXIT_INCLUDE_POSITION_ORDER_TRUE");
+  }
   if (CFG.LIVE_FORWARD_ALLOWED) problems.push("LIVE_FORWARD_ALLOWED_MUST_BE_FALSE");
   if (!CFG.DEMO_FORWARD_ALLOWED) problems.push("DEMO_FORWARD_ALLOWED_MUST_BE_TRUE");
   if (!CFG.ENABLE_HTTP_FORWARD) problems.push("ENABLE_HTTP_FORWARD_MUST_BE_TRUE");
@@ -912,6 +962,13 @@ function statusPayload() {
       allowed: isForwardAllowed(),
       dryRun: CFG.C3_DRY_RUN,
       liveForwardAllowed: false,
+      c3CustomSignalSchema: "ISO8601_TIMESTAMP_TRIGGER_PRICE",
+      c3EntryOrder: {
+        amount: CFG.C3_ENTRY_ORDER_AMOUNT || null,
+        currencyType: CFG.C3_ENTRY_ORDER_CURRENCY_TYPE,
+        orderType: CFG.C3_ENTRY_ORDER_TYPE,
+      },
+      c3ExitIncludesPositionPercentOrder: CFG.C3_EXIT_INCLUDE_POSITION_ORDER,
     },
     persistence: {
       ready: persistenceReady,
@@ -1353,12 +1410,26 @@ function squeezeHoldActive(position, feature, pnl) {
   );
 }
 
+function c3NumberString(value, decimals = CFG.C3_TRIGGER_PRICE_DECIMALS) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return String(round(numeric, decimals));
+}
+
 function c3OrderForAction(action, options = {}) {
-  if (action === "enter_long" && CFG.C3_ORDER_AMOUNT_QUOTE > 0) {
-    return { amount: CFG.C3_ORDER_AMOUNT_QUOTE, currency_type: "quote" };
+  if (action === "enter_long" && CFG.C3_ENTRY_ORDER_AMOUNT > 0) {
+    return {
+      amount: CFG.C3_ENTRY_ORDER_AMOUNT,
+      currency_type: CFG.C3_ENTRY_ORDER_CURRENCY_TYPE,
+      order_type: CFG.C3_ENTRY_ORDER_TYPE,
+    };
   }
 
-  if (action === "exit_long" && Number.isFinite(options.positionPercent)) {
+  if (
+    action === "exit_long" &&
+    CFG.C3_EXIT_INCLUDE_POSITION_ORDER &&
+    Number.isFinite(options.positionPercent)
+  ) {
     return {
       amount: options.positionPercent,
       currency_type: "position_percent",
@@ -1368,31 +1439,24 @@ function c3OrderForAction(action, options = {}) {
   return null;
 }
 
-async function forward3Commas(action, price, reason, options = {}) {
-  const requestId = crypto.randomUUID();
-  const dedupeKey = options.dedupeKey || `${action}:${options.positionPercent || "full"}`;
-  const current = nowMs();
-  const lastAt = finite(state.forward.lastByKey?.[dedupeKey], 0);
-
-  if (
-    !options.bypassDedupe &&
-    current - lastAt < CFG.C3_FORWARD_DEDUP_MS
-  ) {
-    return { ok: false, deduped: true, error: "C3_FORWARD_DEDUP_ACTIVE", requestId };
-  }
-
-  if (!isForwardAllowed()) {
-    return { ok: false, error: "FORWARDING_NOT_ALLOWED", requestId };
+function build3CommasCustomSignal(action, price, options = {}, current = nowMs()) {
+  const triggerPrice = c3NumberString(price);
+  if (!triggerPrice) {
+    throw new Error("C3_TRIGGER_PRICE_INVALID");
   }
 
   const body = {
+    // Exact Custom Signal schema base: the timestamp is ISO-8601, not Unix
+    // seconds/milliseconds. trigger_price makes every request auditable in the
+    // Signal Bot log and matches the JSON generated by the dedicated bot.
     secret: CFG.C3_SIGNAL_SECRET,
-    bot_uuid: getBotUuid(),
-    max_lag: CFG.C3_MAX_LAG_SEC,
-    timestamp: Math.floor(current / 1000),
+    max_lag: String(Math.floor(CFG.C3_MAX_LAG_SEC)),
+    timestamp: new Date(current).toISOString(),
+    trigger_price: triggerPrice,
     tv_exchange: "BINANCE",
     tv_instrument: "SOLUSDT",
     action,
+    bot_uuid: getBotUuid(),
   };
 
   const order = c3OrderForAction(action, options);
@@ -1414,6 +1478,39 @@ async function forward3Commas(action, price, reason, options = {}) {
     };
   }
 
+  return body;
+}
+
+async function forward3Commas(action, price, reason, options = {}) {
+  const requestId = crypto.randomUUID();
+  const dedupeKey = options.dedupeKey || `${action}:${options.positionPercent || "full"}`;
+  const current = nowMs();
+  const lastAt = finite(state.forward.lastByKey?.[dedupeKey], 0);
+
+  if (
+    !options.bypassDedupe &&
+    current - lastAt < CFG.C3_FORWARD_DEDUP_MS
+  ) {
+    return { ok: false, deduped: true, error: "C3_FORWARD_DEDUP_ACTIVE", requestId };
+  }
+
+  if (!isForwardAllowed()) {
+    return { ok: false, error: "FORWARDING_NOT_ALLOWED", requestId };
+  }
+
+  let body;
+  try {
+    body = build3CommasCustomSignal(action, price, options, current);
+  } catch (error) {
+    log("ERROR", "C3_PAYLOAD_BUILD_FAILED", {
+      action,
+      reason,
+      requestId,
+      error: error.message,
+    });
+    return { ok: false, error: error.message, requestId };
+  }
+
   state.forward.lastByKey = {
     ...(state.forward.lastByKey || {}),
     [dedupeKey]: current,
@@ -1429,8 +1526,21 @@ async function forward3Commas(action, price, reason, options = {}) {
     positionPercent: options.positionPercent || null,
     finalStopPct: options.finalStopPct || null,
     requestId,
+    c3Timestamp: body.timestamp,
+    triggerPrice: body.trigger_price,
+    hasOrder: Boolean(body.order),
     dryRun: CFG.C3_DRY_RUN,
   });
+
+  if (CFG.C3_PAYLOAD_AUDIT_ENABLED) {
+    log("INFO", "C3_FORWARD_PAYLOAD_AUDIT", {
+      requestId,
+      action,
+      reason,
+      schema: "CUSTOM_SIGNAL_ISO8601_TRIGGER_PRICE",
+      body: { ...body, secret: "REDACTED" },
+    });
+  }
 
   if (CFG.C3_DRY_RUN) {
     log("INFO", "C3_FORWARD_DRY_RUN", {
@@ -1439,7 +1549,15 @@ async function forward3Commas(action, price, reason, options = {}) {
       requestId,
       body: { ...body, secret: "REDACTED" },
     });
-    return { ok: true, accepted: true, dryRun: true, requestId, status: 200 };
+    return {
+      ok: true,
+      accepted: true,
+      dryRun: true,
+      requestId,
+      status: 200,
+      c3Timestamp: body.timestamp,
+      triggerPrice: body.trigger_price,
+    };
   }
 
   const controller = new AbortController();
@@ -1477,7 +1595,14 @@ async function forward3Commas(action, price, reason, options = {}) {
       requestId,
       responseText,
     });
-    return { ok: true, accepted: true, requestId, status: response.status };
+    return {
+      ok: true,
+      accepted: true,
+      requestId,
+      status: response.status,
+      c3Timestamp: body.timestamp,
+      triggerPrice: body.trigger_price,
+    };
   } catch (error) {
     const label = error.name === "AbortError" ? "C3_TIMEOUT" : "C3_NETWORK_ERROR";
     log("ERROR", label, {
@@ -2213,6 +2338,70 @@ async function manualConfirmExitClosed(body) {
   };
 }
 
+async function manualForceClearVerifiedFlat(body) {
+  if (!CFG.MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT) {
+    return {
+      status: 403,
+      body: { ok: false, error: "FORCE_CLEAR_VERIFIED_FLAT_DISABLED" },
+    };
+  }
+
+  if (!state.position && !state.externalDealLock.active && !state.manual.recoveryRequired) {
+    return {
+      status: 409,
+      body: { ok: false, error: "NO_POSITION_OR_EXTERNAL_LOCK_TO_CLEAR" },
+    };
+  }
+
+  if (body.confirm_flat !== true) {
+    return {
+      status: 400,
+      body: { ok: false, error: "CONFIRM_FLAT_TRUE_REQUIRED" },
+    };
+  }
+
+  if (
+    CFG.MANUAL_FORCE_CLEAR_CONFIRM_PHRASE &&
+    String(body.confirm_phrase || "").trim() !== CFG.MANUAL_FORCE_CLEAR_CONFIRM_PHRASE
+  ) {
+    return {
+      status: 400,
+      body: { ok: false, error: "EXACT_FORCE_CLEAR_CONFIRM_PHRASE_REQUIRED" },
+    };
+  }
+
+  const clearing = publicPosition(state.position);
+  state.position = null;
+  state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+  state.manual = {
+    ...state.manual,
+    handoffActive: false,
+    recoveryRequired: false,
+    recoveryReason: "",
+    lastAction: "force_clear_verified_flat",
+    lastActionAt: nowIso(),
+  };
+  await persistState("force_clear_verified_external_flat");
+
+  log("WARN", "FVVO_FORCE_CLEAR_VERIFIED_FLAT", {
+    confirmedFlat: true,
+    priorLifecycle: clearing?.lifecycle || null,
+    priorExitReason: clearing?.exitReason || null,
+    note: "Operator verified the dedicated 3Commas DEMO bot is flat after an external/emergency close.",
+  });
+  log("INFO", "FVVO_TRADE_RESULT", {
+    resultSource: "force_clear_verified_external_flat",
+    entryPriceReference: clearing?.entryPriceReference || null,
+    lastTrackedPnlPct: clearing?.latestPnlPct || null,
+    peakPnlPct: clearing?.peakPnlPct || null,
+  });
+
+  return {
+    status: 200,
+    body: { ok: true, forcedClear: true, confirmedFlat: true },
+  };
+}
+
 async function manualAdopt(body) {
   if (!CFG.MANUAL_ALLOW_ADOPT) {
     return { status: 403, body: { ok: false, error: "ADOPT_LONG_DISABLED" } };
@@ -2440,6 +2629,11 @@ app.post(CFG.MANUAL_WEBHOOK_PATH, async (req, res) => {
         });
       }
       const outcome = await manualConfirmExitClosed(body);
+      return res.status(outcome.status).json(outcome.body);
+    }
+
+    if (action === "force_clear_verified_flat") {
+      const outcome = await manualForceClearVerifiedFlat(body);
       return res.status(outcome.status).json(outcome.body);
     }
 

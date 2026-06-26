@@ -1,12 +1,13 @@
 {
-  "name": "brainfvvo-manualexit-v1c-absolute-levels-persist-safe-demo",
-  "version": "1.2.0",
+  "name": "brainfvvo-manualexit-v1d-c3-canonical-exit-audit-demo",
+  "version": "1.3.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node replay_validation.js"
+    "validate": "node replay_validation.js",
+    "test:c3-schema": "node c3_schema_probe_test.js"
   },
   "engines": {
     "node": ">=20"
