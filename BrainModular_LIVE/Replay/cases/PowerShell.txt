@@ -17,6 +17,20 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body $body
 
+#####  1.1 C3 BOT EXIT confirmation — (need to confirm before NEXT ENTER)
+
+$body = @{
+  secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
+  action = "confirm_exit_closed"
+  symbol = "BINANCE:SOLUSDT"
+  confirm_flat = $true
+  reason = "3commas_verified_dynamic_profit_exit_closed"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
 
 #####  2. Manual exit — close deal now (STOP)
 This sends exit_long to 3Commas immediately.
