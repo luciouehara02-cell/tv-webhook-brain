@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-manualexit-v1d-c3-canonical-exit-audit-demo",
-  "version": "1.3.0",
+  "name": "brainfvvo-manualexit-v1e-explicit-market-entry-exit-demo",
+  "version": "1.4.0",
   "private": true,
   "main": "server.js",
   "scripts": {
