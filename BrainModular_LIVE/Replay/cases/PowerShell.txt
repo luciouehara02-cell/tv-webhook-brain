@@ -1,0 +1,69 @@
+#####  1. Manual entry — start deal now (START)
+
+$body = @{
+  secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
+  action = "enter_long"
+  symbol = "BINANCE:SOLUSDT"
+profile = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT"
+
+  stop_price = 71.60
+  profit_target_price = 0
+
+  reason = "manual_post_washout_absolute_support_levels"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+#####  2. Manual exit — close deal now (STOP)
+This sends exit_long to 3Commas immediately.
+
+$body = @{
+  secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
+  action = "exit_long"
+  symbol = "BINANCE:SOLUSDT"
+  reason = "manual_exit"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+#####   3) Handoff / reset control when BOT already in trade (Take OVER by Manual BOT EXIT)
+Use this only when you do not want the brain to close the deal, but you want to manage the deal manually outside the brain.
+
+$body = @{
+  secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
+  action = "handoff_manual"
+  symbol = "BINANCE:SOLUSDT"
+  reason = "user_will_manage_exit_in_3commas"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
+
+#####   4) Clear handoff after you manually close in 3Commas (CLEAR MEMORY)
+Use this only after the deal is already closed manually.
+
+$body = @{
+  secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
+  action = "force_clear_verified_flat"
+  symbol = "BINANCE:SOLUSDT"
+  confirm_flat = $true
+  confirm_phrase = "I_VERIFIED_DEDICATED_3COMMAS_DEMO_BOT_IS_FLAT"
+  reason = "manual_handoff_trade_closed_in_3commas"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
+  -ContentType "application/json" `
+  -Body $body
+
