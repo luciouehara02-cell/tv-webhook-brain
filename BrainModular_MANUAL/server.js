@@ -1,10 +1,11 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1j_PRICE_TRIGGER_ENTRY_REENTRY_SHADOW_DEMO
+// BrainFVVO_ManualExit_v1l_AUTO_EXIT_RELEASE_AUTO_REENTRY_DEMO
 // SOLUSDT dedicated DEMO Signal Bot manual-entry / brain-exit service
 // ------------------------------------------------------------
-// v1j manual price-trigger entry + Phase-2 shadow re-entry + dynamic-profit contract:
+// v1l manual price-trigger entry + delayed auto exit release + DEMO-auto re-entry + dynamic-profit contract:
 //   - Primary entries can be immediate manual or a user-armed absolute price trigger.
 //   - The price trigger is cross-activated from a fresh 15s feature and then sends a bot-fixed market entry.
+//   - Strong winning runners can suppress premature 15s thesis exits after a configured MFE and use a tight full-position runner trail.
 //   - Phase-2 re-entry remains candidate SHADOW only and never forwards an automatic re-entry order.
 //   - One absolute `stop_price`: a confirmed breach sends exit_long 100%.
 //   - Optional absolute `profit_target_price`: fixed ceiling, full 100% exit.
@@ -68,7 +69,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1j_PRICE_TRIGGER_ENTRY_REENTRY_SHADOW_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1l_AUTO_EXIT_RELEASE_AUTO_REENTRY_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -101,7 +102,12 @@ const CFG = {
   C3_REQUEST_TIMEOUT_MS: envNum("C3_REQUEST_TIMEOUT_MS", 10000),
   C3_FORWARD_DEDUP_MS: envNum("C3_FORWARD_DEDUP_MS", 60000),
   C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", true),
+  // Retired direct-clear compatibility flag. v1l requires the delayed auto-release contract instead.
   C3_ASSUME_EXIT_ACCEPTANCE: envBool("C3_ASSUME_EXIT_ACCEPTANCE", false),
+  // DEMO-only: after a 100% exit_long is accepted by 3Commas, retain the lock for this grace
+  // period and then release the brain state as ASSUMED flat. This replaces manual confirm_exit_closed.
+  AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", false),
+  AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
   STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-manualexit-v1b-state.json"),
@@ -126,7 +132,7 @@ const CFG = {
   MANUAL_FORCE_CLEAR_CONFIRM_PHRASE: envStr("MANUAL_FORCE_CLEAR_CONFIRM_PHRASE", "I_VERIFIED_DEDICATED_3COMMAS_DEMO_BOT_IS_FLAT"),
   MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT: envBool("MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT", true),
 
-  // v1j user-armed absolute price trigger. This is a brain-side conditional entry,
+  // v1l user-armed absolute price trigger. This is a brain-side conditional entry,
   // not an exchange-native resting limit order. It sends a bot-fixed MARKET entry only
   // after a fresh price crosses the armed level from the correct side.
   PRICE_ENTRY_ENABLED: envBool("PRICE_ENTRY_ENABLED", true),
@@ -167,8 +173,20 @@ const CFG = {
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", true),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
 
-  // v1i Phase-2 re-entry: strict pullback reclaim micro-breakout observer.
-  // This release intentionally NEVER sends automatic enter_long signals.
+  // v1k strong-runner protection retained in v1l. This changes exits only; no new primary entry path is added.
+  // "live" suppresses the fast 15s thesis exit after the hold threshold and activates a tight runner trail after the arm threshold.
+  // "shadow" logs what would have been held/trailing but preserves baseline exits.
+  RUNNER_EXIT_ENABLED: envBool("RUNNER_EXIT_ENABLED", true),
+  RUNNER_EXIT_MODE: envStr("RUNNER_EXIT_MODE", "live").toLowerCase(),
+  RUNNER_HOLD_MIN_MFE_PCT: envNum("RUNNER_HOLD_MIN_MFE_PCT", 0.75),
+  RUNNER_TIGHT_TRAIL_ARM_MFE_PCT: envNum("RUNNER_TIGHT_TRAIL_ARM_MFE_PCT", 1.00),
+  RUNNER_TIGHT_TRAIL_GIVEBACK_PCT: envNum("RUNNER_TIGHT_TRAIL_GIVEBACK_PCT", 0.08),
+  RUNNER_TIGHT_TRAIL_CONFIRM_SEC: envNum("RUNNER_TIGHT_TRAIL_CONFIRM_SEC", 0),
+  RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS: Math.floor(envNum("RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS", 1)),
+  RUNNER_TIGHT_TRAIL_LOG_STEP_PCT: envNum("RUNNER_TIGHT_TRAIL_LOG_STEP_PCT", 0.05),
+
+  // v1l re-entry: strict pullback reclaim micro-breakout.
+  // `shadow` observes only; `demo_auto` sends a bot-fixed DEMO market re-entry after the auto-release guard.
   REENTRY_ENABLED: envBool("REENTRY_ENABLED", true),
   REENTRY_PHASE: envStr("REENTRY_PHASE", "shadow").toLowerCase(),
   REENTRY_AUTO_FORWARD_ENABLED: envBool("REENTRY_AUTO_FORWARD_ENABLED", false),
@@ -199,7 +217,7 @@ const CFG = {
 };
 
 const PROFILE = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT";
-const REENTRY_PROFILE = "AUTO_REENTRY_PULLBACK_MICROBREAKOUT_SHADOW";
+const REENTRY_PROFILE = "AUTO_REENTRY_PULLBACK_MICROBREAKOUT_DEMO";
 const STATE_PATH = path.join(CFG.STATE_DIR, CFG.STATE_FILE_NAME);
 const STATE_BACKUP_PATH = `${STATE_PATH}.bak`;
 
@@ -213,6 +231,7 @@ let persistenceError = "";
 let persistenceQueue = Promise.resolve();
 let persistenceSequence = 0;
 let state = defaultState();
+let autoExitReleaseTimer = null;
 
 function nowIso() { return new Date().toISOString(); }
 function nowMs() { return Date.now(); }
@@ -253,7 +272,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -263,6 +282,8 @@ function defaultState() {
     manual: { handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "", lastActionAt: "" },
     forward: { lastByKey: {}, lastRequestId: "" },
     reentry: { campaign: null, recentTickPrices: [] },
+    // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
+    autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "" },
     priceEntry: { pending: null, last: null },
   };
 }
@@ -276,6 +297,10 @@ function normalizeState(raw) {
   next.externalDealLock = { ...fallback.externalDealLock, ...(raw.externalDealLock || {}) };
   next.reentry = { ...fallback.reentry, ...(raw.reentry || {}) };
   next.reentry.recentTickPrices = Array.isArray(next.reentry.recentTickPrices) ? next.reentry.recentTickPrices.slice(-12) : [];
+  next.autoExitRelease = { ...fallback.autoExitRelease, ...(raw.autoExitRelease || {}) };
+  next.autoExitRelease.active = Boolean(next.autoExitRelease.active);
+  next.autoExitRelease.releaseAtMs = finite(next.autoExitRelease.releaseAtMs, 0);
+  next.autoExitRelease.positionOpenedAtMs = finite(next.autoExitRelease.positionOpenedAtMs, 0);
   next.priceEntry = { ...fallback.priceEntry, ...(raw.priceEntry || {}) };
   if (next.priceEntry.pending && typeof next.priceEntry.pending !== "object") next.priceEntry.pending = null;
   if (next.priceEntry.last && typeof next.priceEntry.last !== "object") next.priceEntry.last = null;
@@ -288,7 +313,9 @@ function normalizeState(raw) {
   // final price as the only stop if a position exists during deployment.
   const migratedStop = firstFinite(p.stopPrice, p.finalStopPrice, p.firstStopPrice, entry ? pctPriceBelow(entry, finite(p.finalStopPct, finite(p.firstStopPct, 1.0))) : null);
   const migratedTarget = firstFinite(p.profitTargetPrice, 0);
-  p.profile = PROFILE;
+  p.entryOrigin = p.entryOrigin || "MANUAL";
+  p.reentryNumber = Math.max(0, Math.floor(finite(p.reentryNumber, 0)));
+  p.profile = p.entryOrigin === "AUTO_REENTRY" ? REENTRY_PROFILE : PROFILE;
   p.phase = "ONE_STOP_ACTIVE";
   p.stopPrice = finite(migratedStop, null);
   p.stopPct = entry && p.stopPrice ? round(percentageBelow(entry, p.stopPrice), 6) : finite(p.stopPct, 0);
@@ -310,12 +337,40 @@ function normalizeState(raw) {
     lastLoggedProtectedPnlPct: Math.max(0, finite(priorDynamic.lastLoggedProtectedPnlPct, 0)),
     floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(priorDynamic.floor || {}) },
     thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, ...(priorDynamic.thesis || {}) },
+    runner: {
+      holdActive: Boolean(priorDynamic.runner?.holdActive),
+      holdActivatedAtMs: finite(priorDynamic.runner?.holdActivatedAtMs, 0),
+      holdActivatedAtPnlPct: finite(priorDynamic.runner?.holdActivatedAtPnlPct, 0),
+      tightTrailArmed: Boolean(priorDynamic.runner?.tightTrailArmed),
+      tightTrailArmedAtMs: finite(priorDynamic.runner?.tightTrailArmedAtMs, 0),
+      tightTrailArmedAtPnlPct: finite(priorDynamic.runner?.tightTrailArmedAtPnlPct, 0),
+      protectedPnlPct: Math.max(0, finite(priorDynamic.runner?.protectedPnlPct, 0)),
+      protectedPrice: finite(priorDynamic.runner?.protectedPrice, null),
+      lastLoggedProtectedPnlPct: Math.max(0, finite(priorDynamic.runner?.lastLoggedProtectedPnlPct, 0)),
+      floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(priorDynamic.runner?.floor || {}) },
+      suppressedTickThesisCount: Math.max(0, Math.floor(finite(priorDynamic.runner?.suppressedTickThesisCount, 0))),
+    },
     lastThesisReason: priorDynamic.lastThesisReason || null,
   };
   if (p.dynamicProfit.armed && entry) {
     const computedFloor = dynamicProfitFloorPnlPct(p.dynamicProfit.peakPnlPct);
     p.dynamicProfit.protectedPnlPct = Math.max(p.dynamicProfit.protectedPnlPct, computedFloor);
     p.dynamicProfit.protectedPrice = round(entry * (1 + p.dynamicProfit.protectedPnlPct / 100), 8);
+    const runner = p.dynamicProfit.runner;
+    const runnerPeak = p.dynamicProfit.peakPnlPct;
+    if (CFG.RUNNER_EXIT_ENABLED && runnerPeak >= CFG.RUNNER_HOLD_MIN_MFE_PCT) {
+      runner.holdActive = true;
+      if (!runner.holdActivatedAtMs) runner.holdActivatedAtMs = nowMs();
+      if (!runner.holdActivatedAtPnlPct) runner.holdActivatedAtPnlPct = round(runnerPeak, 6);
+    }
+    if (CFG.RUNNER_EXIT_ENABLED && runnerPeak >= CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT) {
+      runner.tightTrailArmed = true;
+      if (!runner.tightTrailArmedAtMs) runner.tightTrailArmedAtMs = nowMs();
+      if (!runner.tightTrailArmedAtPnlPct) runner.tightTrailArmedAtPnlPct = round(runnerPeak, 6);
+      const floorPnl = Math.max(0, runnerPeak - CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT);
+      runner.protectedPnlPct = Math.max(runner.protectedPnlPct, round(floorPnl, 6));
+      runner.protectedPrice = round(entry * (1 + runner.protectedPnlPct / 100), 8);
+    }
   }
   p.exitRequestedAt = p.exitRequestedAt || null;
   p.exitReason = p.exitReason || null;
@@ -413,8 +468,16 @@ function configProblems() {
   if (CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT");
   if (CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_FLOOR_CONFIRM");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
-  if (CFG.REENTRY_PHASE !== "shadow") problems.push("REENTRY_PHASE_MUST_BE_SHADOW_IN_V1J");
-  if (CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_AUTO_FORWARD_MUST_BE_FALSE_IN_V1J");
+  if (!["live", "shadow", "disabled"].includes(CFG.RUNNER_EXIT_MODE)) problems.push("INVALID_RUNNER_EXIT_MODE");
+  if (CFG.RUNNER_HOLD_MIN_MFE_PCT <= 0 || CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT < CFG.RUNNER_HOLD_MIN_MFE_PCT || CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT <= 0) problems.push("INVALID_RUNNER_THRESHOLDS");
+  if (CFG.RUNNER_TIGHT_TRAIL_CONFIRM_SEC < 0 || CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_RUNNER_TIGHT_TRAIL_CONFIRM");
+  if (CFG.C3_ASSUME_EXIT_ACCEPTANCE) problems.push("C3_ASSUME_EXIT_ACCEPTANCE_MUST_BE_FALSE_USE_AUTO_EXIT_RECONCILIATION");
+  if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED && (CFG.LIVE_FORWARD_ALLOWED || !CFG.DEMO_FORWARD_ALLOWED)) problems.push("AUTO_EXIT_RECONCILIATION_DEMO_ONLY");
+  if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED && (CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC < 1 || CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC > 600)) problems.push("INVALID_AUTO_EXIT_RECONCILIATION_DELAY_SEC");
+  if (!["shadow", "demo_auto"].includes(CFG.REENTRY_PHASE)) problems.push("INVALID_REENTRY_PHASE");
+  if (CFG.REENTRY_PHASE === "shadow" && CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_AUTO_FORWARD_REQUIRES_DEMO_AUTO_PHASE");
+  if (CFG.REENTRY_PHASE === "demo_auto" && !CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_DEMO_AUTO_REQUIRES_AUTO_FORWARD_TRUE");
+  if (CFG.REENTRY_PHASE === "demo_auto" && (!CFG.AUTO_EXIT_RECONCILIATION_ENABLED || CFG.LIVE_FORWARD_ALLOWED || !CFG.DEMO_FORWARD_ALLOWED)) problems.push("REENTRY_DEMO_AUTO_REQUIRES_DEMO_AUTO_EXIT_RELEASE");
   if (CFG.REENTRY_MAX_COUNT < 1 || CFG.REENTRY_MAX_COUNT > 2) problems.push("REENTRY_MAX_COUNT_MUST_BE_1_OR_2");
   if (CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC <= 0 || CFG.REENTRY_CONTEXT_MAX_AGE_SEC <= 0) problems.push("INVALID_REENTRY_CAMPAIGN_GUARD");
   if (CFG.REENTRY_PULLBACK_MIN_PCT <= 0 || CFG.REENTRY_PULLBACK_MAX_PCT < CFG.REENTRY_PULLBACK_MIN_PCT) problems.push("INVALID_REENTRY_PULLBACK_RANGE");
@@ -634,6 +697,89 @@ async function forward3Commas(action, price, reason, options = {}) {
   } finally { clearTimeout(timer); }
 }
 
+
+function reentryDemoAutoEnabled() {
+  return CFG.REENTRY_ENABLED && CFG.REENTRY_PHASE === "demo_auto" && CFG.REENTRY_AUTO_FORWARD_ENABLED && CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED;
+}
+
+function autoExitReconciliationActive() {
+  return CFG.AUTO_EXIT_RECONCILIATION_ENABLED && CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED;
+}
+
+function autoExitReleaseStatusPayload() {
+  const a = state.autoExitRelease || {};
+  return {
+    enabled: autoExitReconciliationActive(),
+    delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC,
+    active: Boolean(a.active),
+    status: a.status || "IDLE",
+    releaseAt: a.releaseAt || null,
+    reason: a.reason || null,
+    requestId: a.requestId || null,
+    releasedAt: a.releasedAt || null,
+  };
+}
+
+function clearAutoExitReleaseTimer() {
+  if (autoExitReleaseTimer) clearTimeout(autoExitReleaseTimer);
+  autoExitReleaseTimer = null;
+}
+
+function armAutoExitRelease(position, requestId, reason) {
+  if (!autoExitReconciliationActive()) return null;
+  const current = nowMs();
+  const releaseAtMs = current + CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC * 1000;
+  state.autoExitRelease = {
+    active: true,
+    status: "PENDING_ASSUMED_FLAT_RELEASE",
+    positionOpenedAtMs: finite(position?.openedAtMs, 0),
+    releaseAtMs,
+    armedAt: nowIso(),
+    releaseAt: new Date(releaseAtMs).toISOString(),
+    requestId: requestId || "",
+    reason: reason || "",
+    releasedAt: "",
+  };
+  log("INFO", "FVVO_EXIT_AUTO_RELEASE_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, demoOnly: true, reentryAutoEnabled: reentryDemoAutoEnabled() });
+  return state.autoExitRelease;
+}
+
+async function finalizeAutoExitRelease(source = "timer") {
+  const pending = state.autoExitRelease;
+  if (!autoExitReconciliationActive() || !pending?.active) return false;
+  const remainingMs = finite(pending.releaseAtMs, 0) - nowMs();
+  if (remainingMs > 0) {
+    scheduleAutoExitRelease();
+    return false;
+  }
+  const prior = state.position;
+  if (!prior || !String(prior.lifecycle || "").startsWith("EXIT_ACCEPTED_AUTO_RELEASE")) {
+    state.autoExitRelease = { ...pending, active: false, status: "CANCELLED_NO_MATCHING_EXIT", releasedAt: nowIso() };
+    await persistState("auto_exit_release_cancelled_no_position");
+    log("WARN", "FVVO_EXIT_AUTO_RELEASE_CANCELLED", { source, reason: "NO_MATCHING_EXIT_POSITION", requestId: pending.requestId || null });
+    return false;
+  }
+  state.position = null;
+  state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+  const campaign = armReentryCampaignAfterConfirmedExit(prior);
+  state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "auto_exit_release", lastActionAt: nowIso() };
+  state.autoExitRelease = { ...pending, active: false, status: "RELEASED_ASSUMED_FLAT", releasedAt: nowIso() };
+  clearAutoExitReleaseTimer();
+  await persistState("auto_exit_release_assumed_flat");
+  log("INFO", "FVVO_EXIT_AUTO_RECONCILED_ASSUMED_FLAT", { source, priorExitReason: prior.exitReason, requestId: pending.requestId || null, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null, reentryAutoEnabled: reentryDemoAutoEnabled() });
+  return true;
+}
+
+function scheduleAutoExitRelease() {
+  clearAutoExitReleaseTimer();
+  const pending = state.autoExitRelease;
+  if (!autoExitReconciliationActive() || !pending?.active) return;
+  const waitMs = Math.max(0, finite(pending.releaseAtMs, nowMs()) - nowMs());
+  autoExitReleaseTimer = setTimeout(() => {
+    finalizeAutoExitRelease("timer").catch((error) => log("ERROR", "FVVO_EXIT_AUTO_RELEASE_FAILED", { error: error.message }));
+  }, Math.min(waitMs + 20, 2147483647));
+}
+
 function stateBlocksNewEntry() {
   if (CFG.FVVO_EMERGENCY_DISABLE_NEW_ENTRIES) return "EMERGENCY_NEW_ENTRIES_DISABLED";
   if (state.position) return "MANAGED_POSITION_ACTIVE";
@@ -649,8 +795,8 @@ function statusPayload() {
     brain: CFG.BRAIN_NAME,
     symbol: CFG.SYMBOL,
     demoOnly: !CFG.LIVE_FORWARD_ALLOWED,
-    automaticEntriesEnabled: false,
-    reentryAutomaticOrdersEnabled: false,
+    automaticEntriesEnabled: reentryDemoAutoEnabled(),
+    reentryAutomaticOrdersEnabled: reentryDemoAutoEnabled(),
     entryProfileAllowed: PROFILE,
     oneStopContract: {
       commandStopField: "stop_price",
@@ -679,6 +825,15 @@ function statusPayload() {
       fiveMinuteThesisExitEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED,
       exitPercent: 100,
     },
+    runnerExitContract: {
+      enabled: CFG.RUNNER_EXIT_ENABLED,
+      mode: CFG.RUNNER_EXIT_MODE,
+      holdMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT,
+      tightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT,
+      tightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT,
+      tightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
+      automaticEntryOrdersEnabled: false,
+    },
     c3ExecutionContract: {
       entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE,
       entryOrderIncludedInWebhook: false,
@@ -687,6 +842,7 @@ function statusPayload() {
       exitPercent: 100,
       nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED,
     },
+    autoExitReconciliation: autoExitReleaseStatusPayload(),
     priceTriggerEntry: priceEntryStatusPayload(),
     forwarding: { allowed: isForwardAllowed(), dryRun: CFG.C3_DRY_RUN, c3PayloadAudit: CFG.C3_PAYLOAD_AUDIT_ENABLED },
     persistence: { ready: persistenceReady, error: persistenceError, statePath: STATE_PATH },
@@ -699,6 +855,8 @@ function statusPayload() {
     position: state.position ? {
       lifecycle: state.position.lifecycle,
       phase: state.position.phase,
+      entryOrigin: state.position.entryOrigin || "MANUAL",
+      reentryNumber: state.position.reentryNumber || 0,
       entryPriceReference: state.position.entryPriceReference,
       stopPrice: state.position.stopPrice,
       stopPct: state.position.stopPct,
@@ -716,6 +874,16 @@ function statusPayload() {
         floorObservations: state.position.dynamicProfit.floor?.observations || 0,
         thesisObservations: state.position.dynamicProfit.thesis?.observations || 0,
         lastThesisReason: state.position.dynamicProfit.lastThesisReason || null,
+        runner: state.position.dynamicProfit.runner ? {
+          holdActive: Boolean(state.position.dynamicProfit.runner.holdActive),
+          holdActivatedAtPnlPct: state.position.dynamicProfit.runner.holdActivatedAtPnlPct || 0,
+          tightTrailArmed: Boolean(state.position.dynamicProfit.runner.tightTrailArmed),
+          tightTrailArmedAtPnlPct: state.position.dynamicProfit.runner.tightTrailArmedAtPnlPct || 0,
+          protectedPnlPct: state.position.dynamicProfit.runner.protectedPnlPct || 0,
+          protectedPrice: state.position.dynamicProfit.runner.protectedPrice || null,
+          floorObservations: state.position.dynamicProfit.runner.floor?.observations || 0,
+          suppressedTickThesisCount: state.position.dynamicProfit.runner.suppressedTickThesisCount || 0,
+        } : null,
       } : null,
       exitReason: state.position.exitReason,
     } : null,
@@ -793,18 +961,19 @@ async function requestFullExit(reason, price, origin) {
     return result;
   }
 
-  p.lifecycle = "EXIT_ACCEPTED_UNVERIFIED_CLOSE";
+  p.lifecycle = CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? "EXIT_ACCEPTED_AUTO_RELEASE_PENDING" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE";
   p.exitRequestedAt = nowIso();
   p.exitReason = reason;
   p.exitRequestPrice = price;
   p.exitForwardRequestId = result.requestId;
-  state.manual.recoveryRequired = !CFG.C3_ASSUME_EXIT_ACCEPTANCE;
-  state.manual.recoveryReason = CFG.C3_ASSUME_EXIT_ACCEPTANCE ? "" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE";
-  state.externalDealLock = { active: !CFG.C3_ASSUME_EXIT_ACCEPTANCE, source: "brain_full_exit", setAt: nowIso(), reason: CFG.C3_ASSUME_EXIT_ACCEPTANCE ? "EXIT_ASSUMED_CLOSED_BY_CONFIG" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE" };
-  if (CFG.C3_ASSUME_EXIT_ACCEPTANCE) state.position = null;
+  state.manual.recoveryRequired = !CFG.AUTO_EXIT_RECONCILIATION_ENABLED;
+  state.manual.recoveryReason = CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? "" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE";
+  state.externalDealLock = { active: true, source: "brain_full_exit", setAt: nowIso(), reason: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? "EXIT_ACCEPTED_AUTO_RELEASE_PENDING" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE" };
+  if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED) armAutoExitRelease(p, result.requestId, reason);
   await persistState("full_exit_accepted");
-  log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, recoveryRequired: !CFG.C3_ASSUME_EXIT_ACCEPTANCE, exitPercent: 100 });
-  return { ...result, exitUnverified: !CFG.C3_ASSUME_EXIT_ACCEPTANCE };
+  if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED) scheduleAutoExitRelease();
+  log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, autoReleasePending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED, autoReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC : null, recoveryRequired: !CFG.AUTO_EXIT_RECONCILIATION_ENABLED, exitPercent: 100 });
+  return { ...result, exitUnverified: true, autoReleasePending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED };
 }
 
 function oneStopBreakConfirmed(position, feature, markPrice) {
@@ -839,13 +1008,90 @@ function dynamicProfitState(position) {
       protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0,
       floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
       thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null },
+      runner: {
+        holdActive: false, holdActivatedAtMs: 0, holdActivatedAtPnlPct: 0,
+        tightTrailArmed: false, tightTrailArmedAtMs: 0, tightTrailArmedAtPnlPct: 0,
+        protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0,
+        floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+        suppressedTickThesisCount: 0,
+      },
       lastThesisReason: null,
     };
   }
   const d = position.dynamicProfit;
   d.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.floor || {}) };
   d.thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, ...(d.thesis || {}) };
+  d.runner = {
+    holdActive: false, holdActivatedAtMs: 0, holdActivatedAtPnlPct: 0,
+    tightTrailArmed: false, tightTrailArmedAtMs: 0, tightTrailArmedAtPnlPct: 0,
+    protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0,
+    floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+    suppressedTickThesisCount: 0,
+    ...(d.runner || {}),
+  };
+  d.runner.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.runner.floor || {}) };
   return d;
+}
+
+function runnerLiveEnabled() { return CFG.RUNNER_EXIT_ENABLED && CFG.RUNNER_EXIT_MODE === "live"; }
+function runnerShadowEnabled() { return CFG.RUNNER_EXIT_ENABLED && CFG.RUNNER_EXIT_MODE === "shadow"; }
+
+function updateRunnerExit(position, price) {
+  const d = dynamicProfitState(position);
+  const r = d.runner;
+  const peak = finite(d.peakPnlPct, 0);
+  let holdActivatedNow = false;
+  let tightTrailArmedNow = false;
+  let floorRaised = false;
+  const enabled = CFG.RUNNER_EXIT_ENABLED && CFG.RUNNER_EXIT_MODE !== "disabled" && Boolean(d.armed);
+  if (!enabled) return { enabled: false, holdActive: false, tightTrailArmed: false, holdActivatedNow, tightTrailArmedNow, floorRaised, runner: r };
+
+  if (!r.holdActive && peak >= CFG.RUNNER_HOLD_MIN_MFE_PCT) {
+    r.holdActive = true;
+    r.holdActivatedAtMs = nowMs();
+    r.holdActivatedAtPnlPct = round(peak, 6);
+    holdActivatedNow = true;
+  }
+  if (!r.tightTrailArmed && peak >= CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT) {
+    r.tightTrailArmed = true;
+    r.tightTrailArmedAtMs = nowMs();
+    r.tightTrailArmedAtPnlPct = round(peak, 6);
+    tightTrailArmedNow = true;
+  }
+  if (r.tightTrailArmed) {
+    const priorFloor = finite(r.protectedPnlPct, 0);
+    const calculatedFloor = Math.max(0, peak - CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT);
+    r.protectedPnlPct = Math.max(priorFloor, round(calculatedFloor, 6));
+    r.protectedPrice = round(position.entryPriceReference * (1 + r.protectedPnlPct / 100), 8);
+    floorRaised = r.protectedPnlPct > priorFloor + 1e-9;
+  }
+  return { enabled: true, holdActive: r.holdActive, tightTrailArmed: r.tightTrailArmed, holdActivatedNow, tightTrailArmedNow, floorRaised, runner: r, price };
+}
+
+function runnerTightTrailBreakConfirmed(position, feature, price, pnlPct) {
+  const d = dynamicProfitState(position);
+  const r = d.runner;
+  if (!runnerLiveEnabled() || !r.tightTrailArmed || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !(finite(r.protectedPnlPct, 0) > 0)) return { confirmed: false, reason: "RUNNER_TIGHT_TRAIL_NOT_ELIGIBLE" };
+  if (pnlPct > r.protectedPnlPct + 1e-9 || price > finite(r.protectedPrice, Infinity)) {
+    if (r.floor?.observations) r.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null };
+    return { confirmed: false, reason: "ABOVE_RUNNER_TIGHT_TRAIL", protectedPnlPct: r.protectedPnlPct, protectedPrice: r.protectedPrice };
+  }
+  const current = nowMs();
+  if (!r.floor?.breachAtMs) r.floor = { breachAtMs: current, observations: 1, lastBreachPrice: price };
+  else { r.floor.observations = Number(r.floor.observations || 0) + 1; r.floor.lastBreachPrice = price; }
+  const elapsed = (current - r.floor.breachAtMs) / 1000;
+  const observations = Number(r.floor.observations || 0);
+  return { confirmed: observations >= CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS && elapsed >= CFG.RUNNER_TIGHT_TRAIL_CONFIRM_SEC, reason: "RUNNER_TIGHT_TRAIL_CONFIRM", observations, elapsedSec: elapsed, protectedPnlPct: r.protectedPnlPct, protectedPrice: r.protectedPrice };
+}
+
+function tickThesisEvidence(position, feature, price, pnlPct) {
+  const d = dynamicProfitState(position);
+  if (!CFG.DYNAMIC_PROFIT_EXIT_ENABLED || !CFG.DYNAMIC_PROFIT_THESIS_EXIT_ENABLED || !d.armed || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { eligible: false, conditions: false, reason: "TICK_THESIS_NOT_ELIGIBLE" };
+  const ema8 = finite(feature.ema8, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const conditions = pnlPct >= CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT && ema8 !== null && price < ema8 && slope !== null && slope <= CFG.DYNAMIC_PROFIT_THESIS_SLOPE_MAX && fvvo !== null && (fvvo <= 0 || feature.crossDown === true);
+  return { eligible: true, conditions, ema8, fvvo, slope, reason: conditions ? "PRICE_BELOW_EMA8_AND_NEGATIVE_FVVO_SLOPE" : "TICK_THESIS_HEALTHY_OR_UNCONFIRMED" };
 }
 
 function updateDynamicProfit(position, price, pnlPct) {
@@ -886,17 +1132,11 @@ function dynamicFloorBreakConfirmed(position, markPrice, pnlPct) {
 
 function tickThesisFailureConfirmed(position, feature, price, pnlPct) {
   const d = dynamicProfitState(position);
-  if (!CFG.DYNAMIC_PROFIT_EXIT_ENABLED || !CFG.DYNAMIC_PROFIT_THESIS_EXIT_ENABLED || !d.armed || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { confirmed: false, reason: "TICK_THESIS_NOT_ELIGIBLE" };
-  const ema8 = finite(feature.ema8, null);
-  const fvvo = finite(feature.fvvo, null);
-  const slope = finite(feature.slope, null);
-  const conditions = pnlPct >= CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT &&
-    ema8 !== null && price < ema8 &&
-    slope !== null && slope <= CFG.DYNAMIC_PROFIT_THESIS_SLOPE_MAX &&
-    fvvo !== null && (fvvo <= 0 || feature.crossDown === true);
-  if (!conditions) {
+  const evidence = tickThesisEvidence(position, feature, price, pnlPct);
+  if (!evidence.eligible) return { confirmed: false, reason: evidence.reason };
+  if (!evidence.conditions) {
     if (d.thesis?.observations) d.thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null };
-    return { confirmed: false, reason: "TICK_THESIS_HEALTHY_OR_UNCONFIRMED" };
+    return { confirmed: false, reason: evidence.reason, ema8: evidence.ema8, fvvo: evidence.fvvo, slope: evidence.slope };
   }
   const current = nowMs();
   if (!d.thesis?.breachAtMs) d.thesis = { breachAtMs: current, observations: 1, lastBreachPrice: price, lastFeatureKind: feature.kind };
@@ -904,7 +1144,7 @@ function tickThesisFailureConfirmed(position, feature, price, pnlPct) {
   d.lastThesisReason = "PRICE_BELOW_EMA8_AND_NEGATIVE_FVVO_SLOPE";
   const elapsed = (current - d.thesis.breachAtMs) / 1000;
   const observations = Number(d.thesis.observations || 0);
-  return { confirmed: observations >= CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS && elapsed >= CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC, reason: "TICK_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, ema8, fvvo, slope };
+  return { confirmed: observations >= CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS && elapsed >= CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC, reason: "TICK_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, ema8: evidence.ema8, fvvo: evidence.fvvo, slope: evidence.slope };
 }
 
 function fiveMinuteThesisFailure(position, feature, price, pnlPct) {
@@ -939,6 +1179,19 @@ async function manageExit(feature) {
     log("INFO", "FVVO_DYNAMIC_PROFIT_FLOOR_RAISED", { peakPnlPct: d.peakPnlPct, protectedPnlPct: d.protectedPnlPct, protectedPrice: d.protectedPrice, price, allowedGivebackPct: round(d.peakPnlPct - d.protectedPnlPct, 6) });
   }
 
+  const runnerUpdate = updateRunnerExit(p, price);
+  const runner = runnerUpdate.runner;
+  if (runnerUpdate.holdActivatedNow) {
+    log("INFO", runnerLiveEnabled() ? "FVVO_RUNNER_HOLD_ARMED" : "FVVO_RUNNER_HOLD_SHADOW_ARMED", { entryPrice: p.entryPriceReference, peakPnlPct: d.peakPnlPct, holdMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, mode: CFG.RUNNER_EXIT_MODE, price });
+  }
+  if (runnerUpdate.tightTrailArmedNow) {
+    log("INFO", runnerLiveEnabled() ? "FVVO_RUNNER_TIGHT_TRAIL_ARMED" : "FVVO_RUNNER_TIGHT_TRAIL_SHADOW_ARMED", { entryPrice: p.entryPriceReference, peakPnlPct: d.peakPnlPct, armMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, protectedPnlPct: runner.protectedPnlPct, protectedPrice: runner.protectedPrice, givebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, mode: CFG.RUNNER_EXIT_MODE, price });
+  }
+  if (runnerUpdate.floorRaised && runner.tightTrailArmed && runner.protectedPnlPct >= finite(runner.lastLoggedProtectedPnlPct, 0) + CFG.RUNNER_TIGHT_TRAIL_LOG_STEP_PCT - 1e-9) {
+    runner.lastLoggedProtectedPnlPct = runner.protectedPnlPct;
+    log("INFO", runnerLiveEnabled() ? "FVVO_RUNNER_TIGHT_TRAIL_RAISED" : "FVVO_RUNNER_TIGHT_TRAIL_SHADOW_RAISED", { peakPnlPct: d.peakPnlPct, protectedPnlPct: runner.protectedPnlPct, protectedPrice: runner.protectedPrice, price, allowedGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, mode: CFG.RUNNER_EXIT_MODE });
+  }
+
   // Optional fixed ceiling remains available. profit_target_price=0 means no fixed ceiling.
   if (CFG.MANUAL_ONE_STOP_TARGET_EXIT_ENABLED && p.profitTargetPrice > 0 && price >= p.profitTargetPrice) {
     await persistState(`profit_target_${feature.kind}`);
@@ -962,12 +1215,33 @@ async function manageExit(feature) {
     return;
   }
 
-  // Faster 15s momentum/thesis failure; requires consecutive observations.
-  const tickThesis = tickThesisFailureConfirmed(p, feature, price, pnl);
-  if (tickThesis.confirmed) {
-    await persistState(`dynamic_profit_tick_thesis_${feature.kind}`);
-    await requestFullExit(`FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, price, feature.kind);
+  // A strong runner has a separate full-position tight trail. It remains subordinate to the manual stop and normal dynamic floor above.
+  const runnerTrail = runnerTightTrailBreakConfirmed(p, feature, price, pnl);
+  if (runnerTrail.confirmed) {
+    await persistState(`runner_tight_trail_${feature.kind}`);
+    await requestFullExit(`FVVO_RUNNER_TIGHT_TRAIL_HIT_${runnerTrail.reason}`, price, feature.kind);
     return;
+  }
+
+  // Faster 15s momentum/thesis failure; requires consecutive observations. For strong runners in live mode,
+  // this exit is suppressed until either the runner trail or the slower 5m / normal floor protection exits.
+  const currentRunner = dynamicProfitState(p).runner;
+  const suppressTickThesis = runnerLiveEnabled() && currentRunner.holdActive;
+  if (suppressTickThesis && feature.kind === CFG.FVVO_FEATURE_TICK_EVENT) {
+    const evidence = tickThesisEvidence(p, feature, price, pnl);
+    const persistedRunner = dynamicProfitState(p).runner;
+    if (evidence.eligible && evidence.conditions) {
+      persistedRunner.suppressedTickThesisCount = Number(persistedRunner.suppressedTickThesisCount || 0) + 1;
+      log("INFO", "FVVO_RUNNER_HOLD_SUPPRESSED_TICK_THESIS", { peakPnlPct: d.peakPnlPct, latestPnlPct: pnl, holdMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, price, ema8: evidence.ema8, fvvo: evidence.fvvo, slope: evidence.slope, suppressedCount: persistedRunner.suppressedTickThesisCount, tightTrailArmed: persistedRunner.tightTrailArmed, runnerProtectedPrice: persistedRunner.protectedPrice || null });
+    }
+    d.thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null };
+  } else {
+    const tickThesis = tickThesisFailureConfirmed(p, feature, price, pnl);
+    if (tickThesis.confirmed) {
+      await persistState(`dynamic_profit_tick_thesis_${feature.kind}`);
+      await requestFullExit(`FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, price, feature.kind);
+      return;
+    }
   }
 
   // Slower 5m backup confirmation; only after protected profit is available.
@@ -993,7 +1267,7 @@ function reentryStatusPayload() {
   return {
     enabled: CFG.REENTRY_ENABLED,
     phase: CFG.REENTRY_PHASE,
-    automaticOrdersEnabled: false,
+    automaticOrdersEnabled: reentryDemoAutoEnabled(),
     maxCount: CFG.REENTRY_MAX_COUNT,
     profile: REENTRY_PROFILE,
     campaign: c ? {
@@ -1008,6 +1282,7 @@ function reentryStatusPayload() {
       pullbackDepthPct: c.pullbackDepthPct || 0,
       observedCandidates: c.observedCandidates || 0,
       candidateLimit: c.candidateLimit,
+      nextReentryNumber: c.nextReentryNumber || 1,
       reclaimObservations: c.reclaim?.observations || 0,
       expiresAt: c.expiresAt || null,
       lastCandidate: c.lastCandidate || null,
@@ -1030,6 +1305,12 @@ function armReentryCampaignAfterConfirmedExit(prior) {
   if (!prior || !Number.isFinite(finite(prior.entryPriceReference, null))) {
     r.campaign = null;
     return { active: false, reason: "NO_VALID_PRIOR_POSITION" };
+  }
+  const nextReentryNumber = Math.max(1, Math.floor(finite(prior.reentryNumber, 0)) + 1);
+  if (nextReentryNumber > CFG.REENTRY_MAX_COUNT) {
+    r.campaign = null;
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_NOT_ARMED", { reason: "REENTRY_LIMIT_REACHED", priorReentryNumber: finite(prior.reentryNumber, 0), nextReentryNumber, maxCount: CFG.REENTRY_MAX_COUNT, priorExitReason: prior.exitReason || null });
+    return { active: false, reason: "REENTRY_LIMIT_REACHED" };
   }
   const peakPnlPct = Math.max(finite(prior.peakPnlPct, 0), finite(prior.dynamicProfit?.peakPnlPct, 0));
   const dynamicArmed = Boolean(prior.dynamicProfit?.armed) || peakPnlPct >= CFG.DYNAMIC_PROFIT_ARM_MFE_PCT;
@@ -1063,6 +1344,7 @@ function armReentryCampaignAfterConfirmedExit(prior) {
     sourceEntryOrigin: prior.entryOrigin || "MANUAL",
     sourceExitReason: prior.exitReason || null,
     sourceExitPrice: finite(prior.latestPrice, prior.entryPriceReference),
+    nextReentryNumber,
     baseEntryPrice: round(prior.entryPriceReference, 8),
     priorPeakPrice: round(priorPeakPrice, 8),
     highestPrice: round(priorPeakPrice, 8),
@@ -1082,7 +1364,7 @@ function armReentryCampaignAfterConfirmedExit(prior) {
   r.campaign = campaign;
   log("INFO", "FVVO_REENTRY_CAMPAIGN_ARMED", {
     campaignId: campaign.id,
-    mode: "shadow",
+    mode: CFG.REENTRY_PHASE,
     profile: REENTRY_PROFILE,
     baseEntryPrice: campaign.baseEntryPrice,
     priorPeakPrice: campaign.priorPeakPrice,
@@ -1090,7 +1372,8 @@ function armReentryCampaignAfterConfirmedExit(prior) {
     minPriorImpulsePct: CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT,
     priorExitReason: campaign.sourceExitReason,
     maxCount: CFG.REENTRY_MAX_COUNT,
-    automaticOrderWillBeSent: false,
+    nextReentryNumber,
+    automaticOrderWillBeSent: reentryDemoAutoEnabled(),
   });
   return campaign;
 }
@@ -1140,7 +1423,7 @@ function projectReentryStop(entryPrice, pullbackLowPrice) {
 
 async function evaluateReentryShadow(feature) {
   const r = ensureReentryState();
-  if (!CFG.REENTRY_ENABLED || CFG.REENTRY_PHASE !== "shadow" || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
+  if (!CFG.REENTRY_ENABLED || !["shadow", "demo_auto"].includes(CFG.REENTRY_PHASE) || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
   if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !Number.isFinite(feature.price) || feature.price <= 0) return;
   addReentryTickPrice(feature);
   const c = r.campaign;
@@ -1248,22 +1531,57 @@ async function evaluateReentryShadow(feature) {
   }
 
   const candidate = {
-    id: crypto.randomUUID(), profile: REENTRY_PROFILE, sequence: Number(c.observedCandidates || 0) + 1,
+    id: crypto.randomUUID(), profile: REENTRY_PROFILE, sequence: Number(c.nextReentryNumber || 1),
     observedAt: nowIso(), observedAtMs: current, price: round(price, 8), projectedStopPrice: projectedStop.stopPrice,
     projectedStopDistancePct: projectedStop.stopDistancePct, baseEntryPrice: c.baseEntryPrice, highestPrice: c.highestPrice,
     pullbackLowPrice: c.pullbackLowPrice, pullbackDepthPct: c.pullbackDepthPct, bouncePct: round(bouncePct, 6),
     tick: { ema8: tickEma8, ema18: tickEma18, rsi, adx, fvvo, slope, crossUp: feature.crossUp },
     context5m: { price: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, rayRegime: context.ray, ageSec: round(context.ctxAge, 2) },
-    mode: "shadow", automaticOrderSent: false,
+    mode: CFG.REENTRY_PHASE, automaticOrderSent: false,
   };
-  c.observedCandidates = candidate.sequence;
+  c.observedCandidates = Number(c.observedCandidates || 0) + 1;
   c.lastCandidate = candidate;
   c.phase = "CANDIDATE_OBSERVED";
   c.reason = "PULLBACK_RECLAIM_MICROBREAKOUT_CONFIRMED";
   c.active = false;
   resetReentryReclaim(c);
-  await persistState("reentry_candidate_shadow");
-  log("INFO", "FVVO_REENTRY_CANDIDATE_SHADOW", candidate);
+
+  if (!reentryDemoAutoEnabled()) {
+    await persistState("reentry_candidate_shadow");
+    log("INFO", "FVVO_REENTRY_CANDIDATE_SHADOW", candidate);
+    return;
+  }
+
+  state.position = buildPosition(price, { stopPrice: projectedStop.stopPrice, stopPct: projectedStop.stopDistancePct, profitTargetPrice: 0, profitTargetPct: 0 }, { entryOrigin: "AUTO_REENTRY", profile: REENTRY_PROFILE, reentryNumber: candidate.sequence });
+  state.position.reentryCampaignId = c.id;
+  state.position.reentryCandidateId = candidate.id;
+  state.externalDealLock = { active: true, source: "auto_reentry", setAt: nowIso(), reason: "AUTO_REENTRY_PENDING_FORWARD" };
+  state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "auto_reentry", lastActionAt: nowIso() };
+  candidate.automaticOrderSent = true;
+  candidate.forwardStatus = "PENDING";
+  await persistState("reentry_demo_auto_pre_forward");
+  log("INFO", "FVVO_REENTRY_CANDIDATE_DEMO_AUTO", candidate);
+  const result = await forward3Commas("enter_long", price, "AUTO_REENTRY_PULLBACK_MICROBREAKOUT", { dedupeKey: `auto_reentry_enter_${candidate.id}`, stopPct: projectedStop.stopDistancePct });
+  if (!result.ok) {
+    state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
+    state.manual.recoveryRequired = true;
+    state.manual.recoveryReason = `AUTO_REENTRY_FORWARD_UNCERTAIN_${result.error}`;
+    state.externalDealLock.reason = "AUTO_REENTRY_FORWARD_UNCERTAIN";
+    candidate.forwardStatus = "FORWARD_UNCERTAIN";
+    candidate.forwardRequestId = result.requestId || null;
+    await persistState("reentry_demo_auto_forward_uncertain");
+    log("ERROR", "FVVO_REENTRY_FORWARD_UNCERTAIN", { candidateId: candidate.id, reentryNumber: candidate.sequence, requestId: result.requestId || null, error: result.error });
+    return;
+  }
+  state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  state.position.entryAcceptedAt = nowIso();
+  state.position.entryAcceptedAtMs = nowMs();
+  state.position.entryForwardRequestId = result.requestId;
+  state.externalDealLock.reason = "AUTO_REENTRY_ACCEPTED_UNVERIFIED_FILL";
+  candidate.forwardStatus = "FORWARDED_UNVERIFIED";
+  candidate.forwardRequestId = result.requestId;
+  await persistState("reentry_demo_auto_forward_accepted");
+  log("INFO", "FVVO_AUTO_REENTRY_ENTRY_TRACKED", { candidateId: candidate.id, reentryNumber: candidate.sequence, entryPriceReference: price, stopPrice: projectedStop.stopPrice, stopDistancePct: projectedStop.stopDistancePct, requestId: result.requestId, entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, fillVerified: false });
 }
 
 function ensurePriceEntryState() {
@@ -1494,7 +1812,7 @@ async function manualExit(body) {
   if (!state.position) return { status: 409, body: { ok: false, error: "NO_MANAGED_POSITION", status: statusPayload() } };
   const price = finite(state.lastFeature?.price, state.position.latestPrice || state.position.entryPriceReference);
   const result = await requestFullExit("MANUAL_EXIT_LONG", price, "manual");
-  return result.ok ? { status: 200, body: { ok: true, accepted: true, requestId: result.requestId, c3Timestamp: result.c3Timestamp, triggerPrice: result.triggerPrice, exitUnverified: result.exitUnverified, status: statusPayload() } } : { status: 502, body: { ok: false, error: result.error, requestId: result.requestId, status: statusPayload() } };
+  return result.ok ? { status: 200, body: { ok: true, accepted: true, requestId: result.requestId, c3Timestamp: result.c3Timestamp, triggerPrice: result.triggerPrice, exitUnverified: result.exitUnverified, autoReleasePending: Boolean(result.autoReleasePending), status: statusPayload() } } : { status: 502, body: { ok: false, error: result.error, requestId: result.requestId, status: statusPayload() } };
 }
 
 async function confirmExitClosed(body) {
@@ -1502,8 +1820,10 @@ async function confirmExitClosed(body) {
   if (!state.position || !String(state.position.lifecycle || "").startsWith("EXIT_")) return { status: 409, body: { ok: false, error: "NO_EXIT_RECONCILIATION_PENDING" } };
   if (CFG.MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT && body.confirm_flat !== true) return { status: 400, body: { ok: false, error: "CONFIRM_FLAT_TRUE_REQUIRED" } };
   const prior = state.position;
+  clearAutoExitReleaseTimer();
   state.position = null;
   state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+  state.autoExitRelease = { ...(state.autoExitRelease || {}), active: false, status: "MANUALLY_CONFIRMED", releasedAt: nowIso() };
   const campaign = armReentryCampaignAfterConfirmedExit(prior);
   state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "confirm_exit_closed", lastActionAt: nowIso() };
   await persistState("confirm_exit_closed");
@@ -1516,8 +1836,10 @@ async function forceClearVerifiedFlat(body) {
   if (body.confirm_flat !== true) return { status: 400, body: { ok: false, error: "CONFIRM_FLAT_TRUE_REQUIRED" } };
   if (String(body.confirm_phrase || "") !== CFG.MANUAL_FORCE_CLEAR_CONFIRM_PHRASE) return { status: 403, body: { ok: false, error: "FORCE_CLEAR_CONFIRM_PHRASE_REQUIRED" } };
   const prior = state.position;
+  clearAutoExitReleaseTimer();
   state.position = null;
   state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+  state.autoExitRelease = { ...(state.autoExitRelease || {}), active: false, status: "FORCE_CLEARED", releasedAt: nowIso() };
   state.reentry = { campaign: null, recentTickPrices: [] };
   if (state.priceEntry?.pending) {
     state.priceEntry = { pending: null, last: { ...state.priceEntry.pending, status: "CANCELLED_BY_FORCE_CLEAR", resolvedAt: nowIso(), resolvedAtMs: nowMs() } };
@@ -1574,8 +1896,9 @@ app.post(CFG.WEBHOOK_PATH, async (req, res) => {
   if (![CFG.FVVO_FEATURE_TICK_EVENT, CFG.FVVO_FEATURE_5M_EVENT, CFG.FVVO_FAST_TICK_EVENT].includes(feature.kind)) return res.status(202).json({ ok: false, error: "UNSUPPORTED_EVENT", event: feature.kind || null });
   if (!updateFeature(feature)) return res.status(400).json({ ok: false, error: "VALID_PRICE_REQUIRED" });
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
-  log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: state.priceEntry?.pending?.status || null, brainExitManagementActive: Boolean(state.position && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
+  log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: state.priceEntry?.pending?.status || null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
   try {
+    await finalizeAutoExitRelease("feature");
     await manageExit(feature);
     await evaluatePriceTriggerEntry(feature);
     await evaluateReentryShadow(feature);
@@ -1595,12 +1918,13 @@ async function start() {
   await ensurePersistence();
   await loadState();
   const problems = configProblems();
+  if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
-  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: false, priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: false, reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
+  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: reentryDemoAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryDemoAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, fiveMinuteThesisFailure, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
+module.exports = { app, CFG, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryDemoAutoEnabled, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
