@@ -1,16 +1,16 @@
 {
-  "name": "brainfvvo-manualexit-v1h-bot-fixed-entry-dynamic-profit-full-exit-demo",
-  "version": "1.8.0",
+  "name": "brainfvvo-manualexit-v1j-price-trigger-entry-reentry-shadow-demo",
+  "version": "1.0.0",
   "private": true,
+  "description": "SOLUSDT manual entry with price-triggered market entry, dynamic full exits, and shadow re-entry observation.",
   "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js",
-    "validate": "node replay_validation.js",
+    "validate": "node validate_v1j.js",
     "replay": "node replay_historical_feed.js"
-  },
-  "engines": {
-    "node": ">=18.20.0"
   },
   "dependencies": {
     "express": "^4.21.2"

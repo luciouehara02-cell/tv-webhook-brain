@@ -1,9 +1,11 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1h_BOT_FIXED_ENTRY_DYNAMIC_PROFIT_FULL_EXIT_DEMO
+// BrainFVVO_ManualExit_v1j_PRICE_TRIGGER_ENTRY_REENTRY_SHADOW_DEMO
 // SOLUSDT dedicated DEMO Signal Bot manual-entry / brain-exit service
 // ------------------------------------------------------------
-// v1h safety and dynamic-profit contract:
-//   - No automatic entries. /manual enter_long only.
+// v1j manual price-trigger entry + Phase-2 shadow re-entry + dynamic-profit contract:
+//   - Primary entries can be immediate manual or a user-armed absolute price trigger.
+//   - The price trigger is cross-activated from a fresh 15s feature and then sends a bot-fixed market entry.
+//   - Phase-2 re-entry remains candidate SHADOW only and never forwards an automatic re-entry order.
 //   - One absolute `stop_price`: a confirmed breach sends exit_long 100%.
 //   - Optional absolute `profit_target_price`: fixed ceiling, full 100% exit.
 //   - When peak gross PnL reaches the configured arm level (default +0.45%),
@@ -66,7 +68,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1h_BOT_FIXED_ENTRY_DYNAMIC_PROFIT_FULL_EXIT_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1j_PRICE_TRIGGER_ENTRY_REENTRY_SHADOW_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -105,7 +107,8 @@ const CFG = {
   STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-manualexit-v1b-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
-  FVVO_LOG_COLOR_ENABLED: envBool("FVVO_LOG_COLOR_ENABLED", true),
+  // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
+  FVVO_LOG_UNICODE_MARKERS_ENABLED: envBool("FVVO_LOG_UNICODE_MARKERS_ENABLED", true),
   FVVO_FEATURE_TICK_EVENT: envStr("FVVO_FEATURE_TICK_EVENT", "FEATURE_TICK_FVVO"),
   FVVO_FEATURE_5M_EVENT: envStr("FVVO_FEATURE_5M_EVENT", "FEATURE_5M_FVVO"),
   FVVO_FAST_TICK_EVENT: envStr("FVVO_FAST_TICK_EVENT", "FAST_TICK_FVVO"),
@@ -122,6 +125,20 @@ const CFG = {
   MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT: envBool("MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT", true),
   MANUAL_FORCE_CLEAR_CONFIRM_PHRASE: envStr("MANUAL_FORCE_CLEAR_CONFIRM_PHRASE", "I_VERIFIED_DEDICATED_3COMMAS_DEMO_BOT_IS_FLAT"),
   MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT: envBool("MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT", true),
+
+  // v1j user-armed absolute price trigger. This is a brain-side conditional entry,
+  // not an exchange-native resting limit order. It sends a bot-fixed MARKET entry only
+  // after a fresh price crosses the armed level from the correct side.
+  PRICE_ENTRY_ENABLED: envBool("PRICE_ENTRY_ENABLED", true),
+  MANUAL_ALLOW_ARM_PRICE_ENTRY: envBool("MANUAL_ALLOW_ARM_PRICE_ENTRY", true),
+  MANUAL_ALLOW_CANCEL_PRICE_ENTRY: envBool("MANUAL_ALLOW_CANCEL_PRICE_ENTRY", true),
+  PRICE_ENTRY_DEFAULT_EXPIRY_SEC: envNum("PRICE_ENTRY_DEFAULT_EXPIRY_SEC", 14400),
+  PRICE_ENTRY_MIN_EXPIRY_SEC: envNum("PRICE_ENTRY_MIN_EXPIRY_SEC", 60),
+  PRICE_ENTRY_MAX_EXPIRY_SEC: envNum("PRICE_ENTRY_MAX_EXPIRY_SEC", 86400),
+  PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT: envNum("PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT", 0.05),
+  PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT: envNum("PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT", 5.0),
+  PRICE_ENTRY_REQUIRE_ACTUAL_CROSS: envBool("PRICE_ENTRY_REQUIRE_ACTUAL_CROSS", true),
+  PRICE_ENTRY_TRIGGER_ON_FAST_TICK: envBool("PRICE_ENTRY_TRIGGER_ON_FAST_TICK", false),
 
   // v1h one-stop / optional fixed-target controls.
   MANUAL_ONE_STOP_PROFILE_ENABLED: envBool("MANUAL_ONE_STOP_PROFILE_ENABLED", true),
@@ -149,22 +166,46 @@ const CFG = {
   DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS", 2),
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", true),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
+
+  // v1i Phase-2 re-entry: strict pullback reclaim micro-breakout observer.
+  // This release intentionally NEVER sends automatic enter_long signals.
+  REENTRY_ENABLED: envBool("REENTRY_ENABLED", true),
+  REENTRY_PHASE: envStr("REENTRY_PHASE", "shadow").toLowerCase(),
+  REENTRY_AUTO_FORWARD_ENABLED: envBool("REENTRY_AUTO_FORWARD_ENABLED", false),
+  REENTRY_MAX_COUNT: Math.floor(envNum("REENTRY_MAX_COUNT", 1)),
+  REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM: envBool("REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM", true),
+  REENTRY_REQUIRE_NON_STOP_EXIT: envBool("REENTRY_REQUIRE_NON_STOP_EXIT", true),
+  REENTRY_MIN_PRIOR_IMPULSE_PCT: envNum("REENTRY_MIN_PRIOR_IMPULSE_PCT", 0.60),
+  REENTRY_CAMPAIGN_MAX_AGE_SEC: envNum("REENTRY_CAMPAIGN_MAX_AGE_SEC", 14400),
+  REENTRY_CONTEXT_MAX_AGE_SEC: envNum("REENTRY_CONTEXT_MAX_AGE_SEC", 420),
+  REENTRY_REQUIRE_RAY_BULL: envBool("REENTRY_REQUIRE_RAY_BULL", false),
+  REENTRY_REQUIRE_5M_EMA_BULL: envBool("REENTRY_REQUIRE_5M_EMA_BULL", true),
+  REENTRY_MIN_5M_FVVO: envNum("REENTRY_MIN_5M_FVVO", -0.50),
+  REENTRY_PULLBACK_MIN_PCT: envNum("REENTRY_PULLBACK_MIN_PCT", 0.35),
+  REENTRY_PULLBACK_MAX_PCT: envNum("REENTRY_PULLBACK_MAX_PCT", 1.20),
+  REENTRY_MAX_BELOW_EMA18_PCT: envNum("REENTRY_MAX_BELOW_EMA18_PCT", 0.15),
+  REENTRY_MIN_BOUNCE_FROM_LOW_PCT: envNum("REENTRY_MIN_BOUNCE_FROM_LOW_PCT", 0.25),
+  REENTRY_REQUIRE_RECLAIM_EMA8: envBool("REENTRY_REQUIRE_RECLAIM_EMA8", true),
+  REENTRY_MIN_RSI: envNum("REENTRY_MIN_RSI", 54),
+  REENTRY_MAX_RSI: envNum("REENTRY_MAX_RSI", 84),
+  REENTRY_MIN_ADX: envNum("REENTRY_MIN_ADX", 17),
+  REENTRY_MIN_FVVO: envNum("REENTRY_MIN_FVVO", -1.00),
+  REENTRY_MIN_SLOPE: envNum("REENTRY_MIN_SLOPE", 0.50),
+  REENTRY_MAX_CHASE_ABOVE_EMA8_PCT: envNum("REENTRY_MAX_CHASE_ABOVE_EMA8_PCT", 0.30),
+  REENTRY_RECLAIM_CONFIRM_OBSERVATIONS: Math.floor(envNum("REENTRY_RECLAIM_CONFIRM_OBSERVATIONS", 2)),
+  REENTRY_STOP_BUFFER_PCT: envNum("REENTRY_STOP_BUFFER_PCT", 0.15),
+  REENTRY_MIN_STOP_DISTANCE_PCT: envNum("REENTRY_MIN_STOP_DISTANCE_PCT", 0.25),
+  REENTRY_MAX_STOP_DISTANCE_PCT: envNum("REENTRY_MAX_STOP_DISTANCE_PCT", 1.20),
 };
 
 const PROFILE = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT";
+const REENTRY_PROFILE = "AUTO_REENTRY_PULLBACK_MICROBREAKOUT_SHADOW";
 const STATE_PATH = path.join(CFG.STATE_DIR, CFG.STATE_FILE_NAME);
 const STATE_BACKUP_PATH = `${STATE_PATH}.bak`;
 
-const ANSI = {
-  reset: "\x1b[0m",
-  grey: "\x1b[90m",
-  orange: "\x1b[38;5;214m",
-  lightBlue: "\x1b[94m",
-  cyan: "\x1b[36m",
-  yellow: "\x1b[33m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  magenta: "\x1b[35m",
+const LOG_MARKER = {
+  inbound: "📩", feature5m: "📊", featureTick: "⚡", strategy: "🧠", entry: "🟢",
+  protect: "🟡", exit: "🔴", lock: "🔒", confirmed: "✅", warning: "⚠", error: "❌", persistence: "💾",
 };
 
 let persistenceReady = false;
@@ -186,30 +227,33 @@ function safeTimingEqual(left, right) { const a = Buffer.from(String(left || "")
 function authenticate(expected, received) { return Boolean(expected) && safeTimingEqual(expected, received); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
-function logColor(level, event, fields) {
-  if (!CFG.FVVO_LOG_COLOR_ENABLED) return "";
-  const eventName = String(event || "").toUpperCase();
-  const action = String(fields?.action || "").toLowerCase();
-  if (eventName.includes("FEATURE_5M")) return ANSI.lightBlue;
-  if (eventName.includes("FEATURE_TICK") || eventName.includes("FAST_TICK")) return ANSI.orange;
-  if (eventName.includes("ENTRY") || eventName.includes("TRADE_OPEN")) return ANSI.green;
-  if (eventName.includes("EXIT") || eventName.includes("STOP") || eventName.includes("TARGET") || action === "exit_long") return ANSI.red;
-  if (eventName.includes("RECOVERY") || eventName.includes("RESTORED")) return ANSI.magenta;
-  if (level === "ERROR") return ANSI.red;
-  if (level === "WARN") return ANSI.yellow;
-  if (eventName.includes("MANUAL_COMMAND")) return ANSI.cyan;
-  return ANSI.grey;
+function logMarker(level, event, fields = {}) {
+  const name = String(event || "").toUpperCase();
+  const action = String(fields.action || "").toLowerCase();
+  if (level === "ERROR" || name.includes("FAILED") || name.includes("FATAL") || name.includes("REJECTED")) return LOG_MARKER.error;
+  if (level === "WARN" || name.includes("BLOCK") || name.includes("EXPIRED")) return LOG_MARKER.warning;
+  if (name.includes("PERSIST") || name.includes("STATE_")) return LOG_MARKER.persistence;
+  if (name.includes("FEATURE_5M")) return LOG_MARKER.feature5m;
+  if (name.includes("FEATURE_TICK") || name.includes("FAST_TICK")) return LOG_MARKER.featureTick;
+  if (name.includes("WEBHOOK") || name.includes("MANUAL_COMMAND")) return LOG_MARKER.inbound;
+  if (name.includes("REENTRY")) return LOG_MARKER.strategy;
+  if (name.includes("PRICE_TRIGGER")) return LOG_MARKER.entry;
+  if (name.includes("ENTRY") || name.includes("TRADE_OPEN") || action === "enter_long") return LOG_MARKER.entry;
+  if (name.includes("DYNAMIC_PROFIT") || name.includes("FLOOR")) return LOG_MARKER.protect;
+  if (name.includes("EXIT") || name.includes("STOP") || name.includes("TARGET") || action === "exit_long") return LOG_MARKER.exit;
+  if (name.includes("LOCK") || name.includes("HANDOFF") || name.includes("RECOVERY")) return LOG_MARKER.lock;
+  if (name.includes("CONFIRMED") || name.includes("ACCEPTED")) return LOG_MARKER.confirmed;
+  return LOG_MARKER.strategy;
 }
 
 function log(level, event, fields = {}) {
-  const line = `${nowIso()} | ${level} | ${CFG.BRAIN_NAME} | ${event} | ${JSON.stringify(fields)}`;
-  const color = logColor(level, event, fields);
-  console.log(color ? `${color}${line}${ANSI.reset}` : line);
+  const marker = CFG.FVVO_LOG_UNICODE_MARKERS_ENABLED ? logMarker(level, event, fields) : "";
+  console.log(`${nowIso()}${marker ? ` ${marker}` : ""} ${event} | ${JSON.stringify({ brain: CFG.BRAIN_NAME, ...fields })}`);
 }
 
 function defaultState() {
   return {
-    schemaVersion: 5,
+    schemaVersion: 7,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -218,6 +262,8 @@ function defaultState() {
     externalDealLock: { active: false, source: "", setAt: "", reason: "" },
     manual: { handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "", lastActionAt: "" },
     forward: { lastByKey: {}, lastRequestId: "" },
+    reentry: { campaign: null, recentTickPrices: [] },
+    priceEntry: { pending: null, last: null },
   };
 }
 
@@ -228,6 +274,11 @@ function normalizeState(raw) {
   next.forward = { ...fallback.forward, ...(raw.forward || {}) };
   next.manual = { ...fallback.manual, ...(raw.manual || {}) };
   next.externalDealLock = { ...fallback.externalDealLock, ...(raw.externalDealLock || {}) };
+  next.reentry = { ...fallback.reentry, ...(raw.reentry || {}) };
+  next.reentry.recentTickPrices = Array.isArray(next.reentry.recentTickPrices) ? next.reentry.recentTickPrices.slice(-12) : [];
+  next.priceEntry = { ...fallback.priceEntry, ...(raw.priceEntry || {}) };
+  if (next.priceEntry.pending && typeof next.priceEntry.pending !== "object") next.priceEntry.pending = null;
+  if (next.priceEntry.last && typeof next.priceEntry.last !== "object") next.priceEntry.last = null;
 
   if (!raw.position || typeof raw.position !== "object") return next;
   const p = { ...raw.position };
@@ -362,6 +413,17 @@ function configProblems() {
   if (CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT");
   if (CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_FLOOR_CONFIRM");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
+  if (CFG.REENTRY_PHASE !== "shadow") problems.push("REENTRY_PHASE_MUST_BE_SHADOW_IN_V1J");
+  if (CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_AUTO_FORWARD_MUST_BE_FALSE_IN_V1J");
+  if (CFG.REENTRY_MAX_COUNT < 1 || CFG.REENTRY_MAX_COUNT > 2) problems.push("REENTRY_MAX_COUNT_MUST_BE_1_OR_2");
+  if (CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC <= 0 || CFG.REENTRY_CONTEXT_MAX_AGE_SEC <= 0) problems.push("INVALID_REENTRY_CAMPAIGN_GUARD");
+  if (CFG.REENTRY_PULLBACK_MIN_PCT <= 0 || CFG.REENTRY_PULLBACK_MAX_PCT < CFG.REENTRY_PULLBACK_MIN_PCT) problems.push("INVALID_REENTRY_PULLBACK_RANGE");
+  if (CFG.REENTRY_MAX_BELOW_EMA18_PCT < 0 || CFG.REENTRY_MIN_BOUNCE_FROM_LOW_PCT <= 0) problems.push("INVALID_REENTRY_RECLAIM_STRUCTURE");
+  if (CFG.REENTRY_MIN_RSI <= 0 || CFG.REENTRY_MAX_RSI < CFG.REENTRY_MIN_RSI || CFG.REENTRY_MIN_ADX < 0) problems.push("INVALID_REENTRY_MOMENTUM_RANGE");
+  if (CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_REENTRY_RECLAIM_CONFIRM_OBSERVATIONS");
+  if (CFG.REENTRY_STOP_BUFFER_PCT < 0 || CFG.REENTRY_MIN_STOP_DISTANCE_PCT <= 0 || CFG.REENTRY_MAX_STOP_DISTANCE_PCT < CFG.REENTRY_MIN_STOP_DISTANCE_PCT) problems.push("INVALID_REENTRY_STOP_PROJECTION");
+  if (CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC || CFG.PRICE_ENTRY_MAX_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC) problems.push("INVALID_PRICE_ENTRY_EXPIRY_RANGE");
+  if (CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT <= 0 || CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) problems.push("INVALID_PRICE_ENTRY_TRIGGER_DISTANCE_RANGE");
   if (CFG.STATE_PERSISTENCE_REQUIRED && !persistenceReady) problems.push("PERSISTENCE_NOT_READY");
   return problems;
 }
@@ -437,6 +499,9 @@ function normalizeFeature(payload) {
     ema18: firstFinite(payload.ema18, payload.ema_18),
     fvvo: firstFinite(payload.fvvo, payload.fvvoValue, payload.fluxOscillator),
     slope: firstFinite(payload.slope, payload.fvvoSlope),
+    rsi: firstFinite(payload.rsi, payload.rsiValue),
+    adx: firstFinite(payload.adx, payload.adxValue),
+    crossUp: Boolean(payload.crossUp ?? payload.fvvoCrossUp),
     crossDown: Boolean(payload.crossDown ?? payload.fvvoCrossDown),
     redPulse: Boolean(payload.redPulse ?? payload.fvvoRedPulse),
     rayRegime: String(payload.rayRegime || payload.tickRayRegime || "RAY_NEUTRAL"),
@@ -457,10 +522,12 @@ function updateFeature(feature) {
   return true;
 }
 
-function buildPosition(entryPrice, levels) {
+function buildPosition(entryPrice, levels, options = {}) {
   return {
     symbol: CFG.SYMBOL,
-    profile: PROFILE,
+    profile: options.profile || PROFILE,
+    entryOrigin: options.entryOrigin || "MANUAL",
+    reentryNumber: Number(options.reentryNumber || 0),
     lifecycle: "ENTRY_PENDING_FORWARD",
     phase: "ONE_STOP_ACTIVE",
     entryPriceReference: entryPrice,
@@ -583,6 +650,7 @@ function statusPayload() {
     symbol: CFG.SYMBOL,
     demoOnly: !CFG.LIVE_FORWARD_ALLOWED,
     automaticEntriesEnabled: false,
+    reentryAutomaticOrdersEnabled: false,
     entryProfileAllowed: PROFILE,
     oneStopContract: {
       commandStopField: "stop_price",
@@ -619,6 +687,7 @@ function statusPayload() {
       exitPercent: 100,
       nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED,
     },
+    priceTriggerEntry: priceEntryStatusPayload(),
     forwarding: { allowed: isForwardAllowed(), dryRun: CFG.C3_DRY_RUN, c3PayloadAudit: CFG.C3_PAYLOAD_AUDIT_ENABLED },
     persistence: { ready: persistenceReady, error: persistenceError, statePath: STATE_PATH },
     latestFeature: state.lastFeature ? { price: state.lastFeature.price, ageSec: round(ageSec(state.lastFeature), 2), freshForManualEntry: isFeatureFresh(), receivedAt: state.lastFeature.receivedAt } : null,
@@ -652,6 +721,7 @@ function statusPayload() {
     } : null,
     externalDealLockActive: Boolean(state.externalDealLock?.active),
     manualState: state.manual,
+    reentry: reentryStatusPayload(),
     entryBlockReason: stateBlocksNewEntry() || null,
   };
 }
@@ -671,7 +741,15 @@ async function beginManualEnter(body) {
   const levels = validateOneStopCommand(body, entry);
   if (!levels.ok) return { status: 400, body: { ok: false, error: levels.error } };
 
-  state.position = buildPosition(entry, levels);
+  if (state.priceEntry?.pending) {
+    log("INFO", "FVVO_PRICE_TRIGGER_CANCELLED_BY_IMMEDIATE_MANUAL_ENTRY", { triggerId: state.priceEntry.pending.id, triggerMode: state.priceEntry.pending.triggerMode, triggerPrice: state.priceEntry.pending.triggerPrice });
+    state.priceEntry = { pending: null, last: { ...state.priceEntry.pending, status: "CANCELLED_BY_IMMEDIATE_MANUAL_ENTRY", resolvedAt: nowIso(), resolvedAtMs: nowMs() } };
+  }
+  if (state.reentry?.campaign) {
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_CANCELLED_BY_MANUAL_ENTRY", { campaignId: state.reentry.campaign.id, observedCandidates: state.reentry.campaign.observedCandidates || 0 });
+  }
+  state.reentry = { campaign: null, recentTickPrices: [] };
+  state.position = buildPosition(entry, levels, { entryOrigin: "MANUAL" });
   state.externalDealLock = { active: true, source: "manual_enter", setAt: nowIso(), reason: "ENTRY_REQUEST_PENDING" };
   state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "enter_long", lastActionAt: nowIso() };
   if (!(await persistState("manual_enter_pre_forward"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_BEFORE_ENTRY" } };
@@ -903,6 +981,514 @@ async function manageExit(feature) {
   await persistState(`one_stop_dynamic_profit_hold_${feature.kind}`);
 }
 
+function ensureReentryState() {
+  if (!state.reentry || typeof state.reentry !== "object") state.reentry = { campaign: null, recentTickPrices: [] };
+  if (!Array.isArray(state.reentry.recentTickPrices)) state.reentry.recentTickPrices = [];
+  return state.reentry;
+}
+
+function reentryStatusPayload() {
+  const r = ensureReentryState();
+  const c = r.campaign;
+  return {
+    enabled: CFG.REENTRY_ENABLED,
+    phase: CFG.REENTRY_PHASE,
+    automaticOrdersEnabled: false,
+    maxCount: CFG.REENTRY_MAX_COUNT,
+    profile: REENTRY_PROFILE,
+    campaign: c ? {
+      id: c.id,
+      active: Boolean(c.active),
+      phase: c.phase,
+      reason: c.reason || null,
+      baseEntryPrice: c.baseEntryPrice,
+      priorPeakPrice: c.priorPeakPrice,
+      highestPrice: c.highestPrice,
+      pullbackLowPrice: c.pullbackLowPrice || null,
+      pullbackDepthPct: c.pullbackDepthPct || 0,
+      observedCandidates: c.observedCandidates || 0,
+      candidateLimit: c.candidateLimit,
+      reclaimObservations: c.reclaim?.observations || 0,
+      expiresAt: c.expiresAt || null,
+      lastCandidate: c.lastCandidate || null,
+    } : null,
+  };
+}
+
+function exitReasonLooksLikeStop(reason) {
+  const text = String(reason || "").toUpperCase();
+  return text.includes("STOP") || text.includes("HARD_STOP") || text.includes("PRICE_HIT_STOP");
+}
+
+function armReentryCampaignAfterConfirmedExit(prior) {
+  const r = ensureReentryState();
+  r.recentTickPrices = [];
+  if (!CFG.REENTRY_ENABLED) {
+    r.campaign = null;
+    return { active: false, reason: "REENTRY_DISABLED" };
+  }
+  if (!prior || !Number.isFinite(finite(prior.entryPriceReference, null))) {
+    r.campaign = null;
+    return { active: false, reason: "NO_VALID_PRIOR_POSITION" };
+  }
+  const peakPnlPct = Math.max(finite(prior.peakPnlPct, 0), finite(prior.dynamicProfit?.peakPnlPct, 0));
+  const dynamicArmed = Boolean(prior.dynamicProfit?.armed) || peakPnlPct >= CFG.DYNAMIC_PROFIT_ARM_MFE_PCT;
+  const priorPeakPrice = Math.max(
+    finite(prior.dynamicProfit?.peakPrice, 0),
+    finite(prior.entryPriceReference, 0) * (1 + peakPnlPct / 100),
+    finite(prior.latestPrice, 0)
+  );
+  const impulsePct = percentPnl(prior.entryPriceReference, priorPeakPrice);
+  if (CFG.REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM && !dynamicArmed) {
+    r.campaign = null;
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_NOT_ARMED", { reason: "PRIOR_DYNAMIC_PROFIT_NOT_ARMED", priorExitReason: prior.exitReason || null, peakPnlPct });
+    return { active: false, reason: "PRIOR_DYNAMIC_PROFIT_NOT_ARMED" };
+  }
+  if (CFG.REENTRY_REQUIRE_NON_STOP_EXIT && exitReasonLooksLikeStop(prior.exitReason)) {
+    r.campaign = null;
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_NOT_ARMED", { reason: "PRIOR_EXIT_WAS_STOP", priorExitReason: prior.exitReason || null, peakPnlPct });
+    return { active: false, reason: "PRIOR_EXIT_WAS_STOP" };
+  }
+  if (impulsePct + 1e-9 < CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT) {
+    r.campaign = null;
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_NOT_ARMED", { reason: "PRIOR_IMPULSE_TOO_SMALL", impulsePct: round(impulsePct, 6), requiredImpulsePct: CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT, peakPnlPct });
+    return { active: false, reason: "PRIOR_IMPULSE_TOO_SMALL" };
+  }
+  const current = nowMs();
+  const campaign = {
+    id: crypto.randomUUID(),
+    active: true,
+    phase: "WAIT_PULLBACK",
+    reason: "ARMED_AFTER_CONFIRMED_PROFITABLE_CYCLE",
+    sourceEntryOrigin: prior.entryOrigin || "MANUAL",
+    sourceExitReason: prior.exitReason || null,
+    sourceExitPrice: finite(prior.latestPrice, prior.entryPriceReference),
+    baseEntryPrice: round(prior.entryPriceReference, 8),
+    priorPeakPrice: round(priorPeakPrice, 8),
+    highestPrice: round(priorPeakPrice, 8),
+    pullbackLowPrice: null,
+    pullbackDepthPct: 0,
+    pullbackSeenAtMs: 0,
+    pullbackSeenAt: null,
+    reclaim: { observations: 0, firstAtMs: 0, lastPrice: null },
+    observedCandidates: 0,
+    candidateLimit: CFG.REENTRY_MAX_COUNT,
+    lastCandidate: null,
+    armedAtMs: current,
+    armedAt: nowIso(),
+    expiresAtMs: current + CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC * 1000,
+    expiresAt: new Date(current + CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC * 1000).toISOString(),
+  };
+  r.campaign = campaign;
+  log("INFO", "FVVO_REENTRY_CAMPAIGN_ARMED", {
+    campaignId: campaign.id,
+    mode: "shadow",
+    profile: REENTRY_PROFILE,
+    baseEntryPrice: campaign.baseEntryPrice,
+    priorPeakPrice: campaign.priorPeakPrice,
+    priorImpulsePct: round(impulsePct, 6),
+    minPriorImpulsePct: CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT,
+    priorExitReason: campaign.sourceExitReason,
+    maxCount: CFG.REENTRY_MAX_COUNT,
+    automaticOrderWillBeSent: false,
+  });
+  return campaign;
+}
+
+function addReentryTickPrice(feature) {
+  const r = ensureReentryState();
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !Number.isFinite(feature.price)) return;
+  r.recentTickPrices.push({ price: round(feature.price, 8), atMs: feature.receivedAtMs, barTimeMs: feature.barTimeMs });
+  r.recentTickPrices = r.recentTickPrices.slice(-12);
+}
+
+function reentryContext(feature) {
+  const ctx = state.lastFeature5m;
+  const ctxAge = ageSec(ctx);
+  const close = finite(ctx?.close, ctx?.price);
+  const ema8 = finite(ctx?.ema8, null);
+  const ema18 = finite(ctx?.ema18, null);
+  const fvvo = finite(ctx?.fvvo, null);
+  const ray = String(ctx?.rayRegime || feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const fresh = Boolean(ctx) && ctxAge <= CFG.REENTRY_CONTEXT_MAX_AGE_SEC;
+  const emaBull = !CFG.REENTRY_REQUIRE_5M_EMA_BULL || (close !== null && ema8 !== null && ema18 !== null && close >= ema18 && ema8 >= ema18);
+  const rayBull = !CFG.REENTRY_REQUIRE_RAY_BULL || ray === "RAY_BULL";
+  const fvvoOk = fvvo !== null && fvvo >= CFG.REENTRY_MIN_5M_FVVO;
+  return { ctx, ctxAge, close, ema8, ema18, fvvo, ray, fresh, emaBull, rayBull, fvvoOk, ok: fresh && emaBull && rayBull && fvvoOk };
+}
+
+function resetReentryReclaim(campaign) {
+  campaign.reclaim = { observations: 0, firstAtMs: 0, lastPrice: null };
+}
+
+function floorToStep(value) {
+  const step = CFG.MANUAL_ONE_STOP_PRICE_STEP;
+  return round(Math.floor((value + 1e-9) / step) * step, 8);
+}
+
+function projectReentryStop(entryPrice, pullbackLowPrice) {
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(pullbackLowPrice) || entryPrice <= 0 || pullbackLowPrice <= 0) return { ok: false, reason: "INVALID_STOP_INPUT" };
+  const bufferedLow = pullbackLowPrice * (1 - CFG.REENTRY_STOP_BUFFER_PCT / 100);
+  const minDistancePrice = entryPrice * (1 - CFG.REENTRY_MIN_STOP_DISTANCE_PCT / 100);
+  const rawStop = Math.min(bufferedLow, minDistancePrice);
+  const stopPrice = floorToStep(rawStop);
+  const stopDistancePct = percentageBelow(entryPrice, stopPrice);
+  if (!Number.isFinite(stopPrice) || stopPrice <= 0 || stopPrice >= entryPrice) return { ok: false, reason: "INVALID_PROJECTED_STOP" };
+  if (stopDistancePct > CFG.REENTRY_MAX_STOP_DISTANCE_PCT + 1e-9) return { ok: false, reason: "PROJECTED_STOP_TOO_WIDE", stopPrice, stopDistancePct: round(stopDistancePct, 6) };
+  return { ok: true, stopPrice, stopDistancePct: round(stopDistancePct, 6) };
+}
+
+async function evaluateReentryShadow(feature) {
+  const r = ensureReentryState();
+  if (!CFG.REENTRY_ENABLED || CFG.REENTRY_PHASE !== "shadow" || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !Number.isFinite(feature.price) || feature.price <= 0) return;
+  addReentryTickPrice(feature);
+  const c = r.campaign;
+  if (!c || !c.active) return;
+  const current = nowMs();
+  if (current > finite(c.expiresAtMs, 0)) {
+    c.active = false; c.phase = "EXPIRED"; c.reason = "CAMPAIGN_MAX_AGE_EXCEEDED"; resetReentryReclaim(c);
+    await persistState("reentry_campaign_expired");
+    log("WARN", "FVVO_REENTRY_CAMPAIGN_EXPIRED", { campaignId: c.id, maxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, observedCandidates: c.observedCandidates || 0 });
+    return;
+  }
+  if ((c.observedCandidates || 0) >= CFG.REENTRY_MAX_COUNT) {
+    c.active = false; c.phase = "CANDIDATE_LIMIT_REACHED"; c.reason = "SHADOW_CANDIDATE_LIMIT_REACHED";
+    await persistState("reentry_candidate_limit");
+    return;
+  }
+
+  const price = feature.price;
+  if (price > finite(c.highestPrice, 0) + 1e-9) {
+    c.highestPrice = round(price, 8);
+    c.phase = "WAIT_PULLBACK";
+    c.pullbackLowPrice = null; c.pullbackDepthPct = 0; c.pullbackSeenAtMs = 0; c.pullbackSeenAt = null;
+    resetReentryReclaim(c);
+  }
+  const impulsePct = percentPnl(c.baseEntryPrice, c.highestPrice);
+  if (impulsePct + 1e-9 < CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT) {
+    c.phase = "WAIT_IMPULSE";
+    await persistState("reentry_wait_impulse");
+    return;
+  }
+
+  const context = reentryContext(feature);
+  const tickEma8 = finite(feature.ema8, null);
+  const tickEma18 = finite(feature.ema18, null);
+  const pullbackDepthPct = percentageBelow(c.highestPrice, price);
+  const belowEma18Pct = tickEma18 !== null && price < tickEma18 ? percentageBelow(tickEma18, price) : 0;
+
+  if (c.phase === "WAIT_PULLBACK" || c.phase === "WAIT_IMPULSE") {
+    if (pullbackDepthPct >= CFG.REENTRY_PULLBACK_MIN_PCT && pullbackDepthPct <= CFG.REENTRY_PULLBACK_MAX_PCT && belowEma18Pct <= CFG.REENTRY_MAX_BELOW_EMA18_PCT) {
+      c.phase = "WAIT_RECLAIM";
+      c.reason = "HEALTHY_PULLBACK_SEEN";
+      c.pullbackLowPrice = round(price, 8);
+      c.pullbackDepthPct = round(pullbackDepthPct, 6);
+      c.pullbackSeenAtMs = current;
+      c.pullbackSeenAt = nowIso();
+      resetReentryReclaim(c);
+      await persistState("reentry_pullback_seen");
+      log("INFO", "FVVO_REENTRY_PULLBACK_SEEN", { campaignId: c.id, highestPrice: c.highestPrice, pullbackLowPrice: c.pullbackLowPrice, pullbackDepthPct: c.pullbackDepthPct, belowEma18Pct: round(belowEma18Pct, 6), contextReady: context.ok });
+    }
+    return;
+  }
+
+  if (c.phase !== "WAIT_RECLAIM") return;
+  if (price < finite(c.pullbackLowPrice, Infinity)) {
+    c.pullbackLowPrice = round(price, 8);
+    c.pullbackDepthPct = round(percentageBelow(c.highestPrice, price), 6);
+    resetReentryReclaim(c);
+  }
+  if (c.pullbackDepthPct > CFG.REENTRY_PULLBACK_MAX_PCT + 1e-9 || belowEma18Pct > CFG.REENTRY_MAX_BELOW_EMA18_PCT + 1e-9) {
+    c.phase = "WAIT_PULLBACK";
+    c.reason = "PULLBACK_INVALIDATED";
+    resetReentryReclaim(c);
+    await persistState("reentry_pullback_invalidated");
+    log("WARN", "FVVO_REENTRY_PULLBACK_INVALIDATED", { campaignId: c.id, pullbackDepthPct: c.pullbackDepthPct, belowEma18Pct: round(belowEma18Pct, 6), maxPullbackPct: CFG.REENTRY_PULLBACK_MAX_PCT, maxBelowEma18Pct: CFG.REENTRY_MAX_BELOW_EMA18_PCT });
+    return;
+  }
+
+  const rsi = finite(feature.rsi, null);
+  const adx = finite(feature.adx, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const bouncePct = percentPnl(c.pullbackLowPrice, price);
+  const reclaimEma8Ok = !CFG.REENTRY_REQUIRE_RECLAIM_EMA8 || (tickEma8 !== null && price >= tickEma8);
+  const chasePct = tickEma8 !== null && price > tickEma8 ? percentPnl(tickEma8, price) : 0;
+  const conditions = context.ok &&
+    tickEma18 !== null && price >= tickEma18 * (1 - CFG.REENTRY_MAX_BELOW_EMA18_PCT / 100) &&
+    reclaimEma8Ok &&
+    bouncePct >= CFG.REENTRY_MIN_BOUNCE_FROM_LOW_PCT &&
+    rsi !== null && rsi >= CFG.REENTRY_MIN_RSI && rsi <= CFG.REENTRY_MAX_RSI &&
+    adx !== null && adx >= CFG.REENTRY_MIN_ADX &&
+    fvvo !== null && fvvo >= CFG.REENTRY_MIN_FVVO &&
+    slope !== null && slope >= CFG.REENTRY_MIN_SLOPE &&
+    chasePct <= CFG.REENTRY_MAX_CHASE_ABOVE_EMA8_PCT &&
+    feature.redPulse !== true && feature.crossDown !== true;
+
+  if (!conditions) {
+    resetReentryReclaim(c);
+    await persistState("reentry_wait_reclaim");
+    return;
+  }
+  if (!c.reclaim.firstAtMs) c.reclaim = { observations: 1, firstAtMs: current, lastPrice: price };
+  else { c.reclaim.observations = Number(c.reclaim.observations || 0) + 1; c.reclaim.lastPrice = price; }
+  if (c.reclaim.observations < CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS) {
+    await persistState("reentry_reclaim_confirming");
+    log("INFO", "FVVO_REENTRY_RECLAIM_CONFIRMING", { campaignId: c.id, observations: c.reclaim.observations, requiredObservations: CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS, price, bouncePct: round(bouncePct, 6), contextRayRegime: context.ray });
+    return;
+  }
+
+  const projectedStop = projectReentryStop(price, c.pullbackLowPrice);
+  if (!projectedStop.ok) {
+    c.phase = "WAIT_PULLBACK"; c.reason = projectedStop.reason; resetReentryReclaim(c);
+    await persistState("reentry_projected_stop_rejected");
+    log("WARN", "FVVO_REENTRY_CANDIDATE_REJECTED", { campaignId: c.id, reason: projectedStop.reason, price, pullbackLowPrice: c.pullbackLowPrice, stopDistancePct: projectedStop.stopDistancePct || null });
+    return;
+  }
+
+  const candidate = {
+    id: crypto.randomUUID(), profile: REENTRY_PROFILE, sequence: Number(c.observedCandidates || 0) + 1,
+    observedAt: nowIso(), observedAtMs: current, price: round(price, 8), projectedStopPrice: projectedStop.stopPrice,
+    projectedStopDistancePct: projectedStop.stopDistancePct, baseEntryPrice: c.baseEntryPrice, highestPrice: c.highestPrice,
+    pullbackLowPrice: c.pullbackLowPrice, pullbackDepthPct: c.pullbackDepthPct, bouncePct: round(bouncePct, 6),
+    tick: { ema8: tickEma8, ema18: tickEma18, rsi, adx, fvvo, slope, crossUp: feature.crossUp },
+    context5m: { price: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, rayRegime: context.ray, ageSec: round(context.ctxAge, 2) },
+    mode: "shadow", automaticOrderSent: false,
+  };
+  c.observedCandidates = candidate.sequence;
+  c.lastCandidate = candidate;
+  c.phase = "CANDIDATE_OBSERVED";
+  c.reason = "PULLBACK_RECLAIM_MICROBREAKOUT_CONFIRMED";
+  c.active = false;
+  resetReentryReclaim(c);
+  await persistState("reentry_candidate_shadow");
+  log("INFO", "FVVO_REENTRY_CANDIDATE_SHADOW", candidate);
+}
+
+function ensurePriceEntryState() {
+  if (!state.priceEntry || typeof state.priceEntry !== "object") state.priceEntry = { pending: null, last: null };
+  if (state.priceEntry.pending && typeof state.priceEntry.pending !== "object") state.priceEntry.pending = null;
+  return state.priceEntry;
+}
+
+function priceEntryStatusPayload() {
+  const pe = ensurePriceEntryState();
+  const pending = pe.pending;
+  const serialize = (item) => item ? {
+    id: item.id,
+    status: item.status,
+    triggerMode: item.triggerMode,
+    triggerPrice: item.triggerPrice,
+    armedReferencePrice: item.armedReferencePrice,
+    stopPrice: item.stopPrice,
+    stopPctAtTrigger: item.stopPctAtTrigger,
+    profitTargetPrice: item.profitTargetPrice || null,
+    profitTargetPctAtTrigger: item.profitTargetPctAtTrigger || 0,
+    armedAt: item.armedAt,
+    expiresAt: item.expiresAt,
+    lastObservedPrice: item.lastObservedPrice,
+    lastObservedAt: item.lastObservedAt,
+    triggeredAt: item.triggeredAt || null,
+    triggeredPrice: item.triggeredPrice || null,
+    resolutionReason: item.resolutionReason || null,
+    requestId: item.requestId || null,
+  } : null;
+  return {
+    enabled: CFG.PRICE_ENTRY_ENABLED,
+    profile: PROFILE,
+    automaticOrderOnCross: CFG.PRICE_ENTRY_ENABLED,
+    triggerSource: CFG.PRICE_ENTRY_TRIGGER_ON_FAST_TICK ? "feature_tick_or_fast_tick" : "feature_tick_only",
+    requireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS,
+    minTriggerDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT,
+    maxTriggerDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT,
+    pending: serialize(pending),
+    last: serialize(pe.last),
+  };
+}
+
+function isPriceTriggerFeature(feature) {
+  return feature.kind === CFG.FVVO_FEATURE_TICK_EVENT || (CFG.PRICE_ENTRY_TRIGGER_ON_FAST_TICK && feature.kind === CFG.FVVO_FAST_TICK_EVENT);
+}
+
+function validTriggerMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return mode === "dip" || mode === "breakout" ? mode : "";
+}
+
+function resolvePriceTriggerExpiry(body) {
+  const requested = oneOf(body, ["expire_after_sec", "expires_after_sec", "expiry_sec"]);
+  const seconds = requested.present ? requested.value : CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC;
+  if (!Number.isFinite(seconds) || seconds < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC || seconds > CFG.PRICE_ENTRY_MAX_EXPIRY_SEC) return { ok: false, error: "PRICE_TRIGGER_EXPIRY_OUT_OF_RANGE" };
+  return { ok: true, seconds: Math.floor(seconds) };
+}
+
+function validatePriceTriggerCommand(body, currentPrice) {
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return { ok: false, error: "VALID_FRESH_FEATURE_PRICE_REQUIRED_FOR_PRICE_TRIGGER" };
+  if (hasRetiredLadderFields(body)) return { ok: false, error: "USE_STOP_PRICE_AND_OPTIONAL_PROFIT_TARGET_PRICE_ONLY_TWO_LEVEL_FIELDS_ARE_RETIRED" };
+  if (["price", "entry_price", "entryPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "ENTRY_PRICE_FIELD_NOT_ALLOWED_USE_TRIGGER_PRICE" };
+  const mode = validTriggerMode(body.trigger_mode || body.triggerMode);
+  if (!mode) return { ok: false, error: "TRIGGER_MODE_MUST_BE_DIP_OR_BREAKOUT" };
+  const trigger = oneOf(body, ["trigger_price", "triggerPrice"]);
+  if (!trigger.present || !Number.isFinite(trigger.value) || !validStep(trigger.value)) return { ok: false, error: "VALID_TRIGGER_PRICE_ALIGNED_TO_PRICE_STEP_REQUIRED" };
+  const triggerPrice = round(trigger.value, 8);
+  const gapPct = mode === "dip" ? percentageBelow(currentPrice, triggerPrice) : percentPnl(currentPrice, triggerPrice);
+  if (mode === "dip" && triggerPrice >= currentPrice) return { ok: false, error: "DIP_TRIGGER_MUST_BE_BELOW_CURRENT_PRICE" };
+  if (mode === "breakout" && triggerPrice <= currentPrice) return { ok: false, error: "BREAKOUT_TRIGGER_MUST_BE_ABOVE_CURRENT_PRICE" };
+  if (gapPct + 1e-9 < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) return { ok: false, error: "TRIGGER_PRICE_TOO_CLOSE_TO_CURRENT_PRICE" };
+  if (gapPct > CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT + 1e-9) return { ok: false, error: "TRIGGER_PRICE_TOO_FAR_FROM_CURRENT_PRICE" };
+  const levels = validateOneStopCommand(body, triggerPrice);
+  if (!levels.ok) return { ok: false, error: levels.error };
+  const expiry = resolvePriceTriggerExpiry(body);
+  if (!expiry.ok) return expiry;
+  return { ok: true, triggerMode: mode, triggerPrice, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
+}
+
+function validateStoredPriceTriggerAtExecution(pending, executionPrice) {
+  if (!Number.isFinite(executionPrice) || executionPrice <= 0) return { ok: false, error: "INVALID_EXECUTION_PRICE" };
+  const body = { stop_price: pending.stopPrice, profit_target_price: pending.profitTargetPrice || 0 };
+  const levels = validateOneStopCommand(body, executionPrice);
+  if (!levels.ok) return { ok: false, error: `EXECUTION_LEVELS_INVALID_${levels.error}` };
+  return { ok: true, levels };
+}
+
+function priceTriggerCrossed(pending, previousPrice, currentPrice) {
+  if (!Number.isFinite(previousPrice) || !Number.isFinite(currentPrice)) return false;
+  const trigger = pending.triggerPrice;
+  const epsilon = Math.max(CFG.MANUAL_ONE_STOP_PRICE_STEP / 10, 1e-9);
+  if (pending.triggerMode === "dip") return previousPrice > trigger + epsilon && currentPrice <= trigger + epsilon;
+  if (pending.triggerMode === "breakout") return previousPrice < trigger - epsilon && currentPrice >= trigger - epsilon;
+  return false;
+}
+
+function resolvePriceEntryPending(status, reason, fields = {}) {
+  const pe = ensurePriceEntryState();
+  const pending = pe.pending;
+  if (!pending) return null;
+  pe.last = { ...pending, ...fields, status, resolutionReason: reason, resolvedAt: nowIso(), resolvedAtMs: nowMs() };
+  pe.pending = null;
+  return pe.last;
+}
+
+async function armPriceEntry(body) {
+  const issue = configProblems()[0];
+  if (issue) return { status: 503, body: { ok: false, error: issue } };
+  if (!CFG.PRICE_ENTRY_ENABLED || !CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY) return { status: 403, body: { ok: false, error: "PRICE_TRIGGER_ENTRY_DISABLED" } };
+  if (String(body.profile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE).trim().toUpperCase() !== PROFILE) return { status: 400, body: { ok: false, error: "ONLY_MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT_PROFILE_ALLOWED" } };
+  const pe = ensurePriceEntryState();
+  if (pe.pending) return { status: 409, body: { ok: false, error: "PENDING_PRICE_ENTRY_ACTIVE", priceTriggerEntry: priceEntryStatusPayload() } };
+  const block = stateBlocksNewEntry();
+  if (block) return { status: 409, body: { ok: false, error: block, status: statusPayload() } };
+  if (CFG.MANUAL_REQUIRE_FRESH_FEATURE_TICK && !isFeatureFresh()) return { status: 409, body: { ok: false, error: "FRESH_FEATURE_TICK_REQUIRED", featureAgeSec: ageSec(state.lastFeature) } };
+  const armPrice = finite(state.lastFeature?.price, null);
+  const validated = validatePriceTriggerCommand(body, armPrice);
+  if (!validated.ok) return { status: 400, body: { ok: false, error: validated.error } };
+
+  if (state.reentry?.campaign) {
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_CANCELLED_BY_PRICE_TRIGGER_ARM", { campaignId: state.reentry.campaign.id, observedCandidates: state.reentry.campaign.observedCandidates || 0 });
+    state.reentry = { campaign: null, recentTickPrices: [] };
+  }
+  const current = nowMs();
+  const expiresAtMs = current + validated.expirySec * 1000;
+  const pending = {
+    id: crypto.randomUUID(), status: "ARMED", profile: PROFILE,
+    triggerMode: validated.triggerMode, triggerPrice: validated.triggerPrice,
+    armedReferencePrice: validated.armPrice, triggerDistancePct: validated.triggerDistancePct,
+    stopPrice: validated.levels.stopPrice, stopPctAtTrigger: validated.levels.stopPct,
+    profitTargetPrice: validated.levels.profitTargetPrice, profitTargetPctAtTrigger: validated.levels.profitTargetPct,
+    armedAt: nowIso(), armedAtMs: current, expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs,
+    lastObservedPrice: validated.armPrice, lastObservedAt: nowIso(), lastObservedAtMs: current,
+    reason: String(body.reason || "manual_price_trigger_entry"),
+  };
+  pe.pending = pending;
+  state.manual = { ...state.manual, lastAction: "arm_price_entry", lastActionAt: nowIso() };
+  if (!(await persistState("price_trigger_armed"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_WHILE_ARMING_PRICE_TRIGGER" } };
+  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, marketOrderWillBeSentOnCross: true });
+  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pending } };
+}
+
+async function cancelPriceEntry(body) {
+  if (!CFG.MANUAL_ALLOW_CANCEL_PRICE_ENTRY) return { status: 403, body: { ok: false, error: "PRICE_TRIGGER_CANCEL_DISABLED" } };
+  const pe = ensurePriceEntryState();
+  if (!pe.pending) return { status: 409, body: { ok: false, error: "NO_PENDING_PRICE_ENTRY", priceTriggerEntry: priceEntryStatusPayload() } };
+  const cancelled = resolvePriceEntryPending("CANCELLED", "MANUAL_CANCEL", { cancelReason: String(body.reason || "manual_cancel_price_entry") });
+  state.manual = { ...state.manual, lastAction: "cancel_price_entry", lastActionAt: nowIso() };
+  await persistState("price_trigger_cancelled");
+  log("INFO", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, triggerMode: cancelled.triggerMode, triggerPrice: cancelled.triggerPrice, reason: cancelled.cancelReason });
+  return { status: 200, body: { ok: true, priceEntryCancelled: true, priceTriggerEntry: priceEntryStatusPayload() } };
+}
+
+let priceEntryEvaluationQueue = Promise.resolve();
+async function evaluatePriceTriggerEntry(feature) {
+  const run = async () => {
+    if (!CFG.PRICE_ENTRY_ENABLED || !isPriceTriggerFeature(feature) || !Number.isFinite(feature.price) || feature.price <= 0) return;
+    const pe = ensurePriceEntryState();
+    const pending = pe.pending;
+    if (!pending) return;
+    const current = nowMs();
+    if (current > finite(pending.expiresAtMs, 0)) {
+      const expired = resolvePriceEntryPending("EXPIRED", "EXPIRY_REACHED", { lastObservedPrice: pending.lastObservedPrice, lastObservedAt: pending.lastObservedAt });
+      await persistState("price_trigger_expired");
+      log("WARN", "FVVO_PRICE_TRIGGER_EXPIRED", { triggerId: expired.id, triggerMode: expired.triggerMode, triggerPrice: expired.triggerPrice, expiresAt: expired.expiresAt });
+      return;
+    }
+    if (state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "STATE_BECAME_INELIGIBLE", { stateBlock: stateBlocksNewEntry() || "MANAGED_STATE" });
+      await persistState("price_trigger_cancelled_ineligible_state");
+      log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, stateBlock: cancelled.stateBlock });
+      return;
+    }
+    const previousPrice = finite(pending.lastObservedPrice, pending.armedReferencePrice);
+    pending.lastObservedPrice = round(feature.price, 8);
+    pending.lastObservedAt = feature.receivedAt;
+    pending.lastObservedAtMs = feature.receivedAtMs;
+    const crossed = CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS ? priceTriggerCrossed(pending, previousPrice, feature.price) : (pending.triggerMode === "dip" ? feature.price <= pending.triggerPrice : feature.price >= pending.triggerPrice);
+    if (!crossed) {
+      await persistState("price_trigger_watch");
+      return;
+    }
+
+    const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+    if (!checked.ok) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current });
+      await persistState("price_trigger_gap_level_rejected");
+      log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, triggerMode: cancelled.triggerMode, triggerPrice: cancelled.triggerPrice, executionPrice: feature.price, reason: checked.error });
+      return;
+    }
+
+    const consumed = resolvePriceEntryPending("TRIGGERED_FORWARDING", "PRICE_CROSS_CONFIRMED", { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current, sourceEvent: feature.kind });
+    if (state.reentry?.campaign) state.reentry = { campaign: null, recentTickPrices: [] };
+    state.position = buildPosition(feature.price, checked.levels, { entryOrigin: "PRICE_TRIGGER", profile: PROFILE });
+    state.position.priceTrigger = { id: consumed.id, mode: consumed.triggerMode, price: consumed.triggerPrice, armedReferencePrice: consumed.armedReferencePrice, triggeredAt: consumed.triggeredAt };
+    state.externalDealLock = { active: true, source: "price_trigger_entry", setAt: nowIso(), reason: "PRICE_TRIGGER_ENTRY_PENDING_FORWARD" };
+    state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "price_trigger_fired", lastActionAt: nowIso() };
+    await persistState("price_trigger_pre_forward");
+    log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, previousPrice, executionReferencePrice: feature.price, stopPrice: checked.levels.stopPrice, profitTargetPrice: checked.levels.profitTargetPrice || null, marketOrderWillBeSent: true });
+    const result = await forward3Commas("enter_long", feature.price, `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`, { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
+    if (!result.ok) {
+      state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
+      state.manual.recoveryRequired = true;
+      state.manual.recoveryReason = `PRICE_TRIGGER_ENTRY_FORWARD_UNCERTAIN_${result.error}`;
+      state.externalDealLock.reason = "PRICE_TRIGGER_ENTRY_FORWARD_UNCERTAIN";
+      pe.last = { ...pe.last, status: "FORWARD_UNCERTAIN", requestId: result.requestId || null, resolutionReason: result.error };
+      await persistState("price_trigger_forward_uncertain");
+      log("ERROR", "FVVO_PRICE_TRIGGER_FORWARD_UNCERTAIN", { triggerId: consumed.id, requestId: result.requestId, error: result.error });
+      return;
+    }
+    state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+    state.position.entryAcceptedAt = nowIso();
+    state.position.entryAcceptedAtMs = nowMs();
+    state.position.entryForwardRequestId = result.requestId;
+    state.externalDealLock.reason = "PRICE_TRIGGER_ENTRY_ACCEPTED_UNVERIFIED_FILL";
+    pe.last = { ...pe.last, status: "FORWARDED_UNVERIFIED", requestId: result.requestId, acceptedAt: nowIso(), acceptedAtMs: nowMs() };
+    await persistState("price_trigger_forward_accepted");
+    log("INFO", "FVVO_PRICE_TRIGGER_ENTRY_TRACKED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, entryPriceReference: feature.price, stopPrice: checked.levels.stopPrice, stopDistancePct: checked.levels.stopPct, profitTargetPrice: checked.levels.profitTargetPrice || null, requestId: result.requestId, entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, fillVerified: false });
+  };
+  const task = priceEntryEvaluationQueue.then(run, run);
+  priceEntryEvaluationQueue = task.catch(() => {});
+  return task;
+}
+
 async function manualExit(body) {
   if (!CFG.MANUAL_ALLOW_EXIT) return { status: 403, body: { ok: false, error: "MANUAL_EXIT_DISABLED" } };
   if (!state.position) return { status: 409, body: { ok: false, error: "NO_MANAGED_POSITION", status: statusPayload() } };
@@ -918,10 +1504,11 @@ async function confirmExitClosed(body) {
   const prior = state.position;
   state.position = null;
   state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+  const campaign = armReentryCampaignAfterConfirmedExit(prior);
   state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "confirm_exit_closed", lastActionAt: nowIso() };
   await persistState("confirm_exit_closed");
-  log("INFO", "FVVO_EXIT_RECONCILIATION_CONFIRMED", { priorExitReason: prior.exitReason, entryPrice: prior.entryPriceReference, stopPrice: prior.stopPrice, targetPrice: prior.profitTargetPrice || null });
-  return { status: 200, body: { ok: true, exitReconciled: true, confirmedFlat: true } };
+  log("INFO", "FVVO_EXIT_RECONCILIATION_CONFIRMED", { priorExitReason: prior.exitReason, entryPrice: prior.entryPriceReference, stopPrice: prior.stopPrice, targetPrice: prior.profitTargetPrice || null, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null });
+  return { status: 200, body: { ok: true, exitReconciled: true, confirmedFlat: true, reentry: reentryStatusPayload() } };
 }
 
 async function forceClearVerifiedFlat(body) {
@@ -931,6 +1518,10 @@ async function forceClearVerifiedFlat(body) {
   const prior = state.position;
   state.position = null;
   state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+  state.reentry = { campaign: null, recentTickPrices: [] };
+  if (state.priceEntry?.pending) {
+    state.priceEntry = { pending: null, last: { ...state.priceEntry.pending, status: "CANCELLED_BY_FORCE_CLEAR", resolvedAt: nowIso(), resolvedAtMs: nowMs() } };
+  }
   state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "force_clear_verified_flat", lastActionAt: nowIso() };
   await persistState("force_clear_verified_flat");
   log("WARN", "FVVO_FORCE_CLEAR_VERIFIED_FLAT", { hadPosition: Boolean(prior), priorLifecycle: prior?.lifecycle || null, reason: body.reason || "" });
@@ -945,6 +1536,8 @@ async function handleManual(body) {
   log("INFO", "FVVO_MANUAL_COMMAND", { action, symbol: CFG.SYMBOL });
   if (action === "status") return CFG.MANUAL_ALLOW_STATUS ? { status: 200, body: statusPayload() } : { status: 403, body: { ok: false, error: "MANUAL_STATUS_DISABLED" } };
   if (action === "enter_long") return beginManualEnter(body);
+  if (action === "arm_price_entry") return armPriceEntry(body);
+  if (action === "cancel_price_entry") return cancelPriceEntry(body);
   if (action === "exit_long") return manualExit(body);
   if (action === "confirm_exit_closed") return confirmExitClosed(body);
   if (action === "force_clear_verified_flat") return forceClearVerifiedFlat(body);
@@ -961,6 +1554,13 @@ async function handleManual(body) {
     await persistState("clear_handoff");
     return { status: 200, body: { ok: true, handoffActive: false, status: statusPayload() } };
   }
+  if (action === "clear_reentry_campaign") {
+    const prior = state.reentry?.campaign || null;
+    state.reentry = { campaign: null, recentTickPrices: [] };
+    await persistState("clear_reentry_campaign");
+    log("INFO", "FVVO_REENTRY_CAMPAIGN_CLEARED", { hadCampaign: Boolean(prior), campaignId: prior?.id || null, reason: body.reason || "" });
+    return { status: 200, body: { ok: true, reentryCampaignCleared: true, reentry: reentryStatusPayload() } };
+  }
   return { status: 400, body: { ok: false, error: "UNKNOWN_MANUAL_ACTION" } };
 }
 
@@ -974,8 +1574,15 @@ app.post(CFG.WEBHOOK_PATH, async (req, res) => {
   if (![CFG.FVVO_FEATURE_TICK_EVENT, CFG.FVVO_FEATURE_5M_EVENT, CFG.FVVO_FAST_TICK_EVENT].includes(feature.kind)) return res.status(202).json({ ok: false, error: "UNSUPPORTED_EVENT", event: feature.kind || null });
   if (!updateFeature(feature)) return res.status(400).json({ ok: false, error: "VALID_PRICE_REQUIRED" });
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
-  log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, fvvo: feature.fvvo, slope: feature.slope, crossDown: feature.crossDown, redPulse: feature.redPulse, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, brainExitManagementActive: Boolean(state.position && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
-  try { await manageExit(feature); } catch (error) { log("ERROR", "FVVO_MANAGE_EXIT_FAILED", { error: error.message, event: feature.kind }); return res.status(500).json({ ok: false, error: "MANAGE_EXIT_FAILED" }); }
+  log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: state.priceEntry?.pending?.status || null, brainExitManagementActive: Boolean(state.position && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
+  try {
+    await manageExit(feature);
+    await evaluatePriceTriggerEntry(feature);
+    await evaluateReentryShadow(feature);
+  } catch (error) {
+    log("ERROR", "FVVO_MANAGEMENT_FAILED", { error: error.message, event: feature.kind });
+    return res.status(500).json({ ok: false, error: "MANAGEMENT_FAILED" });
+  }
   return res.status(200).json({ ok: true, event: feature.kind });
 });
 
@@ -990,10 +1597,10 @@ async function start() {
   const problems = configProblems();
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
-  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: false, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, persistenceReady, configurationProblems: problems });
+  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: false, priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: false, reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, fiveMinuteThesisFailure, legacyEntrySizingVariablesPresent };
+module.exports = { app, CFG, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, fiveMinuteThesisFailure, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
