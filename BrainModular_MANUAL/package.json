@@ -1,18 +1,18 @@
 {
-  "name": "brainfvvo-manualexit-v1l-auto-exit-release-auto-reentry-demo",
-  "version": "1.0.0",
+  "name": "brainfvvo-manualexit-v1m-brain-owned-stop-min-distance-demo",
+  "version": "1.13.0",
   "private": true,
-  "description": "SOLUSDT manual and price-triggered entry with dynamic full exits, v1k runner exit, delayed demo-only auto exit release, and demo-auto re-entry.",
   "main": "server.js",
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "start": "node server.js",
-    "validate": "node validate_v1l.js",
-    "replay": "node replay_historical_feed.js",
-    "lifecycle-replay": "node replay_lifecycle_v1l.js",
-    "auto-reentry-replay": "node replay_auto_reentry_v1l.js"
+    "check": "node --check server.js",
+    "validate": "node validation_v1m.js",
+    "replay": "node replay_historical_v1m.js",
+    "replay:runtime": "node runtime_replay_v1m.js",
+    "compare": "node compare_v1l_v1m.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "express": "^4.21.2"
