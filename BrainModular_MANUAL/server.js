@@ -1,8 +1,8 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1m_BRAIN_OWNED_STOP_MIN_DISTANCE_DEMO
-// SOLUSDT dedicated DEMO Signal Bot manual-entry / brain-exit service
+// BrainFVVO_ManualExit_v1o_DUAL_ENV_AUTO_REENTRY_VARIABLE_MODE
+// SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// v1m brain-owned stop + manual minimum stop-distance + delayed auto exit release + DEMO-auto re-entry + dynamic-profit contract:
+// v1o dual-environment mode switch: v1m brain-owned stop + manual minimum stop-distance + delayed auto exit release + automatic re-entry + dynamic-profit contract:
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -18,8 +18,8 @@
 //     send the SAME full 100% exit_long payload. No partial exits exist.
 //   - Entry order sizing is BOT-OWNED: the brain emits no entry `order` object.
 //   - 3Commas Signal Bot owns fixed entry size/type (800 USDT quote, Market).
-//   - HTTP 200 from 3Commas is acceptance only. In DEMO, a brain-requested full exit
-//     uses the 90-second auto-release contract. A force-clear remains recovery-only.
+//   - HTTP 200 from 3Commas is acceptance only. In either configured environment, a brain-requested full exit
+//     uses the configured 90-second assumed-flat auto-release contract. A force-clear remains recovery-only.
 // ============================================================
 
 "use strict";
@@ -72,7 +72,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1m_BRAIN_OWNED_STOP_MIN_DISTANCE_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1o_DUAL_ENV_AUTO_REENTRY_VARIABLE_MODE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -85,8 +85,9 @@ const CFG = {
 
   SHADOW_ONLY: envBool("SHADOW_ONLY", false),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
-  DEMO_FORWARD_ALLOWED: envBool("DEMO_FORWARD_ALLOWED", true),
-  LIVE_FORWARD_ALLOWED: envBool("LIVE_FORWARD_ALLOWED", false),
+  // v1o: deploy exactly the same code to DEMO or LIVE. The sole environment selector is this variable.
+  // Valid values: demo | live. The legacy DEMO_FORWARD_ALLOWED/LIVE_FORWARD_ALLOWED flags are ignored by v1o.
+  EXECUTION_MODE: envStr("EXECUTION_MODE", "demo").toLowerCase(),
   C3_DRY_RUN: envBool("C3_DRY_RUN", false),
   FVVO_EMERGENCY_DISABLE_ALL_FORWARDS: envBool("FVVO_EMERGENCY_DISABLE_ALL_FORWARDS", false),
   FVVO_EMERGENCY_DISABLE_NEW_ENTRIES: envBool("FVVO_EMERGENCY_DISABLE_NEW_ENTRIES", false),
@@ -110,8 +111,8 @@ const CFG = {
   C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", true),
   // Retired direct-clear compatibility flag. v1l requires the delayed auto-release contract instead.
   C3_ASSUME_EXIT_ACCEPTANCE: envBool("C3_ASSUME_EXIT_ACCEPTANCE", false),
-  // DEMO-only: after a 100% exit_long is accepted by 3Commas, retain the lock for this grace
-  // period and then release the brain state as ASSUMED flat. This replaces manual confirm_exit_closed.
+  // After a 100% exit_long is accepted by 3Commas, retain the lock for this grace
+  // period and then release the brain state as ASSUMED flat. This is intentionally identical for demo/live mode.
   AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", false),
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
@@ -135,7 +136,7 @@ const CFG = {
   MANUAL_ALLOW_CLEAR_HANDOFF: envBool("MANUAL_ALLOW_CLEAR_HANDOFF", true),
   MANUAL_ALLOW_CONFIRM_EXIT: envBool("MANUAL_ALLOW_CONFIRM_EXIT", true),
   MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT: envBool("MANUAL_ALLOW_FORCE_CLEAR_VERIFIED_FLAT", true),
-  MANUAL_FORCE_CLEAR_CONFIRM_PHRASE: envStr("MANUAL_FORCE_CLEAR_CONFIRM_PHRASE", "I_VERIFIED_DEDICATED_3COMMAS_DEMO_BOT_IS_FLAT"),
+  MANUAL_FORCE_CLEAR_CONFIRM_PHRASE: envStr("MANUAL_FORCE_CLEAR_CONFIRM_PHRASE", "I_VERIFIED_DEDICATED_3COMMAS_BOT_IS_FLAT"),
   MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT: envBool("MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT", true),
 
   // v1l user-armed absolute price trigger. This is a brain-side conditional entry,
@@ -192,10 +193,11 @@ const CFG = {
   RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS: Math.floor(envNum("RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS", 1)),
   RUNNER_TIGHT_TRAIL_LOG_STEP_PCT: envNum("RUNNER_TIGHT_TRAIL_LOG_STEP_PCT", 0.05),
 
-  // v1l re-entry: strict pullback reclaim micro-breakout.
-  // `shadow` observes only; `demo_auto` sends a bot-fixed DEMO market re-entry after the auto-release guard.
+  // v1l/v1m re-entry: strict pullback reclaim micro-breakout.
+  // `shadow` observes only; `auto` sends a bot-fixed market re-entry after the auto-release guard.
+  // Legacy `demo_auto` is treated as `auto` so an existing v1m DEMO variable set remains compatible.
   REENTRY_ENABLED: envBool("REENTRY_ENABLED", true),
-  REENTRY_PHASE: envStr("REENTRY_PHASE", "shadow").toLowerCase(),
+  REENTRY_PHASE: (() => { const phase = envStr("REENTRY_PHASE", "auto").toLowerCase(); return phase === "demo_auto" ? "auto" : phase; })(),
   REENTRY_AUTO_FORWARD_ENABLED: envBool("REENTRY_AUTO_FORWARD_ENABLED", false),
   REENTRY_MAX_COUNT: Math.floor(envNum("REENTRY_MAX_COUNT", 1)),
   REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM: envBool("REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM", true),
@@ -224,7 +226,7 @@ const CFG = {
 };
 
 const PROFILE = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT";
-const REENTRY_PROFILE = "AUTO_REENTRY_PULLBACK_MICROBREAKOUT_DEMO";
+const REENTRY_PROFILE = "AUTO_REENTRY_PULLBACK_MICROBREAKOUT";
 const STATE_PATH = path.join(CFG.STATE_DIR, CFG.STATE_FILE_NAME);
 const STATE_BACKUP_PATH = `${STATE_PATH}.bak`;
 
@@ -458,8 +460,7 @@ function configProblems() {
   if (!CFG.C3_SIGNAL_SECRET) problems.push("C3_SIGNAL_SECRET_REQUIRED");
   if (!getBotUuid()) problems.push("C3_BOT_UUID_REQUIRED");
   if (!CFG.ENABLE_HTTP_FORWARD) problems.push("ENABLE_HTTP_FORWARD_MUST_BE_TRUE");
-  if (!CFG.DEMO_FORWARD_ALLOWED) problems.push("DEMO_FORWARD_ALLOWED_MUST_BE_TRUE");
-  if (CFG.LIVE_FORWARD_ALLOWED) problems.push("LIVE_FORWARD_ALLOWED_MUST_BE_FALSE");
+  if (!["demo", "live"].includes(CFG.EXECUTION_MODE)) problems.push("EXECUTION_MODE_MUST_BE_DEMO_OR_LIVE");
   if (CFG.SHADOW_ONLY) problems.push("SHADOW_ONLY_MUST_BE_FALSE");
   if (CFG.C3_ENTRY_SIZE_SOURCE !== "bot_fixed") problems.push("C3_ENTRY_SIZE_SOURCE_MUST_BE_BOT_FIXED");
   if (!CFG.C3_EXIT_INCLUDE_POSITION_ORDER) problems.push("C3_EXIT_INCLUDE_POSITION_ORDER_MUST_BE_TRUE");
@@ -483,12 +484,11 @@ function configProblems() {
   if (CFG.RUNNER_HOLD_MIN_MFE_PCT <= 0 || CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT < CFG.RUNNER_HOLD_MIN_MFE_PCT || CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT <= 0) problems.push("INVALID_RUNNER_THRESHOLDS");
   if (CFG.RUNNER_TIGHT_TRAIL_CONFIRM_SEC < 0 || CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_RUNNER_TIGHT_TRAIL_CONFIRM");
   if (CFG.C3_ASSUME_EXIT_ACCEPTANCE) problems.push("C3_ASSUME_EXIT_ACCEPTANCE_MUST_BE_FALSE_USE_AUTO_EXIT_RECONCILIATION");
-  if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED && (CFG.LIVE_FORWARD_ALLOWED || !CFG.DEMO_FORWARD_ALLOWED)) problems.push("AUTO_EXIT_RECONCILIATION_DEMO_ONLY");
   if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED && (CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC < 1 || CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC > 600)) problems.push("INVALID_AUTO_EXIT_RECONCILIATION_DELAY_SEC");
-  if (!["shadow", "demo_auto"].includes(CFG.REENTRY_PHASE)) problems.push("INVALID_REENTRY_PHASE");
-  if (CFG.REENTRY_PHASE === "shadow" && CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_AUTO_FORWARD_REQUIRES_DEMO_AUTO_PHASE");
-  if (CFG.REENTRY_PHASE === "demo_auto" && !CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_DEMO_AUTO_REQUIRES_AUTO_FORWARD_TRUE");
-  if (CFG.REENTRY_PHASE === "demo_auto" && (!CFG.AUTO_EXIT_RECONCILIATION_ENABLED || CFG.LIVE_FORWARD_ALLOWED || !CFG.DEMO_FORWARD_ALLOWED)) problems.push("REENTRY_DEMO_AUTO_REQUIRES_DEMO_AUTO_EXIT_RELEASE");
+  if (!["shadow", "auto"].includes(CFG.REENTRY_PHASE)) problems.push("INVALID_REENTRY_PHASE");
+  if (CFG.REENTRY_PHASE === "shadow" && CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_AUTO_FORWARD_REQUIRES_AUTO_PHASE");
+  if (CFG.REENTRY_PHASE === "auto" && !CFG.REENTRY_AUTO_FORWARD_ENABLED) problems.push("REENTRY_AUTO_REQUIRES_AUTO_FORWARD_TRUE");
+  if (CFG.REENTRY_PHASE === "auto" && !CFG.AUTO_EXIT_RECONCILIATION_ENABLED) problems.push("REENTRY_AUTO_REQUIRES_AUTO_EXIT_RELEASE");
   if (CFG.REENTRY_MAX_COUNT < 1 || CFG.REENTRY_MAX_COUNT > 2) problems.push("REENTRY_MAX_COUNT_MUST_BE_1_OR_2");
   if (CFG.REENTRY_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC <= 0 || CFG.REENTRY_CONTEXT_MAX_AGE_SEC <= 0) problems.push("INVALID_REENTRY_CAMPAIGN_GUARD");
   if (CFG.REENTRY_PULLBACK_MIN_PCT <= 0 || CFG.REENTRY_PULLBACK_MAX_PCT < CFG.REENTRY_PULLBACK_MIN_PCT) problems.push("INVALID_REENTRY_PULLBACK_RANGE");
@@ -512,8 +512,11 @@ function legacyEntrySizingVariablesPresent() {
     .filter((name) => Object.prototype.hasOwnProperty.call(process.env, name) && String(process.env[name] || "").trim() !== "");
 }
 
+function executionModeValid() { return ["demo", "live"].includes(CFG.EXECUTION_MODE); }
+function demoMode() { return CFG.EXECUTION_MODE === "demo"; }
+function liveMode() { return CFG.EXECUTION_MODE === "live"; }
 function isForwardAllowed() {
-  return CFG.ENABLE_HTTP_FORWARD && CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED && !CFG.SHADOW_ONLY && !CFG.FVVO_EMERGENCY_DISABLE_ALL_FORWARDS;
+  return CFG.ENABLE_HTTP_FORWARD && executionModeValid() && !CFG.SHADOW_ONLY && !CFG.FVVO_EMERGENCY_DISABLE_ALL_FORWARDS;
 }
 
 function ageSec(feature) { return feature?.receivedAtMs ? Math.max(0, (nowMs() - feature.receivedAtMs) / 1000) : Infinity; }
@@ -710,12 +713,12 @@ async function forward3Commas(action, price, reason, options = {}) {
 }
 
 
-function reentryDemoAutoEnabled() {
-  return CFG.REENTRY_ENABLED && CFG.REENTRY_PHASE === "demo_auto" && CFG.REENTRY_AUTO_FORWARD_ENABLED && CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED;
+function reentryAutoEnabled() {
+  return CFG.REENTRY_ENABLED && CFG.REENTRY_PHASE === "auto" && CFG.REENTRY_AUTO_FORWARD_ENABLED && executionModeValid();
 }
 
 function autoExitReconciliationActive() {
-  return CFG.AUTO_EXIT_RECONCILIATION_ENABLED && CFG.DEMO_FORWARD_ALLOWED && !CFG.LIVE_FORWARD_ALLOWED;
+  return CFG.AUTO_EXIT_RECONCILIATION_ENABLED && executionModeValid();
 }
 
 function autoExitReleaseStatusPayload() {
@@ -752,7 +755,7 @@ function armAutoExitRelease(position, requestId, reason) {
     reason: reason || "",
     releasedAt: "",
   };
-  log("INFO", "FVVO_EXIT_AUTO_RELEASE_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, demoOnly: true, reentryAutoEnabled: reentryDemoAutoEnabled() });
+  log("INFO", "FVVO_EXIT_AUTO_RELEASE_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, executionMode: CFG.EXECUTION_MODE, demoOnly: demoMode(), reentryAutoEnabled: reentryAutoEnabled() });
   return state.autoExitRelease;
 }
 
@@ -778,7 +781,7 @@ async function finalizeAutoExitRelease(source = "timer") {
   state.autoExitRelease = { ...pending, active: false, status: "RELEASED_ASSUMED_FLAT", releasedAt: nowIso() };
   clearAutoExitReleaseTimer();
   await persistState("auto_exit_release_assumed_flat");
-  log("INFO", "FVVO_EXIT_AUTO_RECONCILED_ASSUMED_FLAT", { source, priorExitReason: prior.exitReason, requestId: pending.requestId || null, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null, reentryAutoEnabled: reentryDemoAutoEnabled() });
+  log("INFO", "FVVO_EXIT_AUTO_RECONCILED_ASSUMED_FLAT", { source, priorExitReason: prior.exitReason, requestId: pending.requestId || null, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null, reentryAutoEnabled: reentryAutoEnabled() });
   return true;
 }
 
@@ -806,9 +809,10 @@ function statusPayload() {
     ok: true,
     brain: CFG.BRAIN_NAME,
     symbol: CFG.SYMBOL,
-    demoOnly: !CFG.LIVE_FORWARD_ALLOWED,
-    automaticEntriesEnabled: reentryDemoAutoEnabled(),
-    reentryAutomaticOrdersEnabled: reentryDemoAutoEnabled(),
+    executionMode: CFG.EXECUTION_MODE,
+    demoOnly: demoMode(),
+    automaticEntriesEnabled: reentryAutoEnabled(),
+    reentryAutomaticOrdersEnabled: reentryAutoEnabled(),
     entryProfileAllowed: PROFILE,
     oneStopContract: {
       commandStopField: "stop_price",
@@ -1282,7 +1286,7 @@ function reentryStatusPayload() {
   return {
     enabled: CFG.REENTRY_ENABLED,
     phase: CFG.REENTRY_PHASE,
-    automaticOrdersEnabled: reentryDemoAutoEnabled(),
+    automaticOrdersEnabled: reentryAutoEnabled(),
     maxCount: CFG.REENTRY_MAX_COUNT,
     profile: REENTRY_PROFILE,
     campaign: c ? {
@@ -1388,7 +1392,7 @@ function armReentryCampaignAfterConfirmedExit(prior) {
     priorExitReason: campaign.sourceExitReason,
     maxCount: CFG.REENTRY_MAX_COUNT,
     nextReentryNumber,
-    automaticOrderWillBeSent: reentryDemoAutoEnabled(),
+    automaticOrderWillBeSent: reentryAutoEnabled(),
   });
   return campaign;
 }
@@ -1438,7 +1442,7 @@ function projectReentryStop(entryPrice, pullbackLowPrice) {
 
 async function evaluateReentryShadow(feature) {
   const r = ensureReentryState();
-  if (!CFG.REENTRY_ENABLED || !["shadow", "demo_auto"].includes(CFG.REENTRY_PHASE) || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
+  if (!CFG.REENTRY_ENABLED || !["shadow", "auto"].includes(CFG.REENTRY_PHASE) || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
   if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !Number.isFinite(feature.price) || feature.price <= 0) return;
   addReentryTickPrice(feature);
   const c = r.campaign;
@@ -1561,7 +1565,7 @@ async function evaluateReentryShadow(feature) {
   c.active = false;
   resetReentryReclaim(c);
 
-  if (!reentryDemoAutoEnabled()) {
+  if (!reentryAutoEnabled()) {
     await persistState("reentry_candidate_shadow");
     log("INFO", "FVVO_REENTRY_CANDIDATE_SHADOW", candidate);
     return;
@@ -1574,8 +1578,8 @@ async function evaluateReentryShadow(feature) {
   state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "auto_reentry", lastActionAt: nowIso() };
   candidate.automaticOrderSent = true;
   candidate.forwardStatus = "PENDING";
-  await persistState("reentry_demo_auto_pre_forward");
-  log("INFO", "FVVO_REENTRY_CANDIDATE_DEMO_AUTO", candidate);
+  await persistState("reentry_auto_pre_forward");
+  log("INFO", "FVVO_REENTRY_CANDIDATE_AUTO", { ...candidate, executionMode: CFG.EXECUTION_MODE });
   const result = await forward3Commas("enter_long", price, "AUTO_REENTRY_PULLBACK_MICROBREAKOUT", { dedupeKey: `auto_reentry_enter_${candidate.id}`, stopPct: projectedStop.stopDistancePct });
   if (!result.ok) {
     state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
@@ -1584,7 +1588,7 @@ async function evaluateReentryShadow(feature) {
     state.externalDealLock.reason = "AUTO_REENTRY_FORWARD_UNCERTAIN";
     candidate.forwardStatus = "FORWARD_UNCERTAIN";
     candidate.forwardRequestId = result.requestId || null;
-    await persistState("reentry_demo_auto_forward_uncertain");
+    await persistState("reentry_auto_forward_uncertain");
     log("ERROR", "FVVO_REENTRY_FORWARD_UNCERTAIN", { candidateId: candidate.id, reentryNumber: candidate.sequence, requestId: result.requestId || null, error: result.error });
     return;
   }
@@ -1595,7 +1599,7 @@ async function evaluateReentryShadow(feature) {
   state.externalDealLock.reason = "AUTO_REENTRY_ACCEPTED_UNVERIFIED_FILL";
   candidate.forwardStatus = "FORWARDED_UNVERIFIED";
   candidate.forwardRequestId = result.requestId;
-  await persistState("reentry_demo_auto_forward_accepted");
+  await persistState("reentry_auto_forward_accepted");
   log("INFO", "FVVO_AUTO_REENTRY_ENTRY_TRACKED", { candidateId: candidate.id, reentryNumber: candidate.sequence, entryPriceReference: price, stopPrice: projectedStop.stopPrice, stopDistancePct: projectedStop.stopDistancePct, requestId: result.requestId, entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, fillVerified: false });
 }
 
@@ -1936,10 +1940,11 @@ async function start() {
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
-  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, demoOnly: !CFG.LIVE_FORWARD_ALLOWED, automaticEntriesEnabled: reentryDemoAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryDemoAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
+  log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
+    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryDemoAutoEnabled, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
