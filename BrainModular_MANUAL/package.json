@@ -1,16 +1,15 @@
 {
-  "name": "brainfvvomanualexit-v1o-dual-env-auto-reentry-variable-mode",
+  "name": "brainfvvomanualexit-v1q-pre-release-reentry-memory-yellow-shadow",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1o.js",
-    "replay": "node replay_historical_v1o.js",
-    "replay:runtime": "node runtime_replay_v1o.js",
-    "replay:auto": "node runtime_auto_release_v1o.js",
-    "compare": "node compare_v1m_v1o.js"
+    "validate": "node validation_v1q.js",
+    "replay": "node replay_historical_v1q.js",
+    "replay:reentry": "node reentry_optimization_replay_v1q.js",
+    "compare": "node compare_v1p_v1q.js"
   },
   "engines": {
     "node": ">=18"
@@ -18,5 +17,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1o: one codebase, DEMO/LIVE selected by EXECUTION_MODE; v1m logic retained."
+  "description": "BrainFVVO ManualExit v1q: v1p runner capture plus post-release pullback memory, strict fast reclaim re-entry, and Yellow shadow telemetry."
 }
