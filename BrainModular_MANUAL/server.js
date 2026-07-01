@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1q_PRE_RELEASE_REENTRY_MEMORY_YELLOW_SHADOW
+// BrainFVVO_ManualExit_v1r_REENTRY_AGE_GUARD_CONTINUATION_GRACE
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
 // v1q continuation-capture release: retains v1p runner tuning and adds pre-release pullback memory for re-entry plus Yellow-signal shadow telemetry:
@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1q_PRE_RELEASE_REENTRY_MEMORY_YELLOW_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1r_REENTRY_AGE_GUARD_CONTINUATION_GRACE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -214,6 +214,8 @@ const CFG = {
   REENTRY_PULLBACK_MAX_PCT: envNum("REENTRY_PULLBACK_MAX_PCT", 1.20),
   REENTRY_MAX_BELOW_EMA18_PCT: envNum("REENTRY_MAX_BELOW_EMA18_PCT", 0.15),
   REENTRY_MIN_BOUNCE_FROM_LOW_PCT: envNum("REENTRY_MIN_BOUNCE_FROM_LOW_PCT", 0.25),
+  // v1r: optional late-reclaim ceiling. 0 disables the ceiling. This controls entry timing only; it never changes stops.
+  REENTRY_MAX_BOUNCE_FROM_LOW_PCT: envNum("REENTRY_MAX_BOUNCE_FROM_LOW_PCT", 0),
   REENTRY_REQUIRE_RECLAIM_EMA8: envBool("REENTRY_REQUIRE_RECLAIM_EMA8", true),
   REENTRY_MIN_RSI: envNum("REENTRY_MIN_RSI", 54),
   REENTRY_MAX_RSI: envNum("REENTRY_MAX_RSI", 84),
@@ -240,6 +242,19 @@ const CFG = {
   REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED: envBool("REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED", true),
   REENTRY_FAST_RECLAIM_MIN_PRIOR_IMPULSE_PCT: envNum("REENTRY_FAST_RECLAIM_MIN_PRIOR_IMPULSE_PCT", 0.90),
   REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI: envNum("REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI", 72),
+
+  // v1r: when a profitable AUTO_REENTRY sees a transient tick-thesis failure while the 5m thesis remains strongly bullish,
+  // optionally defer that one exit until a short recovery cross or timeout. Manual/price-trigger first legs are untouched.
+  // disabled | shadow | live. Default is shadow so missing variables cannot alter production exits.
+  REENTRY_CONTINUATION_GRACE_MODE: envStr("REENTRY_CONTINUATION_GRACE_MODE", "shadow").toLowerCase(),
+  REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT: envNum("REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT", 0.55),
+  REENTRY_CONTINUATION_GRACE_MIN_PNL_PCT: envNum("REENTRY_CONTINUATION_GRACE_MIN_PNL_PCT", 0.25),
+  REENTRY_CONTINUATION_GRACE_MAX_SEC: envNum("REENTRY_CONTINUATION_GRACE_MAX_SEC", 180),
+  REENTRY_CONTINUATION_GRACE_CONTEXT_MAX_AGE_SEC: envNum("REENTRY_CONTINUATION_GRACE_CONTEXT_MAX_AGE_SEC", 420),
+  REENTRY_CONTINUATION_GRACE_REQUIRE_RAY_BULL: envBool("REENTRY_CONTINUATION_GRACE_REQUIRE_RAY_BULL", true),
+  REENTRY_CONTINUATION_GRACE_REQUIRE_5M_EMA_BULL: envBool("REENTRY_CONTINUATION_GRACE_REQUIRE_5M_EMA_BULL", true),
+  REENTRY_CONTINUATION_GRACE_MIN_5M_FVVO: envNum("REENTRY_CONTINUATION_GRACE_MIN_5M_FVVO", 0),
+  REENTRY_CONTINUATION_GRACE_RECOVERY_REQUIRE_CROSS_UP: envBool("REENTRY_CONTINUATION_GRACE_RECOVERY_REQUIRE_CROSS_UP", true),
 
   // The server accepts yellowPulse/yellowReason from the feature publisher. v1q records them only; no Yellow TP is forwarded.
   YELLOW_TP_SHADOW_ENABLED: envBool("YELLOW_TP_SHADOW_ENABLED", true),
@@ -1141,6 +1156,7 @@ function dynamicProfitState(position) {
         suppressedTickThesisCount: 0,
       },
       lastThesisReason: null,
+      reentryContinuationGrace: { active: false, startedAtMs: 0, expiresAtMs: 0, baselineExitPrice: null, baselinePnlPct: 0, baselineReason: null, context: null, shadowLogged: false },
     };
   }
   const d = position.dynamicProfit;
@@ -1155,6 +1171,7 @@ function dynamicProfitState(position) {
     ...(d.runner || {}),
   };
   d.runner.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.runner.floor || {}) };
+  d.reentryContinuationGrace = { active: false, startedAtMs: 0, expiresAtMs: 0, baselineExitPrice: null, baselinePnlPct: 0, baselineReason: null, context: null, shadowLogged: false, ...(d.reentryContinuationGrace || {}) };
   return d;
 }
 
@@ -1283,6 +1300,86 @@ function fiveMinuteThesisFailure(position, feature, price, pnlPct) {
   return { confirmed, reason: confirmed ? "FIVE_MINUTE_THESIS_FAILURE" : "FIVE_MINUTE_THESIS_HEALTHY_OR_UNCONFIRMED", close, ema8, fvvo };
 }
 
+function reentryContinuationGraceMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.REENTRY_CONTINUATION_GRACE_MODE)
+    ? CFG.REENTRY_CONTINUATION_GRACE_MODE
+    : "shadow";
+}
+
+function reentryContinuationGraceContext(feature) {
+  const ctx = state.lastFeature5m;
+  const age = ageSec(ctx);
+  const close = finite(ctx?.close, ctx?.price);
+  const ema8 = finite(ctx?.ema8, null);
+  const ema18 = finite(ctx?.ema18, null);
+  const fvvo = finite(ctx?.fvvo, null);
+  const ray = String(ctx?.rayRegime || feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const fresh = Boolean(ctx) && age <= CFG.REENTRY_CONTINUATION_GRACE_CONTEXT_MAX_AGE_SEC;
+  const emaBull = !CFG.REENTRY_CONTINUATION_GRACE_REQUIRE_5M_EMA_BULL ||
+    (close !== null && ema8 !== null && ema18 !== null && close >= ema18 && ema8 >= ema18);
+  const rayBull = !CFG.REENTRY_CONTINUATION_GRACE_REQUIRE_RAY_BULL || ray === "RAY_BULL";
+  const fvvoOk = fvvo !== null && fvvo >= CFG.REENTRY_CONTINUATION_GRACE_MIN_5M_FVVO;
+  return { ok: fresh && emaBull && rayBull && fvvoOk, fresh, ageSec: age, close, ema8, ema18, fvvo, ray, emaBull, rayBull, fvvoOk };
+}
+
+function reentryContinuationGraceEligible(position, feature, price, pnlPct) {
+  if (reentryContinuationGraceMode() === "disabled") return { ok: false, reason: "GRACE_DISABLED" };
+  if (position.entryOrigin !== "AUTO_REENTRY") return { ok: false, reason: "NOT_AUTO_REENTRY" };
+  const dynamic = dynamicProfitState(position);
+  const peak = Math.max(finite(position.peakPnlPct, 0), finite(dynamic.peakPnlPct, 0));
+  if (peak + 1e-9 < CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT) return { ok: false, reason: "MFE_BELOW_GRACE_MIN", peakPnlPct: peak };
+  if (pnlPct + 1e-9 < CFG.REENTRY_CONTINUATION_GRACE_MIN_PNL_PCT) return { ok: false, reason: "PNL_BELOW_GRACE_MIN", peakPnlPct: peak, pnlPct };
+  const context = reentryContinuationGraceContext(feature);
+  if (!context.ok) return { ok: false, reason: "FIVE_MINUTE_CONTINUATION_NOT_STRONG", peakPnlPct: peak, pnlPct, context };
+  return { ok: true, peakPnlPct: peak, pnlPct, context };
+}
+
+function armReentryContinuationGrace(position, feature, price, pnlPct, baselineReason, evidence) {
+  const dynamic = dynamicProfitState(position);
+  const grace = dynamic.reentryContinuationGrace;
+  if (grace.active) return grace;
+  const current = nowMs();
+  grace.active = true;
+  grace.startedAtMs = current;
+  grace.expiresAtMs = current + Math.max(0, CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC) * 1000;
+  grace.baselineExitPrice = round(price, 8);
+  grace.baselinePnlPct = round(pnlPct, 6);
+  grace.baselineReason = baselineReason;
+  grace.context = evidence?.context || null;
+  grace.shadowLogged = false;
+  return grace;
+}
+
+function reentryContinuationGraceRecovery(feature, price) {
+  const ema8 = finite(feature.ema8, null);
+  const ema18 = finite(feature.ema18, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const rsi = finite(feature.rsi, null);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const crossOk = !CFG.REENTRY_CONTINUATION_GRACE_RECOVERY_REQUIRE_CROSS_UP || feature.crossUp === true;
+  const priceOk = ema8 !== null && ema18 !== null && price >= ema8 && price >= ema18;
+  const momentumOk = fvvo !== null && fvvo >= 0 && slope !== null && slope >= 0 && rsi !== null && rsi >= 52 && ray === "RAY_BULL";
+  return { ok: crossOk && priceOk && momentumOk, crossOk, priceOk, momentumOk, ema8, ema18, fvvo, slope, rsi, ray };
+}
+
+async function evaluateReentryContinuationGrace(position, feature, price, pnlPct) {
+  const dynamic = dynamicProfitState(position);
+  const grace = dynamic.reentryContinuationGrace;
+  if (!grace.active) return { active: false, resolved: false };
+  const current = nowMs();
+  const recovery = reentryContinuationGraceRecovery(feature, price);
+  if (recovery.ok) {
+    grace.active = false;
+    return { active: false, resolved: true, action: "RECOVERY_CAPTURE", recovery, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+  }
+  if (current >= grace.expiresAtMs) {
+    grace.active = false;
+    return { active: false, resolved: true, action: "TIMEOUT", recovery, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+  }
+  return { active: true, resolved: false, recovery, expiresAtMs: grace.expiresAtMs, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+}
+
 function evaluateYellowTpShadow(feature) {
   const p = state.position;
   if (!CFG.YELLOW_TP_SHADOW_ENABLED || !p || String(p.lifecycle || "").startsWith("EXIT_") || feature.yellowPulse !== true) return false;
@@ -1360,6 +1457,22 @@ async function manageExit(feature) {
     return;
   }
 
+  // v1r: an already-armed re-entry continuation grace never bypasses the manual stop, dynamic floor, or runner trail above.
+  // It can only resolve with a short recovery-capture exit or a timeout.
+  const activeGrace = await evaluateReentryContinuationGrace(p, feature, price, pnl);
+  if (activeGrace.resolved) {
+    await persistState(`reentry_continuation_grace_${activeGrace.action.toLowerCase()}_${feature.kind}`);
+    const reason = activeGrace.action === "RECOVERY_CAPTURE"
+      ? "FVVO_REENTRY_CONTINUATION_GRACE_RECOVERY_CAPTURE"
+      : "FVVO_REENTRY_CONTINUATION_GRACE_TIMEOUT";
+    await requestFullExit(reason, price, feature.kind);
+    return;
+  }
+  if (activeGrace.active) {
+    await persistState(`reentry_continuation_grace_hold_${feature.kind}`);
+    return;
+  }
+
   // Faster 15s momentum/thesis failure; requires consecutive observations. For strong runners in live mode,
   // this exit is suppressed until either the runner trail or the slower 5m / normal floor protection exits.
   const currentRunner = dynamicProfitState(p).runner;
@@ -1375,6 +1488,27 @@ async function manageExit(feature) {
   } else {
     const tickThesis = tickThesisFailureConfirmed(p, feature, price, pnl);
     if (tickThesis.confirmed) {
+      const graceCheck = reentryContinuationGraceEligible(p, feature, price, pnl);
+      const graceMode = reentryContinuationGraceMode();
+      if (graceCheck.ok && graceMode === "shadow") {
+        log("INFO", "FVVO_REENTRY_CONTINUATION_GRACE_SHADOW_CANDIDATE", {
+          entryPrice: p.entryPriceReference, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(graceCheck.peakPnlPct, 6),
+          baselineExitReason: `FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`,
+          maxGraceSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, context5m: graceCheck.context,
+          action: "NO_EXIT_CHANGE_SHADOW_ONLY",
+        });
+      }
+      if (graceCheck.ok && graceMode === "live") {
+        const grace = armReentryContinuationGrace(p, feature, price, pnl, `FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, graceCheck);
+        await persistState(`reentry_continuation_grace_armed_${feature.kind}`);
+        log("INFO", "FVVO_REENTRY_CONTINUATION_GRACE_ARMED", {
+          entryPrice: p.entryPriceReference, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(graceCheck.peakPnlPct, 6),
+          baselineExitReason: grace.baselineReason, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct,
+          expiresAt: new Date(grace.expiresAtMs).toISOString(), maxGraceSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC,
+          context5m: graceCheck.context,
+        });
+        return;
+      }
       await persistState(`dynamic_profit_tick_thesis_${feature.kind}`);
       await requestFullExit(`FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, price, feature.kind);
       return;
@@ -1679,6 +1813,7 @@ async function evaluateReentryShadow(feature) {
     tickEma18 !== null && price >= tickEma18 * (1 - CFG.REENTRY_MAX_BELOW_EMA18_PCT / 100) &&
     reclaimEma8Ok &&
     bouncePct >= CFG.REENTRY_MIN_BOUNCE_FROM_LOW_PCT &&
+    (CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT <= 0 || bouncePct <= CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT) &&
     rsi !== null && rsi >= CFG.REENTRY_MIN_RSI && rsi <= CFG.REENTRY_MAX_RSI &&
     adx !== null && adx >= CFG.REENTRY_MIN_ADX &&
     fvvo !== null && fvvo >= CFG.REENTRY_MIN_FVVO &&
@@ -2108,10 +2243,10 @@ async function start() {
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
-    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
+    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI, reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };

@@ -1,15 +1,17 @@
 {
-  "name": "brainfvvomanualexit-v1q-pre-release-reentry-memory-yellow-shadow",
+  "name": "brainfvvomanualexit-v1r-reentry-age-guard-continuation-grace",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1q.js",
-    "replay": "node replay_historical_v1q.js",
-    "replay:reentry": "node reentry_optimization_replay_v1q.js",
-    "compare": "node compare_v1p_v1q.js"
+    "validate": "node validation_v1r.js",
+    "replay": "node replay_full_v1r.js",
+    "compare": "node compare_v1q_v1r.js",
+    "smoke:demo": "SMOKE_MODE=demo node runtime_mode_smoke_v1r.js",
+    "smoke:live": "SMOKE_MODE=live node runtime_mode_smoke_v1r.js",
+    "smoke:yellow": "node yellow_shadow_smoke_v1r.js"
   },
   "engines": {
     "node": ">=18"
@@ -17,5 +19,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1q: v1p runner capture plus post-release pullback memory, strict fast reclaim re-entry, and Yellow shadow telemetry."
+  "description": "BrainFVVO ManualExit v1r: replay-backed 45-minute re-entry campaign guard plus AUTO_REENTRY continuation-grace shadow audit."
 }
