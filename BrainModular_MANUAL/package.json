@@ -1,17 +1,19 @@
 {
-  "name": "brainfvvomanualexit-v1r-reentry-age-guard-continuation-grace",
+  "name": "brainfvvomanualexit-v1s-dynamic-pullback-grace-pink-structure",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1r.js",
-    "replay": "node replay_full_v1r.js",
-    "compare": "node compare_v1q_v1r.js",
-    "smoke:demo": "SMOKE_MODE=demo node runtime_mode_smoke_v1r.js",
-    "smoke:live": "SMOKE_MODE=live node runtime_mode_smoke_v1r.js",
-    "smoke:yellow": "node yellow_shadow_smoke_v1r.js"
+    "validate": "node validation_v1s.js",
+    "replay": "node replay_full_v1s.js",
+    "compare": "node compare_v1r_v1s.js",
+    "smoke:demo": "SMOKE_MODE=demo node runtime_mode_smoke_v1s.js",
+    "smoke:live": "SMOKE_MODE=live node runtime_mode_smoke_v1s.js",
+    "smoke:yellow": "node yellow_shadow_smoke_v1s.js",
+    "smoke:pullback-shadow": "PULLBACK_TEST_MODE=shadow node dynamic_pullback_grace_smoke_v1s.js",
+    "smoke:pullback-live": "PULLBACK_TEST_MODE=live node dynamic_pullback_grace_smoke_v1s.js"
   },
   "engines": {
     "node": ">=18"
@@ -19,5 +21,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1r: replay-backed 45-minute re-entry campaign guard plus AUTO_REENTRY continuation-grace shadow audit."
+  "description": "BrainFVVO ManualExit v1s: v1r baseline plus dynamic-pullback grace audit toward fresh 5m EMA18/pink structure."
 }

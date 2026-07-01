@@ -2,7 +2,7 @@
 // BrainFVVO_ManualExit_v1r_REENTRY_AGE_GUARD_CONTINUATION_GRACE
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// v1q continuation-capture release: retains v1p runner tuning and adds pre-release pullback memory for re-entry plus Yellow-signal shadow telemetry:
+// v1s dynamic-pullback-grace candidate: retains v1r behaviour and adds a shadow/live-capable 5m EMA18 (pink-line) pullback grace for profitable tick-thesis exits:
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -182,6 +182,21 @@ const CFG = {
   DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS", 2),
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", true),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
+
+  // v1s: after a profitable 15s/tick thesis-failure signal, optionally defer the full exit while
+  // the fresh 5m trend remains above its EMA18 (the chart pink line). Hard stop, dynamic floor
+  // and runner trail always remain higher-priority. `shadow` only audits; `live` can hold briefly.
+  DYNAMIC_PULLBACK_GRACE_MODE: envStr("DYNAMIC_PULLBACK_GRACE_MODE", "shadow").toLowerCase(),
+  DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT: envNum("DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT", 0.55),
+  DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT: envNum("DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT", 0.25),
+  DYNAMIC_PULLBACK_GRACE_MAX_SEC: envNum("DYNAMIC_PULLBACK_GRACE_MAX_SEC", 90),
+  DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC: envNum("DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC", 420),
+  DYNAMIC_PULLBACK_GRACE_REQUIRE_5M_EMA_BULL: envBool("DYNAMIC_PULLBACK_GRACE_REQUIRE_5M_EMA_BULL", true),
+  DYNAMIC_PULLBACK_GRACE_REQUIRE_RAY_NOT_BEAR: envBool("DYNAMIC_PULLBACK_GRACE_REQUIRE_RAY_NOT_BEAR", true),
+  DYNAMIC_PULLBACK_GRACE_MIN_5M_FVVO: envNum("DYNAMIC_PULLBACK_GRACE_MIN_5M_FVVO", -0.50),
+  DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT: envNum("DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT", 0),
+  DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS: Math.floor(envNum("DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS", 1)),
+  DYNAMIC_PULLBACK_GRACE_RECOVERY_REQUIRE_CROSS_UP: envBool("DYNAMIC_PULLBACK_GRACE_RECOVERY_REQUIRE_CROSS_UP", false),
 
   // v1k strong-runner protection retained in v1l. This changes exits only; no new primary entry path is added.
   // "live" suppresses the fast 15s thesis exit after the hold threshold and activates a tight runner trail after the arm threshold.
@@ -533,6 +548,8 @@ function configProblems() {
   if (CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT");
   if (CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_FLOOR_CONFIRM");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
+  if (!["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_MODE");
+  if (CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT < CFG.DYNAMIC_PROFIT_ARM_MFE_PCT || CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC < 0 || CFG.DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC <= 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_THRESHOLDS");
   if (!["live", "shadow", "disabled"].includes(CFG.RUNNER_EXIT_MODE)) problems.push("INVALID_RUNNER_EXIT_MODE");
   if (CFG.RUNNER_HOLD_MIN_MFE_PCT <= 0 || CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT < CFG.RUNNER_HOLD_MIN_MFE_PCT || CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT <= 0) problems.push("INVALID_RUNNER_THRESHOLDS");
   if (CFG.RUNNER_TIGHT_TRAIL_CONFIRM_SEC < 0 || CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_RUNNER_TIGHT_TRAIL_CONFIRM");
@@ -1156,6 +1173,7 @@ function dynamicProfitState(position) {
         suppressedTickThesisCount: 0,
       },
       lastThesisReason: null,
+      dynamicPullbackGrace: { active: false, startedAtMs: 0, expiresAtMs: 0, baselineExitPrice: null, baselinePnlPct: 0, baselineReason: null, context: null, pinkBreakAtMs: 0, pinkBreakObservations: 0, shadowLogged: false },
       reentryContinuationGrace: { active: false, startedAtMs: 0, expiresAtMs: 0, baselineExitPrice: null, baselinePnlPct: 0, baselineReason: null, context: null, shadowLogged: false },
     };
   }
@@ -1171,6 +1189,7 @@ function dynamicProfitState(position) {
     ...(d.runner || {}),
   };
   d.runner.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.runner.floor || {}) };
+  d.dynamicPullbackGrace = { active: false, startedAtMs: 0, expiresAtMs: 0, baselineExitPrice: null, baselinePnlPct: 0, baselineReason: null, context: null, pinkBreakAtMs: 0, pinkBreakObservations: 0, shadowLogged: false, ...(d.dynamicPullbackGrace || {}) };
   d.reentryContinuationGrace = { active: false, startedAtMs: 0, expiresAtMs: 0, baselineExitPrice: null, baselinePnlPct: 0, baselineReason: null, context: null, shadowLogged: false, ...(d.reentryContinuationGrace || {}) };
   return d;
 }
@@ -1298,6 +1317,107 @@ function fiveMinuteThesisFailure(position, feature, price, pnlPct) {
   const confirmed = pnlPct >= CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT && close !== null && ema8 !== null && close < ema8 && fvvo !== null && fvvo <= 0;
   if (confirmed) d.lastThesisReason = "FIVE_MINUTE_CLOSE_BELOW_EMA8_AND_FVVO_NONPOSITIVE";
   return { confirmed, reason: confirmed ? "FIVE_MINUTE_THESIS_FAILURE" : "FIVE_MINUTE_THESIS_HEALTHY_OR_UNCONFIRMED", close, ema8, fvvo };
+}
+
+function dynamicPullbackGraceMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)
+    ? CFG.DYNAMIC_PULLBACK_GRACE_MODE
+    : "shadow";
+}
+
+function dynamicPullbackGraceContext(feature, price) {
+  const ctx = state.lastFeature5m;
+  const age = ageSec(ctx);
+  const close = finite(ctx?.close, ctx?.price);
+  const ema8 = finite(ctx?.ema8, null);
+  const ema18 = finite(ctx?.ema18, null);
+  const fvvo = finite(ctx?.fvvo, null);
+  const ray = String(ctx?.rayRegime || feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const fresh = Boolean(ctx) && age <= CFG.DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC;
+  const emaBull = !CFG.DYNAMIC_PULLBACK_GRACE_REQUIRE_5M_EMA_BULL ||
+    (close !== null && ema8 !== null && ema18 !== null && close >= ema18 && ema8 >= ema18);
+  const rayNotBear = !CFG.DYNAMIC_PULLBACK_GRACE_REQUIRE_RAY_NOT_BEAR || !ray.startsWith("RAY_BEAR");
+  const fvvoOk = fvvo !== null && fvvo >= CFG.DYNAMIC_PULLBACK_GRACE_MIN_5M_FVVO;
+  const pinkPrice = ema18 === null ? null : ema18 * (1 - CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT / 100);
+  const pinkHeld = pinkPrice !== null && price > pinkPrice + 1e-9;
+  return { fresh, ageSec: age, close, ema8, ema18, fvvo, ray, emaBull, rayNotBear, fvvoOk, pinkPrice, pinkHeld,
+    eligible: fresh && emaBull && rayNotBear && fvvoOk && pinkHeld };
+}
+
+function dynamicPullbackGraceEligible(position, feature, price, pnlPct) {
+  if (dynamicPullbackGraceMode() === "disabled") return { ok: false, reason: "GRACE_DISABLED" };
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { ok: false, reason: "NOT_TICK_THESIS" };
+  const dynamic = dynamicProfitState(position);
+  const peak = Math.max(finite(position.peakPnlPct, 0), finite(dynamic.peakPnlPct, 0));
+  if (!dynamic.armed || peak + 1e-9 < CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT) return { ok: false, reason: "MFE_BELOW_GRACE_MIN", peakPnlPct: peak };
+  if (pnlPct + 1e-9 < CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT) return { ok: false, reason: "PNL_BELOW_GRACE_MIN", peakPnlPct: peak, pnlPct };
+  const context = dynamicPullbackGraceContext(feature, price);
+  if (!context.eligible) return { ok: false, reason: "FIVE_MINUTE_PINK_STRUCTURE_NOT_HEALTHY", peakPnlPct: peak, pnlPct, context };
+  return { ok: true, peakPnlPct: peak, pnlPct, context };
+}
+
+function armDynamicPullbackGrace(position, feature, price, pnlPct, baselineReason, evidence) {
+  const dynamic = dynamicProfitState(position);
+  const grace = dynamic.dynamicPullbackGrace;
+  if (grace.active) return grace;
+  const current = nowMs();
+  grace.active = true;
+  grace.startedAtMs = current;
+  grace.expiresAtMs = current + Math.max(0, CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC) * 1000;
+  grace.baselineExitPrice = round(price, 8);
+  grace.baselinePnlPct = round(pnlPct, 6);
+  grace.baselineReason = baselineReason;
+  grace.context = evidence?.context || null;
+  grace.pinkBreakAtMs = 0;
+  grace.pinkBreakObservations = 0;
+  grace.shadowLogged = false;
+  return grace;
+}
+
+function dynamicPullbackGraceRecovery(feature, price) {
+  const ema8 = finite(feature.ema8, null);
+  const ema18 = finite(feature.ema18, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const rsi = finite(feature.rsi, null);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const crossOk = !CFG.DYNAMIC_PULLBACK_GRACE_RECOVERY_REQUIRE_CROSS_UP || feature.crossUp === true;
+  const priceOk = ema8 !== null && ema18 !== null && price >= ema8 && price >= ema18;
+  const momentumOk = fvvo !== null && fvvo >= 0 && slope !== null && slope >= 0 && rsi !== null && rsi >= 50 && !ray.startsWith("RAY_BEAR");
+  return { ok: crossOk && priceOk && momentumOk, crossOk, priceOk, momentumOk, ema8, ema18, fvvo, slope, rsi, ray };
+}
+
+async function evaluateDynamicPullbackGrace(position, feature, price, pnlPct) {
+  const dynamic = dynamicProfitState(position);
+  const grace = dynamic.dynamicPullbackGrace;
+  if (!grace.active) return { active: false, resolved: false };
+  const current = nowMs();
+  const context = dynamicPullbackGraceContext(feature, price);
+  if (!context.fresh || context.ema18 === null || context.pinkPrice === null) {
+    grace.active = false;
+    return { active: false, resolved: true, action: "CONTEXT_STALE", context, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+  }
+  if (!context.pinkHeld) {
+    if (!grace.pinkBreakAtMs) grace.pinkBreakAtMs = current;
+    grace.pinkBreakObservations = Number(grace.pinkBreakObservations || 0) + 1;
+    if (grace.pinkBreakObservations >= CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS) {
+      grace.active = false;
+      return { active: false, resolved: true, action: "PINK_BREAK", context, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+    }
+  } else if (grace.pinkBreakObservations) {
+    grace.pinkBreakAtMs = 0;
+    grace.pinkBreakObservations = 0;
+  }
+  const recovery = feature.kind === CFG.FVVO_FEATURE_TICK_EVENT ? dynamicPullbackGraceRecovery(feature, price) : { ok: false };
+  if (recovery.ok) {
+    grace.active = false;
+    return { active: false, resolved: true, action: "RECOVERY_CONTINUE", context, recovery, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+  }
+  if (current >= grace.expiresAtMs) {
+    grace.active = false;
+    return { active: false, resolved: true, action: "TIMEOUT", context, recovery, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
+  }
+  return { active: true, resolved: false, context, recovery, expiresAtMs: grace.expiresAtMs, baselineExitPrice: grace.baselineExitPrice, baselinePnlPct: grace.baselinePnlPct };
 }
 
 function reentryContinuationGraceMode() {
@@ -1457,6 +1577,30 @@ async function manageExit(feature) {
     return;
   }
 
+  // v1s: a dynamic pullback grace also never bypasses the stop, normal dynamic floor, or runner trail above.
+  // While active it suppresses the faster EMA8 / 5m EMA8 thesis exits and exits on the fresh 5m EMA18 (pink) break, a recovery continuation, or timeout.
+  const activeDynamicPullbackGrace = await evaluateDynamicPullbackGrace(p, feature, price, pnl);
+  if (activeDynamicPullbackGrace.resolved) {
+    if (activeDynamicPullbackGrace.action === "RECOVERY_CONTINUE") {
+      dynamicProfitState(p).thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null };
+      await persistState(`dynamic_pullback_grace_recovery_continue_${feature.kind}`);
+      log("INFO", "FVVO_DYNAMIC_PULLBACK_GRACE_RECOVERY_CONTINUE", { entryPrice: p.entryPriceReference, price, latestPnlPct: round(pnl, 6), baselineExitPrice: activeDynamicPullbackGrace.baselineExitPrice, baselinePnlPct: activeDynamicPullbackGrace.baselinePnlPct, context5m: activeDynamicPullbackGrace.context, recovery: activeDynamicPullbackGrace.recovery });
+      return;
+    }
+    await persistState(`dynamic_pullback_grace_${activeDynamicPullbackGrace.action.toLowerCase()}_${feature.kind}`);
+    const dynamicGraceReason = activeDynamicPullbackGrace.action === "PINK_BREAK"
+      ? "FVVO_DYNAMIC_PULLBACK_GRACE_PINK_EMA18_BREAK"
+      : activeDynamicPullbackGrace.action === "CONTEXT_STALE"
+        ? "FVVO_DYNAMIC_PULLBACK_GRACE_CONTEXT_STALE"
+        : "FVVO_DYNAMIC_PULLBACK_GRACE_TIMEOUT";
+    await requestFullExit(dynamicGraceReason, price, feature.kind);
+    return;
+  }
+  if (activeDynamicPullbackGrace.active) {
+    await persistState(`dynamic_pullback_grace_hold_${feature.kind}`);
+    return;
+  }
+
   // v1r: an already-armed re-entry continuation grace never bypasses the manual stop, dynamic floor, or runner trail above.
   // It can only resolve with a short recovery-capture exit or a timeout.
   const activeGrace = await evaluateReentryContinuationGrace(p, feature, price, pnl);
@@ -1488,6 +1632,26 @@ async function manageExit(feature) {
   } else {
     const tickThesis = tickThesisFailureConfirmed(p, feature, price, pnl);
     if (tickThesis.confirmed) {
+      const pullbackGraceCheck = dynamicPullbackGraceEligible(p, feature, price, pnl);
+      const pullbackGraceMode = dynamicPullbackGraceMode();
+      if (pullbackGraceCheck.ok && pullbackGraceMode === "shadow") {
+        log("INFO", "FVVO_DYNAMIC_PULLBACK_GRACE_SHADOW_CANDIDATE", {
+          entryPrice: p.entryPriceReference, entryOrigin: p.entryOrigin, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(pullbackGraceCheck.peakPnlPct, 6),
+          baselineExitReason: `FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, maxGraceSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC,
+          pinkEma18: pullbackGraceCheck.context.ema18, pinkPrice: pullbackGraceCheck.context.pinkPrice, context5m: pullbackGraceCheck.context, action: "NO_EXIT_CHANGE_SHADOW_ONLY",
+        });
+      }
+      if (pullbackGraceCheck.ok && pullbackGraceMode === "live") {
+        const pullbackGrace = armDynamicPullbackGrace(p, feature, price, pnl, `FVVO_DYNAMIC_PROFIT_TICK_THESIS_FAILURE_${tickThesis.reason}`, pullbackGraceCheck);
+        dynamicProfitState(p).thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null };
+        await persistState(`dynamic_pullback_grace_armed_${feature.kind}`);
+        log("INFO", "FVVO_DYNAMIC_PULLBACK_GRACE_ARMED", {
+          entryPrice: p.entryPriceReference, entryOrigin: p.entryOrigin, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(pullbackGraceCheck.peakPnlPct, 6),
+          baselineExitReason: pullbackGrace.baselineReason, baselineExitPrice: pullbackGrace.baselineExitPrice, baselinePnlPct: pullbackGrace.baselinePnlPct,
+          pinkEma18: pullbackGraceCheck.context.ema18, pinkPrice: pullbackGraceCheck.context.pinkPrice, expiresAt: new Date(pullbackGrace.expiresAtMs).toISOString(), maxGraceSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, context5m: pullbackGraceCheck.context,
+        });
+        return;
+      }
       const graceCheck = reentryContinuationGraceEligible(p, feature, price, pnl);
       const graceMode = reentryContinuationGraceMode();
       if (graceCheck.ok && graceMode === "shadow") {
@@ -2243,10 +2407,10 @@ async function start() {
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
-    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI, reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
+    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS, reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI, reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
