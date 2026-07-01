@@ -1,6 +1,7 @@
-MAX_TARGET_DISTANCE_PCT="2.0"
+MAX_PROFIT_TARGET_DISTANCE_PCT="2.0"
 MAX_STOP_DISTANCE_PCT="2.0"
 
+//############### LIVE PowerShell ################
 
 ##### 1. Arm DIP entry
 Use only while the current fresh price is above the trigger.
@@ -12,16 +13,16 @@ $body = @{
   profile = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT"
 
   trigger_mode = "dip"
-  trigger_price = 71.40
-  stop_price = 70.30
+  trigger_price = 77.20
+  stop_price = 76.88
   profit_target_price = 0
-  expire_after_sec = 14400
+  expire_after_sec = 10800
 
   reason = "manual_arm_dip_entry"
 } | ConvertTo-Json
 Invoke-RestMethod `
   -Method Post `
-  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual"
   -ContentType "application/json" `
   -Body $body
 
@@ -36,8 +37,8 @@ $body = @{
   profile = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT"
 
   trigger_mode = "breakout"
-  trigger_price = 73.20
-  stop_price = 72.25
+  trigger_price = 71.40
+  stop_price = 70.05
   profit_target_price = 0
   expire_after_sec = 14400
 
@@ -45,18 +46,34 @@ $body = @{
 } | ConvertTo-Json
 Invoke-RestMethod `
   -Method Post `
+  -Uri "https://brainfvvomanualentry-production.up.railway.app/manual"
+  -ContentType "application/json" `
+  -Body $body
+
+3. Cancel previous price Entry
+This cancels the currently armed DIP trigger, so you can arm a new price afterward.
+
+$body = @{
+  secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
+  action = "cancel_price_entry"
+  symbol = "BINANCE:SOLUSDT"
+  reason = "replace_dip_trigger_with_new_price"
+} | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
   -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
   -ContentType "application/json" `
   -Body $body
 
-3. Check the brain’s exact current STATUS
+
+4. Check the brain’s exact current STATUS
+
 
 $body = @{
   secret = "Manual_LIVE_h9m3d6j4l1a6c9b7m0a4x8z3m2b7d9l7s3k1ll"
   action = "status"
   symbol = "BINANCE:SOLUSDT"
 } | ConvertTo-Json
-
 Invoke-RestMethod `
   -Method Post `
   -Uri "https://brainfvvomanualentry-production.up.railway.app/manual" `
