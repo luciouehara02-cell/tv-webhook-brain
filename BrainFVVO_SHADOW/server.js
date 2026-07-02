@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_v2q_TICK_EXECUTION_AUTHORITY_DEMO
+// BrainFVVO_v2r_MANUAL_EXIT_STACK_DEMO
 // Standalone FVVO demo-forward brain
 // ------------------------------------------------------------
 // v1h fast-exit build based on v1g exit-managed logic:
@@ -82,10 +82,10 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2q_TICK_EXECUTION_AUTHORITY_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_v2r_MANUAL_EXIT_STACK_DEMO"),
   PORT: envNum("PORT", 8080),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
-  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "BrainFVVO_DEMO_40+CHARS_9f8d7c6b5a4e3d2c1b0a"),
+  WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", "CHANGE_ME_TO_RANDOM_SECRET"),
   DEBUG: envBool("DEBUG", true),
 
   // v1u: visual log formatting. Badge is moved near the start of each log line,
@@ -887,6 +887,44 @@ const CFG = {
   FVVO_RAY_BEAR_BLOCK_CONTINUATION: envBool("FVVO_RAY_BEAR_BLOCK_CONTINUATION", true),
   FVVO_RAY_BEAR_ALLOW_REVERSAL_ONLY: envBool("FVVO_RAY_BEAR_ALLOW_REVERSAL_ONLY", true),
 
+  // v2r: ManualExit-inspired exit stack, adapted for automatic FVVO positions.
+  // DEMO-only: all stack components are live in the DEMO service; 5m remains context only.
+  FVVO_EXIT_STACK_ENABLED: envBool("FVVO_EXIT_STACK_ENABLED", true),
+  FVVO_EXIT_STACK_SETUPS: envStr("FVVO_EXIT_STACK_SETUPS", "CROSS_UP_CONFIRM,DEEP_WASHOUT_SLOW_RECOVERY,LAUNCH_15S_MICRO_BREAKOUT,LAUNCH_15S_ZERO_CONFIRM"),
+  // Dynamic floor/thesis are setup-scoped. Historical replay showed they clip validated Deep runners,
+  // while the Manual-Exit runner trail/rescue improves those runners.
+  FVVO_EXIT_STACK_DYNAMIC_SETUPS: envStr("FVVO_EXIT_STACK_DYNAMIC_SETUPS", "CROSS_UP_CONFIRM,LAUNCH_15S_MICRO_BREAKOUT,LAUNCH_15S_ZERO_CONFIRM"),
+  FVVO_EXIT_STACK_MIN_HOLD_SEC: envNum("FVVO_EXIT_STACK_MIN_HOLD_SEC", 15),
+  FVVO_EXIT_STACK_DYNAMIC_PROFIT_ENABLED: envBool("FVVO_EXIT_STACK_DYNAMIC_PROFIT_ENABLED", true),
+  FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT: envNum("FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT", 0.45),
+  FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT: envNum("FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT", 0.20),
+  FVVO_EXIT_STACK_DYNAMIC_GIVEBACK_START_PCT: envNum("FVVO_EXIT_STACK_DYNAMIC_GIVEBACK_START_PCT", 0.35),
+  FVVO_EXIT_STACK_DYNAMIC_GIVEBACK_MIN_PCT: envNum("FVVO_EXIT_STACK_DYNAMIC_GIVEBACK_MIN_PCT", 0.18),
+  FVVO_EXIT_STACK_DYNAMIC_TIGHTEN_PER_1PCT: envNum("FVVO_EXIT_STACK_DYNAMIC_TIGHTEN_PER_1PCT", 0.06),
+  FVVO_EXIT_STACK_DYNAMIC_FLOOR_CONFIRM_TICKS: envNum("FVVO_EXIT_STACK_DYNAMIC_FLOOR_CONFIRM_TICKS", 1),
+  FVVO_EXIT_STACK_THESIS_ENABLED: envBool("FVVO_EXIT_STACK_THESIS_ENABLED", true),
+  FVVO_EXIT_STACK_THESIS_MIN_PNL_PCT: envNum("FVVO_EXIT_STACK_THESIS_MIN_PNL_PCT", 0.25),
+  FVVO_EXIT_STACK_THESIS_SLOPE_MAX: envNum("FVVO_EXIT_STACK_THESIS_SLOPE_MAX", -0.10),
+  FVVO_EXIT_STACK_THESIS_CONFIRM_TICKS: envNum("FVVO_EXIT_STACK_THESIS_CONFIRM_TICKS", 2),
+  FVVO_EXIT_STACK_5M_THESIS_ENABLED: envBool("FVVO_EXIT_STACK_5M_THESIS_ENABLED", true),
+  FVVO_EXIT_STACK_RUNNER_ENABLED: envBool("FVVO_EXIT_STACK_RUNNER_ENABLED", true),
+  FVVO_EXIT_STACK_RUNNER_HOLD_MFE_PCT: envNum("FVVO_EXIT_STACK_RUNNER_HOLD_MFE_PCT", 0.75),
+  FVVO_EXIT_STACK_RUNNER_TIGHT_ARM_MFE_PCT: envNum("FVVO_EXIT_STACK_RUNNER_TIGHT_ARM_MFE_PCT", 0.95),
+  FVVO_EXIT_STACK_RUNNER_TIGHT_GIVEBACK_PCT: envNum("FVVO_EXIT_STACK_RUNNER_TIGHT_GIVEBACK_PCT", 0.06),
+  FVVO_EXIT_STACK_RUNNER_TIGHT_CONFIRM_TICKS: envNum("FVVO_EXIT_STACK_RUNNER_TIGHT_CONFIRM_TICKS", 1),
+  FVVO_EXIT_STACK_RUNNER_RESCUE_MODE: envStr("FVVO_EXIT_STACK_RUNNER_RESCUE_MODE", "live").toLowerCase(),
+  FVVO_EXIT_STACK_RUNNER_RESCUE_MAX_SEC: envNum("FVVO_EXIT_STACK_RUNNER_RESCUE_MAX_SEC", 180),
+  FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_PNL_PCT: envNum("FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_PNL_PCT", 0.75),
+  FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_HARD_LOCK_PNL_PCT: envNum("FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_HARD_LOCK_PNL_PCT", 0.70),
+  FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_5M_FVVO: envNum("FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_5M_FVVO", -0.50),
+  FVVO_EXIT_STACK_RUNNER_RESCUE_CONTEXT_MAX_AGE_SEC: envNum("FVVO_EXIT_STACK_RUNNER_RESCUE_CONTEXT_MAX_AGE_SEC", 420),
+  FVVO_EXIT_STACK_PULLBACK_GRACE_MODE: envStr("FVVO_EXIT_STACK_PULLBACK_GRACE_MODE", "live").toLowerCase(),
+  FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_MFE_PCT: envNum("FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_MFE_PCT", 0.55),
+  FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_PNL_PCT: envNum("FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_PNL_PCT", 0.25),
+  FVVO_EXIT_STACK_PULLBACK_GRACE_MAX_SEC: envNum("FVVO_EXIT_STACK_PULLBACK_GRACE_MAX_SEC", 90),
+  FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_5M_FVVO: envNum("FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_5M_FVVO", -0.50),
+  FVVO_EXIT_STACK_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC: envNum("FVVO_EXIT_STACK_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC", 420),
+  FVVO_EXIT_STACK_LOG_FLOOR_STEP_PCT: envNum("FVVO_EXIT_STACK_LOG_FLOOR_STEP_PCT", 0.05),
   BAR_DEDUP_ENABLED: envBool("BAR_DEDUP_ENABLED", true),
   HISTORY_MAX_BARS: envNum("HISTORY_MAX_BARS", 120),
   FVVO_REPLAY_MINIMAL_LOG: envBool("FVVO_REPLAY_MINIMAL_LOG", false),
@@ -1076,7 +1114,18 @@ const state = {
     manualExits: 0,
     manualStatusRequests: 0,
     manualHandoffs: 0,
-    manualClearHandoffs: 0
+    manualClearHandoffs: 0,
+    exitStackArms: 0,
+    exitStackFloorExits: 0,
+    exitStackThesisExits: 0,
+    exitStack5mThesisExits: 0,
+    exitStackRunnerTrailExits: 0,
+    exitStackRunnerRescueArms: 0,
+    exitStackRunnerRescueExits: 0,
+    exitStackRunnerRescueRecoveries: 0,
+    exitStackPullbackGraceArms: 0,
+    exitStackPullbackGraceExits: 0,
+    exitStackPullbackGraceRecoveries: 0
   }
 };
 
@@ -3723,6 +3772,193 @@ function clearFeatureWeaknessForPosition(pos) {
   }
 }
 
+
+// v2r — Manual Exit v1t-inspired automatic exit stack.
+// Important: all execution exits are evaluated only from chronological FEATURE_TICK_FVVO prices.
+// FEATURE_5M_FVVO may arm a thesis condition, but the next accepted 15s tick is the execution price.
+function exitStackSetupSet() {
+  return new Set(String(CFG.FVVO_EXIT_STACK_SETUPS || "").split(",").map(x => x.trim().toUpperCase()).filter(Boolean));
+}
+function exitStackApplies(pos) {
+  return Boolean(CFG.FVVO_EXIT_STACK_ENABLED && pos && exitStackSetupSet().has(String(pos.setup || "").toUpperCase()));
+}
+function exitStackDynamicSetupSet() {
+  return new Set(String(CFG.FVVO_EXIT_STACK_DYNAMIC_SETUPS || "").split(",").map(x => x.trim().toUpperCase()).filter(Boolean));
+}
+function exitStackDynamicApplies(pos) {
+  return Boolean(exitStackApplies(pos) && exitStackDynamicSetupSet().has(String(pos.setup || "").toUpperCase()));
+}
+function exitStackMode(value) {
+  const v = String(value || "").toLowerCase();
+  return ["disabled", "shadow", "live"].includes(v) ? v : "shadow";
+}
+function exitStackFresh5mContext(symbol, p, price) {
+  const ctx = state.lastRay5mContext.get(symbol) || null;
+  const now = timeToMs(p && p.time);
+  const ctxMs = ctx ? timeToMs(ctx.time) : NaN;
+  const ageSec = ctx && Number.isFinite(now) && Number.isFinite(ctxMs) ? Math.max(0, (now - ctxMs) / 1000) : Infinity;
+  const close = ctx ? Number(ctx.close) : NaN;
+  const ema8 = ctx ? Number(ctx.ema8) : NaN;
+  const ema18 = ctx ? Number(ctx.ema18) : NaN;
+  const fvvo = ctx ? Number(ctx.fvvoValue) : NaN;
+  const ray = String(ctx?.regime || ctx?.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const fresh = Boolean(ctx) && ageSec <= CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_CONTEXT_MAX_AGE_SEC;
+  const emaBull = Number.isFinite(close) && Number.isFinite(ema8) && Number.isFinite(ema18) && close >= ema18 && ema8 >= ema18;
+  const rayNotBear = !ray.startsWith("RAY_BEAR");
+  const fvvoOk = Number.isFinite(fvvo) && fvvo >= CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_5M_FVVO;
+  const pinkHeld = Number.isFinite(ema18) && Number.isFinite(price) && price > ema18 + 1e-9;
+  return { fresh, ageSec, close, ema8, ema18, fvvo, ray, emaBull, rayNotBear, fvvoOk, pinkHeld, healthy: fresh && emaBull && rayNotBear && fvvoOk && pinkHeld };
+}
+function ensureExitStack(pos) {
+  if (!pos.exitStack || typeof pos.exitStack !== "object") {
+    pos.exitStack = {
+      dynamic: { armed: false, peakPnlPct: 0, peakPrice: pos.entryPrice, protectedPnlPct: 0, protectedPrice: null, floorTicks: 0, thesisTicks: 0, lastLoggedProtectedPnlPct: 0 },
+      runner: { holdActive: false, tightArmed: false, trailPeakPnlPct: 0, protectedPnlPct: 0, protectedPrice: null, floorTicks: 0, rescue: { active: false, count: 0, startedMs: 0, expiresMs: 0, baselineExitPrice: null, baselinePnlPct: 0, hardLockPnlPct: 0, hardLockPrice: null, pinkBreakTicks: 0 } },
+      pullbackGrace: { active: false, startedMs: 0, expiresMs: 0, baselineExitPrice: null, baselinePnlPct: 0, pinkBreakTicks: 0 },
+      fiveMinuteThesisArmed: false,
+      fiveMinuteThesisAt: 0,
+      fiveMinuteThesisContext: null
+    };
+  }
+  const s = pos.exitStack;
+  s.dynamic = { armed: false, peakPnlPct: 0, peakPrice: pos.entryPrice, protectedPnlPct: 0, protectedPrice: null, floorTicks: 0, thesisTicks: 0, lastLoggedProtectedPnlPct: 0, ...(s.dynamic || {}) };
+  s.runner = { holdActive: false, tightArmed: false, trailPeakPnlPct: 0, protectedPnlPct: 0, protectedPrice: null, floorTicks: 0, rescue: {}, ...(s.runner || {}) };
+  s.runner.rescue = { active: false, count: 0, startedMs: 0, expiresMs: 0, baselineExitPrice: null, baselinePnlPct: 0, hardLockPnlPct: 0, hardLockPrice: null, pinkBreakTicks: 0, ...(s.runner.rescue || {}) };
+  s.pullbackGrace = { active: false, startedMs: 0, expiresMs: 0, baselineExitPrice: null, baselinePnlPct: 0, pinkBreakTicks: 0, ...(s.pullbackGrace || {}) };
+  return s;
+}
+function exitStackDynamicFloor(peakPnlPct) {
+  const peak = Math.max(0, Number(peakPnlPct) || 0);
+  const excess = Math.max(0, peak - CFG.FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT);
+  const allowedGiveback = Math.max(CFG.FVVO_EXIT_STACK_DYNAMIC_GIVEBACK_MIN_PCT, CFG.FVVO_EXIT_STACK_DYNAMIC_GIVEBACK_START_PCT - excess * CFG.FVVO_EXIT_STACK_DYNAMIC_TIGHTEN_PER_1PCT);
+  return Math.max(CFG.FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT, peak - allowedGiveback);
+}
+function updateExitStack(pos, p, perf) {
+  const stack = ensureExitStack(pos);
+  const current = Number(perf.currentPnlPct) || 0;
+  const d = stack.dynamic;
+  const priorFloor = d.protectedPnlPct;
+  d.peakPnlPct = Math.max(Number(d.peakPnlPct) || 0, Number(perf.peakPnlPct) || 0, current);
+  if (current >= d.peakPnlPct - 1e-9) d.peakPrice = p.close;
+  let armedNow = false;
+  if (CFG.FVVO_EXIT_STACK_DYNAMIC_PROFIT_ENABLED && exitStackDynamicApplies(pos) && !d.armed && d.peakPnlPct >= CFG.FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT) {
+    d.armed = true; armedNow = true; state.stats.exitStackArms += 1;
+  }
+  if (d.armed) {
+    d.protectedPnlPct = Math.max(Number(d.protectedPnlPct) || 0, exitStackDynamicFloor(d.peakPnlPct));
+    d.protectedPrice = pos.entryPrice * (1 + d.protectedPnlPct / 100);
+  }
+  const r = stack.runner;
+  let runnerHoldNow = false, runnerArmNow = false;
+  if (CFG.FVVO_EXIT_STACK_RUNNER_ENABLED && !r.holdActive && d.peakPnlPct >= CFG.FVVO_EXIT_STACK_RUNNER_HOLD_MFE_PCT) { r.holdActive = true; runnerHoldNow = true; }
+  if (CFG.FVVO_EXIT_STACK_RUNNER_ENABLED && !r.tightArmed && d.peakPnlPct >= CFG.FVVO_EXIT_STACK_RUNNER_TIGHT_ARM_MFE_PCT) { r.tightArmed = true; r.trailPeakPnlPct = d.peakPnlPct; runnerArmNow = true; }
+  if (r.tightArmed) {
+    r.trailPeakPnlPct = Math.max(Number(r.trailPeakPnlPct) || 0, d.peakPnlPct, current);
+    const newFloor = Math.max(0, r.trailPeakPnlPct - CFG.FVVO_EXIT_STACK_RUNNER_TIGHT_GIVEBACK_PCT);
+    r.protectedPnlPct = Math.max(Number(r.protectedPnlPct) || 0, newFloor);
+    r.protectedPrice = pos.entryPrice * (1 + r.protectedPnlPct / 100);
+  }
+  return { stack, armedNow, floorRaised: d.protectedPnlPct > priorFloor + 1e-9, runnerHoldNow, runnerArmNow };
+}
+function exitStackTickThesis(pos, p, perf) {
+  const stack = ensureExitStack(pos), d = stack.dynamic;
+  const current = Number(perf.currentPnlPct) || 0;
+  const ema8 = Number(p.ema8), fvvo = Number(p.fvvoValue), slope = Number(p.fvvoSlope);
+  const conditions = d.armed && CFG.FVVO_EXIT_STACK_THESIS_ENABLED && current >= CFG.FVVO_EXIT_STACK_THESIS_MIN_PNL_PCT && Number.isFinite(ema8) && p.close < ema8 && Number.isFinite(slope) && slope <= CFG.FVVO_EXIT_STACK_THESIS_SLOPE_MAX && Number.isFinite(fvvo) && (fvvo <= 0 || p.fvvoCrossDown === true);
+  d.thesisTicks = conditions ? (Number(d.thesisTicks) || 0) + 1 : 0;
+  return { conditions, confirmed: d.thesisTicks >= Math.max(1, Math.floor(CFG.FVVO_EXIT_STACK_THESIS_CONFIRM_TICKS)), ticks: d.thesisTicks, ema8, fvvo, slope };
+}
+function exitStackPullbackGraceEligible(pos, p, perf) {
+  const stack = ensureExitStack(pos), peak = Number(stack.dynamic.peakPnlPct) || 0, current = Number(perf.currentPnlPct) || 0;
+  const ctx = exitStackFresh5mContext(pos.symbol, p, p.close);
+  return { ok: exitStackMode(CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MODE) !== "disabled" && peak >= CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_MFE_PCT && current >= CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MIN_PNL_PCT && ctx.healthy, peak, current, ctx };
+}
+function armExitStackPullbackGrace(pos, p, perf) {
+  const stack = ensureExitStack(pos), g = stack.pullbackGrace, now = timeToMs(p.time);
+  g.active = true; g.startedMs = now; g.expiresMs = now + CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MAX_SEC * 1000; g.baselineExitPrice = p.close; g.baselinePnlPct = Number(perf.currentPnlPct) || 0; g.pinkBreakTicks = 0;
+  state.stats.exitStackPullbackGraceArms += 1;
+  return g;
+}
+function evaluateExitStackPullbackGrace(pos, p) {
+  const stack = ensureExitStack(pos), g = stack.pullbackGrace;
+  if (!g.active) return { active: false };
+  const now = timeToMs(p.time), ctx = exitStackFresh5mContext(pos.symbol, p, p.close);
+  if (!ctx.fresh || !Number.isFinite(ctx.ema18)) { g.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_PULLBACK_GRACE_CONTEXT_STALE", ctx }; }
+  if (!ctx.pinkHeld) g.pinkBreakTicks = (Number(g.pinkBreakTicks) || 0) + 1; else g.pinkBreakTicks = 0;
+  if (g.pinkBreakTicks >= 1) { g.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_PULLBACK_GRACE_PINK_EMA18_BREAK", ctx }; }
+  const recovery = Number.isFinite(Number(p.ema8)) && Number.isFinite(Number(p.ema18)) && p.close >= p.ema8 && p.close >= p.ema18 && Number(p.fvvoValue) >= 0 && Number(p.fvvoSlope) >= 0 && Number(p.rsi) >= 50 && !String(classifyRayRegime(p).regime).startsWith("RAY_BEAR");
+  if (recovery) { g.active = false; state.stats.exitStackPullbackGraceRecoveries += 1; return { active: false, resolved: true, exit: false, recovery: true, ctx }; }
+  if (now >= g.expiresMs) { g.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_PULLBACK_GRACE_TIMEOUT", ctx }; }
+  return { active: true, suppressBase: true, ctx };
+}
+function exitStackRunnerRescueEligible(pos, p, perf) {
+  const stack = ensureExitStack(pos), r = stack.runner, current = Number(perf.currentPnlPct) || 0;
+  const ctx = exitStackFresh5mContext(pos.symbol, p, p.close);
+  return { ok: exitStackMode(CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MODE) !== "disabled" && r.tightArmed && (Number(stack.dynamic.peakPnlPct) || 0) >= CFG.FVVO_EXIT_STACK_RUNNER_TIGHT_ARM_MFE_PCT && current >= CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_PNL_PCT && !r.rescue.active && Number(r.rescue.count || 0) < 1 && ctx.healthy, ctx, current };
+}
+function armExitStackRunnerRescue(pos, p, perf) {
+  const stack = ensureExitStack(pos), r = stack.runner, x = r.rescue, now = timeToMs(p.time);
+  x.active = true; x.count = Number(x.count || 0) + 1; x.startedMs = now; x.expiresMs = now + CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MAX_SEC * 1000; x.baselineExitPrice = p.close; x.baselinePnlPct = Number(perf.currentPnlPct) || 0; x.hardLockPnlPct = Math.max(Number(stack.dynamic.protectedPnlPct) || 0, CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MIN_HARD_LOCK_PNL_PCT); x.hardLockPrice = pos.entryPrice * (1 + x.hardLockPnlPct / 100); x.pinkBreakTicks = 0;
+  state.stats.exitStackRunnerRescueArms += 1;
+  return x;
+}
+function evaluateExitStackRunnerRescue(pos, p, perf) {
+  const stack = ensureExitStack(pos), r = stack.runner, x = r.rescue;
+  if (!x.active) return { active: false };
+  const current = Number(perf.currentPnlPct) || 0, now = timeToMs(p.time), ctx = exitStackFresh5mContext(pos.symbol, p, p.close);
+  if (current <= x.hardLockPnlPct + 1e-9 || p.close <= x.hardLockPrice) { x.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_RUNNER_RESCUE_HARD_LOCK", ctx }; }
+  if (!ctx.fresh || !Number.isFinite(ctx.ema18)) { x.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_RUNNER_RESCUE_CONTEXT_STALE", ctx }; }
+  if (!ctx.pinkHeld) x.pinkBreakTicks = (Number(x.pinkBreakTicks) || 0) + 1; else x.pinkBreakTicks = 0;
+  if (x.pinkBreakTicks >= 1) { x.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_RUNNER_RESCUE_PINK_EMA18_BREAK", ctx }; }
+  if (p.close > x.baselineExitPrice && current > x.baselinePnlPct) { r.trailPeakPnlPct = Math.max(Number(r.trailPeakPnlPct) || 0, current); r.protectedPnlPct = Math.max(x.hardLockPnlPct, r.trailPeakPnlPct - CFG.FVVO_EXIT_STACK_RUNNER_TIGHT_GIVEBACK_PCT); r.protectedPrice = pos.entryPrice * (1 + r.protectedPnlPct / 100); x.active = false; state.stats.exitStackRunnerRescueRecoveries += 1; return { active: false, resolved: true, exit: false, recovery: true, ctx }; }
+  if (now >= x.expiresMs) { x.active = false; return { active: false, resolved: true, exit: true, reason: "FVVO_EXIT_STACK_RUNNER_RESCUE_TIMEOUT", ctx }; }
+  return { active: true, suppressBase: true, ctx };
+}
+function evaluateExitStackTick(pos, p, perf) {
+  if (!exitStackApplies(pos) || p.event !== CFG.FVVO_FEATURE_TICK_EVENT) return { exit: false, suppressBase: false, reason: "EXIT_STACK_NOT_APPLICABLE" };
+  const elapsedSec = Math.max(0, (timeToMs(p.time) - (pos.entryMs || timeToMs(pos.entryTime))) / 1000);
+  const update = updateExitStack(pos, p, perf), stack = update.stack, d = stack.dynamic, r = stack.runner;
+  if (update.armedNow) logLine("FVVO_EXIT_STACK_DYNAMIC_ARMED", `🟡 setup=${pos.setup} | symbol=${pos.symbol} | entry=${n(pos.entryPrice,4)} | peak=${pct(d.peakPnlPct)} | protected=${pct(d.protectedPnlPct)} | protectedPrice=${n(d.protectedPrice,4)} | source=FEATURE_TICK_15S`);
+  if (update.floorRaised && d.protectedPnlPct >= (Number(d.lastLoggedProtectedPnlPct) || 0) + CFG.FVVO_EXIT_STACK_LOG_FLOOR_STEP_PCT - 1e-9) { d.lastLoggedProtectedPnlPct = d.protectedPnlPct; logLine("FVVO_EXIT_STACK_DYNAMIC_FLOOR_RAISED", `🟡 setup=${pos.setup} | symbol=${pos.symbol} | peak=${pct(d.peakPnlPct)} | protected=${pct(d.protectedPnlPct)} | protectedPrice=${n(d.protectedPrice,4)} | price=${n(p.close,4)}`); }
+  if (update.runnerArmNow) logLine("FVVO_EXIT_STACK_RUNNER_TIGHT_ARMED", `🟡 setup=${pos.setup} | symbol=${pos.symbol} | peak=${pct(d.peakPnlPct)} | protected=${pct(r.protectedPnlPct)} | protectedPrice=${n(r.protectedPrice,4)} | price=${n(p.close,4)}`);
+  if (elapsedSec < CFG.FVVO_EXIT_STACK_MIN_HOLD_SEC) return { exit: false, suppressBase: false, reason: "EXIT_STACK_MIN_HOLD", stack };
+  const rescueActive = evaluateExitStackRunnerRescue(pos, p, perf);
+  if (rescueActive.exit) { state.stats.exitStackRunnerRescueExits += 1; return { exit: true, reason: rescueActive.reason, exitPrice: p.close, exitStack: rescueActive }; }
+  if (rescueActive.active) return { exit: false, suppressBase: true, reason: "EXIT_STACK_RUNNER_RESCUE_ACTIVE", exitStack: rescueActive };
+  const graceActive = evaluateExitStackPullbackGrace(pos, p);
+  if (graceActive.exit) { state.stats.exitStackPullbackGraceExits += 1; return { exit: true, reason: graceActive.reason, exitPrice: p.close, exitStack: graceActive }; }
+  if (graceActive.active) return { exit: false, suppressBase: true, reason: "EXIT_STACK_PULLBACK_GRACE_ACTIVE", exitStack: graceActive };
+  if (d.armed && Number(perf.currentPnlPct) <= d.protectedPnlPct + 1e-9) { d.floorTicks = (Number(d.floorTicks) || 0) + 1; if (d.floorTicks >= Math.max(1, Math.floor(CFG.FVVO_EXIT_STACK_DYNAMIC_FLOOR_CONFIRM_TICKS))) { state.stats.exitStackFloorExits += 1; return { exit: true, reason: "FVVO_EXIT_STACK_DYNAMIC_PROFIT_FLOOR", exitPrice: p.close, exitStack: { protectedPnlPct: d.protectedPnlPct, protectedPrice: d.protectedPrice } }; } } else d.floorTicks = 0;
+  if (r.tightArmed && Number(perf.currentPnlPct) <= r.protectedPnlPct + 1e-9) { r.floorTicks = (Number(r.floorTicks) || 0) + 1; if (r.floorTicks >= Math.max(1, Math.floor(CFG.FVVO_EXIT_STACK_RUNNER_TIGHT_CONFIRM_TICKS))) { const eligible = exitStackRunnerRescueEligible(pos,p,perf), mode = exitStackMode(CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MODE); if (eligible.ok && mode === "live") { const x = armExitStackRunnerRescue(pos,p,perf); logLine("FVVO_EXIT_STACK_RUNNER_RESCUE_ARMED", `🧠 setup=${pos.setup} | symbol=${pos.symbol} | price=${n(p.close,4)} | pnl=${pct(perf.currentPnlPct)} | peak=${pct(d.peakPnlPct)} | hardLock=${pct(x.hardLockPnlPct)} | expiresAt=${new Date(x.expiresMs).toISOString()}`); return { exit: false, suppressBase: true, reason: "EXIT_STACK_RUNNER_RESCUE_ARMED", exitStack: { rescue: x, context: eligible.ctx } }; } if (eligible.ok && mode === "shadow") logLine("FVVO_EXIT_STACK_RUNNER_RESCUE_SHADOW_CANDIDATE", `🧠 setup=${pos.setup} | symbol=${pos.symbol} | price=${n(p.close,4)} | pnl=${pct(perf.currentPnlPct)} | peak=${pct(d.peakPnlPct)} | action=NO_EXIT_CHANGE_SHADOW_ONLY`); state.stats.exitStackRunnerTrailExits += 1; return { exit: true, reason: "FVVO_EXIT_STACK_RUNNER_TIGHT_TRAIL", exitPrice: p.close, exitStack: { protectedPnlPct: r.protectedPnlPct, protectedPrice: r.protectedPrice } }; } } else r.floorTicks = 0;
+  if (stack.fiveMinuteThesisArmed && d.armed && Number(perf.currentPnlPct) >= CFG.FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT) { stack.fiveMinuteThesisArmed = false; state.stats.exitStack5mThesisExits += 1; return { exit: true, reason: "FVVO_EXIT_STACK_5M_THESIS_FAILURE_TICK_EXECUTION", exitPrice: p.close, exitStack: stack.fiveMinuteThesisContext || {} }; }
+  const thesis = exitStackTickThesis(pos,p,perf);
+  if (thesis.confirmed) { const eligible = exitStackPullbackGraceEligible(pos,p,perf), mode = exitStackMode(CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MODE); if (eligible.ok && mode === "live") { const g = armExitStackPullbackGrace(pos,p,perf); logLine("FVVO_EXIT_STACK_PULLBACK_GRACE_ARMED", `🧠 setup=${pos.setup} | symbol=${pos.symbol} | price=${n(p.close,4)} | pnl=${pct(perf.currentPnlPct)} | peak=${pct(d.peakPnlPct)} | expiresAt=${new Date(g.expiresMs).toISOString()}`); d.thesisTicks = 0; return { exit: false, suppressBase: true, reason: "EXIT_STACK_PULLBACK_GRACE_ARMED", exitStack: { grace:g, context: eligible.ctx } }; } if (eligible.ok && mode === "shadow") logLine("FVVO_EXIT_STACK_PULLBACK_GRACE_SHADOW_CANDIDATE", `🧠 setup=${pos.setup} | symbol=${pos.symbol} | price=${n(p.close,4)} | pnl=${pct(perf.currentPnlPct)} | peak=${pct(d.peakPnlPct)} | action=NO_EXIT_CHANGE_SHADOW_ONLY`); state.stats.exitStackThesisExits += 1; return { exit: true, reason: "FVVO_EXIT_STACK_DYNAMIC_PROFIT_TICK_THESIS", exitPrice: p.close, exitStack: thesis }; }
+  return { exit: false, suppressBase: false, reason: "EXIT_STACK_HOLD", exitStack: { protectedPnlPct: d.protectedPnlPct, runnerProtectedPnlPct: r.protectedPnlPct } };
+}
+function armExitStack5mThesis(pos, p) {
+  if (!exitStackApplies(pos) || !CFG.FVVO_EXIT_STACK_5M_THESIS_ENABLED) return null;
+  const stack = ensureExitStack(pos), d = stack.dynamic;
+  const currentPnl = calcPct(p.close, pos.entryPrice) || 0;
+  const confirmed = d.armed && currentPnl >= CFG.FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT && Number.isFinite(Number(p.ema8)) && p.close < p.ema8 && Number.isFinite(Number(p.fvvoValue)) && p.fvvoValue <= 0;
+  if (!confirmed) return null;
+  stack.fiveMinuteThesisArmed = true; stack.fiveMinuteThesisAt = timeToMs(p.time); stack.fiveMinuteThesisContext = { confirmed5mClose:p.close, ema8:p.ema8, ema18:p.ema18, fvvo:p.fvvoValue, time:p.time };
+  logLine("FVVO_EXIT_STACK_5M_THESIS_ARMED", `🧠 setup=${pos.setup} | symbol=${pos.symbol} | confirmed5mClose=${n(p.close,4)} | ema8=${n(p.ema8,4)} | fvvo=${n(p.fvvoValue,6)} | action=WAIT_NEXT_FEATURE_TICK_EXECUTION`);
+  return stack.fiveMinuteThesisContext;
+}
+function exitStackTelemetryFields(decision) {
+  const x = decision && decision.exitStack;
+  if (!x) return [];
+  const out=[];
+  if (Number.isFinite(x.protectedPnlPct)) out.push(`exitStackProtected=${pct(x.protectedPnlPct)}`);
+  if (Number.isFinite(x.protectedPrice)) out.push(`exitStackProtectedPrice=${n(x.protectedPrice,4)}`);
+  return out;
+}
+function countExitStackExitReason(reason) {
+  const r = String(reason || "");
+  if (!r.includes("EXIT_STACK")) return;
+  if (r.includes("DYNAMIC_PROFIT_FLOOR")) state.stats.exitStackFloorExits += 0;
+}
+
 function featureExitTrailTelemetryFields(decision) {
   const dynamic = decision && decision.dynamicTrail;
   const adaptive = decision && decision.adaptiveAtrMfeTrail;
@@ -3758,6 +3994,16 @@ function evaluateFeatureTickLegExit(pos, p, perf) {
   const hardStopHit = profile.hardStopPct > 0 && (currentPnlPct <= -Math.abs(profile.hardStopPct) || p.close <= hardStopPrice);
   if (hardStopHit) {
     return { exit: true, reason: `FVVO_FEATURE_${label}_TICK_HARD_STOP`, backupUsed: false, exitPrice: p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, executionSource: "FEATURE_TICK_15S" };
+  }
+
+  // v2r stack runs after the profile hard stop and before the legacy profit/weakness exits.
+  // It never relies on confirmed 5m candle high/low for execution.
+  const exitStackDecision = evaluateExitStackTick(pos, p, perf);
+  if (exitStackDecision.exit) {
+    return { exit: true, reason: exitStackDecision.reason, backupUsed: true, exitPrice: exitStackDecision.exitPrice || p.close, strongTrendHold: false, elapsedSec, featureExitProfile: profile, executionSource: "FEATURE_TICK_15S", exitStack: exitStackDecision.exitStack };
+  }
+  if (exitStackDecision.suppressBase) {
+    return { exit: false, reason: exitStackDecision.reason, backupUsed: false, exitPrice: null, strongTrendHold: true, elapsedSec, featureExitProfile: profile, exitStack: exitStackDecision.exitStack };
   }
 
   if (!minHoldOk) {
@@ -5175,8 +5421,15 @@ async function updateDeepWashoutShadow(tick) {
 
   const perf = { currentPnlPct, peakPnlPct: shadow.peakPnlPct, givebackPct };
   let dynamicTrail = calcDynamicTrail(shadow.setup, perf);
-  const featureProfileActive = tick.event === CFG.FVVO_FEATURE_TICK_EVENT && Boolean(featureExitProfile(shadow.setup));
-  const featureExit = evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec);
+  const featureProfile = featureExitProfile(shadow.setup);
+  const featureProfileActive = tick.event === CFG.FVVO_FEATURE_TICK_EVENT && Boolean(featureProfile);
+  // Keep the Deep profile hard stop absolutely first. The v2r profit-management stack
+  // may only change exits after a loss stop has been ruled out.
+  const hardStopPrice = featureProfile && Number(featureProfile.hardStopPct) > 0
+    ? shadow.entryPrice * (1 - Math.abs(Number(featureProfile.hardStopPct)) / 100)
+    : null;
+  const profileHardStop = featureProfileActive && Number(featureProfile.hardStopPct) > 0 &&
+    (currentPnlPct <= -Math.abs(Number(featureProfile.hardStopPct)) || price <= hardStopPrice);
   const stopHit = price <= shadow.stopPrice;
   const tpHit = !CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_REPLACE_TP && !(CFG.FVVO_FEATURE_EXIT_REPLACE_SHADOW_TP && featureProfileActive) && currentPnlPct >= CFG.FVVO_DEEP_WASHOUT_SHADOW_TP_PCT;
   const dynamicTrailHit = CFG.FVVO_DEEP_WASHOUT_DYNAMIC_TRAIL_ENABLED && dynamicTrail.armed && dynamicTrail.exit;
@@ -5184,15 +5437,31 @@ async function updateDeepWashoutShadow(tick) {
 
   let reason = "";
   let exitPrice = price;
-  if (featureExit) {
-    reason = featureExit.reason;
-    exitPrice = featureExit.exitPrice;
-    if (featureExit.dynamicTrail) dynamicTrail = featureExit.dynamicTrail;
+  let stackDecision = null;
+  if (profileHardStop) {
+    reason = `FVVO_FEATURE_${featureExitLabel(shadow.setup)}_TICK_HARD_STOP`;
+    exitPrice = price;
+  } else {
+    // v2r applies the same Manual-Exit derived management stack to the actual
+    // Deep recovery shadow/deal state. The stack consumes chronological
+    // FEATURE_TICK_FVVO only; 5m can arm but never executes by its high/low.
+    stackDecision = evaluateExitStackTick(shadow, tick, perf);
+    if (stackDecision.exit) {
+      reason = stackDecision.reason;
+      exitPrice = stackDecision.exitPrice || price;
+    } else if (!stackDecision.suppressBase) {
+      const featureExit = evaluateFeatureShadowExit(shadow, tick, perf, elapsedSec);
+      if (featureExit) {
+        reason = featureExit.reason;
+        exitPrice = featureExit.exitPrice;
+        if (featureExit.dynamicTrail) dynamicTrail = featureExit.dynamicTrail;
+      }
+    }
   }
-  else if (stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
-  else if (tpHit) reason = "DEEP_WASHOUT_SHADOW_TP";
-  else if (dynamicTrailHit) reason = "DEEP_WASHOUT_DYNAMIC_TRAIL";
-  else if (maxHoldHit) reason = "DEEP_WASHOUT_MAX_HOLD";
+  if (!reason && stopHit) reason = "DEEP_WASHOUT_STRUCTURE_OR_MAX_STOP";
+  else if (!reason && tpHit) reason = "DEEP_WASHOUT_SHADOW_TP";
+  else if (!reason && dynamicTrailHit) reason = "DEEP_WASHOUT_DYNAMIC_TRAIL";
+  else if (!reason && maxHoldHit) reason = "DEEP_WASHOUT_MAX_HOLD";
 
   if (!reason) return;
 
@@ -6239,6 +6508,7 @@ async function handleFeatureTick(p) {
         `peak=${pct(perf.peakPnlPct)}`,
         `giveback=${pct(perf.givebackPct)}`,
         ...featureExitTrailTelemetryFields(exitDecision),
+        ...exitStackTelemetryFields(exitDecision),
         ...rayBullExitHoldLogFields(exitDecision.rayBullHold),
         `reason=${exitDecision.reason}`,
         `rsi=${n(p.rsi, 2)}`,
@@ -6436,11 +6706,19 @@ async function handleFeature(p) {
   // chronological 15s ticks. The confirmed 5m event remains context only.
   if (!CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED) await updateObservationShadows(p, barNo);
   const openPos = state.positions.get(p.symbol);
+  // Deep recovery has an independent position/deal state. A confirmed 5m bar may
+  // arm a thesis condition here, but only the next chronological feature tick can exit.
+  const deepShadowForExitStack = state.deepWashoutShadow.get(p.symbol);
+  if (deepShadowForExitStack && CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED) {
+    armExitStack5mThesis(deepShadowForExitStack, p);
+  }
 
   if (openPos) {
     if (CFG.FVVO_TICK_EXECUTION_AUTHORITY_ENABLED) {
       openPos.barsHeld += 1;
       const observed = observed5mForSymbol(p.symbol);
+      // v2r: 5m thesis may arm a pending condition, but only a later FEATURE_TICK_FVVO can execute it.
+      armExitStack5mThesis(openPos, p);
       logLine(`${setupPrefix(openPos.setup)}_5M_CONTEXT_HOLD`, [
         `setup=${openPos.setup}`,
         `symbol=${p.symbol}`,
@@ -6746,6 +7024,15 @@ app.get("/health", (req, res) => {
       redPulseExitMinProfitPct: CFG.FVVO_RED_PULSE_EXIT_MIN_PROFIT_PCT,
       greenPulseMemoryBars: CFG.FVVO_GREEN_PULSE_MEMORY_BARS,
       greenPulseCrossAssistEnabled: CFG.FVVO_GREEN_PULSE_CROSS_ASSIST_ENABLED
+    },
+    exitStack: {
+      enabled: CFG.FVVO_EXIT_STACK_ENABLED,
+      setups: Array.from(exitStackSetupSet()),
+      dynamicSetups: Array.from(exitStackDynamicSetupSet()),
+      dynamicProfit: { enabled: CFG.FVVO_EXIT_STACK_DYNAMIC_PROFIT_ENABLED, armMfePct: CFG.FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT, minLockPnlPct: CFG.FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT },
+      runner: { enabled: CFG.FVVO_EXIT_STACK_RUNNER_ENABLED, rescueMode: CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MODE, rescueMaxSec: CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MAX_SEC },
+      pullbackGrace: { mode: CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MODE, maxSec: CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MAX_SEC },
+      executionAuthority: "FEATURE_TICK_15S"
     },
     stats: state.stats,
     manualHandoffs: Array.from(state.manualHandoffs.values()),
@@ -7602,5 +7889,20 @@ app.listen(CFG.PORT, () => {
   console.log(`FVVO_STRONG_TREND_HOLD_MIN_ADX=${CFG.FVVO_STRONG_TREND_HOLD_MIN_ADX}`);
   console.log(`FVVO_STRONG_TREND_HOLD_MIN_FVVO=${CFG.FVVO_STRONG_TREND_HOLD_MIN_FVVO}`);
   console.log(`FVVO_STRONG_TREND_HOLD_MAX_NEG_SLOPE=${CFG.FVVO_STRONG_TREND_HOLD_MAX_NEG_SLOPE}`);
+  console.log("------------------------------------------------------------");
+  console.log(`FVVO_EXIT_STACK_ENABLED=${CFG.FVVO_EXIT_STACK_ENABLED}`);
+  console.log(`FVVO_EXIT_STACK_SETUPS=${CFG.FVVO_EXIT_STACK_SETUPS}`);
+  console.log(`FVVO_EXIT_STACK_DYNAMIC_SETUPS=${CFG.FVVO_EXIT_STACK_DYNAMIC_SETUPS}`);
+  console.log(`FVVO_EXIT_STACK_DYNAMIC_PROFIT_ENABLED=${CFG.FVVO_EXIT_STACK_DYNAMIC_PROFIT_ENABLED}`);
+  console.log(`FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT=${CFG.FVVO_EXIT_STACK_DYNAMIC_ARM_MFE_PCT}`);
+  console.log(`FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT=${CFG.FVVO_EXIT_STACK_DYNAMIC_MIN_LOCK_PNL_PCT}`);
+  console.log(`FVVO_EXIT_STACK_THESIS_ENABLED=${CFG.FVVO_EXIT_STACK_THESIS_ENABLED}`);
+  console.log(`FVVO_EXIT_STACK_5M_THESIS_ENABLED=${CFG.FVVO_EXIT_STACK_5M_THESIS_ENABLED}`);
+  console.log(`FVVO_EXIT_STACK_RUNNER_ENABLED=${CFG.FVVO_EXIT_STACK_RUNNER_ENABLED}`);
+  console.log(`FVVO_EXIT_STACK_RUNNER_RESCUE_MODE=${CFG.FVVO_EXIT_STACK_RUNNER_RESCUE_MODE}`);
+  console.log(`FVVO_EXIT_STACK_PULLBACK_GRACE_MODE=${CFG.FVVO_EXIT_STACK_PULLBACK_GRACE_MODE}`);
   console.log("============================================================");
 });
+
+// v2r replay/test helpers
+module.exports = { app, CFG, state, evaluateExitStackTick, armExitStack5mThesis, ensureExitStack };
