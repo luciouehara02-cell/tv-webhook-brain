@@ -88,7 +88,6 @@ function createInitialState() {
         lastEntryMode: null,
         entryCandidatePrice: null,
 
-        // Phase 5.6 washout fields
         washoutPeakPrice: null,
         washoutLow: null,
         washoutDropPct: null,
@@ -127,6 +126,11 @@ function createInitialState() {
       trailingActive: false,
       profitLockActive: false,
       lastExitReason: null,
+      entryBarIndex: null,
+
+      stepLockActive: false,
+      stepLockTier: 0,
+      stepLockFloorPct: null,
     },
 
     execution: {
@@ -144,7 +148,6 @@ function createInitialState() {
 
       lastFeatureEventKey: null,
 
-      // live sync / recovery
       positionSyncState: "flat",
       pendingLivePosition: null,
       pendingLiveExit: null,

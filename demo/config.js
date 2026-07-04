@@ -211,7 +211,6 @@ export const CONFIG = {
   WASHOUT_DROP_PCT_MIN: num(process.env.WASHOUT_DROP_PCT_MIN, 2.2),
   WASHOUT_DEEP_DROP_PCT_MIN: num(process.env.WASHOUT_DEEP_DROP_PCT_MIN, 3.8),
 
-  // user asked first 6-7 bars should not buy
   WASHOUT_NO_BUY_BARS_AFTER_DETECT: num(
     process.env.WASHOUT_NO_BUY_BARS_AFTER_DETECT,
     7
@@ -293,11 +292,55 @@ export const CONFIG = {
   INIT_STOP_ATR_MULT: num(process.env.INIT_STOP_ATR_MULT, 1.8),
   INIT_STOP_EMA_BUFFER_ATR_MULT: num(process.env.INIT_STOP_EMA_BUFFER_ATR_MULT, 0.3),
   BREAKEVEN_ARM_PCT: num(process.env.BREAKEVEN_ARM_PCT, 0.35),
+
+  // legacy trailing / floating profit lock kept for compatibility, not used by step-lock path
   TRAILING_START_PCT: num(process.env.TRAILING_START_PCT, 0.55),
   TRAILING_ATR_MULT: num(process.env.TRAILING_ATR_MULT, 1.4),
   PROFIT_LOCK_ARM_PCT: num(process.env.PROFIT_LOCK_ARM_PCT, 0.9),
   PROFIT_LOCK_GIVEBACK_PCT: num(process.env.PROFIT_LOCK_GIVEBACK_PCT, 0.35),
+
+  // Step-lock profit floor
+  STEP_LOCK_ENABLED: bool(process.env.STEP_LOCK_ENABLED, true),
+  STEP_LOCK_STEP_PCT: num(process.env.STEP_LOCK_STEP_PCT, 0.30),
+  STEP_LOCK_FLOOR_TIER_1_PCT: num(process.env.STEP_LOCK_FLOOR_TIER_1_PCT, 0.10),
+  STEP_LOCK_FLOOR_TIER_2_PCT: num(process.env.STEP_LOCK_FLOOR_TIER_2_PCT, 0.28),
+  STEP_LOCK_FLOOR_TIER_3_PCT: num(process.env.STEP_LOCK_FLOOR_TIER_3_PCT, 0.50),
+  STEP_LOCK_FLOOR_TIER_4_PCT: num(process.env.STEP_LOCK_FLOOR_TIER_4_PCT, 0.72),
+  STEP_LOCK_FLOOR_TIER_5_PCT: num(process.env.STEP_LOCK_FLOOR_TIER_5_PCT, 0.95),
+  STEP_LOCK_FLOOR_TIER_6_PCT: num(process.env.STEP_LOCK_FLOOR_TIER_6_PCT, 1.20),
+  STEP_LOCK_FLOOR_INCREMENT_AFTER_LAST_PCT: num(
+    process.env.STEP_LOCK_FLOOR_INCREMENT_AFTER_LAST_PCT,
+    0.25
+  ),
+
   EXIT_ON_CLOSE_BELOW_EMA18: bool(process.env.EXIT_ON_CLOSE_BELOW_EMA18, true),
+
+  // Adaptive EMA18 exits
+  BREAKOUT_EMA18_EXIT_BUFFER_PCT: num(
+    process.env.BREAKOUT_EMA18_EXIT_BUFFER_PCT,
+    0.03
+  ),
+  BREAKOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY: num(
+    process.env.BREAKOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY,
+    1
+  ),
+  BREAKOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES: num(
+    process.env.BREAKOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES,
+    1
+  ),
+
+  WASHOUT_EMA18_EXIT_BUFFER_PCT: num(
+    process.env.WASHOUT_EMA18_EXIT_BUFFER_PCT,
+    0.05
+  ),
+  WASHOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY: num(
+    process.env.WASHOUT_EMA18_EXIT_MIN_BARS_AFTER_ENTRY,
+    2
+  ),
+  WASHOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES: num(
+    process.env.WASHOUT_EMA18_EXIT_REQUIRE_CONSECUTIVE_CLOSES,
+    2
+  ),
 
   // Debug
   LOG_FULL_STATE_ON_TRANSITIONS: bool(

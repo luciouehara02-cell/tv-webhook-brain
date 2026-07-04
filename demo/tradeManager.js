@@ -2,8 +2,7 @@ import { CONFIG } from "./config.js";
 import {
   buildInitialStop,
   shouldMoveToBreakEven,
-  calcTrailingStop,
-  calcProfitLockStop,
+  getStepLockProfile,
   checkExitTrigger,
 } from "./stopEngine.js";
 
@@ -28,6 +27,10 @@ export function onEntryPositionPatch(state) {
     profitLockActive: false,
     lastExitReason: null,
     entryBarIndex: state.meta.barIndex ?? null,
+
+    stepLockActive: false,
+    stepLockTier: 0,
+    stepLockFloorPct: null,
   };
 }
 
@@ -74,49 +77,58 @@ export function manageOpenPosition(state) {
     logs.push(`🟨 BREAKEVEN ARMED | stop=${newStop.toFixed(4)}`);
   }
 
-  const trailStop = calcTrailingStop({
-    ...state,
-    position: { ...p, ...patch },
-  });
-
-  if (num(trailStop)) {
-    const currentStop = num(patch.stopPrice)
-      ? patch.stopPrice
-      : num(p.stopPrice)
-      ? p.stopPrice
-      : null;
-
-    const newStop = updateStopHigherOnly(currentStop, trailStop);
-
-    if (num(newStop) && newStop !== currentStop) {
-      patch.stopPrice = newStop;
-      patch.trailingActive = true;
-      logs.push(`🟦 TRAIL UPDATE | stop=${newStop.toFixed(4)}`);
-    }
-  }
-
-  const profitLockStop = calcProfitLockStop({
+  const stepLock = getStepLockProfile({
     ...state,
     position: {
       ...p,
       ...patch,
       peakPrice: patch.peakPrice ?? p.peakPrice,
+      stopPrice: patch.stopPrice ?? p.stopPrice,
     },
   });
 
-  if (num(profitLockStop)) {
+  if (stepLock.armed) {
+    const currentTier = Number.isFinite(Number(p.stepLockTier))
+      ? Number(p.stepLockTier)
+      : 0;
+    const currentFloorPct = num(p.stepLockFloorPct) ? p.stepLockFloorPct : null;
     const currentStop = num(patch.stopPrice)
       ? patch.stopPrice
       : num(p.stopPrice)
       ? p.stopPrice
       : null;
 
-    const newStop = updateStopHigherOnly(currentStop, profitLockStop);
+    const newStop = updateStopHigherOnly(currentStop, stepLock.stopPrice);
 
-    if (num(newStop) && newStop !== currentStop) {
+    if (stepLock.tier > currentTier) {
+      patch.stepLockActive = true;
+      patch.stepLockTier = stepLock.tier;
+      patch.stepLockFloorPct = stepLock.floorPct;
       patch.stopPrice = newStop;
       patch.profitLockActive = true;
-      logs.push(`🟪 PROFIT LOCK | stop=${newStop.toFixed(4)}`);
+
+      logs.push(
+        `🟪 STEP LOCK UPGRADE | tier=${stepLock.tier} peakPct=${stepLock.peakProfitPct.toFixed(
+          3
+        )} floorPct=${stepLock.floorPct.toFixed(3)} stop=${newStop.toFixed(4)}`
+      );
+    } else if (
+      !num(currentFloorPct) ||
+      stepLock.floorPct > currentFloorPct ||
+      (num(newStop) && newStop !== currentStop)
+    ) {
+      patch.stepLockActive = true;
+      patch.stepLockTier = Math.max(currentTier, stepLock.tier);
+      patch.stepLockFloorPct = stepLock.floorPct;
+      patch.stopPrice = newStop;
+      patch.profitLockActive = true;
+
+      logs.push(
+        `🟪 STEP LOCK HOLD | tier=${Math.max(
+          currentTier,
+          stepLock.tier
+        )} floorPct=${stepLock.floorPct.toFixed(3)} stop=${newStop.toFixed(4)}`
+      );
     }
   }
 
@@ -174,6 +186,10 @@ export function buildExitPatches(state, exitSignal) {
       profitLockActive: false,
       lastExitReason: exitReason,
       entryBarIndex: null,
+
+      stepLockActive: false,
+      stepLockTier: 0,
+      stepLockFloorPct: null,
     },
     executionPatch: {
       lastAction:

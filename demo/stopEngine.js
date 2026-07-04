@@ -55,6 +55,46 @@ function getEma18ExitProfile(state) {
   };
 }
 
+function getStepLockFloorTable() {
+  return [
+    0,
+    Number(CONFIG.STEP_LOCK_FLOOR_TIER_1_PCT),
+    Number(CONFIG.STEP_LOCK_FLOOR_TIER_2_PCT),
+    Number(CONFIG.STEP_LOCK_FLOOR_TIER_3_PCT),
+    Number(CONFIG.STEP_LOCK_FLOOR_TIER_4_PCT),
+    Number(CONFIG.STEP_LOCK_FLOOR_TIER_5_PCT),
+    Number(CONFIG.STEP_LOCK_FLOOR_TIER_6_PCT),
+  ];
+}
+
+function getStepLockTierForPeakProfitPct(peakProfitPct) {
+  if (!CONFIG.STEP_LOCK_ENABLED) return 0;
+  if (!num(peakProfitPct) || peakProfitPct <= 0) return 0;
+
+  const stepPct = Number(CONFIG.STEP_LOCK_STEP_PCT);
+  if (!num(stepPct) || stepPct <= 0) return 0;
+
+  const tier = Math.floor(peakProfitPct / stepPct + 1e-9);
+  return tier > 0 ? tier : 0;
+}
+
+function getStepLockFloorPctForTier(tier) {
+  if (!Number.isFinite(Number(tier)) || Number(tier) <= 0) return null;
+
+  const t = Number(tier);
+  const table = getStepLockFloorTable();
+
+  if (t < table.length) return table[t];
+
+  const lastTier = table.length - 1;
+  const lastFloor = table[lastTier];
+  const extraTiers = t - lastTier;
+  const extraInc = Number(CONFIG.STEP_LOCK_FLOOR_INCREMENT_AFTER_LAST_PCT);
+
+  if (!num(lastFloor) || !num(extraInc)) return lastFloor;
+  return lastFloor + extraTiers * extraInc;
+}
+
 export function buildInitialStop(state) {
   const f = state.features;
   const p = state.position;
@@ -89,32 +129,53 @@ export function shouldMoveToBreakEven(state) {
   return gainPct >= CONFIG.BREAKEVEN_ARM_PCT;
 }
 
-export function calcTrailingStop(state) {
+export function getStepLockProfile(state) {
   const p = state.position;
   const f = state.features;
 
-  if (!p.inPosition || !num(p.entryPrice) || !num(f.close)) return null;
+  if (!CONFIG.STEP_LOCK_ENABLED) {
+    return {
+      enabled: false,
+      armed: false,
+      tier: 0,
+      floorPct: null,
+      stopPrice: null,
+      currentProfitPct: null,
+      peakProfitPct: null,
+    };
+  }
 
-  const atr = f.atr ?? null;
-  const close = f.close;
-  const gainPct = ((close - p.entryPrice) / p.entryPrice) * 100;
+  if (!p.inPosition || !num(p.entryPrice) || !num(f.close) || !num(p.peakPrice)) {
+    return {
+      enabled: true,
+      armed: false,
+      tier: 0,
+      floorPct: null,
+      stopPrice: null,
+      currentProfitPct: null,
+      peakProfitPct: null,
+    };
+  }
 
-  if (gainPct < CONFIG.TRAILING_START_PCT) return null;
-  if (!num(atr)) return null;
+  const currentProfitPct = ((f.close - p.entryPrice) / p.entryPrice) * 100;
+  const peakProfitPct = ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100;
 
-  return close - atr * CONFIG.TRAILING_ATR_MULT;
-}
+  const tier = getStepLockTierForPeakProfitPct(peakProfitPct);
+  const floorPct = getStepLockFloorPctForTier(tier);
+  const stopPrice =
+    num(floorPct) && num(p.entryPrice)
+      ? p.entryPrice * (1 + floorPct / 100)
+      : null;
 
-export function calcProfitLockStop(state) {
-  const p = state.position;
-
-  if (!p.inPosition || !num(p.entryPrice) || !num(p.peakPrice)) return null;
-
-  const gainPct = ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100;
-
-  if (gainPct < CONFIG.PROFIT_LOCK_ARM_PCT) return null;
-
-  return p.peakPrice * (1 - CONFIG.PROFIT_LOCK_GIVEBACK_PCT / 100);
+  return {
+    enabled: true,
+    armed: tier > 0 && num(floorPct) && num(stopPrice),
+    tier,
+    floorPct,
+    stopPrice,
+    currentProfitPct,
+    peakProfitPct,
+  };
 }
 
 export function checkExitTrigger(state) {
@@ -130,7 +191,10 @@ export function checkExitTrigger(state) {
   if (num(stopPrice) && num(close) && close <= stopPrice) {
     return {
       shouldExit: true,
-      reason: "stop_hit",
+      reason:
+        p.stepLockActive && Number(p.stepLockTier) > 0
+          ? "step_lock_floor_hit"
+          : "stop_hit",
       exitPrice: close,
     };
   }
