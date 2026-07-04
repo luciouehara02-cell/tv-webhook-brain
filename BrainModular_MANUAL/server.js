@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1u_AUDIT_HYSTERESIS_OVERHEAT_CONFIRM
+// BrainFVVO_ManualExit_v1v_REENTRY_15S_FAST_LAUNCH_EARLY_TURN_SHADOW
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
 // v1t runner-continuation-rescue candidate: retains v1s behaviour and adds a shadow/live-capable 5m EMA18 (pink-line) rescue for qualified tight-runner exits:
@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1u_AUDIT_HYSTERESIS_OVERHEAT_CONFIRM"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1v_REENTRY_15S_FAST_LAUNCH_EARLY_TURN_SHADOW"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -298,6 +298,34 @@ const CFG = {
   REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED: envBool("REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED", true),
   REENTRY_FAST_RECLAIM_MIN_PRIOR_IMPULSE_PCT: envNum("REENTRY_FAST_RECLAIM_MIN_PRIOR_IMPULSE_PCT", 0.90),
   REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI: envNum("REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI", 72),
+
+  // v1v: measure whether a first strong 15-second recovery tick can improve an automatic
+  // re-entry price without changing production entries. Both paths default to shadow.
+  // `fast_launch` is a strict one-tick launch; `early_turn` is deliberately more permissive
+  // and must remain shadow until replay + live audits justify any promotion.
+  REENTRY_15S_FAST_LAUNCH_MODE: envStr("REENTRY_15S_FAST_LAUNCH_MODE", "shadow").toLowerCase(),
+  REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT: envNum("REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT", 0.90),
+  REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT: envNum("REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT", 0.70),
+  REENTRY_15S_FAST_LAUNCH_MAX_PULLBACK_PCT: envNum("REENTRY_15S_FAST_LAUNCH_MAX_PULLBACK_PCT", 1.20),
+  REENTRY_15S_FAST_LAUNCH_MIN_RSI: envNum("REENTRY_15S_FAST_LAUNCH_MIN_RSI", 65),
+  REENTRY_15S_FAST_LAUNCH_MAX_RSI: envNum("REENTRY_15S_FAST_LAUNCH_MAX_RSI", 84),
+  REENTRY_15S_FAST_LAUNCH_MIN_ADX: envNum("REENTRY_15S_FAST_LAUNCH_MIN_ADX", 30),
+  REENTRY_15S_FAST_LAUNCH_MIN_FVVO: envNum("REENTRY_15S_FAST_LAUNCH_MIN_FVVO", 0.50),
+  REENTRY_15S_FAST_LAUNCH_MIN_SLOPE: envNum("REENTRY_15S_FAST_LAUNCH_MIN_SLOPE", 1.20),
+  REENTRY_15S_FAST_LAUNCH_REQUIRE_RAY_BULL: envBool("REENTRY_15S_FAST_LAUNCH_REQUIRE_RAY_BULL", true),
+  REENTRY_15S_FAST_LAUNCH_REQUIRE_CROSS_UP: envBool("REENTRY_15S_FAST_LAUNCH_REQUIRE_CROSS_UP", true),
+  REENTRY_15S_FAST_LAUNCH_REQUIRE_5M_CONTEXT: envBool("REENTRY_15S_FAST_LAUNCH_REQUIRE_5M_CONTEXT", true),
+
+  REENTRY_15S_EARLY_TURN_MODE: envStr("REENTRY_15S_EARLY_TURN_MODE", "shadow").toLowerCase(),
+  REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT: envNum("REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT", 0.90),
+  REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT: envNum("REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT", 0.70),
+  REENTRY_15S_EARLY_TURN_MAX_PULLBACK_PCT: envNum("REENTRY_15S_EARLY_TURN_MAX_PULLBACK_PCT", 1.20),
+  REENTRY_15S_EARLY_TURN_MIN_RSI: envNum("REENTRY_15S_EARLY_TURN_MIN_RSI", 54),
+  REENTRY_15S_EARLY_TURN_MIN_ADX: envNum("REENTRY_15S_EARLY_TURN_MIN_ADX", 30),
+  REENTRY_15S_EARLY_TURN_MIN_FVVO: envNum("REENTRY_15S_EARLY_TURN_MIN_FVVO", -1.00),
+  REENTRY_15S_EARLY_TURN_MIN_SLOPE: envNum("REENTRY_15S_EARLY_TURN_MIN_SLOPE", 0.80),
+  REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT: envNum("REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT", 0.03),
+  REENTRY_15S_EARLY_TURN_REQUIRE_5M_CONTEXT: envBool("REENTRY_15S_EARLY_TURN_REQUIRE_5M_CONTEXT", true),
 
   // v1r: when a profitable AUTO_REENTRY sees a transient tick-thesis failure while the 5m thesis remains strongly bullish,
   // optionally defer that one exit until a short recovery cross or timeout. Manual/price-trigger first legs are untouched.
@@ -618,6 +646,10 @@ function configProblems() {
   if (CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_REENTRY_RECLAIM_CONFIRM_OBSERVATIONS");
   if (CFG.REENTRY_STOP_BUFFER_PCT < 0 || CFG.REENTRY_MIN_STOP_DISTANCE_PCT <= 0 || CFG.REENTRY_MAX_STOP_DISTANCE_PCT < CFG.REENTRY_MIN_STOP_DISTANCE_PCT) problems.push("INVALID_REENTRY_STOP_PROJECTION");
   if (CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_RSI <= 0 || CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_ADX < 0 || CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_SLOPE < 0 || CFG.REENTRY_FAST_RECLAIM_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI < CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_RSI) problems.push("INVALID_REENTRY_PRE_RELEASE_OVERRIDE");
+  if (!["disabled", "shadow", "live"].includes(CFG.REENTRY_15S_FAST_LAUNCH_MODE) || !["disabled", "shadow", "live"].includes(CFG.REENTRY_15S_EARLY_TURN_MODE)) problems.push("INVALID_REENTRY_15S_LAUNCH_MODE");
+  if (CFG.REENTRY_15S_FAST_LAUNCH_MODE === "live" && CFG.REENTRY_15S_EARLY_TURN_MODE === "live") problems.push("ONLY_ONE_REENTRY_15S_LAUNCH_PATH_MAY_BE_LIVE");
+  if (CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT <= 0 || CFG.REENTRY_15S_FAST_LAUNCH_MAX_PULLBACK_PCT < CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT || CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI <= 0 || CFG.REENTRY_15S_FAST_LAUNCH_MAX_RSI < CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI || CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX < 0 || CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE < 0) problems.push("INVALID_REENTRY_15S_FAST_LAUNCH_THRESHOLDS");
+  if (CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT <= 0 || CFG.REENTRY_15S_EARLY_TURN_MAX_PULLBACK_PCT < CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT || CFG.REENTRY_15S_EARLY_TURN_MIN_RSI <= 0 || CFG.REENTRY_15S_EARLY_TURN_MIN_ADX < 0 || CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE < 0 || CFG.REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT < 0) problems.push("INVALID_REENTRY_15S_EARLY_TURN_THRESHOLDS");
   if (CFG.YELLOW_TP_SHADOW_MIN_MFE_PCT < 0 || CFG.YELLOW_TP_SHADOW_MIN_PNL_PCT < 0) problems.push("INVALID_YELLOW_TP_SHADOW_THRESHOLDS");
   if (CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC || CFG.PRICE_ENTRY_MAX_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC) problems.push("INVALID_PRICE_ENTRY_EXPIRY_RANGE");
   if (CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT <= 0 || CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) problems.push("INVALID_PRICE_ENTRY_TRIGGER_DISTANCE_RANGE");
@@ -2221,6 +2253,62 @@ function reentryPullbackHysteresisAudit(campaign, feature, belowEma18Pct, phase)
   }
 }
 
+function reentry15sFastLaunchEligible(campaign, feature, context, values) {
+  const price = values.price, tickEma8 = values.tickEma8, tickEma18 = values.tickEma18;
+  const rsi = values.rsi, adx = values.adx, fvvo = values.fvvo, slope = values.slope;
+  const priorImpulsePct = percentPnl(finite(campaign?.baseEntryPrice, 0), finite(campaign?.highestPrice, 0));
+  const pullbackDepthPct = finite(campaign?.pullbackDepthPct, 0);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const structural = tickEma8 !== null && tickEma18 !== null && price >= tickEma8 && price >= tickEma18 && tickEma8 >= tickEma18 && feature.redPulse !== true && feature.crossDown !== true;
+  const momentum = rsi !== null && rsi >= CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI && rsi <= CFG.REENTRY_15S_FAST_LAUNCH_MAX_RSI &&
+    adx !== null && adx >= CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX &&
+    fvvo !== null && fvvo >= CFG.REENTRY_15S_FAST_LAUNCH_MIN_FVVO &&
+    slope !== null && slope >= CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE;
+  const impulseOk = priorImpulsePct + 1e-9 >= CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT;
+  const pullbackOk = pullbackDepthPct + 1e-9 >= CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT && pullbackDepthPct <= CFG.REENTRY_15S_FAST_LAUNCH_MAX_PULLBACK_PCT + 1e-9;
+  const rayOk = !CFG.REENTRY_15S_FAST_LAUNCH_REQUIRE_RAY_BULL || ray === "RAY_BULL";
+  const crossOk = !CFG.REENTRY_15S_FAST_LAUNCH_REQUIRE_CROSS_UP || feature.crossUp === true;
+  const contextOk = !CFG.REENTRY_15S_FAST_LAUNCH_REQUIRE_5M_CONTEXT || context.ok;
+  return { eligible: structural && momentum && impulseOk && pullbackOk && rayOk && crossOk && contextOk, priorImpulsePct: round(priorImpulsePct, 6), pullbackDepthPct: round(pullbackDepthPct, 6), structural, momentum, impulseOk, pullbackOk, rayOk, crossOk, contextOk, ray };
+}
+
+function reentry15sEarlyTurnEligible(campaign, feature, context, values) {
+  const price = values.price, tickEma8 = values.tickEma8, tickEma18 = values.tickEma18;
+  const rsi = values.rsi, adx = values.adx, fvvo = values.fvvo, slope = values.slope;
+  const priorImpulsePct = percentPnl(finite(campaign?.baseEntryPrice, 0), finite(campaign?.highestPrice, 0));
+  const pullbackDepthPct = finite(campaign?.pullbackDepthPct, 0);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const emaConverged = tickEma8 !== null && tickEma18 !== null && tickEma8 >= tickEma18 * (1 - CFG.REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT / 100);
+  const structural = tickEma8 !== null && tickEma18 !== null && price >= tickEma8 && price >= tickEma18 && emaConverged && feature.redPulse !== true && feature.crossDown !== true;
+  const momentum = rsi !== null && rsi >= CFG.REENTRY_15S_EARLY_TURN_MIN_RSI &&
+    adx !== null && adx >= CFG.REENTRY_15S_EARLY_TURN_MIN_ADX &&
+    fvvo !== null && fvvo >= CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO &&
+    slope !== null && slope >= CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE;
+  const impulseOk = priorImpulsePct + 1e-9 >= CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT;
+  const pullbackOk = pullbackDepthPct + 1e-9 >= CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT && pullbackDepthPct <= CFG.REENTRY_15S_EARLY_TURN_MAX_PULLBACK_PCT + 1e-9;
+  const rayOk = ray !== "RAY_BEAR";
+  const contextOk = !CFG.REENTRY_15S_EARLY_TURN_REQUIRE_5M_CONTEXT || context.ok;
+  return { eligible: structural && momentum && impulseOk && pullbackOk && rayOk && contextOk, priorImpulsePct: round(priorImpulsePct, 6), pullbackDepthPct: round(pullbackDepthPct, 6), structural, momentum, impulseOk, pullbackOk, rayOk, contextOk, emaConverged, ray };
+}
+
+function logReentry15sShadowCandidate(kind, campaign, feature, context, values, detail) {
+  const key = kind === "FAST_LAUNCH" ? "fastLaunchShadow" : "earlyTurnShadow";
+  if (campaign[key]?.logged) return;
+  const projectedStop = projectReentryStop(values.price, campaign.pullbackLowPrice);
+  const candidate = {
+    campaignId: campaign.id, profile: kind === "FAST_LAUNCH" ? "AUTO_REENTRY_15S_FAST_LAUNCH_SHADOW" : "AUTO_REENTRY_15S_EARLY_TURN_SHADOW",
+    action: "NO_REENTRY_BEHAVIOUR_CHANGE", observedAt: nowIso(), observedAtMs: nowMs(), price: round(values.price, 8),
+    projectedStopPrice: projectedStop.ok ? projectedStop.stopPrice : null, projectedStopDistancePct: projectedStop.ok ? projectedStop.stopDistancePct : null,
+    baseEntryPrice: campaign.baseEntryPrice, highestPrice: campaign.highestPrice, pullbackLowPrice: campaign.pullbackLowPrice,
+    pullbackDepthPct: campaign.pullbackDepthPct, bouncePct: round(percentPnl(campaign.pullbackLowPrice, values.price), 6),
+    tick: { ema8: values.tickEma8, ema18: values.tickEma18, rsi: values.rsi, adx: values.adx, fvvo: values.fvvo, slope: values.slope, crossUp: feature.crossUp, rayRegime: detail.ray },
+    context5m: { price: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, rayRegime: context.ray, ageSec: round(context.ctxAge, 2) },
+    checks: detail,
+  };
+  campaign[key] = { logged: true, candidate };
+  log("INFO", kind === "FAST_LAUNCH" ? "FVVO_REENTRY_15S_FAST_LAUNCH_SHADOW_CANDIDATE" : "FVVO_REENTRY_15S_EARLY_TURN_SHADOW_CANDIDATE", candidate);
+}
+
 async function evaluateReentryShadow(feature) {
   const r = ensureReentryState();
   if (!CFG.REENTRY_ENABLED || !["shadow", "auto"].includes(CFG.REENTRY_PHASE) || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
@@ -2315,12 +2403,28 @@ async function evaluateReentryShadow(feature) {
     chasePct <= CFG.REENTRY_MAX_CHASE_ABOVE_EMA8_PCT &&
     feature.redPulse !== true && feature.crossDown !== true;
 
-  if (!conditions) {
+  // v1v audit candidates are evaluated at the first usable recovery tick, before the legacy
+  // two-observation confirmation has time to chase a stronger reclaim. Shadow modes never change
+  // campaign state, entry timing, stop placement, or 3Commas forwarding.
+  const launchValues = { price, tickEma8, tickEma18, rsi, adx, fvvo, slope };
+  const fastLaunch = reentry15sFastLaunchEligible(c, feature, context, launchValues);
+  const earlyTurn = reentry15sEarlyTurnEligible(c, feature, context, launchValues);
+  if (CFG.REENTRY_15S_FAST_LAUNCH_MODE === "shadow" && fastLaunch.eligible) logReentry15sShadowCandidate("FAST_LAUNCH", c, feature, context, launchValues, fastLaunch);
+  if (CFG.REENTRY_15S_EARLY_TURN_MODE === "shadow" && earlyTurn.eligible) logReentry15sShadowCandidate("EARLY_TURN", c, feature, context, launchValues, earlyTurn);
+  const liveFastLaunch = CFG.REENTRY_15S_FAST_LAUNCH_MODE === "live" && fastLaunch.eligible;
+  const liveEarlyTurn = CFG.REENTRY_15S_EARLY_TURN_MODE === "live" && earlyTurn.eligible;
+  const launchPath = liveFastLaunch ? "FAST_LAUNCH_15S" : (liveEarlyTurn ? "EARLY_TURN_15S" : null);
+  const effectiveConditions = conditions || Boolean(launchPath);
+
+  if (!effectiveConditions) {
     resetReentryReclaim(c);
     await persistState("reentry_wait_reclaim");
     return;
   }
-  if (!c.reclaim.firstAtMs) c.reclaim = { observations: 1, firstAtMs: current, lastPrice: price };
+  if (launchPath) {
+    c.reclaim = { observations: CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS, firstAtMs: current, lastPrice: price };
+    log("WARN", "FVVO_REENTRY_15S_LAUNCH_LIVE_TEST", { campaignId: c.id, launchPath, price, pullbackLowPrice: c.pullbackLowPrice, pullbackDepthPct: c.pullbackDepthPct, action: "ONE_TICK_LAUNCH_WILL_FORWARD_AFTER_STOP_VALIDATION" });
+  } else if (!c.reclaim.firstAtMs) c.reclaim = { observations: 1, firstAtMs: current, lastPrice: price };
   else { c.reclaim.observations = Number(c.reclaim.observations || 0) + 1; c.reclaim.lastPrice = price; }
   if (c.reclaim.observations < CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS) {
     await persistState("reentry_reclaim_confirming");
@@ -2337,7 +2441,7 @@ async function evaluateReentryShadow(feature) {
   }
 
   const candidate = {
-    id: crypto.randomUUID(), profile: REENTRY_PROFILE, sequence: Number(c.nextReentryNumber || 1),
+    id: crypto.randomUUID(), profile: launchPath === "FAST_LAUNCH_15S" ? "AUTO_REENTRY_15S_FAST_LAUNCH" : (launchPath === "EARLY_TURN_15S" ? "AUTO_REENTRY_15S_EARLY_TURN" : REENTRY_PROFILE), sequence: Number(c.nextReentryNumber || 1),
     observedAt: nowIso(), observedAtMs: current, price: round(price, 8), projectedStopPrice: projectedStop.stopPrice,
     projectedStopDistancePct: projectedStop.stopDistancePct, baseEntryPrice: c.baseEntryPrice, highestPrice: c.highestPrice,
     pullbackLowPrice: c.pullbackLowPrice, pullbackDepthPct: c.pullbackDepthPct, bouncePct: round(bouncePct, 6),
@@ -2345,12 +2449,12 @@ async function evaluateReentryShadow(feature) {
     context5m: { price: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, rayRegime: context.ray, ageSec: round(context.ctxAge, 2) },
     reentryContextMode: context.ok ? "5M_CONTEXT" : (preReleaseOverride.ok ? preReleaseOverride.source : "NONE"),
     preReleasePullbackCarried: Boolean(c.preReleasePullback?.eligible),
-    mode: CFG.REENTRY_PHASE, automaticOrderSent: false,
+    mode: CFG.REENTRY_PHASE, launchPath: launchPath || "STANDARD_TWO_CONFIRM", automaticOrderSent: false,
   };
   c.observedCandidates = Number(c.observedCandidates || 0) + 1;
   c.lastCandidate = candidate;
   c.phase = "CANDIDATE_OBSERVED";
-  c.reason = "PULLBACK_RECLAIM_MICROBREAKOUT_CONFIRMED";
+  c.reason = launchPath ? `PULLBACK_RECLAIM_${launchPath}_CONFIRMED` : "PULLBACK_RECLAIM_MICROBREAKOUT_CONFIRMED";
   c.active = false;
   resetReentryReclaim(c);
 
@@ -2369,7 +2473,7 @@ async function evaluateReentryShadow(feature) {
   candidate.forwardStatus = "PENDING";
   await persistState("reentry_auto_pre_forward");
   log("INFO", "FVVO_REENTRY_CANDIDATE_AUTO", { ...candidate, executionMode: CFG.EXECUTION_MODE });
-  const result = await forward3Commas("enter_long", price, "AUTO_REENTRY_PULLBACK_MICROBREAKOUT", { dedupeKey: `auto_reentry_enter_${candidate.id}`, stopPct: projectedStop.stopDistancePct });
+  const result = await forward3Commas("enter_long", price, candidate.profile, { dedupeKey: `auto_reentry_enter_${candidate.id}`, stopPct: projectedStop.stopDistancePct });
   if (!result.ok) {
     state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
     state.manual.recoveryRequired = true;
@@ -2745,10 +2849,13 @@ async function start() {
     manualEntryOverheatConfirmationEnabled: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRMATION_ENABLED, manualEntryOverheatConfirmExpirySec: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC, manualEntryOverheatMinSignals: CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS,
     runnerContinuationRescueMode: runnerContinuationRescueMode(), runnerContinuationRescueMinMfePct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT, runnerContinuationRescueMinPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT, runnerContinuationRescueMaxSec: CFG.RUNNER_CONTINUATION_RESCUE_MAX_SEC, runnerContinuationRescueHardLockPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_HARD_LOCK_PNL_PCT, runnerContinuationRescueFastTickProxyAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_FAST_TICK_PROXY_AUDIT_ENABLED, runnerContinuationRescuePostExitAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_ENABLED,
     reentryPullbackHysteresisAuditEnabled: CFG.REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED, reentryPullbackInvalidationHysteresisPct: CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT, reentryPullbackRearmAboveEma18Pct: CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT,
-    reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI, reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
+    reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI,
+    reentry15sFastLaunchMode: CFG.REENTRY_15S_FAST_LAUNCH_MODE, reentry15sFastLaunchMinPriorImpulsePct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT, reentry15sFastLaunchMinPullbackPct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT, reentry15sFastLaunchMinRsi: CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI, reentry15sFastLaunchMinAdx: CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX, reentry15sFastLaunchMinFvvo: CFG.REENTRY_15S_FAST_LAUNCH_MIN_FVVO, reentry15sFastLaunchMinSlope: CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE,
+    reentry15sEarlyTurnMode: CFG.REENTRY_15S_EARLY_TURN_MODE, reentry15sEarlyTurnMinPriorImpulsePct: CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT, reentry15sEarlyTurnMinPullbackPct: CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT, reentry15sEarlyTurnMinRsi: CFG.REENTRY_15S_EARLY_TURN_MIN_RSI, reentry15sEarlyTurnMinAdx: CFG.REENTRY_15S_EARLY_TURN_MIN_ADX, reentry15sEarlyTurnMinFvvo: CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO, reentry15sEarlyTurnMinSlope: CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE,
+    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
