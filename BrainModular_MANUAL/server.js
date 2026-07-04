@@ -1,8 +1,8 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1v_REENTRY_15S_FAST_LAUNCH_EARLY_TURN_SHADOW
+// BrainFVVO_ManualExit_v1w_TRAILING_DIP_RECLAIM_SMART_ENTRY
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// v1t runner-continuation-rescue candidate: retains v1s behaviour and adds a shadow/live-capable 5m EMA18 (pink-line) rescue for qualified tight-runner exits:
+// v1w smart-entry candidate: retains v1v behaviour and adds a shadow/live-capable trailing dip-reclaim entry mode for user-armed manual levels:
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1v_REENTRY_15S_FAST_LAUNCH_EARLY_TURN_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1w_TRAILING_DIP_RECLAIM_SMART_ENTRY"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -158,6 +158,9 @@ const CFG = {
   // v1l user-armed absolute price trigger. This is a brain-side conditional entry,
   // not an exchange-native resting limit order. It sends a bot-fixed MARKET entry only
   // after a fresh price crosses the armed level from the correct side.
+  // v1w adds `trailing_dip_reclaim`: after activation_price crosses down, the brain tracks the
+  // lowest observed 15-second feature price and buys only after a calculated rebound. The
+  // mode is isolated from existing raw `dip` and `breakout` commands.
   PRICE_ENTRY_ENABLED: envBool("PRICE_ENTRY_ENABLED", true),
   MANUAL_ALLOW_ARM_PRICE_ENTRY: envBool("MANUAL_ALLOW_ARM_PRICE_ENTRY", true),
   MANUAL_ALLOW_CANCEL_PRICE_ENTRY: envBool("MANUAL_ALLOW_CANCEL_PRICE_ENTRY", true),
@@ -168,6 +171,19 @@ const CFG = {
   PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT: envNum("PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT", 5.0),
   PRICE_ENTRY_REQUIRE_ACTUAL_CROSS: envBool("PRICE_ENTRY_REQUIRE_ACTUAL_CROSS", true),
   PRICE_ENTRY_TRIGGER_ON_FAST_TICK: envBool("PRICE_ENTRY_TRIGGER_ON_FAST_TICK", false),
+
+  // v1w user-armed one-input trailing dip reclaim. The operator supplies only activation_price
+  // and stop_price. Once activation is crossed down, the brain records the lowest observed feature
+  // price and enters on a percentage rebound. `shadow` never forwards; `live` forwards one market entry.
+  TRAILING_DIP_RECLAIM_MODE: envStr("TRAILING_DIP_RECLAIM_MODE", "shadow").toLowerCase(),
+  TRAILING_DIP_RECLAIM_MIN_DROP_PCT: envNum("TRAILING_DIP_RECLAIM_MIN_DROP_PCT", 0.10),
+  TRAILING_DIP_RECLAIM_RECLAIM_PCT: envNum("TRAILING_DIP_RECLAIM_RECLAIM_PCT", 0.05),
+  TRAILING_DIP_RECLAIM_MAX_CHASE_PCT: envNum("TRAILING_DIP_RECLAIM_MAX_CHASE_PCT", 0.12),
+  TRAILING_DIP_RECLAIM_MAX_TRACK_SEC: envNum("TRAILING_DIP_RECLAIM_MAX_TRACK_SEC", 600),
+  TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT: envNum("TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT", 0.10),
+  TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY: envBool("TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY", false),
+  TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE: envNum("TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE", 0),
+  TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR: envBool("TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR", false),
 
   // v1h one-stop / optional fixed-target controls.
   MANUAL_ONE_STOP_PROFILE_ENABLED: envBool("MANUAL_ONE_STOP_PROFILE_ENABLED", true),
@@ -418,7 +434,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -653,6 +669,8 @@ function configProblems() {
   if (CFG.YELLOW_TP_SHADOW_MIN_MFE_PCT < 0 || CFG.YELLOW_TP_SHADOW_MIN_PNL_PCT < 0) problems.push("INVALID_YELLOW_TP_SHADOW_THRESHOLDS");
   if (CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC || CFG.PRICE_ENTRY_MAX_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC) problems.push("INVALID_PRICE_ENTRY_EXPIRY_RANGE");
   if (CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT <= 0 || CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) problems.push("INVALID_PRICE_ENTRY_TRIGGER_DISTANCE_RANGE");
+  if (!["disabled", "shadow", "live"].includes(CFG.TRAILING_DIP_RECLAIM_MODE)) problems.push("INVALID_TRAILING_DIP_RECLAIM_MODE");
+  if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
   if (CFG.STATE_PERSISTENCE_REQUIRED && !persistenceReady) problems.push("PERSISTENCE_NOT_READY");
   return problems;
 }
@@ -2502,6 +2520,30 @@ function ensurePriceEntryState() {
   return state.priceEntry;
 }
 
+function trailingDipReclaimMode() { return CFG.TRAILING_DIP_RECLAIM_MODE; }
+function isTrailingDipReclaim(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim"; }
+function nonBearRay(value) { return !String(value || "").toUpperCase().includes("BEAR"); }
+
+function trailingDipReclaimPublic(item) {
+  const t = item?.trailing;
+  if (!t || typeof t !== "object") return null;
+  return {
+    mode: trailingDipReclaimMode(),
+    phase: t.phase || "ARMED",
+    activatedAt: t.activatedAt || null,
+    activationPrice: item.activationPrice || item.triggerPrice || null,
+    observedLowPrice: t.observedLowPrice || null,
+    observedLowAt: t.observedLowAt || null,
+    observedDropPct: t.observedDropPct || 0,
+    lowStopBufferPct: t.lowStopBufferPct || 0,
+    minDipQualified: Boolean(t.minDipQualified),
+    reclaimTargetPrice: t.reclaimTargetPrice || null,
+    maxEntryPrice: t.maxEntryPrice || null,
+    trackingExpiresAt: t.trackingExpiresAt || null,
+    tickRecoveryRequired: Boolean(CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY),
+  };
+}
+
 function priceEntryStatusPayload() {
   const pe = ensurePriceEntryState();
   const pending = pe.pending;
@@ -2510,6 +2552,7 @@ function priceEntryStatusPayload() {
     status: item.status,
     triggerMode: item.triggerMode,
     triggerPrice: item.triggerPrice,
+    activationPrice: item.activationPrice || null,
     armedReferencePrice: item.armedReferencePrice,
     stopPrice: item.stopPrice,
     stopPctAtTrigger: item.stopPctAtTrigger,
@@ -2523,6 +2566,7 @@ function priceEntryStatusPayload() {
     triggeredPrice: item.triggeredPrice || null,
     resolutionReason: item.resolutionReason || null,
     requestId: item.requestId || null,
+    trailingDipReclaim: trailingDipReclaimPublic(item),
   } : null;
   return {
     enabled: CFG.PRICE_ENTRY_ENABLED,
@@ -2532,6 +2576,16 @@ function priceEntryStatusPayload() {
     requireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS,
     minTriggerDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT,
     maxTriggerDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT,
+    trailingDipReclaim: {
+      enabled: CFG.TRAILING_DIP_RECLAIM_MODE !== "disabled",
+      mode: trailingDipReclaimMode(),
+      minDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT,
+      reclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT,
+      maxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT,
+      maxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC,
+      minLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT,
+      requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY,
+    },
     pending: serialize(pending),
     last: serialize(pe.last),
   };
@@ -2543,7 +2597,7 @@ function isPriceTriggerFeature(feature) {
 
 function validTriggerMode(value) {
   const mode = String(value || "").trim().toLowerCase();
-  return mode === "dip" || mode === "breakout" ? mode : "";
+  return ["dip", "breakout", "trailing_dip_reclaim"].includes(mode) ? mode : "";
 }
 
 function resolvePriceTriggerExpiry(body) {
@@ -2556,14 +2610,17 @@ function resolvePriceTriggerExpiry(body) {
 function validatePriceTriggerCommand(body, currentPrice) {
   if (!Number.isFinite(currentPrice) || currentPrice <= 0) return { ok: false, error: "VALID_FRESH_FEATURE_PRICE_REQUIRED_FOR_PRICE_TRIGGER" };
   if (hasRetiredLadderFields(body)) return { ok: false, error: "USE_STOP_PRICE_AND_OPTIONAL_PROFIT_TARGET_PRICE_ONLY_TWO_LEVEL_FIELDS_ARE_RETIRED" };
-  if (["price", "entry_price", "entryPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "ENTRY_PRICE_FIELD_NOT_ALLOWED_USE_TRIGGER_PRICE" };
+  if (["price", "entry_price", "entryPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "ENTRY_PRICE_FIELD_NOT_ALLOWED" };
   const mode = validTriggerMode(body.trigger_mode || body.triggerMode);
-  if (!mode) return { ok: false, error: "TRIGGER_MODE_MUST_BE_DIP_OR_BREAKOUT" };
-  const trigger = oneOf(body, ["trigger_price", "triggerPrice"]);
-  if (!trigger.present || !Number.isFinite(trigger.value) || !validStep(trigger.value)) return { ok: false, error: "VALID_TRIGGER_PRICE_ALIGNED_TO_PRICE_STEP_REQUIRED" };
-  const triggerPrice = round(trigger.value, 8);
-  const gapPct = mode === "dip" ? percentageBelow(currentPrice, triggerPrice) : percentPnl(currentPrice, triggerPrice);
-  if (mode === "dip" && triggerPrice >= currentPrice) return { ok: false, error: "DIP_TRIGGER_MUST_BE_BELOW_CURRENT_PRICE" };
+  if (!mode) return { ok: false, error: "TRIGGER_MODE_MUST_BE_DIP_BREAKOUT_OR_TRAILING_DIP_RECLAIM" };
+  const isTrailing = mode === "trailing_dip_reclaim";
+  if (isTrailing && trailingDipReclaimMode() === "disabled") return { ok: false, error: "TRAILING_DIP_RECLAIM_DISABLED" };
+  const level = isTrailing ? oneOf(body, ["activation_price", "activationPrice"]) : oneOf(body, ["trigger_price", "triggerPrice"]);
+  if (isTrailing && ["trigger_price", "triggerPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "USE_ACTIVATION_PRICE_ONLY_FOR_TRAILING_DIP_RECLAIM" };
+  if (!level.present || !Number.isFinite(level.value) || !validStep(level.value)) return { ok: false, error: isTrailing ? "VALID_ACTIVATION_PRICE_ALIGNED_TO_PRICE_STEP_REQUIRED" : "VALID_TRIGGER_PRICE_ALIGNED_TO_PRICE_STEP_REQUIRED" };
+  const triggerPrice = round(level.value, 8);
+  const gapPct = isTrailing || mode === "dip" ? percentageBelow(currentPrice, triggerPrice) : percentPnl(currentPrice, triggerPrice);
+  if ((isTrailing || mode === "dip") && triggerPrice >= currentPrice) return { ok: false, error: isTrailing ? "ACTIVATION_PRICE_MUST_BE_BELOW_CURRENT_PRICE" : "DIP_TRIGGER_MUST_BE_BELOW_CURRENT_PRICE" };
   if (mode === "breakout" && triggerPrice <= currentPrice) return { ok: false, error: "BREAKOUT_TRIGGER_MUST_BE_ABOVE_CURRENT_PRICE" };
   if (gapPct + 1e-9 < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) return { ok: false, error: "TRIGGER_PRICE_TOO_CLOSE_TO_CURRENT_PRICE" };
   if (gapPct > CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT + 1e-9) return { ok: false, error: "TRIGGER_PRICE_TOO_FAR_FROM_CURRENT_PRICE" };
@@ -2571,7 +2628,7 @@ function validatePriceTriggerCommand(body, currentPrice) {
   if (!levels.ok) return { ok: false, error: levels.error };
   const expiry = resolvePriceTriggerExpiry(body);
   if (!expiry.ok) return expiry;
-  return { ok: true, triggerMode: mode, triggerPrice, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
+  return { ok: true, triggerMode: mode, triggerPrice, activationPrice: isTrailing ? triggerPrice : null, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
 }
 
 function validateStoredPriceTriggerAtExecution(pending, executionPrice) {
@@ -2584,9 +2641,9 @@ function validateStoredPriceTriggerAtExecution(pending, executionPrice) {
 
 function priceTriggerCrossed(pending, previousPrice, currentPrice) {
   if (!Number.isFinite(previousPrice) || !Number.isFinite(currentPrice)) return false;
-  const trigger = pending.triggerPrice;
+  const trigger = pending.activationPrice || pending.triggerPrice;
   const epsilon = Math.max(CFG.MANUAL_ONE_STOP_PRICE_STEP / 10, 1e-9);
-  if (pending.triggerMode === "dip") return previousPrice > trigger + epsilon && currentPrice <= trigger + epsilon;
+  if (pending.triggerMode === "dip" || pending.triggerMode === "trailing_dip_reclaim") return previousPrice > trigger + epsilon && currentPrice <= trigger + epsilon;
   if (pending.triggerMode === "breakout") return previousPrice < trigger - epsilon && currentPrice >= trigger - epsilon;
   return false;
 }
@@ -2598,6 +2655,15 @@ function resolvePriceEntryPending(status, reason, fields = {}) {
   pe.last = { ...pending, ...fields, status, resolutionReason: reason, resolvedAt: nowIso(), resolvedAtMs: nowMs() };
   pe.pending = null;
   return pe.last;
+}
+
+function trailingTickRecoveryOk(feature) {
+  if (!CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY) return true;
+  const ema8 = finite(feature.ema8, null);
+  const slope = finite(feature.slope, null);
+  if (ema8 === null || feature.price < ema8 || slope === null || slope < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE) return false;
+  if (CFG.TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR && !nonBearRay(feature.rayRegime)) return false;
+  return true;
 }
 
 async function armPriceEntry(body) {
@@ -2620,21 +2686,23 @@ async function armPriceEntry(body) {
   }
   const current = nowMs();
   const expiresAtMs = current + validated.expirySec * 1000;
+  const isTrailing = validated.triggerMode === "trailing_dip_reclaim";
   const pending = {
     id: crypto.randomUUID(), status: "ARMED", profile: PROFILE,
-    triggerMode: validated.triggerMode, triggerPrice: validated.triggerPrice,
+    triggerMode: validated.triggerMode, triggerPrice: validated.triggerPrice, activationPrice: validated.activationPrice,
     armedReferencePrice: validated.armPrice, triggerDistancePct: validated.triggerDistancePct,
     stopPrice: validated.levels.stopPrice, stopPctAtTrigger: validated.levels.stopPct,
     profitTargetPrice: validated.levels.profitTargetPrice, profitTargetPctAtTrigger: validated.levels.profitTargetPct,
     armedAt: nowIso(), armedAtMs: current, expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs,
     lastObservedPrice: validated.armPrice, lastObservedAt: nowIso(), lastObservedAtMs: current,
     reason: String(body.reason || "manual_price_trigger_entry"),
+    trailing: isTrailing ? { phase: "ARMED", activatedAt: null, activatedAtMs: 0, observedLowPrice: null, observedLowAt: null, observedLowAtMs: 0, observedDropPct: 0, lowStopBufferPct: 0, minDipQualified: false, reclaimTargetPrice: null, maxEntryPrice: null, trackingExpiresAt: null, trackingExpiresAtMs: 0 } : null,
   };
   pe.pending = pending;
   state.manual = { ...state.manual, lastAction: "arm_price_entry", lastActionAt: nowIso() };
   if (!(await persistState("price_trigger_armed"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_WHILE_ARMING_PRICE_TRIGGER" } };
-  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, marketOrderWillBeSentOnCross: true });
-  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pending } };
+  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, activationPrice: pending.activationPrice || null, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, marketOrderWillBeSentOnCross: !isTrailing, trailingDipReclaimMode: isTrailing ? trailingDipReclaimMode() : null });
+  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: isTrailing ? "market_on_reclaim" : "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pending } };
 }
 
 async function cancelPriceEntry(body) {
@@ -2646,6 +2714,143 @@ async function cancelPriceEntry(body) {
   await persistState("price_trigger_cancelled");
   log("INFO", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, triggerMode: cancelled.triggerMode, triggerPrice: cancelled.triggerPrice, reason: cancelled.cancelReason });
   return { status: 200, body: { ok: true, priceEntryCancelled: true, priceTriggerEntry: priceEntryStatusPayload() } };
+}
+
+async function enterFromPriceTrigger(pending, feature, modeReason) {
+  const pe = ensurePriceEntryState();
+  const current = nowMs();
+  const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+  if (!checked.ok) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current });
+    await persistState("price_trigger_gap_level_rejected");
+    log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, triggerMode: cancelled.triggerMode, triggerPrice: cancelled.triggerPrice, executionPrice: feature.price, reason: checked.error });
+    return;
+  }
+  const consumed = resolvePriceEntryPending("TRIGGERED_FORWARDING", modeReason, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current, sourceEvent: feature.kind });
+  if (state.reentry?.campaign) state.reentry = { campaign: null, recentTickPrices: [] };
+  state.position = buildPosition(feature.price, checked.levels, { entryOrigin: "PRICE_TRIGGER", profile: PROFILE });
+  state.position.priceTrigger = { id: consumed.id, mode: consumed.triggerMode, price: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, armedReferencePrice: consumed.armedReferencePrice, triggeredAt: consumed.triggeredAt };
+  state.externalDealLock = { active: true, source: "price_trigger_entry", setAt: nowIso(), reason: "PRICE_TRIGGER_ENTRY_PENDING_FORWARD" };
+  state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "price_trigger_fired", lastActionAt: nowIso() };
+  await persistState("price_trigger_pre_forward");
+  log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, previousPrice: consumed.lastObservedPrice, executionReferencePrice: feature.price, stopPrice: checked.levels.stopPrice, profitTargetPrice: checked.levels.profitTargetPrice || null, marketOrderWillBeSent: true });
+  const result = await forward3Commas("enter_long", feature.price, modeReason === "TRAILING_DIP_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM" : `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`, { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
+  if (!result.ok) {
+    state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
+    state.manual.recoveryRequired = true;
+    state.manual.recoveryReason = `PRICE_TRIGGER_ENTRY_FORWARD_UNCERTAIN_${result.error}`;
+    state.externalDealLock.reason = "PRICE_TRIGGER_ENTRY_FORWARD_UNCERTAIN";
+    pe.last = { ...pe.last, status: "FORWARD_UNCERTAIN", requestId: result.requestId || null, resolutionReason: result.error };
+    await persistState("price_trigger_forward_uncertain");
+    log("ERROR", "FVVO_PRICE_TRIGGER_FORWARD_UNCERTAIN", { triggerId: consumed.id, requestId: result.requestId, error: result.error });
+    return;
+  }
+  state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  state.position.entryAcceptedAt = nowIso();
+  state.position.entryAcceptedAtMs = nowMs();
+  state.position.entryForwardRequestId = result.requestId;
+  state.externalDealLock.reason = "PRICE_TRIGGER_ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  pe.last = { ...pe.last, status: "FORWARDED_UNVERIFIED", requestId: result.requestId, acceptedAt: nowIso(), acceptedAtMs: nowMs() };
+  await persistState("price_trigger_forward_accepted");
+  log("INFO", "FVVO_PRICE_TRIGGER_ENTRY_TRACKED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, entryPriceReference: feature.price, stopPrice: checked.levels.stopPrice, stopDistancePct: checked.levels.stopPct, profitTargetPrice: checked.levels.profitTargetPrice || null, requestId: result.requestId, entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, fillVerified: false });
+}
+
+async function evaluateTrailingDipReclaim(pending, previousPrice, feature) {
+  const current = nowMs();
+  const t = pending.trailing || (pending.trailing = {});
+  const activation = finite(pending.activationPrice, pending.triggerPrice);
+  if (!t.phase) t.phase = "ARMED";
+
+  // `ARMED` / `WATCHING_DIP` can repeat until the full command expiry. A shallow first touch that
+  // returns above activation is reset rather than consuming the user's three-hour order. The short
+  // tracking timeout begins only after a meaningful dip has actually formed.
+  if (t.phase === "ARMED") {
+    const crossed = CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS ? priceTriggerCrossed(pending, previousPrice, feature.price) : feature.price <= activation;
+    if (!crossed) return;
+    Object.assign(t, { phase: "WATCHING_DIP", activatedAt: nowIso(), activatedAtMs: current, observedLowPrice: round(feature.price, 8), observedLowAt: feature.receivedAt, observedLowAtMs: feature.receivedAtMs, observedDropPct: 0, lowStopBufferPct: 0, minDipQualified: false, reclaimTargetPrice: null, maxEntryPrice: null, trackingExpiresAt: null, trackingExpiresAtMs: 0 });
+    log("INFO", "FVVO_TRAILING_DIP_RECLAIM_ACTIVATED", { triggerId: pending.id, activationPrice: activation, activationCrossPrice: feature.price, stopPrice: pending.stopPrice, mode: trailingDipReclaimMode() });
+  }
+
+  if (t.phase === "WATCHING_DIP" || t.phase === "TRACKING_RECLAIM") {
+    if (t.observedLowPrice === null || feature.price < t.observedLowPrice - 1e-9) {
+      t.observedLowPrice = round(feature.price, 8);
+      t.observedLowAt = feature.receivedAt;
+      t.observedLowAtMs = feature.receivedAtMs;
+    }
+    const low = finite(t.observedLowPrice, feature.price);
+    const dropPct = percentageBelow(activation, low);
+    const lowStopBufferPct = low > pending.stopPrice ? percentageBelow(low, pending.stopPrice) : 0;
+    t.observedDropPct = round(dropPct, 6);
+    t.lowStopBufferPct = round(lowStopBufferPct, 6);
+
+    if (low <= pending.stopPrice + 1e-9) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "TRAILING_DIP_RECLAIM_LOW_AT_OR_BELOW_STOP", { trailing: t });
+      await persistState("trailing_dip_reclaim_low_at_stop");
+      log("WARN", "FVVO_TRAILING_DIP_RECLAIM_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, activationPrice: activation, observedLowPrice: low, stopPrice: pending.stopPrice, lowStopBufferPct });
+      return;
+    }
+    if (lowStopBufferPct + 1e-9 < CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "TRAILING_DIP_RECLAIM_LOW_TOO_CLOSE_TO_STOP", { trailing: t });
+      await persistState("trailing_dip_reclaim_low_too_close_stop");
+      log("WARN", "FVVO_TRAILING_DIP_RECLAIM_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, activationPrice: activation, observedLowPrice: low, stopPrice: pending.stopPrice, lowStopBufferPct, minLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT });
+      return;
+    }
+
+    if (t.phase === "WATCHING_DIP") {
+      if (dropPct + 1e-9 < CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT) {
+        // A shallow touch recovered back above activation. Reset so a later genuine dip can be tracked.
+        if (feature.price > activation + 1e-9) {
+          Object.assign(t, { phase: "ARMED", activatedAt: null, activatedAtMs: 0, observedLowPrice: null, observedLowAt: null, observedLowAtMs: 0, observedDropPct: 0, lowStopBufferPct: 0, minDipQualified: false, reclaimTargetPrice: null, maxEntryPrice: null, trackingExpiresAt: null, trackingExpiresAtMs: 0 });
+          await persistState("trailing_dip_reclaim_reset_no_meaningful_dip");
+          log("INFO", "FVVO_TRAILING_DIP_RECLAIM_RESET_NO_MEANINGFUL_DIP", { triggerId: pending.id, activationPrice: activation, recoveredPrice: feature.price, minDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT });
+          return;
+        }
+        await persistState("trailing_dip_reclaim_watch_dip");
+        return;
+      }
+      const trackingExpiresAtMs = Math.min(finite(pending.expiresAtMs, current + CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC * 1000), current + CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC * 1000);
+      Object.assign(t, { phase: "TRACKING_RECLAIM", minDipQualified: true, reclaimTargetPrice: round(low * (1 + CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT / 100), 8), maxEntryPrice: round(low * (1 + CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT / 100), 8), trackingExpiresAtMs, trackingExpiresAt: new Date(trackingExpiresAtMs).toISOString() });
+      log("INFO", "FVVO_TRAILING_DIP_RECLAIM_LOW_QUALIFIED", { triggerId: pending.id, activationPrice: activation, observedLowPrice: low, observedDropPct: dropPct, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, trackingExpiresAt: t.trackingExpiresAt });
+    }
+
+    if (t.phase !== "TRACKING_RECLAIM") return;
+    if (current > finite(t.trackingExpiresAtMs, 0)) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "TRAILING_DIP_RECLAIM_TRACK_TIMEOUT", { trailing: t });
+      await persistState("trailing_dip_reclaim_timeout");
+      log("WARN", "FVVO_TRAILING_DIP_RECLAIM_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, activationPrice: activation, observedLowPrice: low, stopPrice: pending.stopPrice });
+      return;
+    }
+
+    // Recalculate thresholds whenever a new low appears during the qualified dip.
+    t.reclaimTargetPrice = round(low * (1 + CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT / 100), 8);
+    t.maxEntryPrice = round(low * (1 + CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT / 100), 8);
+    if (feature.price + 1e-9 < t.reclaimTargetPrice) { await persistState("trailing_dip_reclaim_track_low"); return; }
+    if (feature.price > t.maxEntryPrice + 1e-9) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "TRAILING_DIP_RECLAIM_RECOVERY_CHASE_TOO_LARGE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current });
+      await persistState("trailing_dip_reclaim_chase_cancelled");
+      log("WARN", "FVVO_TRAILING_DIP_RECLAIM_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, executionPrice: feature.price });
+      return;
+    }
+    if (!trailingTickRecoveryOk(feature)) {
+      await persistState("trailing_dip_reclaim_wait_tick_recovery");
+      log("INFO", "FVVO_TRAILING_DIP_RECLAIM_WAIT_TICK_RECOVERY", { triggerId: pending.id, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY });
+      return;
+    }
+    const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+    if (!checked.ok) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current });
+      await persistState("trailing_dip_reclaim_execution_levels_invalid");
+      log("WARN", "FVVO_TRAILING_DIP_RECLAIM_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, stopPrice: pending.stopPrice });
+      return;
+    }
+    if (trailingDipReclaimMode() === "shadow") {
+      const shadow = resolvePriceEntryPending("SHADOW_CANDIDATE", "TRAILING_DIP_RECLAIM_SHADOW_CANDIDATE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current });
+      await persistState("trailing_dip_reclaim_shadow_candidate");
+      log("INFO", "FVVO_TRAILING_DIP_RECLAIM_SHADOW_CANDIDATE", { triggerId: shadow.id, activationPrice: activation, observedLowPrice: low, observedDropPct: dropPct, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, candidateEntryPrice: feature.price, stopPrice: pending.stopPrice, stopDistancePct: checked.levels.stopPct });
+      return;
+    }
+    await enterFromPriceTrigger(pending, feature, "TRAILING_DIP_RECLAIM_CONFIRMED");
+  }
 }
 
 let priceEntryEvaluationQueue = Promise.resolve();
@@ -2672,47 +2877,13 @@ async function evaluatePriceTriggerEntry(feature) {
     pending.lastObservedPrice = round(feature.price, 8);
     pending.lastObservedAt = feature.receivedAt;
     pending.lastObservedAtMs = feature.receivedAtMs;
+    if (isTrailingDipReclaim(pending)) {
+      await evaluateTrailingDipReclaim(pending, previousPrice, feature);
+      return;
+    }
     const crossed = CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS ? priceTriggerCrossed(pending, previousPrice, feature.price) : (pending.triggerMode === "dip" ? feature.price <= pending.triggerPrice : feature.price >= pending.triggerPrice);
-    if (!crossed) {
-      await persistState("price_trigger_watch");
-      return;
-    }
-
-    const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
-    if (!checked.ok) {
-      const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current });
-      await persistState("price_trigger_gap_level_rejected");
-      log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, triggerMode: cancelled.triggerMode, triggerPrice: cancelled.triggerPrice, executionPrice: feature.price, reason: checked.error });
-      return;
-    }
-
-    const consumed = resolvePriceEntryPending("TRIGGERED_FORWARDING", "PRICE_CROSS_CONFIRMED", { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current, sourceEvent: feature.kind });
-    if (state.reentry?.campaign) state.reentry = { campaign: null, recentTickPrices: [] };
-    state.position = buildPosition(feature.price, checked.levels, { entryOrigin: "PRICE_TRIGGER", profile: PROFILE });
-    state.position.priceTrigger = { id: consumed.id, mode: consumed.triggerMode, price: consumed.triggerPrice, armedReferencePrice: consumed.armedReferencePrice, triggeredAt: consumed.triggeredAt };
-    state.externalDealLock = { active: true, source: "price_trigger_entry", setAt: nowIso(), reason: "PRICE_TRIGGER_ENTRY_PENDING_FORWARD" };
-    state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "price_trigger_fired", lastActionAt: nowIso() };
-    await persistState("price_trigger_pre_forward");
-    log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, previousPrice, executionReferencePrice: feature.price, stopPrice: checked.levels.stopPrice, profitTargetPrice: checked.levels.profitTargetPrice || null, marketOrderWillBeSent: true });
-    const result = await forward3Commas("enter_long", feature.price, `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`, { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
-    if (!result.ok) {
-      state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
-      state.manual.recoveryRequired = true;
-      state.manual.recoveryReason = `PRICE_TRIGGER_ENTRY_FORWARD_UNCERTAIN_${result.error}`;
-      state.externalDealLock.reason = "PRICE_TRIGGER_ENTRY_FORWARD_UNCERTAIN";
-      pe.last = { ...pe.last, status: "FORWARD_UNCERTAIN", requestId: result.requestId || null, resolutionReason: result.error };
-      await persistState("price_trigger_forward_uncertain");
-      log("ERROR", "FVVO_PRICE_TRIGGER_FORWARD_UNCERTAIN", { triggerId: consumed.id, requestId: result.requestId, error: result.error });
-      return;
-    }
-    state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
-    state.position.entryAcceptedAt = nowIso();
-    state.position.entryAcceptedAtMs = nowMs();
-    state.position.entryForwardRequestId = result.requestId;
-    state.externalDealLock.reason = "PRICE_TRIGGER_ENTRY_ACCEPTED_UNVERIFIED_FILL";
-    pe.last = { ...pe.last, status: "FORWARDED_UNVERIFIED", requestId: result.requestId, acceptedAt: nowIso(), acceptedAtMs: nowMs() };
-    await persistState("price_trigger_forward_accepted");
-    log("INFO", "FVVO_PRICE_TRIGGER_ENTRY_TRACKED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, entryPriceReference: feature.price, stopPrice: checked.levels.stopPrice, stopDistancePct: checked.levels.stopPct, profitTargetPrice: checked.levels.profitTargetPrice || null, requestId: result.requestId, entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, fillVerified: false });
+    if (!crossed) { await persistState("price_trigger_watch"); return; }
+    await enterFromPriceTrigger(pending, feature, "PRICE_CROSS_CONFIRMED");
   };
   const task = priceEntryEvaluationQueue.then(run, run);
   priceEntryEvaluationQueue = task.catch(() => {});
@@ -2852,10 +3023,10 @@ async function start() {
     reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI,
     reentry15sFastLaunchMode: CFG.REENTRY_15S_FAST_LAUNCH_MODE, reentry15sFastLaunchMinPriorImpulsePct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT, reentry15sFastLaunchMinPullbackPct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT, reentry15sFastLaunchMinRsi: CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI, reentry15sFastLaunchMinAdx: CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX, reentry15sFastLaunchMinFvvo: CFG.REENTRY_15S_FAST_LAUNCH_MIN_FVVO, reentry15sFastLaunchMinSlope: CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE,
     reentry15sEarlyTurnMode: CFG.REENTRY_15S_EARLY_TURN_MODE, reentry15sEarlyTurnMinPriorImpulsePct: CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT, reentry15sEarlyTurnMinPullbackPct: CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT, reentry15sEarlyTurnMinRsi: CFG.REENTRY_15S_EARLY_TURN_MIN_RSI, reentry15sEarlyTurnMinAdx: CFG.REENTRY_15S_EARLY_TURN_MIN_ADX, reentry15sEarlyTurnMinFvvo: CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO, reentry15sEarlyTurnMinSlope: CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE,
-    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, persistenceReady, configurationProblems: problems });
+    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, trailingDipReclaimMode, trailingTickRecoveryOk };

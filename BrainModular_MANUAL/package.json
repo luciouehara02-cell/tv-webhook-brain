@@ -1,15 +1,16 @@
 {
-  "name": "brainfvvomanualexit-v1v-reentry-15s-fast-launch-early-turn-shadow",
+  "name": "brainfvvomanualexit-v1w-trailing-dip-reclaim-smart-entry",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1v.js",
-    "replay": "node replay_full_v1v.js",
+    "validate": "node validation_v1w.js",
+    "replay": "node replay_full_v1w.js",
+    "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
+    "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
     "smoke:manual-confirm": "node manual_overheat_confirmation_smoke_v1u.js",
-    "smoke:reentry-launch": "node reentry_15s_launch_smoke_v1v.js",
     "smoke:runner-audit": "RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_HORIZONS_SEC=1,2 node runner_rescue_audit_smoke_v1u.js",
     "smoke:demo": "SMOKE_MODE=demo node runtime_mode_smoke_v1s.js",
     "smoke:live": "SMOKE_MODE=live node runtime_mode_smoke_v1s.js",
@@ -23,5 +24,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1v: v1u protections plus shadow-first 15-second Fast Launch and Early Turn automatic re-entry timing research."
+  "description": "BrainFVVO ManualExit v1w: v1v protections plus shadow-first manual trailing dip-reclaim price-entry research."
 }
