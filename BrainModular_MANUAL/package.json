@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvomanualexit-v1w-trailing-dip-reclaim-smart-entry",
+  "name": "brainfvvomanualexit-v1x-post-exit-recovered-base-shadow",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1w.js",
-    "replay": "node replay_full_v1w.js",
+    "validate": "node validation_v1x.js",
+    "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
     "smoke:manual-confirm": "node manual_overheat_confirmation_smoke_v1u.js",
@@ -16,7 +16,8 @@
     "smoke:live": "SMOKE_MODE=live node runtime_mode_smoke_v1s.js",
     "smoke:yellow": "node yellow_shadow_smoke_v1s.js",
     "smoke:pullback-shadow": "PULLBACK_TEST_MODE=shadow node dynamic_pullback_grace_smoke_v1s.js",
-    "smoke:runner-live": "RUNNER_RESCUE_TEST_MODE=live node runner_continuation_rescue_smoke_v1t.js"
+    "smoke:runner-live": "RUNNER_RESCUE_TEST_MODE=live node runner_continuation_rescue_smoke_v1t.js",
+    "smoke:post-exit-recovered-base": "node post_exit_recovered_base_smoke_v1x.js"
   },
   "engines": {
     "node": ">=18"
@@ -24,5 +25,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1w: v1v protections plus shadow-first manual trailing dip-reclaim price-entry research."
+  "description": "BrainFVVO ManualExit v1x: v1w protections plus shadow-first post-exit recovered-base re-entry audit after the existing 90-second assumed-flat release."
 }

@@ -1,8 +1,8 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1w_TRAILING_DIP_RECLAIM_SMART_ENTRY
+// BrainFVVO_ManualExit_v1x_POST_EXIT_RECOVERED_BASE_SHADOW
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// v1w smart-entry candidate: retains v1v behaviour and adds a shadow/live-capable trailing dip-reclaim entry mode for user-armed manual levels:
+// v1x candidate: retains v1w behaviour and adds a shadow-first post-exit recovered-base re-entry path after the existing 90-second assumed-flat release.
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1w_TRAILING_DIP_RECLAIM_SMART_ENTRY"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1x_POST_EXIT_RECOVERED_BASE_SHADOW"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -343,6 +343,25 @@ const CFG = {
   REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT: envNum("REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT", 0.03),
   REENTRY_15S_EARLY_TURN_REQUIRE_5M_CONTEXT: envBool("REENTRY_15S_EARLY_TURN_REQUIRE_5M_CONTEXT", true),
 
+  // v1x: after the existing 90-second assumed-flat release, observe a compact recovered base
+  // without requiring a new 0.35% pullback from the prior trade peak. This is intentionally
+  // independent from the standard WAIT_PULLBACK path. `shadow` writes evidence only; `live`
+  // is explicitly opt-in and still requires a two-tick recovery confirmation and projected stop.
+  POST_EXIT_RECOVERED_BASE_MODE: envStr("POST_EXIT_RECOVERED_BASE_MODE", "shadow").toLowerCase(),
+  POST_EXIT_RECOVERED_BASE_WINDOW_SEC: envNum("POST_EXIT_RECOVERED_BASE_WINDOW_SEC", 600),
+  POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT: envNum("POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT", 0.60),
+  POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT: envNum("POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT", 0.06),
+  POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT: envNum("POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT", 0.18),
+  POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS: Math.floor(envNum("POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS", 2)),
+  POST_EXIT_RECOVERED_BASE_MIN_RSI: envNum("POST_EXIT_RECOVERED_BASE_MIN_RSI", 54),
+  POST_EXIT_RECOVERED_BASE_MAX_RSI: envNum("POST_EXIT_RECOVERED_BASE_MAX_RSI", 72),
+  POST_EXIT_RECOVERED_BASE_MIN_ADX: envNum("POST_EXIT_RECOVERED_BASE_MIN_ADX", 15),
+  POST_EXIT_RECOVERED_BASE_MIN_FVVO: envNum("POST_EXIT_RECOVERED_BASE_MIN_FVVO", 0),
+  POST_EXIT_RECOVERED_BASE_MIN_SLOPE: envNum("POST_EXIT_RECOVERED_BASE_MIN_SLOPE", 0.60),
+  POST_EXIT_RECOVERED_BASE_REQUIRE_RAY_NOT_BEAR: envBool("POST_EXIT_RECOVERED_BASE_REQUIRE_RAY_NOT_BEAR", true),
+  POST_EXIT_RECOVERED_BASE_REQUIRE_5M_CONTEXT: envBool("POST_EXIT_RECOVERED_BASE_REQUIRE_5M_CONTEXT", true),
+  POST_EXIT_RECOVERED_BASE_REQUIRE_EMA8_ABOVE_EMA18: envBool("POST_EXIT_RECOVERED_BASE_REQUIRE_EMA8_ABOVE_EMA18", true),
+
   // v1r: when a profitable AUTO_REENTRY sees a transient tick-thesis failure while the 5m thesis remains strongly bullish,
   // optionally defer that one exit until a short recovery cross or timeout. Manual/price-trigger first legs are untouched.
   // disabled | shadow | live. Default is shadow so missing variables cannot alter production exits.
@@ -364,6 +383,7 @@ const CFG = {
 
 const PROFILE = "MANUAL_ONE_STOP_DYNAMIC_PROFIT_FULL_EXIT";
 const REENTRY_PROFILE = "AUTO_REENTRY_PULLBACK_MICROBREAKOUT";
+const POST_EXIT_RECOVERED_BASE_PROFILE = "AUTO_REENTRY_POST_EXIT_RECOVERED_BASE";
 const STATE_PATH = path.join(CFG.STATE_DIR, CFG.STATE_FILE_NAME);
 const STATE_BACKUP_PATH = `${STATE_PATH}.bak`;
 
@@ -666,6 +686,9 @@ function configProblems() {
   if (CFG.REENTRY_15S_FAST_LAUNCH_MODE === "live" && CFG.REENTRY_15S_EARLY_TURN_MODE === "live") problems.push("ONLY_ONE_REENTRY_15S_LAUNCH_PATH_MAY_BE_LIVE");
   if (CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT <= 0 || CFG.REENTRY_15S_FAST_LAUNCH_MAX_PULLBACK_PCT < CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT || CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI <= 0 || CFG.REENTRY_15S_FAST_LAUNCH_MAX_RSI < CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI || CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX < 0 || CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE < 0) problems.push("INVALID_REENTRY_15S_FAST_LAUNCH_THRESHOLDS");
   if (CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT <= 0 || CFG.REENTRY_15S_EARLY_TURN_MAX_PULLBACK_PCT < CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT || CFG.REENTRY_15S_EARLY_TURN_MIN_RSI <= 0 || CFG.REENTRY_15S_EARLY_TURN_MIN_ADX < 0 || CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE < 0 || CFG.REENTRY_15S_EARLY_TURN_EMA_CONVERGENCE_TOLERANCE_PCT < 0) problems.push("INVALID_REENTRY_15S_EARLY_TURN_THRESHOLDS");
+  if (!['disabled', 'shadow', 'live'].includes(CFG.POST_EXIT_RECOVERED_BASE_MODE)) problems.push("INVALID_POST_EXIT_RECOVERED_BASE_MODE");
+  if (CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT < CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT || CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS < 2 || CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MAX_RSI < CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI || CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX < 0 || CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE < 0) problems.push("INVALID_POST_EXIT_RECOVERED_BASE_THRESHOLDS");
+  if (CFG.POST_EXIT_RECOVERED_BASE_MODE === 'live' && (!CFG.REENTRY_ENABLED || CFG.REENTRY_PHASE !== 'auto' || !CFG.REENTRY_AUTO_FORWARD_ENABLED)) problems.push("POST_EXIT_RECOVERED_BASE_LIVE_REQUIRES_AUTO_REENTRY_FORWARD");
   if (CFG.YELLOW_TP_SHADOW_MIN_MFE_PCT < 0 || CFG.YELLOW_TP_SHADOW_MIN_PNL_PCT < 0) problems.push("INVALID_YELLOW_TP_SHADOW_THRESHOLDS");
   if (CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC || CFG.PRICE_ENTRY_MAX_EXPIRY_SEC < CFG.PRICE_ENTRY_MIN_EXPIRY_SEC) problems.push("INVALID_PRICE_ENTRY_EXPIRY_RANGE");
   if (CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT <= 0 || CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) problems.push("INVALID_PRICE_ENTRY_TRIGGER_DISTANCE_RANGE");
@@ -2081,6 +2104,14 @@ function reentryStatusPayload() {
         carried: true, eligible: Boolean(c.preReleasePullback.eligible), pullbackLowPrice: c.preReleasePullback.pullbackLowPrice || null,
         pullbackDepthPct: c.preReleasePullback.pullbackDepthPct || 0, crossUpSeen: Boolean(c.preReleasePullback.crossUpSeen),
       } : null,
+      postExitRecoveredBase: c.postExitRecoveredBase ? {
+        mode: c.postExitRecoveredBase.mode, active: Boolean(c.postExitRecoveredBase.active), phase: c.postExitRecoveredBase.phase || null,
+        baseLowPrice: c.postExitRecoveredBase.baseLowPrice || null, baseLowAt: c.postExitRecoveredBase.baseLowAt || null,
+        recoveryPct: c.postExitRecoveredBase.recoveryPct || 0, confirmations: c.postExitRecoveredBase.confirmations || 0,
+        requiredConfirmations: c.postExitRecoveredBase.requiredConfirmations || CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS,
+        expiresAt: c.postExitRecoveredBase.expiresAt || null, reason: c.postExitRecoveredBase.reason || null,
+        lastCandidate: c.postExitRecoveredBase.lastCandidate || null,
+      } : null,
     } : null,
   };
 }
@@ -2150,6 +2181,7 @@ function armReentryCampaignAfterConfirmedExit(prior) {
     pullbackSeenAtMs: carryPreReleasePullback ? finite(preReleaseMemory.capturedAtMs, 0) : 0,
     pullbackSeenAt: carryPreReleasePullback ? preReleaseMemory.capturedAt || null : null,
     preReleasePullback: carryPreReleasePullback ? { ...clone(preReleaseMemory), carriedAtMs: current, carriedAt: nowIso(), crossUpSeen: false } : null,
+    postExitRecoveredBase: buildPostExitRecoveredBaseState(prior, finite(state.lastFeature?.price, finite(prior.latestPrice, prior.entryPriceReference)), current),
     reclaim: { observations: 0, firstAtMs: 0, lastPrice: null },
     observedCandidates: 0,
     candidateLimit: CFG.REENTRY_MAX_COUNT,
@@ -2175,6 +2207,9 @@ function armReentryCampaignAfterConfirmedExit(prior) {
     preReleasePullbackCarried: carryPreReleasePullback,
     preReleasePullbackLowPrice: carryPreReleasePullback ? campaign.pullbackLowPrice : null,
     preReleasePullbackDepthPct: carryPreReleasePullback ? campaign.pullbackDepthPct : null,
+    postExitRecoveredBaseMode: campaign.postExitRecoveredBase?.mode || "disabled",
+    postExitRecoveredBaseWindowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC,
+    postExitRecoveredBaseRequiredConfirmations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS,
   });
   if (carryPreReleasePullback) log("INFO", "FVVO_REENTRY_PRE_RELEASE_PULLBACK_CARRIED", { campaignId: campaign.id, pullbackLowPrice: campaign.pullbackLowPrice, pullbackDepthPct: campaign.pullbackDepthPct, priorPeakPrice: campaign.priorPeakPrice });
   return campaign;
@@ -2271,6 +2306,307 @@ function reentryPullbackHysteresisAudit(campaign, feature, belowEma18Pct, phase)
   }
 }
 
+function postExitRecoveredBaseMode() { return CFG.POST_EXIT_RECOVERED_BASE_MODE; }
+
+function buildPostExitRecoveredBaseState(prior, startingPrice, current = nowMs()) {
+  const mode = postExitRecoveredBaseMode();
+  const base = finite(startingPrice, finite(prior?.latestPrice, finite(prior?.entryPriceReference, null)));
+  const enabled = mode !== "disabled" && Number.isFinite(base) && base > 0;
+  const expiresAtMs = current + CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC * 1000;
+  return {
+    enabled,
+    mode,
+    active: enabled,
+    phase: enabled ? "WATCHING_BASE" : "DISABLED",
+    reason: enabled ? "POST_RELEASE_BASE_TRACKING" : "MODE_DISABLED",
+    sourceExitPrice: finite(prior?.latestPrice, finite(prior?.entryPriceReference, null)),
+    baseLowPrice: enabled ? round(base, 8) : null,
+    baseLowAtMs: enabled ? current : 0,
+    baseLowAt: enabled ? new Date(current).toISOString() : null,
+    recoveryPct: 0,
+    confirmations: 0,
+    requiredConfirmations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS,
+    firstConfirmAtMs: 0,
+    firstConfirmAt: null,
+    lastConfirmPrice: null,
+    crossUpSeen: false,
+    startedAtMs: current,
+    startedAt: new Date(current).toISOString(),
+    expiresAtMs,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    logged: false,
+    consumed: false,
+    lastCandidate: null,
+  };
+}
+
+function postExitRecoveredBaseCandidate(campaign, feature, context, values, recovered) {
+  const projectedStop = projectReentryStop(values.price, recovered.baseLowPrice);
+  return {
+    id: crypto.randomUUID(),
+    profile: POST_EXIT_RECOVERED_BASE_PROFILE,
+    sequence: Number(campaign.nextReentryNumber || 1),
+    observedAt: nowIso(),
+    observedAtMs: nowMs(),
+    price: round(values.price, 8),
+    projectedStopPrice: projectedStop.ok ? projectedStop.stopPrice : null,
+    projectedStopDistancePct: projectedStop.ok ? projectedStop.stopDistancePct : null,
+    baseEntryPrice: campaign.baseEntryPrice,
+    priorPeakPrice: campaign.priorPeakPrice,
+    baseLowPrice: recovered.baseLowPrice,
+    baseLowAt: recovered.baseLowAt,
+    recoveryPct: round(recovered.recoveryPct, 6),
+    confirmations: recovered.confirmations,
+    requiredConfirmations: recovered.requiredConfirmations,
+    tick: {
+      ema8: values.tickEma8,
+      ema18: values.tickEma18,
+      rsi: values.rsi,
+      adx: values.adx,
+      fvvo: values.fvvo,
+      slope: values.slope,
+      crossUp: Boolean(feature.crossUp),
+      rayRegime: String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase(),
+    },
+    context5m: {
+      price: context.close,
+      ema8: context.ema8,
+      ema18: context.ema18,
+      fvvo: context.fvvo,
+      rayRegime: context.ray,
+      ageSec: round(context.ctxAge, 2),
+      eligible: context.ok,
+    },
+    mode: postExitRecoveredBaseMode(),
+    automaticOrderSent: false,
+  };
+}
+
+async function forwardPostExitRecoveredBaseCandidate(campaign, recovered, candidate) {
+  const projectedStop = projectReentryStop(candidate.price, recovered.baseLowPrice);
+  if (!projectedStop.ok) {
+    recovered.active = false;
+    recovered.phase = "STOP_REJECTED";
+    recovered.reason = projectedStop.reason;
+    await persistState("post_exit_recovered_base_stop_rejected");
+    log("WARN", "FVVO_POST_EXIT_RECOVERED_BASE_REJECTED", {
+      campaignId: campaign.id,
+      reason: projectedStop.reason,
+      price: candidate.price,
+      baseLowPrice: recovered.baseLowPrice,
+      stopDistancePct: projectedStop.stopDistancePct || null,
+    });
+    return { entered: false, rejected: true };
+  }
+
+  candidate.projectedStopPrice = projectedStop.stopPrice;
+  candidate.projectedStopDistancePct = projectedStop.stopDistancePct;
+  candidate.automaticOrderSent = true;
+  candidate.forwardStatus = "PENDING";
+  recovered.active = false;
+  recovered.phase = "LIVE_CANDIDATE_CONFIRMED";
+  recovered.reason = "TWO_TICK_RECOVERED_BASE_CONFIRMED";
+  recovered.consumed = true;
+  recovered.lastCandidate = candidate;
+  campaign.observedCandidates = Number(campaign.observedCandidates || 0) + 1;
+  campaign.lastCandidate = candidate;
+  campaign.phase = "CANDIDATE_OBSERVED";
+  campaign.reason = "POST_EXIT_RECOVERED_BASE_CONFIRMED";
+  campaign.active = false;
+
+  state.position = buildPosition(candidate.price, {
+    stopPrice: projectedStop.stopPrice,
+    stopPct: projectedStop.stopDistancePct,
+    profitTargetPrice: 0,
+    profitTargetPct: 0,
+  }, {
+    entryOrigin: "AUTO_REENTRY",
+    profile: POST_EXIT_RECOVERED_BASE_PROFILE,
+    reentryNumber: candidate.sequence,
+  });
+  state.position.reentryCampaignId = campaign.id;
+  state.position.reentryCandidateId = candidate.id;
+  state.externalDealLock = { active: true, source: "post_exit_recovered_base", setAt: nowIso(), reason: "POST_EXIT_RECOVERED_BASE_PENDING_FORWARD" };
+  state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "post_exit_recovered_base", lastActionAt: nowIso() };
+  await persistState("post_exit_recovered_base_pre_forward");
+  log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_LIVE_CONFIRMED", { ...candidate, executionMode: CFG.EXECUTION_MODE });
+  log("INFO", "FVVO_REENTRY_CANDIDATE_AUTO", { ...candidate, launchPath: "POST_EXIT_RECOVERED_BASE", executionMode: CFG.EXECUTION_MODE });
+
+  const result = await forward3Commas("enter_long", candidate.price, candidate.profile, {
+    dedupeKey: `post_exit_recovered_base_enter_${candidate.id}`,
+    stopPct: projectedStop.stopDistancePct,
+  });
+  if (!result.ok) {
+    state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
+    state.manual.recoveryRequired = true;
+    state.manual.recoveryReason = `POST_EXIT_RECOVERED_BASE_FORWARD_UNCERTAIN_${result.error}`;
+    state.externalDealLock.reason = "POST_EXIT_RECOVERED_BASE_FORWARD_UNCERTAIN";
+    candidate.forwardStatus = "FORWARD_UNCERTAIN";
+    candidate.forwardRequestId = result.requestId || null;
+    await persistState("post_exit_recovered_base_forward_uncertain");
+    log("ERROR", "FVVO_POST_EXIT_RECOVERED_BASE_FORWARD_UNCERTAIN", {
+      candidateId: candidate.id,
+      reentryNumber: candidate.sequence,
+      requestId: result.requestId || null,
+      error: result.error,
+    });
+    return { entered: true, uncertain: true };
+  }
+  state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  state.position.entryAcceptedAt = nowIso();
+  state.position.entryAcceptedAtMs = nowMs();
+  state.position.entryForwardRequestId = result.requestId;
+  state.externalDealLock.reason = "POST_EXIT_RECOVERED_BASE_ACCEPTED_UNVERIFIED_FILL";
+  candidate.forwardStatus = "FORWARDED_UNVERIFIED";
+  candidate.forwardRequestId = result.requestId;
+  await persistState("post_exit_recovered_base_forward_accepted");
+  log("INFO", "FVVO_AUTO_REENTRY_ENTRY_TRACKED", {
+    candidateId: candidate.id,
+    reentryNumber: candidate.sequence,
+    entryPriceReference: candidate.price,
+    stopPrice: projectedStop.stopPrice,
+    stopDistancePct: projectedStop.stopDistancePct,
+    requestId: result.requestId,
+    entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE,
+    entryOrderIncludedInWebhook: false,
+    fillVerified: false,
+    entryPath: "POST_EXIT_RECOVERED_BASE",
+  });
+  return { entered: true, forwarded: true };
+}
+
+async function evaluatePostExitRecoveredBase(campaign, feature) {
+  const recovered = campaign?.postExitRecoveredBase;
+  if (!recovered || !recovered.enabled || !recovered.active || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { entered: false, active: false };
+  const current = nowMs();
+  if (current > finite(recovered.expiresAtMs, 0)) {
+    recovered.active = false;
+    recovered.phase = "EXPIRED";
+    recovered.reason = "POST_RELEASE_WINDOW_EXPIRED";
+    await persistState("post_exit_recovered_base_expired");
+    log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_EXPIRED", {
+      campaignId: campaign.id,
+      windowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC,
+      baseLowPrice: recovered.baseLowPrice,
+    });
+    return { entered: false, active: false, expired: true };
+  }
+
+  const price = finite(feature.price, null);
+  if (!(price > 0)) return { entered: false, active: true };
+  if (!Number.isFinite(finite(recovered.baseLowPrice, null)) || price < recovered.baseLowPrice - 1e-9) {
+    const priorLow = finite(recovered.baseLowPrice, null);
+    recovered.baseLowPrice = round(price, 8);
+    recovered.baseLowAtMs = current;
+    recovered.baseLowAt = nowIso();
+    recovered.recoveryPct = 0;
+    recovered.confirmations = 0;
+    recovered.firstConfirmAtMs = 0;
+    recovered.firstConfirmAt = null;
+    recovered.lastConfirmPrice = null;
+    recovered.crossUpSeen = false;
+    recovered.phase = "WATCHING_BASE";
+    recovered.reason = "LOW_UPDATED";
+    await persistState("post_exit_recovered_base_low_updated");
+    log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_LOW_UPDATED", {
+      campaignId: campaign.id,
+      previousLowPrice: priorLow,
+      baseLowPrice: recovered.baseLowPrice,
+      sourceExitPrice: recovered.sourceExitPrice,
+      maxChasePct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT,
+    });
+    return { entered: false, active: true, lowUpdated: true };
+  }
+
+  const tickEma8 = finite(feature.ema8, null);
+  const tickEma18 = finite(feature.ema18, null);
+  const rsi = finite(feature.rsi, null);
+  const adx = finite(feature.adx, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const context = reentryContext(feature);
+  const recoveryPct = percentPnl(recovered.baseLowPrice, price);
+  recovered.recoveryPct = round(recoveryPct, 6);
+  if (feature.crossUp === true) recovered.crossUpSeen = true;
+
+  const structural = tickEma8 !== null && tickEma18 !== null &&
+    price >= tickEma8 && price >= tickEma18 &&
+    (!CFG.POST_EXIT_RECOVERED_BASE_REQUIRE_EMA8_ABOVE_EMA18 || tickEma8 >= tickEma18) &&
+    feature.redPulse !== true && feature.crossDown !== true;
+  const momentum = rsi !== null && rsi >= CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI && rsi <= CFG.POST_EXIT_RECOVERED_BASE_MAX_RSI &&
+    adx !== null && adx >= CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX &&
+    fvvo !== null && fvvo >= CFG.POST_EXIT_RECOVERED_BASE_MIN_FVVO &&
+    slope !== null && slope >= CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE;
+  const rayOk = !CFG.POST_EXIT_RECOVERED_BASE_REQUIRE_RAY_NOT_BEAR || !ray.includes("BEAR");
+  const contextOk = !CFG.POST_EXIT_RECOVERED_BASE_REQUIRE_5M_CONTEXT || context.ok;
+  const recoveryOk = recoveryPct + 1e-9 >= CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT &&
+    recoveryPct <= CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT + 1e-9;
+  const priorImpulsePct = percentPnl(finite(campaign.baseEntryPrice, 0), finite(campaign.priorPeakPrice, 0));
+  const impulseOk = priorImpulsePct + 1e-9 >= CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT;
+  const qualified = structural && momentum && rayOk && contextOk && recoveryOk && impulseOk;
+
+  if (!qualified) {
+    if (recovered.confirmations > 0) {
+      recovered.confirmations = 0;
+      recovered.firstConfirmAtMs = 0;
+      recovered.firstConfirmAt = null;
+      recovered.lastConfirmPrice = null;
+      recovered.phase = "WATCHING_BASE";
+      recovered.reason = "RECOVERY_CONFIRMATION_RESET";
+      await persistState("post_exit_recovered_base_confirmation_reset");
+      log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_CONFIRMATION_RESET", {
+        campaignId: campaign.id,
+        price,
+        baseLowPrice: recovered.baseLowPrice,
+        recoveryPct: round(recoveryPct, 6),
+        checks: { structural, momentum, rayOk, contextOk, recoveryOk, impulseOk },
+      });
+    }
+    return { entered: false, active: true, qualified: false };
+  }
+
+  recovered.confirmations = Number(recovered.confirmations || 0) + 1;
+  recovered.lastConfirmPrice = round(price, 8);
+  if (!recovered.firstConfirmAtMs) {
+    recovered.firstConfirmAtMs = current;
+    recovered.firstConfirmAt = nowIso();
+  }
+  recovered.phase = "RECOVERY_CONFIRMING";
+  recovered.reason = "TWO_TICK_RECOVERY_CONFIRMATION_PENDING";
+  const values = { price, tickEma8, tickEma18, rsi, adx, fvvo, slope };
+  await persistState("post_exit_recovered_base_confirming");
+  log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_CONFIRMING", {
+    campaignId: campaign.id,
+    price,
+    baseLowPrice: recovered.baseLowPrice,
+    recoveryPct: round(recoveryPct, 6),
+    observations: recovered.confirmations,
+    requiredObservations: recovered.requiredConfirmations,
+    rayRegime: ray,
+    context5m: { eligible: context.ok, ray: context.ray, ageSec: round(context.ctxAge, 2) },
+  });
+  if (recovered.confirmations < recovered.requiredConfirmations) return { entered: false, active: true, confirming: true };
+
+  const candidate = postExitRecoveredBaseCandidate(campaign, feature, context, values, recovered);
+  recovered.lastCandidate = candidate;
+  if (postExitRecoveredBaseMode() === "shadow") {
+    recovered.active = false;
+    recovered.phase = "SHADOW_CANDIDATE_OBSERVED";
+    recovered.reason = "TWO_TICK_RECOVERED_BASE_CONFIRMED";
+    recovered.logged = true;
+    await persistState("post_exit_recovered_base_shadow_candidate");
+    log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_SHADOW_CANDIDATE", {
+      ...candidate,
+      action: "NO_REENTRY_BEHAVIOUR_CHANGE",
+      candidateReferenceOnly: true,
+    });
+    return { entered: false, active: false, shadowCandidate: true, candidate };
+  }
+  if (postExitRecoveredBaseMode() !== "live") return { entered: false, active: false };
+  return forwardPostExitRecoveredBaseCandidate(campaign, recovered, candidate);
+}
+
 function reentry15sFastLaunchEligible(campaign, feature, context, values) {
   const price = values.price, tickEma8 = values.tickEma8, tickEma18 = values.tickEma18;
   const rsi = values.rsi, adx = values.adx, fvvo = values.fvvo, slope = values.slope;
@@ -2346,6 +2682,12 @@ async function evaluateReentryShadow(feature) {
     await persistState("reentry_candidate_limit");
     return;
   }
+
+  // v1x: a compact post-release recovered-base path runs alongside the legacy pullback/reclaim
+  // campaign. Shadow candidates never change the legacy phase. A deliberate live candidate owns
+  // the campaign and returns before the standard path can create a competing order on this tick.
+  const postExitRecoveredBase = await evaluatePostExitRecoveredBase(c, feature);
+  if (postExitRecoveredBase.entered) return;
 
   const price = feature.price;
   if (price > finite(c.highestPrice, 0) + 1e-9) {
@@ -3023,10 +3365,11 @@ async function start() {
     reentryPreReleaseMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED, reentryPreReleaseTickOverrideEnabled: CFG.REENTRY_PRE_RELEASE_TICK_OVERRIDE_ENABLED, reentryFastReclaimTickOverrideEnabled: CFG.REENTRY_FAST_RECLAIM_TICK_OVERRIDE_ENABLED, reentryFastReclaimOverrideMaxRsi: CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI,
     reentry15sFastLaunchMode: CFG.REENTRY_15S_FAST_LAUNCH_MODE, reentry15sFastLaunchMinPriorImpulsePct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT, reentry15sFastLaunchMinPullbackPct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT, reentry15sFastLaunchMinRsi: CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI, reentry15sFastLaunchMinAdx: CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX, reentry15sFastLaunchMinFvvo: CFG.REENTRY_15S_FAST_LAUNCH_MIN_FVVO, reentry15sFastLaunchMinSlope: CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE,
     reentry15sEarlyTurnMode: CFG.REENTRY_15S_EARLY_TURN_MODE, reentry15sEarlyTurnMinPriorImpulsePct: CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT, reentry15sEarlyTurnMinPullbackPct: CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT, reentry15sEarlyTurnMinRsi: CFG.REENTRY_15S_EARLY_TURN_MIN_RSI, reentry15sEarlyTurnMinAdx: CFG.REENTRY_15S_EARLY_TURN_MIN_ADX, reentry15sEarlyTurnMinFvvo: CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO, reentry15sEarlyTurnMinSlope: CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE,
+    postExitRecoveredBaseMode: postExitRecoveredBaseMode(), postExitRecoveredBaseWindowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC, postExitRecoveredBaseMinPriorImpulsePct: CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT, postExitRecoveredBaseMinRecoveryPct: CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT, postExitRecoveredBaseMaxChaseFromLowPct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT, postExitRecoveredBaseConfirmObservations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS, postExitRecoveredBaseMinRsi: CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI, postExitRecoveredBaseMinAdx: CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX, postExitRecoveredBaseMinFvvo: CFG.POST_EXIT_RECOVERED_BASE_MIN_FVVO, postExitRecoveredBaseMinSlope: CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE,
     reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, trailingDipReclaimMode, trailingTickRecoveryOk };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, trailingDipReclaimMode, trailingTickRecoveryOk };
