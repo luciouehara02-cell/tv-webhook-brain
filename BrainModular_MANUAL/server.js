@@ -1,8 +1,8 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1x_POST_EXIT_RECOVERED_BASE_SHADOW
+// BrainFVVO_ManualExit_v1y_LOSS_SIDE_THESIS_FAIL_SHADOW
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// v1x candidate: retains v1w behaviour and adds a shadow-first post-exit recovered-base re-entry path after the existing 90-second assumed-flat release.
+// v1y candidate: retains v1x behaviour and adds a shadow-first loss-side thesis-failure exit before the manual stop is hit.
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1x_POST_EXIT_RECOVERED_BASE_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1y_LOSS_SIDE_THESIS_FAIL_SHADOW"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -212,6 +212,19 @@ const CFG = {
   DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS", 2),
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", true),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
+
+  // v1y: strict loss-side thesis-failure overlay. This does not change the manual stop
+  // contract; it audits or exits early only when an unprotected trade has clearly broken down.
+  LOSS_SIDE_THESIS_FAIL_MODE: envStr("LOSS_SIDE_THESIS_FAIL_MODE", "shadow").toLowerCase(),
+  LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT: envNum("LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT", -0.35),
+  LOSS_SIDE_THESIS_FAIL_MAX_RSI: envNum("LOSS_SIDE_THESIS_FAIL_MAX_RSI", 32),
+  LOSS_SIDE_THESIS_FAIL_MIN_ADX: envNum("LOSS_SIDE_THESIS_FAIL_MIN_ADX", 20),
+  LOSS_SIDE_THESIS_FAIL_MAX_FVVO: envNum("LOSS_SIDE_THESIS_FAIL_MAX_FVVO", -3.0),
+  LOSS_SIDE_THESIS_FAIL_MAX_SLOPE: envNum("LOSS_SIDE_THESIS_FAIL_MAX_SLOPE", 0.0),
+  LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS: Math.floor(envNum("LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS", 2)),
+  LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC: envNum("LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC", 0),
+  LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR: envBool("LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR", true),
+  LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18: envBool("LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18", true),
 
   // v1s: after a profitable 15s/tick thesis-failure signal, optionally defer the full exit while
   // the fresh 5m trend remains above its EMA18 (the chart pink line). Hard stop, dynamic floor
@@ -560,6 +573,7 @@ function normalizeState(raw) {
       runner.protectedPrice = round(entry * (1 + runner.protectedPnlPct / 100), 8);
     }
   }
+  p.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: null, shadowLogged: false, ...(p.lossSideThesis || {}) };
   p.exitRequestedAt = p.exitRequestedAt || null;
   p.exitReason = p.exitReason || null;
   p.entryAcceptedAtMs = finite(p.entryAcceptedAtMs, 0);
@@ -660,6 +674,8 @@ function configProblems() {
   if (CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT");
   if (CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_FLOOR_CONFIRM");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
+  if (!["disabled", "shadow", "live"].includes(CFG.LOSS_SIDE_THESIS_FAIL_MODE)) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_MODE");
+  if (CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT >= 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC < 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS < 1 || CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI <= 0 || CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX < 0) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_MODE");
   if (CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT < CFG.DYNAMIC_PROFIT_ARM_MFE_PCT || CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC < 0 || CFG.DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC <= 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_THRESHOLDS");
   if (!["live", "shadow", "disabled"].includes(CFG.RUNNER_EXIT_MODE)) problems.push("INVALID_RUNNER_EXIT_MODE");
@@ -1109,6 +1125,18 @@ function statusPayload() {
       fiveMinuteThesisExitEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED,
       exitPercent: 100,
     },
+    lossSideThesisFailContract: {
+      mode: lossSideThesisFailMode(),
+      minLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT,
+      maxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI,
+      minAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX,
+      maxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO,
+      maxSlope: CFG.LOSS_SIDE_THESIS_FAIL_MAX_SLOPE,
+      confirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS,
+      requireRayBear: CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR,
+      requireBelowEma8AndEma18: CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18,
+      exitsOnlyBeforeDynamicProfitArmed: true,
+    },
     runnerExitContract: {
       enabled: CFG.RUNNER_EXIT_ENABLED,
       mode: CFG.RUNNER_EXIT_MODE,
@@ -1149,6 +1177,12 @@ function statusPayload() {
       latestPrice: state.position.latestPrice,
       latestPnlPct: state.position.latestPnlPct,
       peakPnlPct: state.position.peakPnlPct,
+      lossSideThesis: state.position.lossSideThesis ? {
+        observations: state.position.lossSideThesis.observations || 0,
+        lastBreachPrice: state.position.lossSideThesis.lastBreachPrice || null,
+        lastReason: state.position.lossSideThesis.lastReason || null,
+        shadowLogged: Boolean(state.position.lossSideThesis.shadowLogged),
+      } : null,
       dynamicProfit: state.position.dynamicProfit ? {
         armed: Boolean(state.position.dynamicProfit.armed),
         armedAtPnlPct: state.position.dynamicProfit.armedAtPnlPct || 0,
@@ -1663,6 +1697,77 @@ function fiveMinuteThesisFailure(position, feature, price, pnlPct) {
   return { confirmed, reason: confirmed ? "FIVE_MINUTE_THESIS_FAILURE" : "FIVE_MINUTE_THESIS_HEALTHY_OR_UNCONFIRMED", close, ema8, fvvo };
 }
 
+function lossSideThesisFailMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.LOSS_SIDE_THESIS_FAIL_MODE)
+    ? CFG.LOSS_SIDE_THESIS_FAIL_MODE
+    : "shadow";
+}
+
+function lossSideThesisState(position) {
+  if (!position.lossSideThesis || typeof position.lossSideThesis !== "object") {
+    position.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: null, shadowLogged: false };
+  }
+  return position.lossSideThesis;
+}
+
+function resetLossSideThesis(position, reason) {
+  const s = lossSideThesisState(position);
+  if (s.observations || s.breachAtMs || s.lastReason) {
+    position.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: reason || null, shadowLogged: false };
+  }
+}
+
+function lossSideThesisEvidence(position, feature, price, pnlPct) {
+  const mode = lossSideThesisFailMode();
+  const dynamic = dynamicProfitState(position);
+  if (mode === "disabled") return { eligible: false, conditions: false, reason: "LOSS_SIDE_THESIS_DISABLED" };
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { eligible: false, conditions: false, reason: "NOT_FEATURE_TICK" };
+  if (dynamic.armed) return { eligible: false, conditions: false, reason: "DYNAMIC_PROFIT_ALREADY_ARMED" };
+  if (pnlPct > CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT + 1e-9) return { eligible: true, conditions: false, reason: "LOSS_NOT_DEEP_ENOUGH", pnlPct };
+  const ema8 = finite(feature.ema8, null);
+  const ema18 = finite(feature.ema18, null);
+  const rsi = finite(feature.rsi, null);
+  const adx = finite(feature.adx, null);
+  const fvvo = finite(feature.fvvo, null);
+  const slope = finite(feature.slope, null);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const belowEma = !CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18 || (ema8 !== null && ema18 !== null && price < ema8 && price < ema18);
+  const rayBear = !CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR || ray.startsWith("RAY_BEAR");
+  const rsiOk = rsi !== null && rsi <= CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI;
+  const adxOk = adx !== null && adx >= CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX;
+  const fvvoOk = fvvo !== null && fvvo <= CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO;
+  const slopeOk = slope !== null && slope <= CFG.LOSS_SIDE_THESIS_FAIL_MAX_SLOPE;
+  const conditions = belowEma && rayBear && rsiOk && adxOk && fvvoOk && slopeOk;
+  const reason = conditions ? "CONFIRMED_BREAKDOWN_STRUCTURE" : "LOSS_SIDE_THESIS_NOT_CONFIRMED";
+  return { eligible: true, conditions, reason, pnlPct, ema8, ema18, rsi, adx, fvvo, slope, ray, belowEma, rayBear, rsiOk, adxOk, fvvoOk, slopeOk };
+}
+
+function lossSideThesisFailureConfirmed(position, feature, price, pnlPct) {
+  const evidence = lossSideThesisEvidence(position, feature, price, pnlPct);
+  const state = lossSideThesisState(position);
+  if (!evidence.eligible) {
+    resetLossSideThesis(position, evidence.reason);
+    return { confirmed: false, reason: evidence.reason, evidence };
+  }
+  if (!evidence.conditions) {
+    resetLossSideThesis(position, evidence.reason);
+    return { confirmed: false, reason: evidence.reason, evidence };
+  }
+  const current = nowMs();
+  if (!state.breachAtMs) {
+    state.breachAtMs = current;
+    state.observations = 1;
+  } else {
+    state.observations = Number(state.observations || 0) + 1;
+  }
+  state.lastBreachPrice = price;
+  state.lastFeatureKind = feature.kind;
+  state.lastReason = evidence.reason;
+  const elapsed = (current - state.breachAtMs) / 1000;
+  const observations = Number(state.observations || 0);
+  return { confirmed: observations >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS && elapsed >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC, reason: "LOSS_SIDE_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, evidence };
+}
+
 function dynamicPullbackGraceMode() {
   return ["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)
     ? CFG.DYNAMIC_PULLBACK_GRACE_MODE
@@ -1903,6 +2008,23 @@ async function manageExit(feature) {
     await persistState(`stop_price_${feature.kind}`);
     await requestFullExit(`FVVO_MANUAL_STOP_PRICE_HIT_${stop.reason}`, price, feature.kind);
     return;
+  }
+
+  // v1y: strict loss-side thesis failure is subordinate to the manual stop but can audit/exit before the full stop if an unprotected trade clearly breaks down.
+  const lossSide = lossSideThesisFailureConfirmed(p, feature, price, pnl);
+  if (lossSide.confirmed) {
+    const mode = lossSideThesisFailMode();
+    if (mode === "shadow") {
+      const ls = lossSideThesisState(p);
+      if (!ls.shadowLogged) {
+        ls.shadowLogged = true;
+        log("WARN", "FVVO_LOSS_SIDE_THESIS_FAIL_SHADOW_CANDIDATE", { entryPrice: p.entryPriceReference, entryOrigin: p.entryOrigin, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(p.peakPnlPct, 6), stopPrice: p.stopPrice, stopDistanceRemainingPct: round(percentageBelow(price, p.stopPrice), 6), minLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, requiredObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, observations: lossSide.observations, evidence: lossSide.evidence, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
+      }
+    } else if (mode === "live") {
+      await persistState(`loss_side_thesis_fail_${feature.kind}`);
+      await requestFullExit(`FVVO_LOSS_SIDE_THESIS_FAIL_${lossSide.reason}`, price, feature.kind);
+      return;
+    }
   }
 
   // Profit floor is a hard protection after the +0.45% (default) arm threshold.
@@ -3358,7 +3480,7 @@ async function start() {
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
-    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
+    demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, lossSideThesisFailMode: lossSideThesisFailMode(), lossSideThesisFailMinLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, lossSideThesisFailMaxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI, lossSideThesisFailMinAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX, lossSideThesisFailMaxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO, lossSideThesisFailConfirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
     manualEntryOverheatConfirmationEnabled: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRMATION_ENABLED, manualEntryOverheatConfirmExpirySec: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC, manualEntryOverheatMinSignals: CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS,
     runnerContinuationRescueMode: runnerContinuationRescueMode(), runnerContinuationRescueMinMfePct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT, runnerContinuationRescueMinPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT, runnerContinuationRescueMaxSec: CFG.RUNNER_CONTINUATION_RESCUE_MAX_SEC, runnerContinuationRescueHardLockPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_HARD_LOCK_PNL_PCT, runnerContinuationRescueFastTickProxyAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_FAST_TICK_PROXY_AUDIT_ENABLED, runnerContinuationRescuePostExitAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_ENABLED,
     reentryPullbackHysteresisAuditEnabled: CFG.REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED, reentryPullbackInvalidationHysteresisPct: CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT, reentryPullbackRearmAboveEma18Pct: CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT,
@@ -3372,4 +3494,4 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, trailingDipReclaimMode, trailingTickRecoveryOk };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, trailingDipReclaimMode, trailingTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed };

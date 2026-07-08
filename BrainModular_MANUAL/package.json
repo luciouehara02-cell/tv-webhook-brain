@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvomanualexit-v1x-post-exit-recovered-base-shadow",
+  "name": "brainfvvomanualexit-v1y-loss-side-thesis-fail-shadow",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1x.js",
+    "validate": "node validation_v1y.js",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
@@ -17,7 +17,8 @@
     "smoke:yellow": "node yellow_shadow_smoke_v1s.js",
     "smoke:pullback-shadow": "PULLBACK_TEST_MODE=shadow node dynamic_pullback_grace_smoke_v1s.js",
     "smoke:runner-live": "RUNNER_RESCUE_TEST_MODE=live node runner_continuation_rescue_smoke_v1t.js",
-    "smoke:post-exit-recovered-base": "node post_exit_recovered_base_smoke_v1x.js"
+    "smoke:post-exit-recovered-base": "node post_exit_recovered_base_smoke_v1x.js",
+    "smoke:loss-side": "node loss_side_thesis_fail_smoke_v1y.js"
   },
   "engines": {
     "node": ">=18"
@@ -25,5 +26,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1x: v1w protections plus shadow-first post-exit recovered-base re-entry audit after the existing 90-second assumed-flat release."
+  "description": "BrainFVVO ManualExit v1y: v1x protections plus shadow-first strict loss-side thesis-failure early-exit audit before the manual stop."
 }
