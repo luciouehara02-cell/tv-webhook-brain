@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvomanualexit-v1z-trailing-dip-reclaim-zone",
+  "name": "brainfvvomanualexit-v1aa-dual-dip-breakout-arm",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1z.js",
+    "validate": "node validation_v1aa.js",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
@@ -19,7 +19,8 @@
     "smoke:runner-live": "RUNNER_RESCUE_TEST_MODE=live node runner_continuation_rescue_smoke_v1t.js",
     "smoke:post-exit-recovered-base": "node post_exit_recovered_base_smoke_v1x.js",
     "smoke:loss-side": "node loss_side_thesis_fail_smoke_v1y.js",
-    "smoke:trailing-zone": "node trailing_dip_reclaim_zone_smoke_v1z.js"
+    "smoke:trailing-zone": "node trailing_dip_reclaim_zone_smoke_v1z.js",
+    "smoke:dual": "node dual_dip_breakout_smoke_v1aa.js"
   },
   "engines": {
     "node": ">=18"
@@ -27,5 +28,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1z: v1y protections plus range-based trailing_dip_reclaim_zone entries and red cancellation markers."
+  "description": "BrainFVVO ManualExit v1aa: v1z protections plus dual pending entry arms: one dip-side setup and one breakout setup can be active together."
 }
