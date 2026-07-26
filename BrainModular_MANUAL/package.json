@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvomanualexit-v1ab-breakout-retest-reentry-60m",
+  "name": "brainfvvomanualexit-v1ac-breakout-confirm-retest-reclaim",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1ab.js",
+    "validate": "node validation_v1ac.js",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
@@ -21,7 +21,8 @@
     "smoke:loss-side": "node loss_side_thesis_fail_smoke_v1y.js",
     "smoke:trailing-zone": "node trailing_dip_reclaim_zone_smoke_v1z.js",
     "smoke:dual": "node dual_dip_breakout_smoke_v1aa.js",
-    "smoke:breakout-retest": "node breakout_retest_reclaim_zone_smoke_v1ab.js"
+    "smoke:breakout-retest": "node breakout_retest_reclaim_zone_smoke_v1ab.js",
+    "smoke:breakout-confirm-retest": "node breakout_confirm_retest_reclaim_smoke_v1ac.js"
   },
   "engines": {
     "node": ">=18"
@@ -29,5 +30,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO ManualExit v1ab: v1aa dual pending arms plus breakout_retest_reclaim_zone and 60-minute auto re-entry campaign support."
+  "description": "BrainFVVO ManualExit v1ac: separates breakout confirmation price from retest range for breakout_retest_reclaim_zone while retaining v1ab 60-minute re-entry."
 }
