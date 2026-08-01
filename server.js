@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = "TickRouter_v4.1_MANUAL_FVVO_DESTINATION";
+const ROUTER_NAME = "TickRouter_v4.2_SWING_FVVO_DESTINATION";
 const PORT = Number(process.env.PORT || 8080);
 
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
@@ -22,6 +22,26 @@ const FVVO_MANUAL_ENTRY_HOST = String(
 )
   .trim()
   .toLowerCase();
+
+// Dedicated Swing Manual Entry destination.
+// The router injects the Swing brain's regular WEBHOOK_SECRET from
+// BRAIN_SECRET_FVVO_SWING_MANUAL_ENTRY. Never use MANUAL_WEBHOOK_SECRET here.
+const FVVO_SWING_MANUAL_ENTRY_URL = cleanEnvUrlPart(
+  process.env.FVVO_SWING_MANUAL_ENTRY_URL ||
+    "https://swingmanualentry-production.up.railway.app/webhook"
+);
+
+const FVVO_SWING_MANUAL_ENTRY_HOST = String(
+  process.env.FVVO_SWING_MANUAL_ENTRY_HOST ||
+    "swingmanualentry-production.up.railway.app"
+)
+  .trim()
+  .toLowerCase();
+
+const AUTO_ADD_FVVO_SWING_MANUAL_ENTRY =
+  String(
+    process.env.AUTO_ADD_FVVO_SWING_MANUAL_ENTRY || "true"
+  ).toLowerCase() === "true";
 
 const ROUTE_SRC_FEATURES_TO_FVVO =
   String(process.env.ROUTE_SRC_FEATURES_TO_FVVO || "false").toLowerCase() ===
@@ -75,9 +95,23 @@ function parseJsonMap(envName) {
 }
 
 const RAW_BRAIN_URLS = parseUrlList(process.env.BRAIN_URLS || "");
-const RAW_FVVO_BRAIN_URLS = parseUrlList(
+const CONFIGURED_FVVO_BRAIN_URLS = parseUrlList(
   process.env.FVVO_BRAIN_URLS || ""
 );
+
+// Keep the Railway FVVO_BRAIN_URLS variable as the main destination list,
+// but guarantee that the isolated Swing brain is present when auto-add is enabled.
+const RAW_FVVO_BRAIN_URLS = [...CONFIGURED_FVVO_BRAIN_URLS];
+
+if (
+  AUTO_ADD_FVVO_SWING_MANUAL_ENTRY &&
+  hostFromUrl(FVVO_SWING_MANUAL_ENTRY_URL) &&
+  !RAW_FVVO_BRAIN_URLS.some(
+    (url) => url.toLowerCase() === FVVO_SWING_MANUAL_ENTRY_URL.toLowerCase()
+  )
+) {
+  RAW_FVVO_BRAIN_URLS.push(FVVO_SWING_MANUAL_ENTRY_URL);
+}
 
 // An FVVO URL wins if it accidentally appears in both lists.
 const fvvoUrlSet = new Set(
@@ -311,6 +345,23 @@ function legacySecretFor(url) {
 function fvvoSecretFor(url) {
   const host = hostFromUrl(url);
   const lowerUrl = String(url || "").toLowerCase();
+
+  // Dedicated Swing Manual Entry brain. Use its own regular WEBHOOK_SECRET.
+  if (host && host === FVVO_SWING_MANUAL_ENTRY_HOST) {
+    const secret = secretFromEnv(
+      "BRAIN_SECRET_FVVO_SWING_MANUAL_ENTRY"
+    );
+
+    return secret
+      ? {
+          secret,
+          source: "ENV:BRAIN_SECRET_FVVO_SWING_MANUAL_ENTRY",
+        }
+      : {
+          secret: "",
+          source: "MISSING_ENV:BRAIN_SECRET_FVVO_SWING_MANUAL_ENTRY",
+        };
+  }
 
   // Dedicated manual brain: explicit first match so a generic FVVO map
   // cannot accidentally route a different secret to this isolated service.
@@ -721,6 +772,9 @@ app.get("/", (_req, res) => {
     ),
 
     fvvoManualEntryHost: FVVO_MANUAL_ENTRY_HOST,
+    fvvoSwingManualEntryUrl: FVVO_SWING_MANUAL_ENTRY_URL,
+    fvvoSwingManualEntryHost: FVVO_SWING_MANUAL_ENTRY_HOST,
+    autoAddFvvoSwingManualEntry: AUTO_ADD_FVVO_SWING_MANUAL_ENTRY,
 
     perBrainSecrets: {
       hasDefault: Boolean(BRAIN_SECRET),
@@ -745,6 +799,10 @@ app.get("/", (_req, res) => {
 
       hasFvvoManualEntry: Boolean(
         process.env.BRAIN_SECRET_FVVO_MANUAL_ENTRY
+      ),
+
+      hasFvvoSwingManualEntry: Boolean(
+        process.env.BRAIN_SECRET_FVVO_SWING_MANUAL_ENTRY
       ),
 
       hasFvvoGeneric: Boolean(process.env.BRAIN_SECRET_FVVO),
@@ -1031,6 +1089,12 @@ app.listen(PORT, () => {
   );
 
   console.log(
+    `FVVO_SWING_MANUAL_ENTRY_URL=${
+      FVVO_SWING_MANUAL_ENTRY_URL || "(not set)"
+    } AUTO_ADD=${AUTO_ADD_FVVO_SWING_MANUAL_ENTRY ? "true" : "false"}`
+  );
+
+  console.log(
     `Per-brain secrets set: ACT=${
       process.env.BRAIN_SECRET_ACTLONG ? "YES" : "NO"
     }, ` +
@@ -1057,6 +1121,9 @@ app.listen(PORT, () => {
       }, ` +
       `FVVO_MANUAL_ENTRY=${
         process.env.BRAIN_SECRET_FVVO_MANUAL_ENTRY ? "YES" : "NO"
+      }, ` +
+      `FVVO_SWING_MANUAL_ENTRY=${
+        process.env.BRAIN_SECRET_FVVO_SWING_MANUAL_ENTRY ? "YES" : "NO"
       }, ` +
       `FVVO_GENERIC=${
         process.env.BRAIN_SECRET_FVVO ? "YES" : "NO"
