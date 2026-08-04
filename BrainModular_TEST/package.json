@@ -1,21 +1,19 @@
 {
-  "name": "brainfvvo-swing-v1a-confirm-retest-structure-exit",
-  "version": "1.0.0-demo",
+  "name": "brainfvvo-swing-v1b-runner-profit-capture-audit",
+  "version": "1.1.0-demo",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_swing_v1a.js",
+    "validate": "node validation_swing_v1b_contract.js && node validation_swing_v1b.js",
     "smoke:structure": "node swing_structure_exit_smoke_v1a.js",
     "smoke:breakout-confirm-retest": "node breakout_confirm_retest_reclaim_smoke_v1ac.js",
     "smoke:dual": "node dual_dip_breakout_smoke_v1aa.js",
-    "smoke:loss-side": "node loss_side_thesis_fail_smoke_v1y.js",
-    "smoke:http:trailing-zone": "node trailing_dip_reclaim_zone_smoke_v1z.js",
-    "test:strategy": "npm run check && npm run validate && npm run smoke:structure && npm run smoke:trigger-lifecycle && npm run smoke:dual",
-    "replay": "node replay_full_swing_v1a.js",
-    "replay:coverage": "node replay_log_coverage_swing_v1a.js",
-    "smoke:trigger-lifecycle": "node swing_trigger_lifecycle_smoke_v1a.js"
+    "smoke:trigger-lifecycle": "node swing_trigger_lifecycle_smoke_v1a.js",
+    "test:strategy": "npm run check && npm run validate && npm run smoke:structure && npm run smoke:breakout-confirm-retest && npm run smoke:dual && npm run smoke:trigger-lifecycle",
+    "replay": "node replay_full_swing_v1b.js",
+    "replay:dip-gate": "node replay_dip_gate_counterfactual_v1b.js"
   },
   "engines": {
     "node": ">=18"
@@ -23,5 +21,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Swing v1a DEMO candidate: v1ac entries with structure-led 5m exits, delayed profit protection, wider runner trail, longer hold, and re-entry disabled by default."
+  "description": "BrainFVVO Swing v1b DEMO: replay-selected 1.60% runner arm, 0.25% tight trail, stronger dip recovery gate, actual-fill PnL audit, and visible breach/rejection logs."
 }
