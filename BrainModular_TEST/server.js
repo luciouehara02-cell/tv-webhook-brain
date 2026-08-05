@@ -1,8 +1,8 @@
 // ============================================================
-// BrainFVVO_Swing_v1b_RUNNER_PROFIT_CAPTURE_AUDIT
+// BrainFVVO_Swing_v1c_FAST_EMERGENCY_CONFIRM_MONITOR
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// Swing v1b DEMO candidate: preserves v1ac entry mechanics, promotes earlier tight-runner protection after replay, adds explicit first-breach audit logs, optional actual-fill audit confirmation, and keeps re-entry disabled by default.
+// Swing v1c DEMO candidate: preserves v1b entry/profit logic and replaces the one-candle 5m emergency exit with a persisted 15s micro-trend confirmation state, hard-break override, recovery cancellation, and shadow legacy/intelligent-1m comparators.
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1b_RUNNER_PROFIT_CAPTURE_AUDIT_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1c_FAST_EMERGENCY_CONFIRM_MONITOR_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -111,8 +111,8 @@ const CFG = {
   C3_REQUEST_TIMEOUT_MS: envNum("C3_REQUEST_TIMEOUT_MS", 10000),
   C3_FORWARD_DEDUP_MS: envNum("C3_FORWARD_DEDUP_MS", 60000),
   C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", true),
-  // v1b audit-only PnL estimate. It never changes entry, stop, or exit decisions.
-  PNL_ESTIMATED_ROUND_TRIP_COST_PCT: envNum("PNL_ESTIMATED_ROUND_TRIP_COST_PCT", 0.10),
+  // v1c audit-only PnL estimate. It never changes entry, stop, or exit decisions.
+  PNL_ESTIMATED_ROUND_TRIP_COST_PCT: envNum("PNL_ESTIMATED_ROUND_TRIP_COST_PCT", 0.20),
   // Retired direct-clear compatibility flag. v1l requires the delayed auto-release contract instead.
   C3_ASSUME_EXIT_ACCEPTANCE: envBool("C3_ASSUME_EXIT_ACCEPTANCE", false),
   // After a 100% exit_long is accepted by 3Commas, retain the lock for this grace
@@ -121,7 +121,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-v1b-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-v1c-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -131,6 +131,8 @@ const CFG = {
   FVVO_FAST_TICK_EVENT: envStr("FVVO_FAST_TICK_EVENT", "FAST_TICK_FVVO"),
   MANUAL_REQUIRE_FRESH_FEATURE_TICK: envBool("MANUAL_REQUIRE_FRESH_FEATURE_TICK", true),
   FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC: envNum("FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC", 60),
+  FEATURE_MONOTONIC_GUARD_ENABLED: envBool("FEATURE_MONOTONIC_GUARD_ENABLED", true),
+  FEATURE_DUPLICATE_BAR_GUARD_ENABLED: envBool("FEATURE_DUPLICATE_BAR_GUARD_ENABLED", true),
 
   MANUAL_ENTRY_DEFAULT_PROFILE: envStr("MANUAL_ENTRY_DEFAULT_PROFILE", "SWING_BALANCED_STRUCTURE_EXIT"),
   MANUAL_ALLOW_ENTER: envBool("MANUAL_ALLOW_ENTER", true),
@@ -268,7 +270,27 @@ const CFG = {
   SWING_STRUCTURE_REQUIRE_EMA8_BELOW_EMA18: envBool("SWING_STRUCTURE_REQUIRE_EMA8_BELOW_EMA18", false),
   SWING_STRUCTURE_REQUIRE_RAY_BEAR: envBool("SWING_STRUCTURE_REQUIRE_RAY_BEAR", false),
   SWING_STRUCTURE_EMERGENCY_BREAK_PCT: envNum("SWING_STRUCTURE_EMERGENCY_BREAK_PCT", 0.20),
+  // v1c: the confirmed 5m emergency candle arms a fast state instead of exiting immediately.
+  // The live path uses smoothed 15s micro-trend persistence; intelligent synthetic-1m and
+  // legacy-immediate outcomes are logged in shadow for direct counterfactual comparison.
   SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS: Math.max(1, Math.floor(envNum("SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS", 1))),
+  SWING_EMERGENCY_FAST_CONFIRM_MODE: envStr("SWING_EMERGENCY_FAST_CONFIRM_MODE", "micro_15s_trend").toLowerCase(),
+  SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC: envNum("SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC", 195),
+  SWING_EMERGENCY_MICRO_WINDOW_TICKS: Math.max(5, Math.floor(envNum("SWING_EMERGENCY_MICRO_WINDOW_TICKS", 5))),
+  SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS", 4))),
+  SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS", 2))),
+  SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT: envNum("SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT", 0.001),
+  SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS", 2))),
+  SWING_EMERGENCY_MICRO_MOMENTUM_RECOVERY_VETO: envBool("SWING_EMERGENCY_MICRO_MOMENTUM_RECOVERY_VETO", true),
+  SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT: envNum("SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT", 0.12),
+  SWING_EMERGENCY_HARD_EXIT_PNL_PCT: envNum("SWING_EMERGENCY_HARD_EXIT_PNL_PCT", -0.35),
+  SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT: envNum("SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT", 0.02),
+  SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS", 2))),
+  SWING_EMERGENCY_TIMEOUT_EXIT_MIN_BEAR_SIGNALS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_TIMEOUT_EXIT_MIN_BEAR_SIGNALS", 3))),
+  SWING_EMERGENCY_SHADOW_INTELLIGENT_1M_ENABLED: envBool("SWING_EMERGENCY_SHADOW_INTELLIGENT_1M_ENABLED", true),
+  SWING_EMERGENCY_SHADOW_1M_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_SHADOW_1M_CONFIRM_OBSERVATIONS", 2))),
+  SWING_EMERGENCY_SHADOW_1M_MIN_BEAR_SIGNALS: Math.max(1, Math.floor(envNum("SWING_EMERGENCY_SHADOW_1M_MIN_BEAR_SIGNALS", 2))),
+  SWING_EMERGENCY_SHADOW_LEGACY_IMMEDIATE_ENABLED: envBool("SWING_EMERGENCY_SHADOW_LEGACY_IMMEDIATE_ENABLED", true),
   SWING_NO_PROGRESS_CHECK_AFTER_SEC: envNum("SWING_NO_PROGRESS_CHECK_AFTER_SEC", 21600),
   SWING_NO_PROGRESS_MAX_MFE_PCT: envNum("SWING_NO_PROGRESS_MAX_MFE_PCT", 0.80),
   SWING_NO_PROGRESS_MAX_CURRENT_PNL_PCT: envNum("SWING_NO_PROGRESS_MAX_CURRENT_PNL_PCT", 0.20),
@@ -548,7 +570,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -561,7 +583,7 @@ function defaultState() {
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
     priceEntry: { pending: null, pending2: null, last: null },
-    audit: { runnerRescuePostExit: null },
+    audit: { runnerRescuePostExit: null, lastBarTimeByKind: {} },
   };
 }
 
@@ -581,6 +603,7 @@ function normalizeState(raw) {
   next.autoExitRelease.positionOpenedAtMs = finite(next.autoExitRelease.positionOpenedAtMs, 0);
   next.priceEntry = { ...fallback.priceEntry, ...(raw.priceEntry || {}) };
   next.audit = { ...fallback.audit, ...(raw.audit || {}) };
+  next.audit.lastBarTimeByKind = next.audit.lastBarTimeByKind && typeof next.audit.lastBarTimeByKind === "object" ? next.audit.lastBarTimeByKind : {};
   if (next.audit.runnerRescuePostExit && typeof next.audit.runnerRescuePostExit !== "object") next.audit.runnerRescuePostExit = null;
   if (next.priceEntry.pending && typeof next.priceEntry.pending !== "object") next.priceEntry.pending = null;
   if (next.priceEntry.pending2 && typeof next.priceEntry.pending2 !== "object") next.priceEntry.pending2 = null;
@@ -661,6 +684,7 @@ function normalizeState(raw) {
     }
   }
   p.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: null, shadowLogged: false, ...(p.lossSideThesis || {}) };
+  p.swingExit = normalizeSwingExitState(p.swingExit);
   p.exitRequestedAt = p.exitRequestedAt || null;
   p.exitReason = p.exitReason || null;
   p.entryAcceptedAtMs = finite(p.entryAcceptedAtMs, 0);
@@ -767,6 +791,8 @@ function configProblems() {
   if (CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT >= 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC < 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS < 1 || CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI <= 0 || CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX < 0) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.SWING_STRUCTURE_EXIT_MODE)) problems.push("INVALID_SWING_STRUCTURE_EXIT_MODE");
   if (CFG.SWING_STRUCTURE_MIN_MFE_PCT < 0 || CFG.SWING_STRUCTURE_MIN_CURRENT_PNL_PCT < 0 || CFG.SWING_STRUCTURE_EMA18_BREAK_TOLERANCE_PCT < 0 || CFG.SWING_STRUCTURE_CONFIRM_5M_OBSERVATIONS < 1 || CFG.SWING_STRUCTURE_MIN_DETERIORATION_SIGNALS < 1 || CFG.SWING_STRUCTURE_EMERGENCY_BREAK_PCT < CFG.SWING_STRUCTURE_EMA18_BREAK_TOLERANCE_PCT || CFG.SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS < 1) problems.push("INVALID_SWING_STRUCTURE_THRESHOLDS");
+  if (!["disabled", "shadow", "micro_15s_trend"].includes(CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE)) problems.push("INVALID_SWING_EMERGENCY_FAST_CONFIRM_MODE");
+  if (CFG.SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC < 30 || CFG.SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC > 600 || CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS < 5 || CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS < 1 || CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS > CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS || CFG.SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS < 1 || CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT < 0 || CFG.SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS < 1 || CFG.SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT < 0 || CFG.SWING_EMERGENCY_HARD_EXIT_PNL_PCT >= 0 || CFG.SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT < 0 || CFG.SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS < 1 || CFG.SWING_EMERGENCY_TIMEOUT_EXIT_MIN_BEAR_SIGNALS < 1 || CFG.SWING_EMERGENCY_SHADOW_1M_CONFIRM_OBSERVATIONS < 1 || CFG.SWING_EMERGENCY_SHADOW_1M_MIN_BEAR_SIGNALS < 1) problems.push("INVALID_SWING_EMERGENCY_FAST_THRESHOLDS");
   if (CFG.SWING_NO_PROGRESS_CHECK_AFTER_SEC < 0 || CFG.SWING_NO_PROGRESS_MAX_MFE_PCT < 0 || CFG.SWING_NO_PROGRESS_CONFIRM_5M_OBSERVATIONS < 1 || CFG.SWING_HARD_MAX_HOLD_SEC <= 0 || CFG.SWING_HARD_MAX_HOLD_SEC < CFG.SWING_NO_PROGRESS_CHECK_AFTER_SEC) problems.push("INVALID_SWING_HOLD_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_MODE");
   if (CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT < CFG.DYNAMIC_PROFIT_ARM_MFE_PCT || CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC < 0 || CFG.DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC <= 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_THRESHOLDS");
@@ -905,6 +931,20 @@ function normalizeFeature(payload) {
   };
 }
 
+function featureTimeGuard(feature) {
+  if (!CFG.FEATURE_MONOTONIC_GUARD_ENABLED) return { ok: true };
+  const family = String(feature.kind || "UNKNOWN");
+  const currentBarTime = finite(feature.barTimeMs, null);
+  if (currentBarTime === null) return { ok: true };
+  state.audit = state.audit && typeof state.audit === "object" ? state.audit : { runnerRescuePostExit: null, lastBarTimeByKind: {} };
+  state.audit.lastBarTimeByKind = state.audit.lastBarTimeByKind && typeof state.audit.lastBarTimeByKind === "object" ? state.audit.lastBarTimeByKind : {};
+  const prior = finite(state.audit.lastBarTimeByKind[family], null);
+  if (prior !== null && currentBarTime < prior) return { ok: false, reason: "OLDER_BAR_TIME", family, currentBarTime, priorBarTime: prior };
+  if (CFG.FEATURE_DUPLICATE_BAR_GUARD_ENABLED && prior !== null && currentBarTime === prior) return { ok: false, reason: "DUPLICATE_BAR_TIME", family, currentBarTime, priorBarTime: prior };
+  state.audit.lastBarTimeByKind[family] = currentBarTime;
+  return { ok: true };
+}
+
 function updateFeature(feature) {
   if (!Number.isFinite(feature.price) || feature.price <= 0) return false;
   if (feature.kind === CFG.FVVO_FEATURE_TICK_EVENT) state.lastFeature = feature;
@@ -957,11 +997,7 @@ function buildPosition(entryPrice, levels, options = {}) {
     peakPnlPct: 0,
     maxFavorableExcursionPct: 0,
     maxAdverseExcursionPct: 0,
-    swingExit: {
-      structure: { observations: 0, breachAtMs: 0, lastEvidence: null },
-      emergency: { observations: 0, breachAtMs: 0, lastEvidence: null },
-      noProgress: { observations: 0, breachAtMs: 0, lastEvidence: null },
-    },
+    swingExit: normalizeSwingExitState(null),
     exitRequestedAt: null,
     exitReason: null,
   };
@@ -1255,6 +1291,24 @@ function statusPayload() {
       confirm5mObservations: CFG.SWING_STRUCTURE_CONFIRM_5M_OBSERVATIONS,
       minDeteriorationSignals: CFG.SWING_STRUCTURE_MIN_DETERIORATION_SIGNALS,
       emergencyBreakPct: CFG.SWING_STRUCTURE_EMERGENCY_BREAK_PCT,
+      emergency5mDetectorObservations: CFG.SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS,
+      fastEmergency: {
+        mode: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE,
+        maxSec: CFG.SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC,
+        microWindowTicks: CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS,
+        requiredBelowTicks: CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS,
+        confirmObservations: CFG.SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS,
+        minAverageDeclinePct: CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT,
+        minBearSignals: CFG.SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS,
+        momentumRecoveryVeto: CFG.SWING_EMERGENCY_MICRO_MOMENTUM_RECOVERY_VETO,
+        hardBreakBufferPct: CFG.SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT,
+        hardExitPnlPct: CFG.SWING_EMERGENCY_HARD_EXIT_PNL_PCT,
+        recoveryReclaimBufferPct: CFG.SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT,
+        recoveryConfirmObservations: CFG.SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS,
+        shadowIntelligent1mEnabled: CFG.SWING_EMERGENCY_SHADOW_INTELLIGENT_1M_ENABLED,
+        shadowLegacyImmediateEnabled: CFG.SWING_EMERGENCY_SHADOW_LEGACY_IMMEDIATE_ENABLED,
+        activeState: state.position ? swingExitState(state.position).fastEmergency : null,
+      },
       noProgressCheckAfterSec: CFG.SWING_NO_PROGRESS_CHECK_AFTER_SEC,
       hardMaxHoldSec: CFG.SWING_HARD_MAX_HOLD_SEC,
       exitPercent: 100,
@@ -2108,11 +2162,45 @@ function swingStructureExitMode() {
     : "disabled";
 }
 
+function defaultFastEmergencyState() {
+  return {
+    active: false, id: null, armedAtMs: 0, armedAt: null, expiresAtMs: 0,
+    detectorBarTimeMs: 0, detectorPrice: null, detectorPnlPct: null, detectorEvidence: null,
+    emergencyBreakPrice: null, normalBreakPrice: null, hardBreakPrice: null,
+    ticks: [], microConfirmations: 0, recoveryObservations: 0, lastMicroReason: null,
+    lastEvaluationBarTimeMs: 0, lastPrice: null, lastPnlPct: null,
+    shadow: {
+      legacyImmediate: { logged: false, price: null, pnlPct: null, at: null },
+      intelligent1m: { currentMinute: null, current: null, confirmedMinutes: 0, exitLogged: false, exitPrice: null, exitPnlPct: null, exitAt: null, lastFinalizedMinute: null, lastClosed: null },
+    },
+    resolution: null,
+  };
+}
+
+function normalizeFastEmergencyState(raw) {
+  const fallback = defaultFastEmergencyState();
+  const source = raw && typeof raw === "object" ? raw : {};
+  const next = { ...fallback, ...source };
+  next.active = Boolean(next.active);
+  next.ticks = Array.isArray(source.ticks) ? source.ticks.slice(-Math.max(12, CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS + 4)) : [];
+  next.microConfirmations = Math.max(0, Math.floor(finite(source.microConfirmations, 0)));
+  next.recoveryObservations = Math.max(0, Math.floor(finite(source.recoveryObservations, 0)));
+  next.shadow = { ...fallback.shadow, ...(source.shadow || {}) };
+  next.shadow.legacyImmediate = { ...fallback.shadow.legacyImmediate, ...(source.shadow?.legacyImmediate || {}) };
+  next.shadow.intelligent1m = { ...fallback.shadow.intelligent1m, ...(source.shadow?.intelligent1m || {}) };
+  return next;
+}
+
+function normalizeSwingExitState(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const next = { ...source };
+  for (const key of ["structure", "emergency", "noProgress"]) next[key] = { observations: 0, breachAtMs: 0, lastEvidence: null, ...(source[key] || {}) };
+  next.fastEmergency = normalizeFastEmergencyState(source.fastEmergency);
+  return next;
+}
+
 function swingExitState(position) {
-  if (!position.swingExit || typeof position.swingExit !== "object") position.swingExit = {};
-  for (const key of ["structure", "emergency", "noProgress"]) {
-    position.swingExit[key] = { observations: 0, breachAtMs: 0, lastEvidence: null, ...(position.swingExit[key] || {}) };
-  }
+  position.swingExit = normalizeSwingExitState(position.swingExit);
   return position.swingExit;
 }
 
@@ -2155,6 +2243,158 @@ function incrementSwingCounter(counter, evidence) {
   return { observations: counter.observations, elapsedSec: (current - counter.breachAtMs) / 1000 };
 }
 
+
+function featureBearSignals(feature, price, compareTick = null) {
+  const ema8 = finite(feature?.ema8, null);
+  const fvvo = finite(feature?.fvvo, null);
+  const slope = finite(feature?.slope, null);
+  const rsi = finite(feature?.rsi, null);
+  const ray = String(feature?.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const signals = [];
+  if (ema8 !== null && price < ema8) signals.push("PRICE_BELOW_EMA8");
+  if (ray.startsWith("RAY_BEAR")) signals.push("RAY_BEAR");
+  if (slope !== null && slope <= 0) signals.push("FVVO_SLOPE_NONPOSITIVE");
+  if (compareTick && fvvo !== null && finite(compareTick.fvvo, null) !== null && fvvo < compareTick.fvvo) signals.push("FVVO_LOWER_THAN_30S_AGO");
+  if (rsi !== null && rsi <= 35) signals.push("RSI_WEAK_35");
+  return { signals, signalCount: signals.length, ema8, fvvo, slope, rsi, ray };
+}
+
+function emergencyMomentumRecoveryVeto(latest, compareTick) {
+  if (!CFG.SWING_EMERGENCY_MICRO_MOMENTUM_RECOVERY_VETO || !latest || !compareTick) return false;
+  const slope = finite(latest.slope, null);
+  const fvvo = finite(latest.fvvo, null);
+  const priorFvvo = finite(compareTick.fvvo, null);
+  const rsi = finite(latest.rsi, null);
+  const priorRsi = finite(compareTick.rsi, null);
+  return slope !== null && slope > 0 && fvvo !== null && priorFvvo !== null && fvvo > priorFvvo && rsi !== null && priorRsi !== null && rsi > priorRsi;
+}
+
+function armFastEmergency(position, feature, price, pnlPct, evidence) {
+  const swing = swingExitState(position);
+  const fast = swing.fastEmergency;
+  if (fast.active) return { armedNow: false, fast };
+  const current = nowMs();
+  const line = finite(evidence?.emergencyBreakPrice, null);
+  const fresh = normalizeFastEmergencyState(null);
+  Object.assign(fast, fresh, {
+    active: true,
+    id: crypto.randomUUID(),
+    armedAtMs: current,
+    armedAt: nowIso(),
+    expiresAtMs: current + CFG.SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC * 1000,
+    detectorBarTimeMs: finite(feature?.barTimeMs, current),
+    detectorPrice: round(price, 8),
+    detectorPnlPct: round(pnlPct, 6),
+    detectorEvidence: clone(evidence),
+    emergencyBreakPrice: line === null ? null : round(line, 8),
+    normalBreakPrice: finite(evidence?.normalBreakPrice, null),
+    hardBreakPrice: line === null ? null : round(line * (1 - CFG.SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT / 100), 8),
+    lastPrice: round(price, 8),
+    lastPnlPct: round(pnlPct, 6),
+  });
+  if (CFG.SWING_EMERGENCY_SHADOW_LEGACY_IMMEDIATE_ENABLED) {
+    fast.shadow.legacyImmediate = { logged: true, price: round(price, 8), pnlPct: round(pnlPct, 6), at: nowIso() };
+    log("WARN", "FVVO_SWING_EMERGENCY_LEGACY_IMMEDIATE_SHADOW", { fastEmergencyId: fast.id, counterfactualReason: "V1B_IMMEDIATE_5M_EMERGENCY_EXIT", price, pnlPct: round(pnlPct, 6), emergencyBreakPrice: fast.emergencyBreakPrice, action: "SHADOW_ONLY_NO_EXIT" });
+  }
+  log("WARN", "FVVO_SWING_EMERGENCY_FAST_CONFIRM_ARMED", { fastEmergencyId: fast.id, mode: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE, price, pnlPct: round(pnlPct, 6), peakPnlPct: round(position.peakPnlPct, 6), emergencyBreakPrice: fast.emergencyBreakPrice, hardBreakPrice: fast.hardBreakPrice, expiresAt: new Date(fast.expiresAtMs).toISOString(), detectorEvidence: evidence, action: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "shadow" ? "SHADOW_MONITOR" : "WAIT_FOR_15S_CONFIRMATION" });
+  return { armedNow: true, fast };
+}
+
+function resetFastEmergency(position, resolution, feature = null, price = null, pnlPct = null, extra = {}) {
+  const fast = swingExitState(position).fastEmergency;
+  const snapshot = { id: fast.id, armedAt: fast.armedAt, emergencyBreakPrice: fast.emergencyBreakPrice, hardBreakPrice: fast.hardBreakPrice, detectorPrice: fast.detectorPrice, detectorPnlPct: fast.detectorPnlPct, microConfirmations: fast.microConfirmations, recoveryObservations: fast.recoveryObservations, shadow: clone(fast.shadow), resolution, resolvedAt: nowIso(), price: finite(price, fast.lastPrice), pnlPct: finite(pnlPct, fast.lastPnlPct), ...extra };
+  Object.assign(fast, defaultFastEmergencyState(), { resolution: snapshot });
+  return snapshot;
+}
+
+function emergencyMicroEvaluation(fast) {
+  const n = CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS;
+  const ticks = fast.ticks.slice(-n);
+  if (ticks.length < n || !(fast.emergencyBreakPrice > 0)) return { ready: false, reason: "MICRO_WINDOW_INCOMPLETE", tickCount: ticks.length, requiredTicks: n };
+  const prices = ticks.map((t) => t.price);
+  const belowCount = prices.filter((v) => v <= fast.emergencyBreakPrice + 1e-9).length;
+  const sorted = [...prices].sort((a,b)=>a-b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const early = ticks.slice(0, 3);
+  const late = ticks.slice(-3);
+  const earlyAverage = early.reduce((a,t)=>a+t.price,0)/early.length;
+  const lateAverage = late.reduce((a,t)=>a+t.price,0)/late.length;
+  const averageDeclinePct = earlyAverage > 0 ? ((earlyAverage - lateAverage) / earlyAverage) * 100 : 0;
+  const latest = ticks[ticks.length - 1];
+  const compareTick = ticks[Math.max(0, ticks.length - 3)];
+  const bear = featureBearSignals(latest, latest.price, compareTick);
+  const recoveryVeto = emergencyMomentumRecoveryVeto(latest, compareTick);
+  const qualifies = belowCount >= CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS && median <= fast.emergencyBreakPrice + 1e-9 && averageDeclinePct + 1e-12 >= CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT && bear.signalCount >= CFG.SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS && !recoveryVeto;
+  return { ready: true, qualifies, reason: qualifies ? "MICRO_DOWNTREND_PERSISTENT" : recoveryVeto ? "MOMENTUM_RECOVERY_VETO" : averageDeclinePct < CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT ? "AVERAGE_NOT_DECLINING" : belowCount < CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS ? "INSUFFICIENT_BELOW_TICKS" : median > fast.emergencyBreakPrice ? "MEDIAN_RECLAIMED" : "INSUFFICIENT_BEAR_SIGNALS", belowCount, requiredBelowCount: CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS, median: round(median,8), earlyAverage: round(earlyAverage,8), lateAverage: round(lateAverage,8), averageDeclinePct: round(averageDeclinePct,6), minAverageDeclinePct: CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT, bearSignals: bear.signals, bearSignalCount: bear.signalCount, recoveryVeto, latest };
+}
+
+function updateIntelligent1mShadow(fast, tick, pnlPct) {
+  if (!CFG.SWING_EMERGENCY_SHADOW_INTELLIGENT_1M_ENABLED || fast.shadow.intelligent1m.exitLogged) return null;
+  const sh = fast.shadow.intelligent1m;
+  const minute = Math.floor(tick.barTimeMs / 60000) * 60000;
+  if (sh.currentMinute === null) {
+    sh.currentMinute = minute; sh.current = tick; return null;
+  }
+  if (minute === sh.currentMinute) { sh.current = tick; return null; }
+  if (minute < sh.currentMinute) return null;
+  const closed = sh.current;
+  sh.lastFinalizedMinute = sh.currentMinute;
+  sh.currentMinute = minute;
+  sh.current = tick;
+  if (!closed) return null;
+  const compareTick = sh.lastClosed;
+  const bear = featureBearSignals(closed, closed.price, compareTick);
+  const recoveryVeto = emergencyMomentumRecoveryVeto(closed, compareTick);
+  const qualifies = closed.price <= fast.emergencyBreakPrice + 1e-9 && bear.signalCount >= CFG.SWING_EMERGENCY_SHADOW_1M_MIN_BEAR_SIGNALS && !recoveryVeto;
+  sh.confirmedMinutes = qualifies ? sh.confirmedMinutes + 1 : 0;
+  sh.lastClosed = closed;
+  log("INFO", "FVVO_SWING_EMERGENCY_INTELLIGENT_1M_SHADOW_OBSERVATION", { fastEmergencyId: fast.id, minuteCloseTime: new Date(sh.lastFinalizedMinute + 60000).toISOString(), price: closed.price, pnlPct: round(percentPnl(state.position?.entryPriceReference || closed.price, closed.price),6), emergencyBreakPrice: fast.emergencyBreakPrice, qualifies, confirmedMinutes: sh.confirmedMinutes, requiredMinutes: CFG.SWING_EMERGENCY_SHADOW_1M_CONFIRM_OBSERVATIONS, bearSignals: bear.signals, recoveryVeto, action: "SHADOW_ONLY_NO_EXIT" });
+  if (sh.confirmedMinutes >= CFG.SWING_EMERGENCY_SHADOW_1M_CONFIRM_OBSERVATIONS) {
+    sh.exitLogged = true; sh.exitPrice = closed.price; sh.exitPnlPct = round(pnlPct,6); sh.exitAt = nowIso();
+    log("WARN", "FVVO_SWING_EMERGENCY_INTELLIGENT_1M_SHADOW_EXIT", { fastEmergencyId: fast.id, price: closed.price, pnlPct: round(percentPnl(state.position?.entryPriceReference || closed.price, closed.price),6), confirmedMinutes: sh.confirmedMinutes, bearSignals: bear.signals, action: "SHADOW_ONLY_NO_EXIT" });
+  }
+  return { qualifies, bear, recoveryVeto, closed };
+}
+
+function evaluateFastEmergency(position, feature, price, pnlPct) {
+  const fast = swingExitState(position).fastEmergency;
+  if (!fast.active) return { active: false };
+  fast.lastPrice = round(price,8); fast.lastPnlPct = round(pnlPct,6);
+  const current = nowMs();
+  const hardByPrice = fast.hardBreakPrice !== null && price <= fast.hardBreakPrice + 1e-9;
+  const hardByPnl = pnlPct <= CFG.SWING_EMERGENCY_HARD_EXIT_PNL_PCT + 1e-9;
+  if (hardByPrice || hardByPnl) return { active: true, confirmed: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "micro_15s_trend", shadow: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "shadow", reason: hardByPrice ? "SWING_EMERGENCY_FAST_HARD_BREAK" : "SWING_EMERGENCY_FAST_HARD_PNL", fast: clone(fast), evidence: { price, pnlPct, hardBreakPrice: fast.hardBreakPrice, hardExitPnlPct: CFG.SWING_EMERGENCY_HARD_EXIT_PNL_PCT } };
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { active: true, reason: "FAST_EMERGENCY_WAITING_FOR_15S" };
+  const barTimeMs = finite(feature.barTimeMs, current);
+  if (barTimeMs <= finite(fast.lastEvaluationBarTimeMs, 0)) return { active: true, reason: "FAST_EMERGENCY_DUPLICATE_TICK_IGNORED" };
+  fast.lastEvaluationBarTimeMs = barTimeMs;
+  const tick = { barTimeMs, price: round(price,8), ema8: finite(feature.ema8,null), ema18: finite(feature.ema18,null), fvvo: finite(feature.fvvo,null), slope: finite(feature.slope,null), rsi: finite(feature.rsi,null), adx: finite(feature.adx,null), rayRegime: String(feature.rayRegime || "RAY_NEUTRAL") };
+  fast.ticks.push(tick);
+  fast.ticks = fast.ticks.slice(-Math.max(12, CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS + 4));
+  updateIntelligent1mShadow(fast, tick, pnlPct);
+  const reclaimPrice = fast.emergencyBreakPrice * (1 + CFG.SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT / 100);
+  const recovery = price >= reclaimPrice - 1e-9 && tick.ema8 !== null && price >= tick.ema8 - 1e-9 && tick.slope !== null && tick.slope > 0 && !String(tick.rayRegime).toUpperCase().startsWith("RAY_BEAR");
+  fast.recoveryObservations = recovery ? fast.recoveryObservations + 1 : 0;
+  if (fast.recoveryObservations >= CFG.SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS) return { active: false, cancelled: true, reason: "SWING_EMERGENCY_FAST_RECOVERY_RECLAIM", evidence: { price, pnlPct, reclaimPrice: round(reclaimPrice,8), recoveryObservations: fast.recoveryObservations, tick } };
+  const micro = emergencyMicroEvaluation(fast);
+  if (micro.ready) {
+    fast.microConfirmations = micro.qualifies ? fast.microConfirmations + 1 : 0;
+    if (micro.qualifies) log("WARN", "FVVO_SWING_EMERGENCY_MICRO_CONFIRMING", { fastEmergencyId: fast.id, price, pnlPct: round(pnlPct,6), emergencyBreakPrice: fast.emergencyBreakPrice, observations: fast.microConfirmations, requiredObservations: CFG.SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS, micro });
+    else if (fast.lastMicroReason !== micro.reason) log("INFO", "FVVO_SWING_EMERGENCY_MICRO_HOLD", { fastEmergencyId: fast.id, price, pnlPct: round(pnlPct,6), emergencyBreakPrice: fast.emergencyBreakPrice, reason: micro.reason, microConfirmations: fast.microConfirmations, micro });
+    fast.lastMicroReason = micro.reason;
+    if (fast.microConfirmations >= CFG.SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS) return { active: true, confirmed: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "micro_15s_trend", shadow: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "shadow", reason: "SWING_EMERGENCY_FAST_MICRO_15S_CONFIRMED", fast: clone(fast), evidence: micro };
+  }
+  if (current >= fast.expiresAtMs) {
+    const latest = fast.ticks[fast.ticks.length - 1] || tick;
+    const compare = fast.ticks.length >= 3 ? fast.ticks[fast.ticks.length - 3] : null;
+    const bear = featureBearSignals(latest, latest.price, compare);
+    const recoveryVeto = emergencyMomentumRecoveryVeto(latest, compare);
+    const timeoutExit = latest.price <= fast.emergencyBreakPrice + 1e-9 && bear.signalCount >= CFG.SWING_EMERGENCY_TIMEOUT_EXIT_MIN_BEAR_SIGNALS && !recoveryVeto;
+    return timeoutExit ? { active: true, confirmed: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "micro_15s_trend", shadow: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "shadow", reason: "SWING_EMERGENCY_FAST_TIMEOUT_BEARISH", fast: clone(fast), evidence: { bearSignals: bear.signals, recoveryVeto, latest } } : { active: false, cancelled: true, reason: "SWING_EMERGENCY_FAST_TIMEOUT_NOT_CONFIRMED", evidence: { bearSignals: bear.signals, recoveryVeto, latest } };
+  }
+  return { active: true, confirmed: false, reason: "SWING_EMERGENCY_FAST_MONITORING", micro, recoveryObservations: fast.recoveryObservations };
+}
+
 function swingStructureExitDecision(position, feature, price, pnlPct) {
   const mode = swingStructureExitMode();
   const stateSwing = swingExitState(position);
@@ -2171,8 +2411,13 @@ function swingStructureExitDecision(position, feature, price, pnlPct) {
   const emergencyEligible = peak + 1e-9 >= CFG.SWING_STRUCTURE_MIN_MFE_PCT && evidence.closeBelowEmergency && (evidence.signals.includes("RAY_BEAR") || evidence.signals.includes("FVVO_CROSS_DOWN") || evidence.signals.includes("EMA8_BELOW_OR_EQUAL_EMA18"));
   if (emergencyEligible) {
     const c = incrementSwingCounter(stateSwing.emergency, evidence);
-    if (c.observations >= CFG.SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS) return { confirmed: mode === "live", shadow: mode === "shadow", reason: "SWING_EMERGENCY_EMA18_STRUCTURE_BREAK", heldSec, peakPnlPct: peak, pnlPct, evidence, ...c };
-  } else resetSwingCounter(stateSwing.emergency);
+    if (c.observations >= CFG.SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS) {
+      if (CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE === "disabled") return { confirmed: mode === "live", shadow: mode === "shadow", reason: "SWING_EMERGENCY_EMA18_STRUCTURE_BREAK", heldSec, peakPnlPct: peak, pnlPct, evidence, ...c };
+      const armed = armFastEmergency(position, feature, price, pnlPct, evidence);
+      resetSwingCounter(stateSwing.emergency);
+      return { confirmed: false, shadow: false, armedFastEmergency: true, armedNow: armed.armedNow, reason: "SWING_EMERGENCY_FAST_CONFIRM_PENDING", heldSec, peakPnlPct: peak, pnlPct, evidence, fastEmergencyId: armed.fast.id, observations: c.observations };
+    }
+  } else if (!stateSwing.fastEmergency.active) resetSwingCounter(stateSwing.emergency);
 
   const normalEligible = peak + 1e-9 >= CFG.SWING_STRUCTURE_MIN_MFE_PCT && pnlPct + 1e-9 >= CFG.SWING_STRUCTURE_MIN_CURRENT_PNL_PCT && evidence.closeRequirement && evidence.emaRequirement && evidence.rayRequirement && evidence.signalCount >= CFG.SWING_STRUCTURE_MIN_DETERIORATION_SIGNALS;
   if (normalEligible) {
@@ -2326,8 +2571,29 @@ async function manageExit(feature) {
     return;
   }
 
-  // Swing v1a: evaluate only confirmed 5m structure after the stop, loss-side protection,
-  // dynamic floor, and runner trail. It never reacts to ordinary 15s noise.
+  // Swing v1c: once a 5m emergency candle arms the persisted fast state, use the
+  // smoothed 15s micro-trend path for the live decision. Hard stop/loss/floor/runner
+  // protections above always retain priority.
+  const fastEmergency = evaluateFastEmergency(p, feature, price, pnl);
+  if (fastEmergency.cancelled) {
+    const resolved = resetFastEmergency(p, fastEmergency.reason, feature, price, pnl, { evidence: fastEmergency.evidence });
+    await persistState(`swing_emergency_fast_cancel_${feature.kind}`);
+    log("INFO", "FVVO_SWING_EMERGENCY_FAST_CANCELLED", { ...resolved, action: "POSITION_REMAINS_MANAGED" });
+  } else if (fastEmergency.shadow) {
+    log("WARN", "FVVO_SWING_EMERGENCY_FAST_SHADOW_EXIT", { reason: fastEmergency.reason, price, latestPnlPct: round(pnl,6), evidence: fastEmergency.evidence, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
+    resetFastEmergency(p, `SHADOW_${fastEmergency.reason}`, feature, price, pnl, { evidence: fastEmergency.evidence });
+    await persistState(`swing_emergency_fast_shadow_${feature.kind}`);
+  } else if (fastEmergency.confirmed) {
+    const reason = fastEmergency.reason;
+    const resolved = resetFastEmergency(p, reason, feature, price, pnl, { evidence: fastEmergency.evidence });
+    await persistState(`swing_emergency_fast_exit_${feature.kind}`);
+    log("WARN", "FVVO_SWING_EMERGENCY_FAST_CONFIRMED", { reason, price, latestPnlPct: round(pnl,6), peakPnlPct: round(p.peakPnlPct,6), resolution: resolved, evidence: fastEmergency.evidence });
+    await requestFullExit(`FVVO_${reason}`, price, feature.kind);
+    return;
+  }
+
+  // Swing structure: normal/no-progress paths remain confirmed on 5m. A 5m emergency
+  // detector now arms the fast state and does not directly close the position.
   const swingExit = swingStructureExitDecision(p, feature, price, pnl);
   if (swingExit.shadow) {
     log("WARN", "FVVO_SWING_STRUCTURE_EXIT_SHADOW_CANDIDATE", { reason: swingExit.reason, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(swingExit.peakPnlPct, 6), heldSec: round(swingExit.heldSec, 1), observations: swingExit.observations || null, evidence: swingExit.evidence, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
@@ -4146,6 +4412,12 @@ async function handleManual(body) {
 app.get("/health", (_req, res) => res.status(200).json({ ok: true, brain: CFG.BRAIN_NAME, status: statusPayload() }));
 
 async function processFeatureEvent(feature) {
+  if (!Number.isFinite(feature.price) || feature.price <= 0) return { ok: false, error: "VALID_PRICE_REQUIRED" };
+  const timeGuard = featureTimeGuard(feature);
+  if (!timeGuard.ok) {
+    log("WARN", "FVVO_STALE_FEATURE_IGNORED", { event: feature.kind, price: feature.price, barTimeMs: feature.barTimeMs, reason: timeGuard.reason, priorBarTimeMs: timeGuard.priorBarTime, positionLifecycle: state.position?.lifecycle || null, action: "NO_STATE_OR_TRADE_CHANGE" });
+    return { ok: true, ignored: true, reason: timeGuard.reason, event: feature.kind };
+  }
   if (!updateFeature(feature)) return { ok: false, error: "VALID_PRICE_REQUIRED" };
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
   log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, yellowPulse: feature.yellowPulse, yellowReason: feature.yellowReason || null, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: activePriceEntryItems().length ? `${activePriceEntryItems().length}_ARMED` : null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
@@ -4192,7 +4464,7 @@ async function start() {
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
-    demoOnly: demoMode(), httpForwardAllowed: isForwardAllowed(), c3DryRun: CFG.C3_DRY_RUN, estimatedRoundTripCostPct: CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT, automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, swingStructureExitMode: swingStructureExitMode(), swingHardMaxHoldSec: CFG.SWING_HARD_MAX_HOLD_SEC, swingNoProgressCheckAfterSec: CFG.SWING_NO_PROGRESS_CHECK_AFTER_SEC, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, lossSideThesisFailMode: lossSideThesisFailMode(), lossSideThesisFailMinLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, lossSideThesisFailMaxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI, lossSideThesisFailMinAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX, lossSideThesisFailMaxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO, lossSideThesisFailConfirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
+    demoOnly: demoMode(), httpForwardAllowed: isForwardAllowed(), c3DryRun: CFG.C3_DRY_RUN, estimatedRoundTripCostPct: CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT, automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, swingStructureExitMode: swingStructureExitMode(), swingHardMaxHoldSec: CFG.SWING_HARD_MAX_HOLD_SEC, swingNoProgressCheckAfterSec: CFG.SWING_NO_PROGRESS_CHECK_AFTER_SEC, swingEmergencyFastConfirmMode: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE, swingEmergencyFastConfirmMaxSec: CFG.SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC, swingEmergencyMicroWindowTicks: CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS, swingEmergencyMicroRequiredBelowTicks: CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS, swingEmergencyMicroConfirmObservations: CFG.SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS, swingEmergencyMicroMinAvgDeclinePct: CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT, swingEmergencyMicroMinBearSignals: CFG.SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS, swingEmergencyHardBreakBufferPct: CFG.SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT, swingEmergencyHardExitPnlPct: CFG.SWING_EMERGENCY_HARD_EXIT_PNL_PCT, swingEmergencyRecoveryReclaimBufferPct: CFG.SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT, swingEmergencyRecoveryConfirmObservations: CFG.SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS, swingEmergencyShadowIntelligent1mEnabled: CFG.SWING_EMERGENCY_SHADOW_INTELLIGENT_1M_ENABLED, swingEmergencyShadowLegacyImmediateEnabled: CFG.SWING_EMERGENCY_SHADOW_LEGACY_IMMEDIATE_ENABLED, featureMonotonicGuardEnabled: CFG.FEATURE_MONOTONIC_GUARD_ENABLED, featureDuplicateBarGuardEnabled: CFG.FEATURE_DUPLICATE_BAR_GUARD_ENABLED, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, lossSideThesisFailMode: lossSideThesisFailMode(), lossSideThesisFailMinLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, lossSideThesisFailMaxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI, lossSideThesisFailMinAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX, lossSideThesisFailMaxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO, lossSideThesisFailConfirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
     manualEntryOverheatConfirmationEnabled: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRMATION_ENABLED, manualEntryOverheatConfirmExpirySec: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC, manualEntryOverheatMinSignals: CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS,
     runnerContinuationRescueMode: runnerContinuationRescueMode(), runnerContinuationRescueMinMfePct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT, runnerContinuationRescueMinPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT, runnerContinuationRescueMaxSec: CFG.RUNNER_CONTINUATION_RESCUE_MAX_SEC, runnerContinuationRescueHardLockPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_HARD_LOCK_PNL_PCT, runnerContinuationRescueFastTickProxyAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_FAST_TICK_PROXY_AUDIT_ENABLED, runnerContinuationRescuePostExitAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_ENABLED,
     reentryPullbackHysteresisAuditEnabled: CFG.REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED, reentryPullbackInvalidationHysteresisPct: CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT, reentryPullbackRearmAboveEma18Pct: CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT,
@@ -4206,4 +4478,4 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState };
+module.exports = { app, CFG, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState };

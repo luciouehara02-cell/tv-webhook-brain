@@ -1,19 +1,20 @@
 {
-  "name": "brainfvvo-swing-v1b-runner-profit-capture-audit",
-  "version": "1.1.0-demo",
+  "name": "brainfvvo-swing-v1c-fast-emergency-confirm-monitor",
+  "version": "1.2.0-demo",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_swing_v1b_contract.js && node validation_swing_v1b.js",
-    "smoke:structure": "node swing_structure_exit_smoke_v1a.js",
+    "validate": "node validation_swing_v1c_contract.js && node validation_swing_v1c.js",
+    "smoke:emergency-fast": "node swing_emergency_fast_smoke_v1c.js",
+    "smoke:emergency-shadow": "node swing_emergency_shadow_compare_smoke_v1c.js",
+    "smoke:structure": "node swing_structure_exit_smoke_v1c.js",
     "smoke:breakout-confirm-retest": "node breakout_confirm_retest_reclaim_smoke_v1ac.js",
     "smoke:dual": "node dual_dip_breakout_smoke_v1aa.js",
     "smoke:trigger-lifecycle": "node swing_trigger_lifecycle_smoke_v1a.js",
-    "test:strategy": "npm run check && npm run validate && npm run smoke:structure && npm run smoke:breakout-confirm-retest && npm run smoke:dual && npm run smoke:trigger-lifecycle",
-    "replay": "node replay_full_swing_v1b.js",
-    "replay:dip-gate": "node replay_dip_gate_counterfactual_v1b.js"
+    "test:strategy": "npm run check && npm run validate && npm run smoke:emergency-fast && npm run smoke:emergency-shadow && npm run smoke:structure && npm run smoke:breakout-confirm-retest && npm run smoke:dual && npm run smoke:trigger-lifecycle",
+    "replay": "node replay_full_swing_v1c.js"
   },
   "engines": {
     "node": ">=18"
@@ -21,5 +22,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Swing v1b DEMO: replay-selected 1.60% runner arm, 0.25% tight trail, stronger dip recovery gate, actual-fill PnL audit, and visible breach/rejection logs."
+  "description": "BrainFVVO Swing v1c DEMO: 5m emergency detector with live 15s micro-trend confirmation, hard-break override, recovery cancellation, shadow intelligent-1m/legacy comparators, and stale-feature guard."
 }
