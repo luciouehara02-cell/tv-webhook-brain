@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-swing-v1c-fast-emergency-confirm-monitor",
-  "version": "1.2.0-demo",
+  "name": "brainfvvo-swing-v1d-profit-floor-shadow-monitor",
+  "version": "1.3.0-demo",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_swing_v1c_contract.js && node validation_swing_v1c.js",
+    "validate": "node validation_swing_v1d_contract.js && node validation_swing_v1d.js && node profit_floor_shadow_smoke_v1d.js",
     "smoke:emergency-fast": "node swing_emergency_fast_smoke_v1c.js",
     "smoke:emergency-shadow": "node swing_emergency_shadow_compare_smoke_v1c.js",
     "smoke:structure": "node swing_structure_exit_smoke_v1c.js",
@@ -14,7 +14,8 @@
     "smoke:dual": "node dual_dip_breakout_smoke_v1aa.js",
     "smoke:trigger-lifecycle": "node swing_trigger_lifecycle_smoke_v1a.js",
     "test:strategy": "npm run check && npm run validate && npm run smoke:emergency-fast && npm run smoke:emergency-shadow && npm run smoke:structure && npm run smoke:breakout-confirm-retest && npm run smoke:dual && npm run smoke:trigger-lifecycle",
-    "replay": "node replay_full_swing_v1c.js"
+    "replay": "node replay_full_swing_v1d.js",
+    "smoke:profit-floor-shadow": "node profit_floor_shadow_smoke_v1d.js"
   },
   "engines": {
     "node": ">=18"
@@ -22,5 +23,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Swing v1c DEMO: 5m emergency detector with live 15s micro-trend confirmation, hard-break override, recovery cancellation, shadow intelligent-1m/legacy comparators, and stale-feature guard."
+  "description": "BrainFVVO Swing v1d DEMO: unchanged v1c live execution plus shadow-only 15s normal profit-floor confirmation and post-exit reclaim/performance monitoring."
 }
