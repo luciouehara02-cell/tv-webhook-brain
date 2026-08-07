@@ -1,8 +1,9 @@
 // ============================================================
-// BrainFVVO_ManualExit_v1ac_BREAKOUT_CONFIRM_RETEST_RECLAIM
+// BrainFVVO_Daily_v1f_ADAPTIVE_BREAKOUT_RETEST_RECLAIM
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
-// v1ac candidate: retains v1ab dual arming/re-entry and separates breakout confirmation from the retest range for breakout_retest_reclaim_zone.
+// v1f daily candidate: retains v1ac dual arming/breakout-retest logic and adds daily_breakout_adaptive_confirm_retest_reclaim.
+//   New adaptive path: STRICT BREAKOUT 1/2 -> ADAPTIVE HOLD 2/2 -> RETEST -> RECLAIM -> ENTER.
 //   - v1m prevents split exit ownership: no native 3Commas entry stop is allowed.
 //   - The brain is the single stop / target / profit-exit owner and sends one full exit_long.
 //   - Manual and price-trigger entries reject stops closer than the configured minimum distance.
@@ -74,7 +75,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ManualExit_v1ac_BREAKOUT_CONFIRM_RETEST_RECLAIM"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1f_ADAPTIVE_BREAKOUT_RETEST_RECLAIM"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -119,7 +120,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-manualexit-v1b-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1f-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -218,6 +219,28 @@ const CFG = {
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE", 0),
   BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR: envBool("BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR", true),
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO", -1.0),
+
+  // v1f daily adaptive breakout-retet-reclaim entry. This is isolated as a new trigger_mode:
+  //   daily_breakout_adaptive_confirm_retest_reclaim
+  // It requires a strict first breakout observation, an adaptive hold observation within a tolerance/max-time,
+  // then a retest and reclaim with slope/FVVO quality gates.
+  DAILY_ADAPTIVE_BREAKOUT_MODE: envStr("DAILY_ADAPTIVE_BREAKOUT_MODE", envStr("DAILY_ADAPTIVE_BREAKOUT_ENTRY_MODE", "live")).toLowerCase(),
+  DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS: Math.max(2, Math.floor(envNum("DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS", 2))),
+  DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT: envNum("DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT", 0.015),
+  DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC: envNum("DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC", 45),
+  DAILY_BREAKOUT_RETEST_RECLAIM_PCT: envNum("DAILY_BREAKOUT_RETEST_RECLAIM_PCT", 0.07),
+  DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT: envNum("DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT", 0.12),
+  DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT: envNum("DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT", 0.03),
+  DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT: envNum("DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT", 0.03),
+  DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC: envNum("DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC", 1800),
+  DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT: envNum("DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT", 0.10),
+  DAILY_BREAKOUT_RECLAIM_MIN_SLOPE: envNum("DAILY_BREAKOUT_RECLAIM_MIN_SLOPE", 0.10),
+  DAILY_BREAKOUT_RECLAIM_MIN_FVVO: envNum("DAILY_BREAKOUT_RECLAIM_MIN_FVVO", -0.50),
+  DAILY_BREAKOUT_RECLAIM_REQUIRE_RAY_NOT_BEAR: envBool("DAILY_BREAKOUT_RECLAIM_REQUIRE_RAY_NOT_BEAR", true),
+  DAILY_BREAKOUT_EXPIRY_WARNING_SEC: envNum("DAILY_BREAKOUT_EXPIRY_WARNING_SEC", 900),
+  DAILY_BREAKOUT_POST_EXPIRY_SHADOW_ENABLED: envBool("DAILY_BREAKOUT_POST_EXPIRY_SHADOW_ENABLED", true),
+  DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC: envNum("DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC", 7200),
+  DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC: envNum("DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC", 3600),
 
   // v1h one-stop / optional fixed-target controls.
   MANUAL_ONE_STOP_PROFILE_ENABLED: envBool("MANUAL_ONE_STOP_PROFILE_ENABLED", true),
@@ -514,7 +537,7 @@ function defaultState() {
     reentry: { campaign: null, recentTickPrices: [] },
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
-    priceEntry: { pending: null, pending2: null, last: null },
+    priceEntry: { pending: null, pending2: null, last: null, postExpiryShadows: [] },
     audit: { runnerRescuePostExit: null },
   };
 }
@@ -748,6 +771,8 @@ function configProblems() {
   if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
   if (!['disabled', 'shadow', 'live'].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_MODE");
   if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS < 1 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE < -10) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_THRESHOLDS");
+  if (!['disabled', 'shadow', 'live'].includes(CFG.DAILY_ADAPTIVE_BREAKOUT_MODE)) problems.push("INVALID_DAILY_ADAPTIVE_BREAKOUT_MODE");
+  if (CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS < 2 || CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT < 0 || CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC <= 0 || CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT <= 0 || CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT || CFG.DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT < 0 || CFG.DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC <= 0 || CFG.DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE < -10 || CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC < 0 || CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC < 0 || CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC < 0) problems.push("INVALID_DAILY_ADAPTIVE_BREAKOUT_THRESHOLDS");
   if (CFG.STATE_PERSISTENCE_REQUIRED && !persistenceReady) problems.push("PERSISTENCE_NOT_READY");
   return problems;
 }
@@ -3017,7 +3042,9 @@ async function evaluateReentryShadow(feature) {
 }
 
 function ensurePriceEntryState() {
-  if (!state.priceEntry || typeof state.priceEntry !== "object") state.priceEntry = { pending: null, pending2: null, last: null };
+  if (!state.priceEntry || typeof state.priceEntry !== "object") state.priceEntry = { pending: null, pending2: null, last: null, postExpiryShadows: [] };
+  if (!Array.isArray(state.priceEntry.postExpiryShadows)) state.priceEntry.postExpiryShadows = [];
+  state.priceEntry.postExpiryShadows = state.priceEntry.postExpiryShadows.filter((item) => item && typeof item === "object").slice(-20);
   if (state.priceEntry.pending && typeof state.priceEntry.pending !== "object") state.priceEntry.pending = null;
   if (state.priceEntry.pending2 && typeof state.priceEntry.pending2 !== "object") state.priceEntry.pending2 = null;
   if (state.priceEntry.pending && state.priceEntry.pending2 && state.priceEntry.pending.id === state.priceEntry.pending2.id) state.priceEntry.pending2 = null;
@@ -3031,7 +3058,7 @@ function activePriceEntryItems() {
 
 function priceEntryKind(modeOrItem) {
   const mode = String(modeOrItem?.triggerMode || modeOrItem || "").toLowerCase();
-  return (mode === "breakout" || mode === "breakout_retest_reclaim_zone") ? "breakout" : "dip";
+  return (mode === "breakout" || mode === "breakout_retest_reclaim_zone" || mode === "daily_breakout_adaptive_confirm_retest_reclaim") ? "breakout" : "dip";
 }
 
 function priceEntryKindLabel(kind) {
@@ -3061,9 +3088,12 @@ function clearPriceEntrySlot(item) {
 function trailingDipReclaimMode() { return CFG.TRAILING_DIP_RECLAIM_MODE; }
 function trailingDipReclaimZoneMode() { return CFG.TRAILING_DIP_RECLAIM_ZONE_MODE; }
 function breakoutRetestReclaimZoneMode() { return CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE; }
+function dailyAdaptiveBreakoutMode() { return CFG.DAILY_ADAPTIVE_BREAKOUT_MODE; }
 function isTrailingDipReclaim(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim"; }
 function isTrailingDipReclaimZone(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim_zone"; }
 function isBreakoutRetestReclaimZone(pending) { return String(pending?.triggerMode || "").toLowerCase() === "breakout_retest_reclaim_zone"; }
+function isDailyAdaptiveBreakout(pending) { return String(pending?.triggerMode || "").toLowerCase() === "daily_breakout_adaptive_confirm_retest_reclaim"; }
+function isAnyBreakoutRetestStyle(pending) { return isBreakoutRetestReclaimZone(pending) || isDailyAdaptiveBreakout(pending); }
 function isAnyTrailingDipReclaim(pending) { return isTrailingDipReclaim(pending) || isTrailingDipReclaimZone(pending); }
 function nonBearRay(value) { return !String(value || "").toUpperCase().includes("BEAR"); }
 
@@ -3165,9 +3195,42 @@ function priceEntryStatusPayload() {
       maxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC,
       requireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY,
     },
+    dailyAdaptiveBreakout: {
+      enabled: CFG.DAILY_ADAPTIVE_BREAKOUT_MODE !== "disabled",
+      mode: dailyAdaptiveBreakoutMode(),
+      confirmObservations: CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS,
+      holdTolerancePct: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT,
+      holdMaxSec: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC,
+      reclaimPct: CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT,
+      maxEntryAboveHighPct: CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT,
+      minRetestPenetrationPct: CFG.DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT,
+      failBelowLowBufferPct: CFG.DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT,
+      maxTrackSec: CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC,
+      minLowAboveStopPct: CFG.DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT,
+      reclaimMinSlope: CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE,
+      reclaimMinFvvo: CFG.DAILY_BREAKOUT_RECLAIM_MIN_FVVO,
+      reclaimRequireRayNotBear: CFG.DAILY_BREAKOUT_RECLAIM_REQUIRE_RAY_NOT_BEAR,
+      expiryWarningSec: CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC,
+      postExpiryShadowEnabled: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_ENABLED,
+      postExpiryShadowWindowSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC,
+      postExpiryPerformanceTrackSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC,
+    },
     pending: serialize(pending),
     pending2: serialize(pending2),
     pendingList: pendingList.map(serialize),
+    postExpiryShadows: (pe.postExpiryShadows || []).map((item) => ({
+      sourceTriggerId: item.sourceTriggerId,
+      triggerMode: item.triggerMode,
+      breakoutConfirmPrice: item.breakoutConfirmPrice,
+      retestRangeLow: item.retestRangeLow,
+      retestRangeHigh: item.retestRangeHigh,
+      startedAt: item.startedAt,
+      startedPrice: item.startedPrice,
+      firstBreakoutAfterExpiryAt: item.firstBreakoutAfterExpiryAt || null,
+      firstBreakoutAfterExpiryPrice: item.firstBreakoutAfterExpiryPrice || null,
+      maxAfterExpiryPrice: item.maxAfterExpiryPrice || null,
+      minAfterExpiryPrice: item.minAfterExpiryPrice || null,
+    })),
     last: serialize(pe.last),
   };
 }
@@ -3178,7 +3241,7 @@ function isPriceTriggerFeature(feature) {
 
 function validTriggerMode(value) {
   const mode = String(value || "").trim().toLowerCase();
-  return ["dip", "breakout", "trailing_dip_reclaim", "trailing_dip_reclaim_zone", "breakout_retest_reclaim_zone"].includes(mode) ? mode : "";
+  return ["dip", "breakout", "trailing_dip_reclaim", "trailing_dip_reclaim_zone", "breakout_retest_reclaim_zone", "daily_breakout_adaptive_confirm_retest_reclaim"].includes(mode) ? mode : "";
 }
 
 function resolvePriceTriggerExpiry(body) {
@@ -3193,28 +3256,31 @@ function validatePriceTriggerCommand(body, currentPrice) {
   if (hasRetiredLadderFields(body)) return { ok: false, error: "USE_STOP_PRICE_AND_OPTIONAL_PROFIT_TARGET_PRICE_ONLY_TWO_LEVEL_FIELDS_ARE_RETIRED" };
   if (["price", "entry_price", "entryPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "ENTRY_PRICE_FIELD_NOT_ALLOWED" };
   const mode = validTriggerMode(body.trigger_mode || body.triggerMode);
-  if (!mode) return { ok: false, error: "TRIGGER_MODE_MUST_BE_DIP_BREAKOUT_TRAILING_DIP_RECLAIM_ZONE_OR_BREAKOUT_RETEST_ZONE" };
+  if (!mode) return { ok: false, error: "TRIGGER_MODE_MUST_BE_DIP_BREAKOUT_TRAILING_DIP_RECLAIM_ZONE_BREAKOUT_RETEST_OR_DAILY_ADAPTIVE_BREAKOUT" };
   const isTrailing = mode === "trailing_dip_reclaim";
   const isZone = mode === "trailing_dip_reclaim_zone";
   const isBreakoutRetestZone = mode === "breakout_retest_reclaim_zone";
+  const isDailyAdaptiveBreakoutZone = mode === "daily_breakout_adaptive_confirm_retest_reclaim";
+  const isAnyBreakoutRetestZone = isBreakoutRetestZone || isDailyAdaptiveBreakoutZone;
   if (isTrailing && trailingDipReclaimMode() === "disabled") return { ok: false, error: "TRAILING_DIP_RECLAIM_DISABLED" };
   if (isZone && trailingDipReclaimZoneMode() === "disabled") return { ok: false, error: "TRAILING_DIP_RECLAIM_ZONE_DISABLED" };
   if (isBreakoutRetestZone && breakoutRetestReclaimZoneMode() === "disabled") return { ok: false, error: "BREAKOUT_RETEST_RECLAIM_ZONE_DISABLED" };
+  if (isDailyAdaptiveBreakoutZone && dailyAdaptiveBreakoutMode() === "disabled") return { ok: false, error: "DAILY_ADAPTIVE_BREAKOUT_DISABLED" };
 
-  if (isZone || isBreakoutRetestZone) {
+  if (isZone || isAnyBreakoutRetestZone) {
     if (isZone && ["trigger_price", "triggerPrice", "activation_price", "activationPrice", "breakout_confirm_price", "breakoutConfirmPrice", "retest_range_low", "retestRangeLow", "retest_range_high", "retestRangeHigh"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "USE_ACTIVATION_RANGE_LOW_HIGH_FOR_TRAILING_DIP_RECLAIM_ZONE" };
-    if (isBreakoutRetestZone && ["trigger_price", "triggerPrice", "activation_price", "activationPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "USE_BREAKOUT_CONFIRM_PRICE_AND_RETEST_RANGE_LOW_HIGH_FOR_BREAKOUT_RETEST_RECLAIM_ZONE" };
+    if (isAnyBreakoutRetestZone && ["trigger_price", "triggerPrice", "activation_price", "activationPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "USE_BREAKOUT_CONFIRM_PRICE_AND_RETEST_RANGE_LOW_HIGH_FOR_BREAKOUT_RETEST_RECLAIM_ZONE" };
 
-    const lowField = isBreakoutRetestZone ? oneOf(body, ["retest_range_low", "retestRangeLow", "activation_range_low", "activationRangeLow"]) : oneOf(body, ["activation_range_low", "activationRangeLow"]);
-    const highField = isBreakoutRetestZone ? oneOf(body, ["retest_range_high", "retestRangeHigh", "activation_range_high", "activationRangeHigh"]) : oneOf(body, ["activation_range_high", "activationRangeHigh"]);
-    if (!lowField.present || !Number.isFinite(lowField.value) || !validStep(lowField.value)) return { ok: false, error: isBreakoutRetestZone ? "VALID_RETEST_RANGE_LOW_ALIGNED_TO_PRICE_STEP_REQUIRED" : "VALID_ACTIVATION_RANGE_LOW_ALIGNED_TO_PRICE_STEP_REQUIRED" };
-    if (!highField.present || !Number.isFinite(highField.value) || !validStep(highField.value)) return { ok: false, error: isBreakoutRetestZone ? "VALID_RETEST_RANGE_HIGH_ALIGNED_TO_PRICE_STEP_REQUIRED" : "VALID_ACTIVATION_RANGE_HIGH_ALIGNED_TO_PRICE_STEP_REQUIRED" };
+    const lowField = isAnyBreakoutRetestZone ? oneOf(body, ["retest_range_low", "retestRangeLow", "activation_range_low", "activationRangeLow"]) : oneOf(body, ["activation_range_low", "activationRangeLow"]);
+    const highField = isAnyBreakoutRetestZone ? oneOf(body, ["retest_range_high", "retestRangeHigh", "activation_range_high", "activationRangeHigh"]) : oneOf(body, ["activation_range_high", "activationRangeHigh"]);
+    if (!lowField.present || !Number.isFinite(lowField.value) || !validStep(lowField.value)) return { ok: false, error: isAnyBreakoutRetestZone ? "VALID_RETEST_RANGE_LOW_ALIGNED_TO_PRICE_STEP_REQUIRED" : "VALID_ACTIVATION_RANGE_LOW_ALIGNED_TO_PRICE_STEP_REQUIRED" };
+    if (!highField.present || !Number.isFinite(highField.value) || !validStep(highField.value)) return { ok: false, error: isAnyBreakoutRetestZone ? "VALID_RETEST_RANGE_HIGH_ALIGNED_TO_PRICE_STEP_REQUIRED" : "VALID_ACTIVATION_RANGE_HIGH_ALIGNED_TO_PRICE_STEP_REQUIRED" };
     const rangeLow = round(lowField.value, 8);
     const rangeHigh = round(highField.value, 8);
-    if (!(rangeLow > 0) || !(rangeHigh > 0) || rangeLow >= rangeHigh) return { ok: false, error: isBreakoutRetestZone ? "RETEST_RANGE_LOW_MUST_BE_BELOW_HIGH" : "ACTIVATION_RANGE_LOW_MUST_BE_BELOW_HIGH" };
+    if (!(rangeLow > 0) || !(rangeHigh > 0) || rangeLow >= rangeHigh) return { ok: false, error: isAnyBreakoutRetestZone ? "RETEST_RANGE_LOW_MUST_BE_BELOW_HIGH" : "ACTIVATION_RANGE_LOW_MUST_BE_BELOW_HIGH" };
 
     let breakoutConfirmPrice = null;
-    if (isBreakoutRetestZone) {
+    if (isAnyBreakoutRetestZone) {
       const confirmField = oneOf(body, ["breakout_confirm_price", "breakoutConfirmPrice", "breakout_price", "breakoutPrice"]);
       breakoutConfirmPrice = confirmField.present ? round(confirmField.value, 8) : rangeHigh;
       if (!Number.isFinite(breakoutConfirmPrice) || !validStep(breakoutConfirmPrice) || breakoutConfirmPrice <= 0) return { ok: false, error: "VALID_BREAKOUT_CONFIRM_PRICE_ALIGNED_TO_PRICE_STEP_REQUIRED" };
@@ -3223,17 +3289,17 @@ function validatePriceTriggerCommand(body, currentPrice) {
     }
 
     if (isZone && rangeHigh >= currentPrice) return { ok: false, error: "ACTIVATION_RANGE_HIGH_MUST_BE_BELOW_CURRENT_PRICE" };
-    const triggerReference = isBreakoutRetestZone ? breakoutConfirmPrice : rangeHigh;
-    const gapPct = isBreakoutRetestZone ? percentPnl(currentPrice, triggerReference) : percentageBelow(currentPrice, rangeHigh);
-    if (gapPct + 1e-9 < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) return { ok: false, error: isBreakoutRetestZone ? "BREAKOUT_CONFIRM_PRICE_TOO_CLOSE_TO_CURRENT_PRICE" : "TRIGGER_RANGE_TOO_CLOSE_TO_CURRENT_PRICE" };
-    if (gapPct > CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT + 1e-9) return { ok: false, error: isBreakoutRetestZone ? "BREAKOUT_CONFIRM_PRICE_TOO_FAR_FROM_CURRENT_PRICE" : "TRIGGER_RANGE_TOO_FAR_FROM_CURRENT_PRICE" };
+    const triggerReference = isAnyBreakoutRetestZone ? breakoutConfirmPrice : rangeHigh;
+    const gapPct = isAnyBreakoutRetestZone ? percentPnl(currentPrice, triggerReference) : percentageBelow(currentPrice, rangeHigh);
+    if (gapPct + 1e-9 < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) return { ok: false, error: isAnyBreakoutRetestZone ? "BREAKOUT_CONFIRM_PRICE_TOO_CLOSE_TO_CURRENT_PRICE" : "TRIGGER_RANGE_TOO_CLOSE_TO_CURRENT_PRICE" };
+    if (gapPct > CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT + 1e-9) return { ok: false, error: isAnyBreakoutRetestZone ? "BREAKOUT_CONFIRM_PRICE_TOO_FAR_FROM_CURRENT_PRICE" : "TRIGGER_RANGE_TOO_FAR_FROM_CURRENT_PRICE" };
     const stopPreview = finite(body.stop_price, finite(body.stopPrice, null));
-    if (!(stopPreview > 0) || stopPreview >= rangeLow) return { ok: false, error: isBreakoutRetestZone ? "STOP_PRICE_MUST_BE_BELOW_RETEST_RANGE_LOW" : "STOP_PRICE_MUST_BE_BELOW_ACTIVATION_RANGE_LOW" };
+    if (!(stopPreview > 0) || stopPreview >= rangeLow) return { ok: false, error: isAnyBreakoutRetestZone ? "STOP_PRICE_MUST_BE_BELOW_RETEST_RANGE_LOW" : "STOP_PRICE_MUST_BE_BELOW_ACTIVATION_RANGE_LOW" };
     const levels = validateOneStopCommand(body, triggerReference);
     if (!levels.ok) return { ok: false, error: levels.error };
     const expiry = resolvePriceTriggerExpiry(body);
     if (!expiry.ok) return expiry;
-    return { ok: true, triggerMode: mode, triggerPrice: triggerReference, activationPrice: triggerReference, activationRangeLow: rangeLow, activationRangeHigh: rangeHigh, breakoutConfirmPrice: isBreakoutRetestZone ? breakoutConfirmPrice : null, retestRangeLow: isBreakoutRetestZone ? rangeLow : null, retestRangeHigh: isBreakoutRetestZone ? rangeHigh : null, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
+    return { ok: true, triggerMode: mode, triggerPrice: triggerReference, activationPrice: triggerReference, activationRangeLow: rangeLow, activationRangeHigh: rangeHigh, breakoutConfirmPrice: isAnyBreakoutRetestZone ? breakoutConfirmPrice : null, retestRangeLow: isAnyBreakoutRetestZone ? rangeLow : null, retestRangeHigh: isAnyBreakoutRetestZone ? rangeHigh : null, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
   }
 
   const level = isTrailing ? oneOf(body, ["activation_price", "activationPrice"]) : oneOf(body, ["trigger_price", "triggerPrice"]);
@@ -3273,6 +3339,10 @@ function priceTriggerCrossed(pending, previousPrice, currentPrice) {
     const breakoutConfirmPrice = finite(pending.breakoutConfirmPrice, trigger);
     const confirmThreshold = breakoutConfirmPrice * (1 + CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT / 100);
     return previousPrice < confirmThreshold - epsilon && currentPrice >= confirmThreshold - epsilon;
+  }
+  if (pending.triggerMode === "daily_breakout_adaptive_confirm_retest_reclaim") {
+    const breakoutConfirmPrice = finite(pending.breakoutConfirmPrice, trigger);
+    return previousPrice < breakoutConfirmPrice - epsilon && currentPrice >= breakoutConfirmPrice - epsilon;
   }
   if (pending.triggerMode === "breakout") return previousPrice < trigger - epsilon && currentPrice >= trigger - epsilon;
   return false;
@@ -3332,6 +3402,19 @@ function breakoutRetestZoneTickRecoveryOk(feature) {
   return true;
 }
 
+function dailyAdaptiveBreakoutReclaimOk(feature) {
+  const slope = finite(feature.slope, null);
+  const fvvo = finite(feature.fvvo, null);
+  if (slope === null || slope < CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE) return false;
+  if (fvvo === null || fvvo < CFG.DAILY_BREAKOUT_RECLAIM_MIN_FVVO) return false;
+  if (CFG.DAILY_BREAKOUT_RECLAIM_REQUIRE_RAY_NOT_BEAR && !nonBearRay(feature.rayRegime)) return false;
+  return true;
+}
+
+function dailyAdaptiveBreakoutHoldFloor(breakoutConfirmPrice) {
+  return breakoutConfirmPrice * (1 - CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT / 100);
+}
+
 async function armPriceEntry(body) {
   const issue = configProblems()[0];
   if (issue) return { status: 503, body: { ok: false, error: issue } };
@@ -3360,6 +3443,7 @@ async function armPriceEntry(body) {
   const current = nowMs();
   const expiresAtMs = current + validated.expirySec * 1000;
   const isTrailing = validated.triggerMode === "trailing_dip_reclaim" || validated.triggerMode === "trailing_dip_reclaim_zone";
+  const isReclaimOrderType = isTrailing || validated.triggerMode === "breakout_retest_reclaim_zone" || validated.triggerMode === "daily_breakout_adaptive_confirm_retest_reclaim";
   const pending = {
     id: crypto.randomUUID(), status: "ARMED", profile: PROFILE,
     triggerMode: validated.triggerMode, triggerPrice: validated.triggerPrice, activationPrice: validated.activationPrice, activationRangeLow: validated.activationRangeLow || null, activationRangeHigh: validated.activationRangeHigh || null,
@@ -3375,8 +3459,8 @@ async function armPriceEntry(body) {
   const pendingSlot = setPriceEntrySlot(pending);
   state.manual = { ...state.manual, lastAction: "arm_price_entry", lastActionAt: nowIso() };
   if (!(await persistState("price_trigger_armed"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_WHILE_ARMING_PRICE_TRIGGER" } };
-  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, pendingSlot, activePendingCount: activePriceEntryItems().length, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, activationPrice: pending.activationPrice || null, activationRangeLow: pending.activationRangeLow || null, activationRangeHigh: pending.activationRangeHigh || null, breakoutConfirmPrice: pending.breakoutConfirmPrice || null, retestRangeLow: pending.retestRangeLow || null, retestRangeHigh: pending.retestRangeHigh || null, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, marketOrderWillBeSentOnCross: (!isTrailing && pending.triggerMode !== "breakout_retest_reclaim_zone"), trailingDipReclaimMode: isTrailingDipReclaim(pending) ? trailingDipReclaimMode() : null, trailingDipReclaimZoneMode: isTrailingDipReclaimZone(pending) ? trailingDipReclaimZoneMode() : null, breakoutRetestReclaimZoneMode: pending.triggerMode === "breakout_retest_reclaim_zone" ? breakoutRetestReclaimZoneMode() : null });
-  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: (isTrailing || pending.triggerMode === "breakout_retest_reclaim_zone") ? "market_on_reclaim" : "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pendingList.find((item) => item.id === pending.id) || priceEntryStatusPayload().pending } };
+  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, pendingSlot, activePendingCount: activePriceEntryItems().length, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, activationPrice: pending.activationPrice || null, activationRangeLow: pending.activationRangeLow || null, activationRangeHigh: pending.activationRangeHigh || null, breakoutConfirmPrice: pending.breakoutConfirmPrice || null, retestRangeLow: pending.retestRangeLow || null, retestRangeHigh: pending.retestRangeHigh || null, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, marketOrderWillBeSentOnCross: !isReclaimOrderType, trailingDipReclaimMode: isTrailingDipReclaim(pending) ? trailingDipReclaimMode() : null, trailingDipReclaimZoneMode: isTrailingDipReclaimZone(pending) ? trailingDipReclaimZoneMode() : null, breakoutRetestReclaimZoneMode: pending.triggerMode === "breakout_retest_reclaim_zone" ? breakoutRetestReclaimZoneMode() : null, dailyAdaptiveBreakoutMode: pending.triggerMode === "daily_breakout_adaptive_confirm_retest_reclaim" ? dailyAdaptiveBreakoutMode() : null });
+  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: isReclaimOrderType ? "market_on_reclaim" : "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pendingList.find((item) => item.id === pending.id) || priceEntryStatusPayload().pending } };
 }
 
 async function cancelPriceEntry(body) {
@@ -3422,7 +3506,7 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
   state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "price_trigger_fired", lastActionAt: nowIso() };
   await persistState("price_trigger_pre_forward");
   log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: consumed.id, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, activationRangeLow: consumed.activationRangeLow || null, activationRangeHigh: consumed.activationRangeHigh || null, breakoutConfirmPrice: consumed.breakoutConfirmPrice || null, retestRangeLow: consumed.retestRangeLow || null, retestRangeHigh: consumed.retestRangeHigh || null, previousPrice: consumed.lastObservedPrice, executionReferencePrice: feature.price, stopPrice: checked.levels.stopPrice, profitTargetPrice: checked.levels.profitTargetPrice || null, marketOrderWillBeSent: true });
-  const result = await forward3Commas("enter_long", feature.price, modeReason === "TRAILING_DIP_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM" : (modeReason === "TRAILING_DIP_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM_ZONE" : (modeReason === "BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE" : `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`)), { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
+  const result = await forward3Commas("enter_long", feature.price, modeReason === "TRAILING_DIP_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM" : (modeReason === "TRAILING_DIP_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM_ZONE" : (modeReason === "BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE" : (modeReason === "DAILY_ADAPTIVE_BREAKOUT_RETEST_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_DAILY_ADAPTIVE_BREAKOUT_RETEST_RECLAIM" : `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`))), { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
   if (!result.ok) {
     state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
     state.manual.recoveryRequired = true;
@@ -3792,16 +3876,227 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
   }
 }
 
+
+async function evaluateDailyAdaptiveBreakoutRetestReclaim(pending, previousPrice, feature) {
+  const current = nowMs();
+  const t = pending.trailing || (pending.trailing = {});
+  const rangeLow = finite(pending.retestRangeLow, finite(pending.activationRangeLow, null));
+  const rangeHigh = finite(pending.retestRangeHigh, finite(pending.activationRangeHigh, null));
+  const breakoutConfirmPrice = finite(pending.breakoutConfirmPrice, finite(pending.activationPrice, pending.triggerPrice));
+  const holdFloor = dailyAdaptiveBreakoutHoldFloor(breakoutConfirmPrice);
+  const failBelowPrice = rangeLow * (1 - CFG.DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT / 100);
+
+  if (!(rangeLow > 0) || !(rangeHigh > 0) || rangeLow >= rangeHigh || !(breakoutConfirmPrice > 0) || breakoutConfirmPrice < rangeHigh) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", "DAILY_ADAPTIVE_BREAKOUT_INVALID_CONFIRM_OR_RANGE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+    await persistState("daily_adaptive_breakout_invalid_confirm_range");
+    log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, executionPrice: feature.price });
+    return;
+  }
+  if (!t.phase) t.phase = "ARMED";
+
+  if (t.phase === "ARMED") {
+    const strictCross = priceTriggerCrossed(pending, previousPrice, feature.price);
+    if (!strictCross) return;
+    Object.assign(t, {
+      phase: "ADAPTIVE_HOLD",
+      breakoutConfirmObservations: 1,
+      firstBreakoutPrice: round(feature.price, 8),
+      firstBreakoutAt: feature.receivedAt,
+      firstBreakoutAtMs: feature.receivedAtMs,
+      holdFloorPrice: round(holdFloor, 8),
+      holdExpiresAtMs: current + CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC * 1000,
+      holdExpiresAt: new Date(current + CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC * 1000).toISOString(),
+      highestBreakoutPrice: round(feature.price, 8),
+      trackingExpiresAt: null,
+      trackingExpiresAtMs: 0,
+    });
+    log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_STRICT_BREAKOUT_1_OF_2", { triggerId: pending.id, breakoutConfirmPrice, executionPrice: feature.price, holdFloorPrice: t.holdFloorPrice, holdTolerancePct: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT, holdExpiresAt: t.holdExpiresAt });
+    await persistState("daily_adaptive_breakout_strict_1_of_2");
+    return;
+  }
+
+  if (t.phase === "ADAPTIVE_HOLD") {
+    if (current > finite(t.holdExpiresAtMs, 0)) {
+      Object.assign(t, { phase: "ARMED", breakoutConfirmObservations: 0, firstBreakoutPrice: null, firstBreakoutAt: null, firstBreakoutAtMs: 0, holdFloorPrice: null, holdExpiresAt: null, holdExpiresAtMs: 0 });
+      await persistState("daily_adaptive_breakout_hold_timeout_reset");
+      log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_HOLD_RESET", { triggerId: pending.id, reason: "ADAPTIVE_HOLD_MAX_SEC_EXCEEDED", breakoutConfirmPrice, executionPrice: feature.price, holdMaxSec: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC });
+      return;
+    }
+    if (feature.price + 1e-9 < holdFloor) {
+      Object.assign(t, { phase: "ARMED", breakoutConfirmObservations: 0, firstBreakoutPrice: null, firstBreakoutAt: null, firstBreakoutAtMs: 0, holdFloorPrice: null, holdExpiresAt: null, holdExpiresAtMs: 0 });
+      await persistState("daily_adaptive_breakout_hold_floor_reset");
+      log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_HOLD_RESET", { triggerId: pending.id, reason: "PRICE_BELOW_ADAPTIVE_HOLD_FLOOR", breakoutConfirmPrice, holdFloorPrice: round(holdFloor, 8), executionPrice: feature.price });
+      return;
+    }
+    t.breakoutConfirmObservations = Math.max(2, finite(t.breakoutConfirmObservations, 1) + 1);
+    if (feature.price > finite(t.highestBreakoutPrice, 0) + 1e-9) t.highestBreakoutPrice = round(feature.price, 8);
+    if (t.breakoutConfirmObservations < CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS) {
+      await persistState("daily_adaptive_breakout_adaptive_hold_more_confirm");
+      log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_ADAPTIVE_HOLD_CONFIRMING", { triggerId: pending.id, breakoutConfirmPrice, holdFloorPrice: round(holdFloor, 8), observations: t.breakoutConfirmObservations, requiredObservations: CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS, executionPrice: feature.price });
+      return;
+    }
+    const trackingExpiresAtMs = Math.min(finite(pending.expiresAtMs, current + CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC * 1000), current + CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC * 1000);
+    Object.assign(t, { phase: "WAITING_RETEST", breakoutConfirmedAt: feature.receivedAt, breakoutConfirmedAtMs: feature.receivedAtMs, trackingExpiresAtMs, trackingExpiresAt: new Date(trackingExpiresAtMs).toISOString(), retestLowPrice: null, retestLowAt: null, retestLowAtMs: 0, retestPenetrationPct: 0, lowStopBufferPct: 0, reclaimTargetPrice: null, maxEntryPrice: null });
+    await persistState("daily_adaptive_breakout_hold_2_of_2_confirmed");
+    log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_ADAPTIVE_HOLD_2_OF_2", { triggerId: pending.id, breakoutConfirmPrice, holdFloorPrice: round(holdFloor, 8), observations: t.breakoutConfirmObservations, executionPrice: feature.price, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, trackingExpiresAt: t.trackingExpiresAt });
+  }
+
+  if (t.phase === "WAITING_RETEST" || t.phase === "TRACKING_RECLAIM") {
+    if (current > finite(t.trackingExpiresAtMs, 0)) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "DAILY_ADAPTIVE_BREAKOUT_RETEST_TRACK_TIMEOUT", { trailing: t }, pending);
+      await persistState("daily_adaptive_breakout_retest_timeout");
+      log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: t.retestLowPrice || null, stopPrice: pending.stopPrice });
+      return;
+    }
+    if (feature.price > finite(t.highestBreakoutPrice, 0) + 1e-9) t.highestBreakoutPrice = round(feature.price, 8);
+    if (feature.price < failBelowPrice - 1e-9) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "DAILY_ADAPTIVE_BREAKOUT_RETEST_FAILED_BELOW_LOW_BUFFER", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+      await persistState("daily_adaptive_breakout_failed_below_low_buffer");
+      log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, failBelowPrice: round(failBelowPrice, 8), executionPrice: feature.price, stopPrice: pending.stopPrice });
+      return;
+    }
+  }
+
+  if (t.phase === "WAITING_RETEST") {
+    if (feature.price > rangeHigh + 1e-9) { await persistState("daily_adaptive_breakout_wait_retest"); return; }
+    if (t.retestLowPrice === null || feature.price < t.retestLowPrice - 1e-9) {
+      t.retestLowPrice = round(feature.price, 8);
+      t.retestLowAt = feature.receivedAt;
+      t.retestLowAtMs = feature.receivedAtMs;
+    }
+    const low = finite(t.retestLowPrice, feature.price);
+    const penetrationPct = percentageBelow(rangeHigh, low);
+    const lowStopBufferPct = low > pending.stopPrice ? percentageBelow(low, pending.stopPrice) : 0;
+    t.retestPenetrationPct = round(penetrationPct, 6);
+    t.lowStopBufferPct = round(lowStopBufferPct, 6);
+    if (low <= pending.stopPrice + 1e-9 || lowStopBufferPct + 1e-9 < CFG.DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT) {
+      const reason = low <= pending.stopPrice + 1e-9 ? "DAILY_ADAPTIVE_BREAKOUT_LOW_AT_OR_BELOW_STOP" : "DAILY_ADAPTIVE_BREAKOUT_LOW_TOO_CLOSE_TO_STOP";
+      const cancelled = resolvePriceEntryPending("CANCELLED", reason, { trailing: t }, pending);
+      await persistState("daily_adaptive_breakout_low_stop_cancelled");
+      log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, stopPrice: pending.stopPrice, lowStopBufferPct, minLowAboveStopPct: CFG.DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT });
+      return;
+    }
+    if (penetrationPct + 1e-9 < CFG.DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT) { await persistState("daily_adaptive_breakout_watch_retest_depth"); return; }
+    Object.assign(t, { phase: "TRACKING_RECLAIM", retestLowPrice: low, retestPenetrationPct: round(penetrationPct, 6), reclaimTargetPrice: round(low * (1 + CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT / 100), 8), maxEntryPrice: round(rangeHigh * (1 + CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT / 100), 8) });
+    await persistState("daily_adaptive_breakout_retest_qualified");
+    log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_RETEST_QUALIFIED", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, penetrationPct, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, stopPrice: pending.stopPrice, trackingExpiresAt: t.trackingExpiresAt });
+  }
+
+  if (t.phase !== "TRACKING_RECLAIM") return;
+  const priorLow = finite(t.retestLowPrice, null);
+  if (priorLow === null || feature.price < priorLow - 1e-9) {
+    t.retestLowPrice = round(feature.price, 8);
+    t.retestLowAt = feature.receivedAt;
+    t.retestLowAtMs = feature.receivedAtMs;
+    if (priorLow !== null) log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_LOW_UPDATED", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, priorLowPrice: priorLow, retestLowPrice: t.retestLowPrice, stopPrice: pending.stopPrice });
+  }
+  const low = finite(t.retestLowPrice, feature.price);
+  const lowStopBufferPct = low > pending.stopPrice ? percentageBelow(low, pending.stopPrice) : 0;
+  t.retestPenetrationPct = round(percentageBelow(rangeHigh, low), 6);
+  t.lowStopBufferPct = round(lowStopBufferPct, 6);
+  if (low <= pending.stopPrice + 1e-9 || lowStopBufferPct + 1e-9 < CFG.DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT) {
+    const reason = low <= pending.stopPrice + 1e-9 ? "DAILY_ADAPTIVE_BREAKOUT_LOW_AT_OR_BELOW_STOP" : "DAILY_ADAPTIVE_BREAKOUT_LOW_TOO_CLOSE_TO_STOP";
+    const cancelled = resolvePriceEntryPending("CANCELLED", reason, { trailing: t }, pending);
+    await persistState("daily_adaptive_breakout_low_stop_cancelled");
+    log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, stopPrice: pending.stopPrice, lowStopBufferPct });
+    return;
+  }
+  t.reclaimTargetPrice = round(low * (1 + CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT / 100), 8);
+  t.maxEntryPrice = round(rangeHigh * (1 + CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT / 100), 8);
+  if (feature.price + 1e-9 < t.reclaimTargetPrice) { await persistState("daily_adaptive_breakout_track_reclaim"); return; }
+  if (feature.price > t.maxEntryPrice + 1e-9) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", "DAILY_ADAPTIVE_BREAKOUT_RECOVERY_CHASE_TOO_LARGE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+    await persistState("daily_adaptive_breakout_chase_cancelled");
+    log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, executionPrice: feature.price });
+    return;
+  }
+  if (!dailyAdaptiveBreakoutReclaimOk(feature)) {
+    await persistState("daily_adaptive_breakout_wait_reclaim_quality");
+    log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_WAIT_RECLAIM_QUALITY", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, slope: finite(feature.slope, null), fvvo: finite(feature.fvvo, null), rayRegime: feature.rayRegime, minSlope: CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE, minFvvo: CFG.DAILY_BREAKOUT_RECLAIM_MIN_FVVO });
+    return;
+  }
+  const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+  if (!checked.ok) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+    await persistState("daily_adaptive_breakout_execution_levels_invalid");
+    log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, stopPrice: pending.stopPrice });
+    return;
+  }
+  if (dailyAdaptiveBreakoutMode() === "shadow") {
+    const shadow = resolvePriceEntryPending("SHADOW_CANDIDATE", "DAILY_ADAPTIVE_BREAKOUT_SHADOW_CANDIDATE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+    await persistState("daily_adaptive_breakout_shadow_candidate");
+    log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_SHADOW_CANDIDATE", { triggerId: shadow.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, candidateEntryPrice: feature.price, stopPrice: pending.stopPrice, stopDistancePct: checked.levels.stopPct });
+    return;
+  }
+  await enterFromPriceTrigger(pending, feature, "DAILY_ADAPTIVE_BREAKOUT_RETEST_RECLAIM_CONFIRMED");
+}
+
+function registerDailyPostExpiryShadow(expired, feature) {
+  if (!CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_ENABLED || !isDailyAdaptiveBreakout(expired)) return;
+  const pe = ensurePriceEntryState();
+  const current = nowMs();
+  const shadow = {
+    id: `${expired.id}:post_expiry`,
+    sourceTriggerId: expired.id,
+    triggerMode: expired.triggerMode,
+    breakoutConfirmPrice: expired.breakoutConfirmPrice,
+    retestRangeLow: expired.retestRangeLow,
+    retestRangeHigh: expired.retestRangeHigh,
+    stopPrice: expired.stopPrice,
+    expiresAtMs: current + CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC * 1000,
+    performanceTrackUntilMs: current + CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC * 1000,
+    startedAt: nowIso(),
+    startedPrice: finite(feature?.price, expired.lastObservedPrice),
+    maxAfterExpiryPrice: finite(feature?.price, expired.lastObservedPrice),
+    minAfterExpiryPrice: finite(feature?.price, expired.lastObservedPrice),
+  };
+  pe.postExpiryShadows.push(shadow);
+  pe.postExpiryShadows = pe.postExpiryShadows.slice(-20);
+  log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_POST_EXPIRY_SHADOW_STARTED", { sourceTriggerId: expired.id, breakoutConfirmPrice: expired.breakoutConfirmPrice, retestRangeLow: expired.retestRangeLow, retestRangeHigh: expired.retestRangeHigh, startedPrice: shadow.startedPrice, shadowWindowSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC, performanceTrackSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC });
+}
+
+async function evaluateDailyPostExpiryShadows(feature) {
+  const pe = ensurePriceEntryState();
+  if (!pe.postExpiryShadows.length) return;
+  const current = nowMs();
+  const next = [];
+  for (const shadow of pe.postExpiryShadows) {
+    if (!shadow || current > finite(shadow.expiresAtMs, 0)) {
+      if (shadow) log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_POST_EXPIRY_SHADOW_COMPLETE", { sourceTriggerId: shadow.sourceTriggerId, startedPrice: shadow.startedPrice, maxAfterExpiryPrice: shadow.maxAfterExpiryPrice, minAfterExpiryPrice: shadow.minAfterExpiryPrice });
+      continue;
+    }
+    const price = finite(feature.price, null);
+    if (price !== null) {
+      shadow.maxAfterExpiryPrice = Math.max(finite(shadow.maxAfterExpiryPrice, price), price);
+      shadow.minAfterExpiryPrice = Math.min(finite(shadow.minAfterExpiryPrice, price), price);
+      if (!shadow.firstBreakoutAfterExpiryAt && price >= finite(shadow.breakoutConfirmPrice, Infinity)) {
+        shadow.firstBreakoutAfterExpiryAt = feature.receivedAt;
+        shadow.firstBreakoutAfterExpiryPrice = round(price, 8);
+        log("INFO", "FVVO_DAILY_ADAPTIVE_BREAKOUT_POST_EXPIRY_SHADOW_BREAKOUT", { sourceTriggerId: shadow.sourceTriggerId, breakoutConfirmPrice: shadow.breakoutConfirmPrice, price: round(price, 8), startedPrice: shadow.startedPrice });
+      }
+    }
+    next.push(shadow);
+  }
+  pe.postExpiryShadows = next.slice(-20);
+}
+
 async function evaluatePriceTriggerEntry(feature) {
   const run = async () => {
     if (!CFG.PRICE_ENTRY_ENABLED || !isPriceTriggerFeature(feature) || !Number.isFinite(feature.price) || feature.price <= 0) return;
+    await evaluateDailyPostExpiryShadows(feature);
     const pendings = activePriceEntryItems();
     if (!pendings.length) return;
     const current = nowMs();
     for (const pending of pendings) {
       if (!pending || state.position) break;
+      if (isDailyAdaptiveBreakout(pending) && CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC > 0 && !pending.expiryWarningLogged && finite(pending.expiresAtMs, 0) - current <= CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC * 1000 && current <= finite(pending.expiresAtMs, 0)) {
+        pending.expiryWarningLogged = true;
+        await persistState("daily_adaptive_breakout_expiry_warning");
+        log("WARN", "FVVO_DAILY_ADAPTIVE_BREAKOUT_EXPIRY_WARNING", { triggerId: pending.id, triggerMode: pending.triggerMode, expiresAt: pending.expiresAt, secondsRemaining: Math.max(0, Math.round((finite(pending.expiresAtMs, 0) - current) / 1000)), breakoutConfirmPrice: pending.breakoutConfirmPrice, retestRangeLow: pending.retestRangeLow, retestRangeHigh: pending.retestRangeHigh });
+      }
       if (current > finite(pending.expiresAtMs, 0)) {
         const expired = resolvePriceEntryPending("EXPIRED", "EXPIRY_REACHED", { lastObservedPrice: pending.lastObservedPrice, lastObservedAt: pending.lastObservedAt }, pending);
+        if (expired) registerDailyPostExpiryShadow(expired, feature);
         await persistState("price_trigger_expired");
         if (expired) log("WARN", "FVVO_PRICE_TRIGGER_EXPIRED", { triggerId: expired.id, triggerMode: expired.triggerMode, triggerPrice: expired.triggerPrice, expiresAt: expired.expiresAt });
         continue;
@@ -3826,6 +4121,10 @@ async function evaluatePriceTriggerEntry(feature) {
       }
       if (isBreakoutRetestReclaimZone(pending)) {
         await evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature);
+        continue;
+      }
+      if (isDailyAdaptiveBreakout(pending)) {
+        await evaluateDailyAdaptiveBreakoutRetestReclaim(pending, previousPrice, feature);
         continue;
       }
       const crossed = CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS ? priceTriggerCrossed(pending, previousPrice, feature.price) : (pending.triggerMode === "dip" ? feature.price <= pending.triggerPrice : feature.price >= pending.triggerPrice);
@@ -3972,10 +4271,10 @@ async function start() {
     reentry15sFastLaunchMode: CFG.REENTRY_15S_FAST_LAUNCH_MODE, reentry15sFastLaunchMinPriorImpulsePct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT, reentry15sFastLaunchMinPullbackPct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT, reentry15sFastLaunchMinRsi: CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI, reentry15sFastLaunchMinAdx: CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX, reentry15sFastLaunchMinFvvo: CFG.REENTRY_15S_FAST_LAUNCH_MIN_FVVO, reentry15sFastLaunchMinSlope: CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE,
     reentry15sEarlyTurnMode: CFG.REENTRY_15S_EARLY_TURN_MODE, reentry15sEarlyTurnMinPriorImpulsePct: CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT, reentry15sEarlyTurnMinPullbackPct: CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT, reentry15sEarlyTurnMinRsi: CFG.REENTRY_15S_EARLY_TURN_MIN_RSI, reentry15sEarlyTurnMinAdx: CFG.REENTRY_15S_EARLY_TURN_MIN_ADX, reentry15sEarlyTurnMinFvvo: CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO, reentry15sEarlyTurnMinSlope: CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE,
     postExitRecoveredBaseMode: postExitRecoveredBaseMode(), postExitRecoveredBaseWindowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC, postExitRecoveredBaseMinPriorImpulsePct: CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT, postExitRecoveredBaseMinRecoveryPct: CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT, postExitRecoveredBaseMaxChaseFromLowPct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT, postExitRecoveredBaseConfirmObservations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS, postExitRecoveredBaseMinRsi: CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI, postExitRecoveredBaseMinAdx: CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX, postExitRecoveredBaseMinFvvo: CFG.POST_EXIT_RECOVERED_BASE_MIN_FVVO, postExitRecoveredBaseMinSlope: CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE,
-    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, persistenceReady, configurationProblems: problems });
+    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, dailyAdaptiveBreakoutMode: dailyAdaptiveBreakoutMode(), dailyAdaptiveBreakoutConfirmObservations: CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS, dailyAdaptiveBreakoutHoldTolerancePct: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT, dailyAdaptiveBreakoutHoldMaxSec: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC, dailyBreakoutRetestReclaimPct: CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT, dailyBreakoutRetestMaxEntryAboveHighPct: CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT, dailyBreakoutRetestMinPenetrationPct: CFG.DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT, dailyBreakoutRetestFailBelowLowBufferPct: CFG.DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT, dailyBreakoutRetestMaxTrackSec: CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC, dailyBreakoutReclaimMinSlope: CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE, dailyBreakoutReclaimMinFvvo: CFG.DAILY_BREAKOUT_RECLAIM_MIN_FVVO, dailyBreakoutExpiryWarningSec: CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC, dailyBreakoutPostExpiryShadowEnabled: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_ENABLED, dailyBreakoutPostExpiryShadowWindowSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC, dailyBreakoutPostExpiryPerformanceTrackSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC, persistenceReady, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, evaluateDailyAdaptiveBreakoutRetestReclaim, dailyAdaptiveBreakoutMode, dailyAdaptiveBreakoutReclaimOk, evaluateDailyPostExpiryShadows, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed };
