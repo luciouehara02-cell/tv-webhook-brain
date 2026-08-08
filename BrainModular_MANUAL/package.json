@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-daily-v1f-adaptive-breakout-retest-reclaim",
-  "version": "1.0.0",
+  "name": "brainfvvo-daily-v1g-phase-aware-multi-setup-campaign-live",
+  "version": "1.1.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1f.js",
+    "validate": "node validation_v1g.js",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
@@ -24,6 +24,8 @@
     "smoke:breakout-retest": "node breakout_retest_reclaim_zone_smoke_v1ab.js",
     "smoke:breakout-confirm-retest": "node breakout_confirm_retest_reclaim_smoke_v1ac.js",
     "smoke:daily-adaptive-breakout": "node daily_adaptive_breakout_smoke_v1f.js",
+    "smoke:multi-setup-campaign": "node multi_setup_campaign_smoke_v1g.js",
+    "replay:aug08": "node replay_daily_v1g_aug08.js",
     "replay:v1f": "REPLAY_DATA_DIR=/mnt/data node replay_full_v1x.js"
   },
   "engines": {
@@ -32,5 +34,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Daily v1f: adds daily_breakout_adaptive_confirm_retest_reclaim using strict breakout 1/2, adaptive hold 2/2, retest, reclaim and quality gates."
+  "description": "BrainFVVO Daily v1g LIVE: phase-aware daily breakout timing and up to three alternative pending setups with exactly one actual entry."
 }
