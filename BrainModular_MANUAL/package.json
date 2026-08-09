@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-daily-v1g-phase-aware-multi-setup-campaign-live",
-  "version": "1.1.0",
+  "name": "brainfvvo-daily-v1h-parallel-shallow-reclaim-order-hotfix-demo",
+  "version": "1.2.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1g.js",
+    "validate": "node validation_v1h.js",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
@@ -25,6 +25,8 @@
     "smoke:breakout-confirm-retest": "node breakout_confirm_retest_reclaim_smoke_v1ac.js",
     "smoke:daily-adaptive-breakout": "node daily_adaptive_breakout_smoke_v1f.js",
     "smoke:multi-setup-campaign": "node multi_setup_campaign_smoke_v1g.js",
+    "smoke:daily-shallow-order": "node daily_shallow_order_hotfix_smoke_v1h.js",
+    "replay:aug09-shallow": "node replay_daily_v1h_aug09_shallow.js",
     "replay:aug08": "node replay_daily_v1g_aug08.js",
     "replay:v1f": "REPLAY_DATA_DIR=/mnt/data node replay_full_v1x.js"
   },
@@ -34,5 +36,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Daily v1g LIVE: phase-aware daily breakout timing and up to three alternative pending setups with exactly one actual entry."
+  "description": "BrainFVVO Daily v1h DEMO: parallel 45-minute shallow reclaim and two-hour normal retest, with order-independent three-entry campaign arming."
 }
