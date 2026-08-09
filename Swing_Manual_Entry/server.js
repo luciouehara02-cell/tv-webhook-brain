@@ -74,7 +74,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1f_PHASE_AWARE_MULTI_SETUP_CAMPAIGN_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1f1_CAMPAIGN_VALIDATION_HOTFIX_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -4193,17 +4193,23 @@ function validateCampaignArm(body, validated, active) {
   if (entryRole === "breakout" && validated.triggerMode !== "breakout_retest_reclaim_zone") return { ok: false, error: "SWING_BREAKOUT_ROLE_REQUIRES_BREAKOUT_RETEST_RECLAIM_ZONE" };
   if (["preferred", "deep_alternative"].includes(entryRole) && validated.triggerMode !== "trailing_dip_reclaim_zone") return { ok: false, error: "PREFERRED_AND_DEEP_ROLES_REQUIRE_TRAILING_DIP_RECLAIM_ZONE" };
 
-  // Preferred and deep zones must never overlap or invert. This avoids ambiguous same-price arbitration.
-  const otherDip = active.find((item) => ["preferred", "deep_alternative"].includes(item.entryRole));
-  if (otherDip) {
-    const newLow = finite(validated.activationRangeLow, null);
-    const newHigh = finite(validated.activationRangeHigh, null);
-    const oldLow = finite(otherDip.activationRangeLow, null);
-    const oldHigh = finite(otherDip.activationRangeHigh, null);
-    const preferredIsNew = entryRole === "preferred";
-    const preferredLow = preferredIsNew ? newLow : oldLow;
-    const deepHigh = preferredIsNew ? oldHigh : newHigh;
-    if (!(preferredLow > deepHigh)) return { ok: false, error: "PREFERRED_ZONE_MUST_BE_COMPLETELY_ABOVE_DEEP_ALTERNATIVE_ZONE" };
+  // Preferred/deep ordering applies ONLY when arming one of the two dip roles.
+  // Breakout has no activationRangeLow/High and must never be evaluated by this check.
+  if (["preferred", "deep_alternative"].includes(entryRole)) {
+    const counterpartRole = entryRole === "preferred" ? "deep_alternative" : "preferred";
+    const otherDip = active.find((item) => item.entryRole === counterpartRole);
+    if (otherDip) {
+      const newLow = Number(validated.activationRangeLow);
+      const newHigh = Number(validated.activationRangeHigh);
+      const oldLow = Number(otherDip.activationRangeLow);
+      const oldHigh = Number(otherDip.activationRangeHigh);
+      if (![newLow, newHigh, oldLow, oldHigh].every(Number.isFinite)) {
+        return { ok: false, error: "CAMPAIGN_DIP_ZONE_RANGE_REQUIRED" };
+      }
+      const preferredLow = entryRole === "preferred" ? newLow : oldLow;
+      const deepHigh = entryRole === "preferred" ? oldHigh : newHigh;
+      if (!(preferredLow > deepHigh)) return { ok: false, error: "PREFERRED_ZONE_MUST_BE_COMPLETELY_ABOVE_DEEP_ALTERNATIVE_ZONE" };
+    }
   }
 
   const campaignOrdinal = Math.max(0, ...active.filter((item) => item.entryCampaign === entryCampaign).map((item) => Math.floor(finite(item.campaignOrdinal, 0)))) + 1;
