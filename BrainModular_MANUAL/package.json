@@ -1,12 +1,13 @@
 {
-  "name": "brainfvvo-daily-v1h-parallel-shallow-reclaim-order-hotfix-demo",
-  "version": "1.2.0",
+  "name": "brainfvvo-daily-v1i-loss-protection-audit-demo",
+  "version": "1.3.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1h.js",
+    "validate": "node validation_v1i.js",
+    "replay:v1i-loss": "node replay_daily_v1i_loss_protection.js ${REPLAY_DATA_DIR:-/mnt/data}",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
     "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
@@ -36,5 +37,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Daily v1h DEMO: parallel 45-minute shallow reclaim and two-hour normal retest, with order-independent three-entry campaign arming."
+  "description": "BrainFVVO Daily v1i: strict live loss-side thesis protection plus shadow-only failed-recovery and emergency-breakdown audits, preserving v1h entries and exits."
 }

@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_Daily_v1h_PARALLEL_SHALLOW_RECLAIM_ORDER_HOTFIX_DEMO
+// BrainFVVO_Daily_v1i_LOSS_PROTECTION_AUDIT_DEMO
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
 // v1h DEMO candidate: parallel shallow/normal daily breakout reclaim plus order-independent campaign arming.
@@ -75,7 +75,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1h_PARALLEL_SHALLOW_RECLAIM_ORDER_HOTFIX_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1i_LOSS_PROTECTION_AUDIT_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -120,7 +120,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1h-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1i-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -285,7 +285,10 @@ const CFG = {
 
   // v1y: strict loss-side thesis-failure overlay. This does not change the manual stop
   // contract; it audits or exits early only when an unprotected trade has clearly broken down.
-  LOSS_SIDE_THESIS_FAIL_MODE: envStr("LOSS_SIDE_THESIS_FAIL_MODE", "shadow").toLowerCase(),
+  // v1i: the strict loss-side rule proved selective on the Aug 10 Daily loss and
+  // matches the already-live Swing protection. New broader Daily protections remain
+  // shadow-only until the limited Daily sample is expanded.
+  LOSS_SIDE_THESIS_FAIL_MODE: envStr("LOSS_SIDE_THESIS_FAIL_MODE", "live").toLowerCase(),
   LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT: envNum("LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT", -0.35),
   LOSS_SIDE_THESIS_FAIL_MAX_RSI: envNum("LOSS_SIDE_THESIS_FAIL_MAX_RSI", 32),
   LOSS_SIDE_THESIS_FAIL_MIN_ADX: envNum("LOSS_SIDE_THESIS_FAIL_MIN_ADX", 20),
@@ -295,6 +298,25 @@ const CFG = {
   LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC: envNum("LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC", 0),
   LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR: envBool("LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR", true),
   LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18: envBool("LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18", true),
+
+  DAILY_FAILED_RECOVERY_MODE: envStr("DAILY_FAILED_RECOVERY_MODE", "shadow").toLowerCase(),
+  DAILY_FAILED_RECOVERY_MIN_HOLD_SEC: envNum("DAILY_FAILED_RECOVERY_MIN_HOLD_SEC", 1200),
+  DAILY_FAILED_RECOVERY_MAX_MFE_PCT: envNum("DAILY_FAILED_RECOVERY_MAX_MFE_PCT", 0.25),
+  DAILY_FAILED_RECOVERY_MAX_PNL_PCT: envNum("DAILY_FAILED_RECOVERY_MAX_PNL_PCT", -0.15),
+  DAILY_FAILED_RECOVERY_CONFIRM_5M_OBSERVATIONS: Math.floor(envNum("DAILY_FAILED_RECOVERY_CONFIRM_5M_OBSERVATIONS", 2)),
+  DAILY_FAILED_RECOVERY_MAX_FVVO: envNum("DAILY_FAILED_RECOVERY_MAX_FVVO", -3.0),
+  DAILY_FAILED_RECOVERY_MIN_ADX: envNum("DAILY_FAILED_RECOVERY_MIN_ADX", 25),
+  DAILY_FAILED_RECOVERY_REQUIRE_RAY_BEAR: envBool("DAILY_FAILED_RECOVERY_REQUIRE_RAY_BEAR", true),
+  DAILY_FAILED_RECOVERY_REQUIRE_BELOW_EMA8_AND_EMA18: envBool("DAILY_FAILED_RECOVERY_REQUIRE_BELOW_EMA8_AND_EMA18", true),
+
+  DAILY_EMERGENCY_BREAKDOWN_MODE: envStr("DAILY_EMERGENCY_BREAKDOWN_MODE", "shadow").toLowerCase(),
+  DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT: envNum("DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT", -0.50),
+  DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS: Math.floor(envNum("DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS", 2)),
+  DAILY_EMERGENCY_BREAKDOWN_MIN_SIGNALS: Math.floor(envNum("DAILY_EMERGENCY_BREAKDOWN_MIN_SIGNALS", 3)),
+  DAILY_EMERGENCY_BREAKDOWN_MAX_RSI: envNum("DAILY_EMERGENCY_BREAKDOWN_MAX_RSI", 35),
+  DAILY_EMERGENCY_BREAKDOWN_MIN_ADX: envNum("DAILY_EMERGENCY_BREAKDOWN_MIN_ADX", 25),
+  DAILY_EMERGENCY_BREAKDOWN_MAX_FVVO: envNum("DAILY_EMERGENCY_BREAKDOWN_MAX_FVVO", -2.0),
+  DAILY_EMERGENCY_BREAKDOWN_MAX_SLOPE: envNum("DAILY_EMERGENCY_BREAKDOWN_MAX_SLOPE", 0),
 
   // v1s: after a profitable 15s/tick thesis-failure signal, optionally defer the full exit while
   // the fresh 5m trend remains above its EMA18 (the chart pink line). Hard stop, dynamic floor
@@ -788,6 +810,10 @@ function configProblems() {
   if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS < 1 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE < -10) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_THRESHOLDS");
   if (!['disabled', 'shadow', 'live'].includes(CFG.DAILY_ADAPTIVE_BREAKOUT_MODE)) problems.push("INVALID_DAILY_ADAPTIVE_BREAKOUT_MODE");
   if (!['disabled', 'shadow', 'live'].includes(CFG.DAILY_BREAKOUT_SHALLOW_MODE)) problems.push("INVALID_DAILY_BREAKOUT_SHALLOW_MODE");
+  if (!['disabled', 'shadow', 'live'].includes(CFG.DAILY_FAILED_RECOVERY_MODE)) problems.push("INVALID_DAILY_FAILED_RECOVERY_MODE");
+  if (CFG.DAILY_FAILED_RECOVERY_MIN_HOLD_SEC < 300 || CFG.DAILY_FAILED_RECOVERY_MAX_MFE_PCT < 0 || CFG.DAILY_FAILED_RECOVERY_MAX_PNL_PCT >= 0 || CFG.DAILY_FAILED_RECOVERY_CONFIRM_5M_OBSERVATIONS < 2 || CFG.DAILY_FAILED_RECOVERY_MIN_ADX < 0) problems.push("INVALID_DAILY_FAILED_RECOVERY_THRESHOLDS");
+  if (!['disabled', 'shadow', 'live'].includes(CFG.DAILY_EMERGENCY_BREAKDOWN_MODE)) problems.push("INVALID_DAILY_EMERGENCY_BREAKDOWN_MODE");
+  if (CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT >= 0 || CFG.DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS < 2 || CFG.DAILY_EMERGENCY_BREAKDOWN_MIN_SIGNALS < 2 || CFG.DAILY_EMERGENCY_BREAKDOWN_MIN_SIGNALS > 6 || CFG.DAILY_EMERGENCY_BREAKDOWN_MIN_ADX < 0) problems.push("INVALID_DAILY_EMERGENCY_BREAKDOWN_THRESHOLDS");
   if (CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS < 2 || CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT < 0 || CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC <= 0 || CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT <= 0 || CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT || CFG.DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT < 0 || CFG.DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC <= 0 || CFG.DAILY_BREAKOUT_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.DAILY_BREAKOUT_RETEST_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE < -10 || CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC < 0 || CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC < 0 || CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC < 0) problems.push("INVALID_DAILY_ADAPTIVE_BREAKOUT_THRESHOLDS");
   if (CFG.DAILY_BREAKOUT_SHALLOW_MAX_TRACK_SEC <= 0 || CFG.DAILY_BREAKOUT_SHALLOW_NEAR_ZONE_ABOVE_HIGH_PCT < 0 || CFG.DAILY_BREAKOUT_SHALLOW_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.DAILY_BREAKOUT_SHALLOW_RECLAIM_PCT <= 0 || CFG.DAILY_BREAKOUT_SHALLOW_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.DAILY_BREAKOUT_SHALLOW_RECLAIM_PCT || CFG.DAILY_BREAKOUT_SHALLOW_CONFIRM_OBSERVATIONS < 2 || CFG.DAILY_BREAKOUT_SHALLOW_MIN_SLOPE < -10) problems.push("INVALID_DAILY_BREAKOUT_SHALLOW_THRESHOLDS");
   if (CFG.STATE_PERSISTENCE_REQUIRED && !persistenceReady) problems.push("PERSISTENCE_NOT_READY");
@@ -1216,6 +1242,17 @@ function statusPayload() {
       requireRayBear: CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR,
       requireBelowEma8AndEma18: CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18,
       exitsOnlyBeforeDynamicProfitArmed: true,
+    },
+    dailyLossProtectionAudit: {
+      failedRecoveryMode: dailyProtectionMode(CFG.DAILY_FAILED_RECOVERY_MODE),
+      failedRecoveryMinHoldSec: CFG.DAILY_FAILED_RECOVERY_MIN_HOLD_SEC,
+      failedRecoveryMaxMfePct: CFG.DAILY_FAILED_RECOVERY_MAX_MFE_PCT,
+      failedRecoveryMaxPnlPct: CFG.DAILY_FAILED_RECOVERY_MAX_PNL_PCT,
+      failedRecoveryConfirm5mObservations: CFG.DAILY_FAILED_RECOVERY_CONFIRM_5M_OBSERVATIONS,
+      emergencyBreakdownMode: dailyProtectionMode(CFG.DAILY_EMERGENCY_BREAKDOWN_MODE),
+      emergencyBreakdownMaxPnlPct: CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT,
+      emergencyBreakdownConfirmObservations: CFG.DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS,
+      emergencyBreakdownMinSignals: CFG.DAILY_EMERGENCY_BREAKDOWN_MIN_SIGNALS,
     },
     runnerExitContract: {
       enabled: CFG.RUNNER_EXIT_ENABLED,
@@ -1848,6 +1885,69 @@ function lossSideThesisFailureConfirmed(position, feature, price, pnlPct) {
   return { confirmed: observations >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS && elapsed >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC, reason: "LOSS_SIDE_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, evidence };
 }
 
+function dailyProtectionMode(value) {
+  return ["disabled", "shadow", "live"].includes(String(value || "").toLowerCase())
+    ? String(value).toLowerCase()
+    : "shadow";
+}
+
+function dailyFailedRecoveryState(position) {
+  if (!position.dailyFailedRecovery || typeof position.dailyFailedRecovery !== "object") {
+    position.dailyFailedRecovery = { structureObservations: 0, shadowLogged: false };
+  }
+  return position.dailyFailedRecovery;
+}
+
+function dailyFailedRecoveryCandidate(position, feature, price, pnlPct) {
+  const mode = dailyProtectionMode(CFG.DAILY_FAILED_RECOVERY_MODE);
+  const s = dailyFailedRecoveryState(position);
+  if (mode === "disabled" || feature.kind !== CFG.FVVO_FEATURE_5M_EVENT || position.dynamicProfit?.armed) {
+    return { confirmed: false, mode, reason: "NOT_ELIGIBLE" };
+  }
+  const heldSec = Math.max(0, (nowMs() - finite(position.openedAtMs, nowMs())) / 1000);
+  const ema8 = finite(feature.ema8, null), ema18 = finite(feature.ema18, null);
+  const fvvo = finite(feature.fvvo, null), adx = finite(feature.adx, null);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const belowEma = !CFG.DAILY_FAILED_RECOVERY_REQUIRE_BELOW_EMA8_AND_EMA18 || (ema8 !== null && ema18 !== null && price < ema8 && price < ema18);
+  const rayBear = !CFG.DAILY_FAILED_RECOVERY_REQUIRE_RAY_BEAR || ray.startsWith("RAY_BEAR");
+  const structureWeak = belowEma && rayBear && fvvo !== null && fvvo <= CFG.DAILY_FAILED_RECOVERY_MAX_FVVO && adx !== null && adx >= CFG.DAILY_FAILED_RECOVERY_MIN_ADX;
+  s.structureObservations = structureWeak ? Number(s.structureObservations || 0) + 1 : 0;
+  const peakPnlPct = Math.max(finite(position.peakPnlPct, 0), finite(position.maxFavorableExcursionPct, 0));
+  const confirmed = heldSec >= CFG.DAILY_FAILED_RECOVERY_MIN_HOLD_SEC && peakPnlPct <= CFG.DAILY_FAILED_RECOVERY_MAX_MFE_PCT + 1e-9 && pnlPct <= CFG.DAILY_FAILED_RECOVERY_MAX_PNL_PCT + 1e-9 && s.structureObservations >= CFG.DAILY_FAILED_RECOVERY_CONFIRM_5M_OBSERVATIONS;
+  return { confirmed, mode, reason: confirmed ? "DAILY_FAILED_RECOVERY_CONFIRMED" : "DAILY_FAILED_RECOVERY_NOT_CONFIRMED", heldSec, peakPnlPct, pnlPct, structureObservations: s.structureObservations, evidence: { price, ema8, ema18, fvvo, adx, ray, belowEma, rayBear, structureWeak } };
+}
+
+function dailyEmergencyBreakdownState(position) {
+  if (!position.dailyEmergencyBreakdown || typeof position.dailyEmergencyBreakdown !== "object") {
+    position.dailyEmergencyBreakdown = { observations: 0, shadowLogged: false };
+  }
+  return position.dailyEmergencyBreakdown;
+}
+
+function dailyEmergencyBreakdownCandidate(position, feature, price, pnlPct) {
+  const mode = dailyProtectionMode(CFG.DAILY_EMERGENCY_BREAKDOWN_MODE);
+  const s = dailyEmergencyBreakdownState(position);
+  if (mode === "disabled" || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || position.dynamicProfit?.armed || pnlPct > CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT + 1e-9) {
+    s.observations = 0;
+    return { confirmed: false, mode, reason: "NOT_ELIGIBLE" };
+  }
+  const ema8 = finite(feature.ema8, null), ema18 = finite(feature.ema18, null);
+  const rsi = finite(feature.rsi, null), adx = finite(feature.adx, null), fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null);
+  const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const belowEma = ema8 !== null && ema18 !== null && price < ema8 && price < ema18;
+  const signals = [];
+  if (rsi !== null && rsi <= CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_RSI) signals.push("RSI_WEAK");
+  if (adx !== null && adx >= CFG.DAILY_EMERGENCY_BREAKDOWN_MIN_ADX) signals.push("ADX_TRENDING");
+  if (fvvo !== null && fvvo <= CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_FVVO) signals.push("FVVO_WEAK");
+  if (slope !== null && slope <= CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_SLOPE) signals.push("SLOPE_NONPOSITIVE");
+  if (ray.startsWith("RAY_BEAR")) signals.push("RAY_BEAR");
+  if (feature.redPulse === true || feature.crossDown === true) signals.push("BEAR_EVENT");
+  const conditions = belowEma && signals.length >= CFG.DAILY_EMERGENCY_BREAKDOWN_MIN_SIGNALS;
+  s.observations = conditions ? Number(s.observations || 0) + 1 : 0;
+  const confirmed = s.observations >= CFG.DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS;
+  return { confirmed, mode, reason: confirmed ? "DAILY_EMERGENCY_BREAKDOWN_CONFIRMED" : "DAILY_EMERGENCY_BREAKDOWN_NOT_CONFIRMED", observations: s.observations, pnlPct, evidence: { price, ema8, ema18, rsi, adx, fvvo, slope, ray, belowEma, signals, signalCount: signals.length } };
+}
+
 function dynamicPullbackGraceMode() {
   return ["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)
     ? CFG.DYNAMIC_PULLBACK_GRACE_MODE
@@ -2088,6 +2188,36 @@ async function manageExit(feature) {
     await persistState(`stop_price_${feature.kind}`);
     await requestFullExit(`FVVO_MANUAL_STOP_PRICE_HIT_${stop.reason}`, price, feature.kind);
     return;
+  }
+
+  // v1i Daily-specific protection audits. These broader rules are shadow by
+  // default because deep-reclaim entries can legitimately begin in bearish structure.
+  const failedRecovery = dailyFailedRecoveryCandidate(p, feature, price, pnl);
+  if (failedRecovery.confirmed) {
+    const s = dailyFailedRecoveryState(p);
+    if (failedRecovery.mode === "live") {
+      await persistState(`daily_failed_recovery_${feature.kind}`);
+      await requestFullExit("FVVO_DAILY_FAILED_RECOVERY_CONFIRMED", price, feature.kind);
+      return;
+    }
+    if (failedRecovery.mode === "shadow" && !s.shadowLogged) {
+      s.shadowLogged = true;
+      log("WARN", "FVVO_DAILY_FAILED_RECOVERY_SHADOW_CANDIDATE", { ...failedRecovery, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
+    }
+  }
+
+  const emergencyBreakdown = dailyEmergencyBreakdownCandidate(p, feature, price, pnl);
+  if (emergencyBreakdown.confirmed) {
+    const s = dailyEmergencyBreakdownState(p);
+    if (emergencyBreakdown.mode === "live") {
+      await persistState(`daily_emergency_breakdown_${feature.kind}`);
+      await requestFullExit("FVVO_DAILY_EMERGENCY_BREAKDOWN_CONFIRMED", price, feature.kind);
+      return;
+    }
+    if (emergencyBreakdown.mode === "shadow" && !s.shadowLogged) {
+      s.shadowLogged = true;
+      log("WARN", "FVVO_DAILY_EMERGENCY_BREAKDOWN_SHADOW_CANDIDATE", { ...emergencyBreakdown, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
+    }
   }
 
   // v1y: strict loss-side thesis failure is subordinate to the manual stop but can audit/exit before the full stop if an unprotected trade clearly breaks down.
@@ -4430,6 +4560,7 @@ async function start() {
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
     demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, lossSideThesisFailMode: lossSideThesisFailMode(), lossSideThesisFailMinLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, lossSideThesisFailMaxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI, lossSideThesisFailMinAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX, lossSideThesisFailMaxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO, lossSideThesisFailConfirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
+    dailyFailedRecoveryMode: dailyProtectionMode(CFG.DAILY_FAILED_RECOVERY_MODE), dailyFailedRecoveryMinHoldSec: CFG.DAILY_FAILED_RECOVERY_MIN_HOLD_SEC, dailyFailedRecoveryMaxMfePct: CFG.DAILY_FAILED_RECOVERY_MAX_MFE_PCT, dailyFailedRecoveryMaxPnlPct: CFG.DAILY_FAILED_RECOVERY_MAX_PNL_PCT, dailyEmergencyBreakdownMode: dailyProtectionMode(CFG.DAILY_EMERGENCY_BREAKDOWN_MODE), dailyEmergencyBreakdownMaxPnlPct: CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT, dailyEmergencyBreakdownConfirmObservations: CFG.DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS,
     manualEntryOverheatConfirmationEnabled: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRMATION_ENABLED, manualEntryOverheatConfirmExpirySec: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC, manualEntryOverheatMinSignals: CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS,
     runnerContinuationRescueMode: runnerContinuationRescueMode(), runnerContinuationRescueMinMfePct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT, runnerContinuationRescueMinPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT, runnerContinuationRescueMaxSec: CFG.RUNNER_CONTINUATION_RESCUE_MAX_SEC, runnerContinuationRescueHardLockPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_HARD_LOCK_PNL_PCT, runnerContinuationRescueFastTickProxyAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_FAST_TICK_PROXY_AUDIT_ENABLED, runnerContinuationRescuePostExitAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_ENABLED,
     reentryPullbackHysteresisAuditEnabled: CFG.REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED, reentryPullbackInvalidationHysteresisPct: CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT, reentryPullbackRearmAboveEma18Pct: CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT,
@@ -4443,4 +4574,4 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, evaluateDailyAdaptiveBreakoutRetestReclaim, dailyAdaptiveBreakoutMode, dailyAdaptiveBreakoutReclaimOk, evaluateDailyPostExpiryShadows, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, evaluateDailyAdaptiveBreakoutRetestReclaim, dailyAdaptiveBreakoutMode, dailyAdaptiveBreakoutReclaimOk, evaluateDailyPostExpiryShadows, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, dailyFailedRecoveryCandidate, dailyEmergencyBreakdownCandidate };
