@@ -1,12 +1,14 @@
 {
-  "name": "brainfvvo-daily-v1i-loss-protection-audit-demo",
-  "version": "1.3.0",
+  "name": "brainfvvo-daily-v1j-5m-bear-guard-uuid-hotfix-demo",
+  "version": "1.4.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
-    "validate": "node validation_v1i.js",
+    "validate": "node validation_v1j.js",
+    "smoke:entry-5m-bear-guard": "node entry_5m_bear_guard_smoke_v1j.js",
+    "smoke:uuid": "node uuid_validation_smoke_v1j.js",
     "replay:v1i-loss": "node replay_daily_v1i_loss_protection.js ${REPLAY_DATA_DIR:-/mnt/data}",
     "replay": "node replay_full_v1x.js",
     "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
@@ -37,5 +39,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Daily v1i: strict live loss-side thesis protection plus shadow-only failed-recovery and emergency-breakdown audits, preserving v1h entries and exits."
+  "description": "BrainFVVO Daily v1j: Preferred/Deep strong-bear 5m entry hold with fast release, UUID fail-closed validation, and preserved v1i exits."
 }

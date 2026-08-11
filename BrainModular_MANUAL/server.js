@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_Daily_v1i_LOSS_PROTECTION_AUDIT_DEMO
+// BrainFVVO_Daily_v1j_5M_BEAR_GUARD_UUID_HOTFIX_DEMO
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
 // v1h DEMO candidate: parallel shallow/normal daily breakout reclaim plus order-independent campaign arming.
@@ -75,7 +75,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1i_LOSS_PROTECTION_AUDIT_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1j_5M_BEAR_GUARD_UUID_HOTFIX_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -120,7 +120,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1i-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1j-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -202,6 +202,22 @@ const CFG = {
   TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY: envBool("TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY", false),
   TRAILING_DIP_RECLAIM_ZONE_MIN_TICK_SLOPE: envNum("TRAILING_DIP_RECLAIM_ZONE_MIN_TICK_SLOPE", 0),
   TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR: envBool("TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR", false),
+
+  // v1j: Preferred/Deep reclaim candidates are held when fresh confirmed 5m
+  // structure is strongly bearish, then released by two fast recovery ticks.
+  ENTRY_5M_BEAR_GUARD_MODE: envStr("ENTRY_5M_BEAR_GUARD_MODE", "live").toLowerCase(),
+  ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC: Math.max(60, envNum("ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC", 420)),
+  ENTRY_5M_BEAR_GUARD_MAX_FVVO: envNum("ENTRY_5M_BEAR_GUARD_MAX_FVVO", -1.0),
+  ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR: envBool("ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR", true),
+  ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED: envBool("ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED", true),
+  ENTRY_5M_BEAR_GUARD_APPLY_DEEP: envBool("ENTRY_5M_BEAR_GUARD_APPLY_DEEP", true),
+  ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE: envStr("ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE", "ema18").toLowerCase(),
+  ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT: Math.max(0, envNum("ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT", 0.03)),
+  ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO: envNum("ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO", 0.0),
+  ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE: envNum("ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE", 0.0),
+  ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR: envBool("ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR", true),
+  ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS", 2))),
+  ENTRY_5M_BEAR_GUARD_WAIT_LOG_SEC: Math.max(15, envNum("ENTRY_5M_BEAR_GUARD_WAIT_LOG_SEC", 60)),
 
   // v1ac breakout retest reclaim zone. Preferred request fields:
   //   breakout_confirm_price = safe break above resistance / prior peak
@@ -560,7 +576,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -581,7 +597,7 @@ function normalizeState(raw) {
   const fallback = defaultState();
   if (!raw || typeof raw !== "object") return fallback;
   const next = { ...fallback, ...raw };
-  next.schemaVersion = 12;
+  next.schemaVersion = 13;
   next.forward = { ...fallback.forward, ...(raw.forward || {}) };
   next.manual = { ...fallback.manual, ...(raw.manual || {}) };
   if (next.manual.entryConfirmation && typeof next.manual.entryConfirmation !== "object") next.manual.entryConfirmation = null;
@@ -747,7 +763,9 @@ function configProblems() {
   if (!CFG.WEBHOOK_SECRET) problems.push("WEBHOOK_SECRET_REQUIRED");
   if (!CFG.MANUAL_WEBHOOK_SECRET) problems.push("MANUAL_WEBHOOK_SECRET_REQUIRED");
   if (!CFG.C3_SIGNAL_SECRET) problems.push("C3_SIGNAL_SECRET_REQUIRED");
-  if (!getBotUuid()) problems.push("C3_BOT_UUID_REQUIRED");
+  const resolvedBotUuid = getBotUuid();
+  if (!resolvedBotUuid) problems.push("C3_BOT_UUID_REQUIRED");
+  else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resolvedBotUuid)) problems.push("C3_BOT_UUID_INVALID_FORMAT_OR_QUOTED");
   if (!CFG.ENABLE_HTTP_FORWARD) problems.push("ENABLE_HTTP_FORWARD_MUST_BE_TRUE");
   if (!["demo", "live"].includes(CFG.EXECUTION_MODE)) problems.push("EXECUTION_MODE_MUST_BE_DEMO_OR_LIVE");
   if (CFG.SHADOW_ONLY) problems.push("SHADOW_ONLY_MUST_BE_FALSE");
@@ -762,6 +780,9 @@ function configProblems() {
   if (CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT < 0) problems.push("INVALID_MAX_TARGET_DISTANCE_PCT");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC < 0) problems.push("INVALID_STOP_CONFIRM_SEC");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_STOP_CONFIRM_OBSERVATIONS");
+  if (!["off", "shadow", "live"].includes(CFG.ENTRY_5M_BEAR_GUARD_MODE)) problems.push("INVALID_ENTRY_5M_BEAR_GUARD_MODE");
+  if (!["ema8", "ema18"].includes(CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE)) problems.push("INVALID_ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE");
+  if (CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC < 60 || CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT < 0 || CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT > 0.20 || CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS < 1 || CFG.ENTRY_5M_BEAR_GUARD_WAIT_LOG_SEC < 15) problems.push("INVALID_ENTRY_5M_BEAR_GUARD_THRESHOLDS");
   if (CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC < 15 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC > 900 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_MAX_PRICE_DEVIATION_PCT < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_RSI <= 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_ADX < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS < 1 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS > 5) problems.push("INVALID_MANUAL_ENTRY_OVERHEAT_CONFIRMATION_CONFIG");
   if (CFG.DYNAMIC_PROFIT_ARM_MFE_PCT <= 0) problems.push("INVALID_DYNAMIC_PROFIT_ARM_MFE_PCT");
   if (CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT < 0) problems.push("INVALID_DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT");
@@ -3243,6 +3264,49 @@ function clearPriceEntrySlot(item) {
 function trailingDipReclaimMode() { return CFG.TRAILING_DIP_RECLAIM_MODE; }
 function trailingDipReclaimZoneMode() { return CFG.TRAILING_DIP_RECLAIM_ZONE_MODE; }
 function breakoutRetestReclaimZoneMode() { return CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE; }
+function entry5mBearGuardMode() { return CFG.ENTRY_5M_BEAR_GUARD_MODE; }
+function entry5mBearGuardApplies(pending) {
+  const role = String(pending?.entryRole || "").toLowerCase();
+  return (role === "preferred" && CFG.ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED) || (role === "deep_alternative" && CFG.ENTRY_5M_BEAR_GUARD_APPLY_DEEP);
+}
+function entry5mStrongBearContext(feature) {
+  const ctx = state.lastFeature5m;
+  const age = ageSec(ctx);
+  const ema8 = finite(ctx?.ema8, null), ema18 = finite(ctx?.ema18, null), fvvo = finite(ctx?.fvvo, null);
+  const ray = String(ctx?.rayRegime || "").toUpperCase();
+  const available = Boolean(ctx) && Number.isFinite(age) && age <= CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC && ema8 !== null && ema18 !== null && fvvo !== null;
+  const belowEma8 = available && feature.price < ema8 - 1e-9;
+  const belowEma18 = available && feature.price < ema18 - 1e-9;
+  const fvvoBear = available && fvvo < CFG.ENTRY_5M_BEAR_GUARD_MAX_FVVO;
+  const rayBear = available && ray.startsWith("RAY_BEAR");
+  const strongBear = available && belowEma8 && belowEma18 && fvvoBear && (!CFG.ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR || rayBear);
+  return { available, strongBear, ageSec: Number.isFinite(age) ? round(age, 3) : null, price: feature.price, ema8, ema18, fvvo, slope: finite(ctx?.slope, null), rsi: finite(ctx?.rsi, null), adx: finite(ctx?.adx, null), rayRegime: ctx?.rayRegime || null, barTimeMs: finite(ctx?.barTimeMs, null), receivedAt: ctx?.receivedAt || null, belowEma8, belowEma18, fvvoBear, rayBear };
+}
+function updateEntry5mGuardReference(guard) {
+  const ctx = state.lastFeature5m;
+  const age = ageSec(ctx);
+  const ema8 = finite(ctx?.ema8, null), ema18 = finite(ctx?.ema18, null);
+  if (!ctx || !Number.isFinite(age) || age > CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC || ema8 === null || ema18 === null) return guard;
+  const barTimeMs = finite(ctx.barTimeMs, 0);
+  if (barTimeMs >= finite(guard.referenceBarTimeMs, 0)) {
+    guard.referenceEma8 = ema8; guard.referenceEma18 = ema18; guard.referenceBarTimeMs = barTimeMs; guard.referenceReceivedAt = ctx.receivedAt || null;
+    guard.referenceFvvo = finite(ctx.fvvo, null); guard.referenceSlope = finite(ctx.slope, null); guard.referenceRayRegime = ctx.rayRegime || null;
+  }
+  return guard;
+}
+function entry5mFastReleaseEvidence(feature, guard) {
+  updateEntry5mGuardReference(guard);
+  const refEma8 = finite(guard?.referenceEma8, null), refEma18 = finite(guard?.referenceEma18, null);
+  const referenceKind = CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE === "ema8" ? "ema8" : "ema18";
+  const referencePrice = referenceKind === "ema8" ? refEma8 : refEma18;
+  const releaseFloor = referencePrice === null ? null : referencePrice * (1 - CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT / 100);
+  const fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null), context5mFvvo = finite(guard?.referenceFvvo, null);
+  const priceStructural = releaseFloor !== null && feature.price + 1e-9 >= releaseFloor;
+  const fvvoOk = fvvo !== null && fvvo >= CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO;
+  const slopeOk = slope !== null && slope >= CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE;
+  const rayOk = !CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR || nonBearRay(feature.rayRegime);
+  return { qualifies: priceStructural && fvvoOk && slopeOk && rayOk, referenceKind, referencePrice, releaseFloor: releaseFloor === null ? null : round(releaseFloor, 8), referenceEma8: refEma8, referenceEma18: refEma18, context5mFvvo, priceStructural, fvvoOk, slopeOk, rayOk, fvvo, slope, rayRegime: feature.rayRegime || null };
+}
 function dailyAdaptiveBreakoutMode() { return CFG.DAILY_ADAPTIVE_BREAKOUT_MODE; }
 function isTrailingDipReclaim(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim"; }
 function isTrailingDipReclaimZone(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim_zone"; }
@@ -3309,6 +3373,15 @@ function priceEntryStatusPayload() {
     resolutionReason: item.resolutionReason || null,
     requestId: item.requestId || null,
     trailingDipReclaim: trailingDipReclaimPublic(item),
+    entry5mBearGuard: item.trailing?.entry5mBearGuard ? {
+      active: Boolean(item.trailing.entry5mBearGuard.active),
+      armedAt: item.trailing.entry5mBearGuard.armedAt || null,
+      role: item.entryRole || "standalone",
+      referenceEma8: finite(item.trailing.entry5mBearGuard.referenceEma8, null),
+      referenceEma18: finite(item.trailing.entry5mBearGuard.referenceEma18, null),
+      releaseObservations: Math.max(0, Math.floor(finite(item.trailing.entry5mBearGuard.releaseObservations, 0))),
+      lastEvidence: item.trailing.entry5mBearGuard.lastEvidence || null,
+    } : null,
   } : null;
   return {
     enabled: CFG.PRICE_ENTRY_ENABLED,
@@ -3932,9 +4005,38 @@ async function evaluateTrailingDipReclaimZone(pending, previousPrice, feature) {
       return;
     }
     if (!trailingZoneTickRecoveryOk(feature)) {
+      if (t.entry5mBearGuard?.active) { t.entry5mBearGuard.releaseObservations = 0; t.entry5mBearGuard.lastEvidence = { reason: "BASE_TICK_RECOVERY_NOT_READY", price: feature.price, at: nowIso() }; }
       await persistState("trailing_dip_reclaim_zone_wait_tick_recovery");
       log("INFO", "FVVO_TRAILING_DIP_RECLAIM_ZONE_WAIT_TICK_RECOVERY", { triggerId: pending.id, activationRangeLow: rangeLow, activationRangeHigh: rangeHigh, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY });
       return;
+    }
+    if (entry5mBearGuardMode() !== "off" && entry5mBearGuardApplies(pending)) {
+      const ctx = entry5mStrongBearContext(feature);
+      let guard = t.entry5mBearGuard && typeof t.entry5mBearGuard === "object" ? t.entry5mBearGuard : null;
+      if (!guard?.active && ctx.strongBear) {
+        guard = t.entry5mBearGuard = { active: true, armedAt: nowIso(), armedAtMs: current, role: pending.entryRole || null, referenceEma8: ctx.ema8, referenceEma18: ctx.ema18, referenceBarTimeMs: ctx.barTimeMs || 0, referenceReceivedAt: ctx.receivedAt || null, referenceFvvo: ctx.fvvo, referenceSlope: ctx.slope, referenceRayRegime: ctx.rayRegime, releaseObservations: 0, lastWaitLogAtMs: 0, lastEvidence: { reason: "STRONG_BEAR_5M", context: ctx, price: feature.price, at: nowIso() } };
+        await persistState("entry_5m_bear_guard_armed");
+        log("WARN", "FVVO_ENTRY_5M_STRONG_BEAR_GUARD_ARMED", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, executionPrice: feature.price, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, context5m: ctx, action: entry5mBearGuardMode() === "shadow" ? "SHADOW_ONLY" : "WAIT_FAST_STRUCTURAL_RELEASE" });
+        if (entry5mBearGuardMode() === "live") return;
+      }
+      if (guard?.active && entry5mBearGuardMode() === "live") {
+        const evidence = entry5mFastReleaseEvidence(feature, guard);
+        guard.lastEvidence = { ...evidence, price: feature.price, at: nowIso() };
+        if (evidence.qualifies) guard.releaseObservations = Math.max(0, Math.floor(finite(guard.releaseObservations, 0))) + 1;
+        else guard.releaseObservations = 0;
+        const required = CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS;
+        if (guard.releaseObservations < required) {
+          const shouldLog = evidence.qualifies || current - finite(guard.lastWaitLogAtMs, 0) >= CFG.ENTRY_5M_BEAR_GUARD_WAIT_LOG_SEC * 1000;
+          if (shouldLog) {
+            guard.lastWaitLogAtMs = current;
+            log("INFO", evidence.qualifies ? "FVVO_ENTRY_5M_STRONG_BEAR_GUARD_RELEASE_CONFIRMING" : "FVVO_ENTRY_5M_STRONG_BEAR_GUARD_WAIT", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, executionPrice: feature.price, observations: guard.releaseObservations, requiredObservations: required, referenceKind: evidence.referenceKind, referencePrice: evidence.referencePrice, referenceEma8: evidence.referenceEma8, referenceEma18: evidence.referenceEma18, releaseFloor: evidence.releaseFloor, evidence });
+          }
+          await persistState("entry_5m_bear_guard_wait");
+          return;
+        }
+        guard.active = false; guard.releasedAt = nowIso(); guard.releasedAtMs = current;
+        log("INFO", "FVVO_ENTRY_5M_STRONG_BEAR_GUARD_RELEASED", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, executionPrice: feature.price, observations: guard.releaseObservations, requiredObservations: required, referenceKind: evidence.referenceKind, referencePrice: evidence.referencePrice, referenceEma8: evidence.referenceEma8, referenceEma18: evidence.referenceEma18, releaseFloor: evidence.releaseFloor, evidence, action: "ALLOW_EXISTING_ENTRY_FLOW" });
+      }
     }
     const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
     if (!checked.ok) {
@@ -4561,6 +4663,7 @@ async function start() {
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
     demoOnly: demoMode(), automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, lossSideThesisFailMode: lossSideThesisFailMode(), lossSideThesisFailMinLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, lossSideThesisFailMaxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI, lossSideThesisFailMinAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX, lossSideThesisFailMaxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO, lossSideThesisFailConfirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
     dailyFailedRecoveryMode: dailyProtectionMode(CFG.DAILY_FAILED_RECOVERY_MODE), dailyFailedRecoveryMinHoldSec: CFG.DAILY_FAILED_RECOVERY_MIN_HOLD_SEC, dailyFailedRecoveryMaxMfePct: CFG.DAILY_FAILED_RECOVERY_MAX_MFE_PCT, dailyFailedRecoveryMaxPnlPct: CFG.DAILY_FAILED_RECOVERY_MAX_PNL_PCT, dailyEmergencyBreakdownMode: dailyProtectionMode(CFG.DAILY_EMERGENCY_BREAKDOWN_MODE), dailyEmergencyBreakdownMaxPnlPct: CFG.DAILY_EMERGENCY_BREAKDOWN_MAX_PNL_PCT, dailyEmergencyBreakdownConfirmObservations: CFG.DAILY_EMERGENCY_BREAKDOWN_CONFIRM_OBSERVATIONS,
+    entry5mBearGuardMode: entry5mBearGuardMode(), entry5mBearGuardMaxAgeSec: CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC, entry5mBearGuardMaxFvvo: CFG.ENTRY_5M_BEAR_GUARD_MAX_FVVO, entry5mBearGuardRequireRayBear: CFG.ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR, entry5mBearGuardApplyPreferred: CFG.ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED, entry5mBearGuardApplyDeep: CFG.ENTRY_5M_BEAR_GUARD_APPLY_DEEP, entry5mBearGuardReleaseReference: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE, entry5mBearGuardReleaseStructureTolerancePct: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT, entry5mBearGuardReleaseMinFvvo: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO, entry5mBearGuardReleaseMinSlope: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE, entry5mBearGuardReleaseRequireRayNotBear: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardReleaseConfirmObservations: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS,
     manualEntryOverheatConfirmationEnabled: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRMATION_ENABLED, manualEntryOverheatConfirmExpirySec: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC, manualEntryOverheatMinSignals: CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS,
     runnerContinuationRescueMode: runnerContinuationRescueMode(), runnerContinuationRescueMinMfePct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT, runnerContinuationRescueMinPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT, runnerContinuationRescueMaxSec: CFG.RUNNER_CONTINUATION_RESCUE_MAX_SEC, runnerContinuationRescueHardLockPnlPct: CFG.RUNNER_CONTINUATION_RESCUE_MIN_HARD_LOCK_PNL_PCT, runnerContinuationRescueFastTickProxyAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_FAST_TICK_PROXY_AUDIT_ENABLED, runnerContinuationRescuePostExitAuditEnabled: CFG.RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_ENABLED,
     reentryPullbackHysteresisAuditEnabled: CFG.REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED, reentryPullbackInvalidationHysteresisPct: CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT, reentryPullbackRearmAboveEma18Pct: CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT,
@@ -4574,4 +4677,4 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, evaluateDailyAdaptiveBreakoutRetestReclaim, dailyAdaptiveBreakoutMode, dailyAdaptiveBreakoutReclaimOk, evaluateDailyPostExpiryShadows, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, dailyFailedRecoveryCandidate, dailyEmergencyBreakdownCandidate };
+module.exports = { app, CFG, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, evaluateDailyAdaptiveBreakoutRetestReclaim, dailyAdaptiveBreakoutMode, dailyAdaptiveBreakoutReclaimOk, evaluateDailyPostExpiryShadows, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, dailyFailedRecoveryCandidate, dailyEmergencyBreakdownCandidate };
