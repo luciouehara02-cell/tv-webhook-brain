@@ -1,6 +1,6 @@
 {
   "name": "brainfvvo-swing-v1h-5m-bear-veto-fast-release-campaign",
-  "version": "1.7.0-demo",
+  "version": "1.7.0-live-paper",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -20,5 +20,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Swing v1h DEMO: v1g strategy retained; Preferred/Deep-only strong-bear 5m veto with fast 15s EMA18 structural release and campaign/status hardening."
+  "description": "BrainFVVO Swing v1h LIVE execution for a dedicated 3Commas PAPER account; replay-validated v1h strategy unchanged."
 }

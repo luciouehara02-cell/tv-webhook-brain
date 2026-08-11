@@ -76,7 +76,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -91,7 +91,7 @@ const CFG = {
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
   // v1o: deploy exactly the same code to DEMO or LIVE. The sole environment selector is this variable.
   // Valid values: demo | live. The legacy DEMO_FORWARD_ALLOWED/LIVE_FORWARD_ALLOWED flags are ignored by v1o.
-  EXECUTION_MODE: envStr("EXECUTION_MODE", "demo").toLowerCase(),
+  EXECUTION_MODE: envStr("EXECUTION_MODE", "live").toLowerCase(),
   C3_DRY_RUN: envBool("C3_DRY_RUN", false),
   FVVO_EMERGENCY_DISABLE_ALL_FORWARDS: envBool("FVVO_EMERGENCY_DISABLE_ALL_FORWARDS", false),
   FVVO_EMERGENCY_DISABLE_NEW_ENTRIES: envBool("FVVO_EMERGENCY_DISABLE_NEW_ENTRIES", false),
@@ -123,7 +123,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-v1h-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-v1h-live-paper-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
