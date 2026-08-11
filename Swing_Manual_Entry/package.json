@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-swing-v1g-shallow-hold-reclaim-campaign",
-  "version": "1.6.0-demo",
+  "name": "brainfvvo-swing-v1h-5m-bear-veto-fast-release-campaign",
+  "version": "1.7.0-demo",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -10,8 +10,9 @@
     "validate:campaign": "node multi_setup_campaign_smoke_v1f.js && node multi_setup_campaign_extended_smoke_v1f.js && node campaign_arm_order_regression_v1f1.js && node shallow_campaign_aug09_integration_smoke_v1g.js",
     "validate:shallow": "node shallow_hold_reclaim_smoke_v1g.js",
     "validate:regression": "node breakout_adaptive_expiry_smoke_v1e.js && node swing_emergency_fast_smoke_v1c.js && node swing_emergency_shadow_compare_smoke_v1c.js && node swing_structure_exit_smoke_v1c.js && node breakout_confirm_retest_reclaim_smoke_v1ac.js && node dual_dip_breakout_smoke_v1aa.js && node swing_trigger_lifecycle_smoke_v1a.js",
-    "test:strategy": "npm run check && npm run validate && npm run validate:campaign && npm run validate:shallow && npm run validate:regression",
-    "replay": "node replay_full_swing_v1e.js"
+    "test:strategy": "npm run check && npm run validate && npm run validate:campaign && npm run validate:shallow && npm run validate:entryguard && npm run validate:regression",
+    "replay": "node replay_full_swing_v1e.js",
+    "validate:entryguard": "node entry_5m_bear_guard_smoke_v1h.js"
   },
   "engines": {
     "node": ">=18"
@@ -19,5 +20,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Swing v1g DEMO: v1f1 campaign and Swing exits retained; adds replay-filtered shallow breakout hold/reclaim path while preserving the normal retest route."
+  "description": "BrainFVVO Swing v1h DEMO: v1g strategy retained; Preferred/Deep-only strong-bear 5m veto with fast 15s EMA18 structural release and campaign/status hardening."
 }
