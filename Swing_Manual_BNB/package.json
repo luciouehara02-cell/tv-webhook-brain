@@ -1,0 +1,17 @@
+{
+  "name": "brainfvvo-swing-multiasset-v1a-single-server",
+  "version": "1.0.0-live-paper",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "description": "Single Railway Node.js service supervising isolated SOL/ETH/BNB BrainFVVO Swing v1h engines with per-symbol state, bots, secrets and strategy env overrides."
+}
