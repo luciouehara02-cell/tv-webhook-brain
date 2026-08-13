@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1a_ETH_BNB_XRP_3DEST";
+const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1d_SOL_ETH_BNB_XRP_5M_3DEST";
 const PORT = Number(process.env.PORT || 8080);
 const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "").trim();
@@ -18,7 +18,7 @@ function parseSymbolSet(value) { return new Set(parseCsv(value).map(normalizeSym
 function hostFromUrl(url) { try { return new URL(url).host.toLowerCase(); } catch { return ""; } }
 
 const ALLOWED_SYMBOLS = parseSymbolSet(
-  process.env.ALLOWED_SYMBOLS || "BINANCE:ETHUSDT,BINANCE:BNBUSDT,BINANCE:XRPUSDT"
+  process.env.ALLOWED_SYMBOLS || "BINANCE:SOLUSDT,BINANCE:ETHUSDT,BINANCE:BNBUSDT,BINANCE:XRPUSDT"
 );
 
 function normalizeDestination(index, label, urlEnv, secretEnv, symbolsEnv) {
@@ -47,9 +47,29 @@ function lowerIntent(payload) { return String(payload?.intent || "").trim().toLo
 
 function payloadKind(payload) {
   const event = upperEvent(payload), src = lowerSrc(payload), intent = lowerIntent(payload);
-  if (event === "FEATURE_TICK_FVVO" || src === "fvvo_feature_tick" || intent === "fvvo_feature_tick") return "fvvo_feature_tick";
-  if (event === "FEATURE_5M_FVVO" || src === "fvvo_feature_5m" || intent === "fvvo_feature_5m" || src === "fvvo") return "fvvo_feature_5m";
-  if (event === "FAST_TICK_FVVO" || src === "fvvo_tick" || intent === "fvvo_tick") return "fvvo_fast_tick";
+
+  // 15-second FVVO feature publisher.
+  if (
+    event === "FEATURE_TICK_FVVO" ||
+    src === "fvvo_feature_tick" ||
+    intent === "fvvo_feature_tick"
+  ) return "fvvo_feature_tick";
+
+  // 5-minute FVVO feature publisher. Accept the current Pine variants used
+  // in BrainFVVO: FEATURE_5M_FVVO, fvvo_feature_5m, or legacy src=fvvo.
+  if (
+    event === "FEATURE_5M_FVVO" ||
+    src === "fvvo_feature_5m" ||
+    intent === "fvvo_feature_5m" ||
+    src === "fvvo"
+  ) return "fvvo_feature_5m";
+
+  if (
+    event === "FAST_TICK_FVVO" ||
+    src === "fvvo_tick" ||
+    intent === "fvvo_tick"
+  ) return "fvvo_fast_tick";
+
   return "unknown";
 }
 
@@ -129,7 +149,12 @@ app.post("/webhook", async (req, res) => {
   const kind = payloadKind(inbound);
 
   if (!inboundSecretOk(inbound)) return res.status(401).json({ ok: false, error: "INBOUND_SECRET_MISMATCH", kind });
-  if (kind === "unknown") return res.status(200).json({ ok: true, ignored: true, reason: "UNSUPPORTED_PAYLOAD_KIND", event: inbound?.event || null, src: inbound?.src || null, symbol: inbound?.symbol || null });
+  if (kind === "unknown") {
+    console.warn(
+      `⚠ ALT_ROUTER_IGNORED reason=UNSUPPORTED_PAYLOAD_KIND event=${inbound?.event || "-"} src=${inbound?.src || "-"} intent=${inbound?.intent || "-"} symbol=${inbound?.symbol || "-"}`
+    );
+    return res.status(200).json({ ok: true, ignored: true, reason: "UNSUPPORTED_PAYLOAD_KIND", event: inbound?.event || null, src: inbound?.src || null, intent: inbound?.intent || null, symbol: inbound?.symbol || null });
+  }
 
   const normalized = normalizePayload(inbound, kind);
   if (!normalized.ok) return res.status(normalized.error === "SYMBOL_NOT_ALLOWED" ? 403 : 400).json(normalized);
@@ -137,7 +162,8 @@ app.post("/webhook", async (req, res) => {
   const destinations = activeDestinationsFor(normalized.symbol);
   if (!destinations.length) return res.status(503).json({ ok: false, error: "NO_ENABLED_DESTINATION_FOR_SYMBOL", symbol: normalized.symbol, configuredDestinations: DESTINATIONS.map(publicDestination) });
 
-  console.log(`📍 ALT_ROUTER_IN kind=${kind} event=${normalized.out.event || "-"} symbol=${normalized.symbol} price=${normalized.price} targets=${destinations.length}`);
+  const marker = kind === "fvvo_feature_5m" ? "📊" : "📍";
+  console.log(`${marker} ALT_ROUTER_IN kind=${kind} event=${normalized.out.event || "-"} src=${normalized.out.src || "-"} symbol=${normalized.symbol} price=${normalized.price} targets=${destinations.length}`);
   const results = await Promise.all(destinations.map((d) => forwardOne(d, normalized, kind)));
 
   for (const result of results) {
