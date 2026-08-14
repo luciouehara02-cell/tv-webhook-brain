@@ -1,8 +1,8 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1a_SINGLE_SERVER_MULTI_SYMBOL
-// Supervisor + unchanged BrainFVVO Swing v1h engine in ONE server.js.
+// BrainFVVO_Swing_MultiAsset_v1b_C3_DYNAMIC_INSTRUMENT_HOTFIX_SINGLE_SERVER_MULTI_SYMBOL
+// Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
 //   - exposes one external /webhook + /manual + /health service
@@ -22,7 +22,7 @@ const { Worker, isMainThread, workerData } = require("worker_threads");
 const FVVO_ENGINE_WORKER = !isMainThread && Boolean(workerData?.fvvoEngineWorker);
 
 if (FVVO_ENGINE_WORKER) {
-// ===== BEGIN UNCHANGED SWING V1H ENGINE =====
+// ===== BEGIN SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
@@ -1132,16 +1132,36 @@ function c3NumberString(value) {
   return String(round(parsed, CFG.C3_TRIGGER_PRICE_DECIMALS));
 }
 
+function c3MarketFromConfiguredSymbol(symbol = CFG.SYMBOL) {
+  const raw = String(symbol || "").trim().toUpperCase();
+  const separator = raw.indexOf(":");
+  if (separator <= 0 || separator >= raw.length - 1) {
+    throw new Error("C3_SYMBOL_FORMAT_INVALID");
+  }
+
+  const tvExchange = raw.slice(0, separator).trim();
+  const tvInstrument = raw.slice(separator + 1).trim();
+
+  if (!tvExchange || !tvInstrument) {
+    throw new Error("C3_SYMBOL_FORMAT_INVALID");
+  }
+
+  return { tvExchange, tvInstrument };
+}
+
 function buildC3Signal(action, price, options = {}, current = nowMs()) {
   const trigger = c3NumberString(price);
   if (!trigger) throw new Error("C3_TRIGGER_PRICE_INVALID");
+
+  const market = c3MarketFromConfiguredSymbol(CFG.SYMBOL);
+
   const body = {
     secret: CFG.C3_SIGNAL_SECRET,
     max_lag: String(Math.floor(CFG.C3_MAX_LAG_SEC)),
     timestamp: new Date(current).toISOString(),
     trigger_price: trigger,
-    tv_exchange: "BINANCE",
-    tv_instrument: "SOLUSDT",
+    tv_exchange: market.tvExchange,
+    tv_instrument: market.tvInstrument,
     action,
     bot_uuid: getBotUuid(),
   };
@@ -5334,6 +5354,23 @@ async function start() {
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
   if (legacyEntryVars.length) log("WARN", "C3_LEGACY_ENTRY_SIZE_VARIABLES_IGNORED", { variables: legacyEntryVars, requiredEntrySizeSource: "bot_fixed" });
+
+  try {
+    const c3MarketAudit = c3MarketFromConfiguredSymbol(CFG.SYMBOL);
+    const botUuid = getBotUuid();
+    log("INFO", "C3_SYMBOL_ROUTE_AUDIT", {
+      symbol: CFG.SYMBOL,
+      tvExchange: c3MarketAudit.tvExchange,
+      tvInstrument: c3MarketAudit.tvInstrument,
+      botUuidSuffix: botUuid ? String(botUuid).slice(-8) : null,
+    });
+  } catch (error) {
+    log("ERROR", "C3_SYMBOL_ROUTE_INVALID", {
+      symbol: CFG.SYMBOL,
+      error: error.message,
+    });
+  }
+
   log("INFO", "FVVO_MANUAL_DYNAMIC_PROFIT_STARTUP", { port: CFG.PORT, webhookPath: CFG.WEBHOOK_PATH, manualPath: CFG.MANUAL_WEBHOOK_PATH, symbol: CFG.SYMBOL, executionMode: CFG.EXECUTION_MODE,
     demoOnly: demoMode(), httpForwardAllowed: isForwardAllowed(), c3DryRun: CFG.C3_DRY_RUN, estimatedRoundTripCostPct: CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT, automaticEntriesEnabled: reentryAutoEnabled(), priceTriggerEntryEnabled: CFG.PRICE_ENTRY_ENABLED, priceTriggerEntryAutoOrderOnCross: CFG.PRICE_ENTRY_ENABLED, autoExitReconciliationEnabled: autoExitReconciliationActive(), autoExitReconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryPhase: CFG.REENTRY_PHASE, reentryAutomaticOrdersEnabled: reentryAutoEnabled(), reentryEnabled: CFG.REENTRY_ENABLED, reentryMaxCount: CFG.REENTRY_MAX_COUNT, allowedProfile: PROFILE, swingStructureExitMode: swingStructureExitMode(), swingHardMaxHoldSec: CFG.SWING_HARD_MAX_HOLD_SEC, swingNoProgressCheckAfterSec: CFG.SWING_NO_PROGRESS_CHECK_AFTER_SEC, swingEmergencyFastConfirmMode: CFG.SWING_EMERGENCY_FAST_CONFIRM_MODE, swingEmergencyFastConfirmMaxSec: CFG.SWING_EMERGENCY_FAST_CONFIRM_MAX_SEC, swingEmergencyMicroWindowTicks: CFG.SWING_EMERGENCY_MICRO_WINDOW_TICKS, swingEmergencyMicroRequiredBelowTicks: CFG.SWING_EMERGENCY_MICRO_REQUIRED_BELOW_TICKS, swingEmergencyMicroConfirmObservations: CFG.SWING_EMERGENCY_MICRO_CONFIRM_OBSERVATIONS, swingEmergencyMicroMinAvgDeclinePct: CFG.SWING_EMERGENCY_MICRO_MIN_AVG_DECLINE_PCT, swingEmergencyMicroMinBearSignals: CFG.SWING_EMERGENCY_MICRO_MIN_BEAR_SIGNALS, swingEmergencyHardBreakBufferPct: CFG.SWING_EMERGENCY_HARD_BREAK_BUFFER_PCT, swingEmergencyHardExitPnlPct: CFG.SWING_EMERGENCY_HARD_EXIT_PNL_PCT, swingEmergencyRecoveryReclaimBufferPct: CFG.SWING_EMERGENCY_RECOVERY_RECLAIM_BUFFER_PCT, swingEmergencyRecoveryConfirmObservations: CFG.SWING_EMERGENCY_RECOVERY_CONFIRM_OBSERVATIONS, swingEmergencyShadowIntelligent1mEnabled: CFG.SWING_EMERGENCY_SHADOW_INTELLIGENT_1M_ENABLED, swingEmergencyShadowLegacyImmediateEnabled: CFG.SWING_EMERGENCY_SHADOW_LEGACY_IMMEDIATE_ENABLED, profitFloorMicroShadowEnabled: CFG.PROFIT_FLOOR_MICRO_SHADOW_ENABLED, profitFloorMicroShadowWindowTicks: CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS, profitFloorMicroShadowRequiredBelowTicks: CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS, profitFloorMicroShadowMaxSec: CFG.PROFIT_FLOOR_MICRO_SHADOW_MAX_SEC, profitFloorPostExitReclaimShadowEnabled: CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_SHADOW_ENABLED, profitFloorPostExitReclaimWindowSec: CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_WINDOW_SEC, profitFloorPostExitReclaimPerformanceSec: CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_PERFORMANCE_SEC, featureMonotonicGuardEnabled: CFG.FEATURE_MONOTONIC_GUARD_ENABLED, featureDuplicateBarGuardEnabled: CFG.FEATURE_DUPLICATE_BAR_GUARD_ENABLED, manualLevelMode: "ONE_ABSOLUTE_STOP_PRICE", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, requiredBotEntryOrder: "fixed quote amount + Market", exitOwnership: "BRAIN_ONLY", nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED, minStopDistancePct: CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT, maxStopDistancePct: CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT, maxTargetDistancePct: CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT, priceStep: CFG.MANUAL_ONE_STOP_PRICE_STEP, stopExitPercent: 100, targetExitPercent: 100, tickConfirmSec: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, tickConfirmObservations: CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS, fiveMinuteCloseImmediate: CFG.MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE, dynamicProfitEnabled: CFG.DYNAMIC_PROFIT_EXIT_ENABLED, dynamicProfitArmMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, dynamicProfitMinLockPnlPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, dynamicProfitTrailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT, dynamicProfitTrailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT, dynamicProfitTrailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT, dynamicProfitThesisTickConfirmObservations: CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS, dynamicProfit5mThesisEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED, lossSideThesisFailMode: lossSideThesisFailMode(), lossSideThesisFailMinLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, lossSideThesisFailMaxRsi: CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI, lossSideThesisFailMinAdx: CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX, lossSideThesisFailMaxFvvo: CFG.LOSS_SIDE_THESIS_FAIL_MAX_FVVO, lossSideThesisFailConfirmObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, dynamicPullbackGraceMode: dynamicPullbackGraceMode(), dynamicPullbackGraceMinMfePct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT, dynamicPullbackGraceMinPnlPct: CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT, dynamicPullbackGraceMaxSec: CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC, dynamicPullbackGracePinkBreakConfirmObservations: CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS, runnerExitEnabled: CFG.RUNNER_EXIT_ENABLED, runnerExitMode: CFG.RUNNER_EXIT_MODE, runnerHoldMinMfePct: CFG.RUNNER_HOLD_MIN_MFE_PCT, runnerTightTrailArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerTightTrailGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, runnerTightTrailConfirmObservations: CFG.RUNNER_TIGHT_TRAIL_CONFIRM_OBSERVATIONS,
     manualEntryOverheatConfirmationEnabled: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRMATION_ENABLED, manualEntryOverheatConfirmExpirySec: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC, manualEntryOverheatMinSignals: CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS,
@@ -5349,9 +5386,9 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
+module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
 
-// ===== END UNCHANGED SWING V1H ENGINE =====
+// ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
   const express = require("express");
   const http = require("http");
@@ -5385,7 +5422,7 @@ module.exports = { app, CFG, pnlAudit, confirmEntryFill, ensurePersistence, load
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1a_SINGLE_SERVER_MULTI_SYMBOL_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1b_C3_DYNAMIC_INSTRUMENT_HOTFIX_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -5439,7 +5476,7 @@ module.exports = { app, CFG, pnlAudit, confirmEntryFill, ensurePersistence, load
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1a_${alias}_v1h_ENGINE_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1b_${alias}_v1h_C3_DYNAMIC_INSTRUMENT_HOTFIX_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
