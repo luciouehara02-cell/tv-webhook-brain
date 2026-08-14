@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = "TickRouter_v4.3_MANUAL_MULTI_SWING_DESTINATION";
+const ROUTER_NAME = "TickRouter_v4.4_SOL_MULTI_SWING_FORWARD_DISABLED";
 const PORT = Number(process.env.PORT || 8080);
 
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
@@ -61,6 +61,15 @@ const FVVO_MANUAL_MULTI_SWING_HOST = String(
 const AUTO_ADD_FVVO_MANUAL_MULTI_SWING =
   String(
     process.env.AUTO_ADD_FVVO_MANUAL_MULTI_SWING || "true"
+  ).toLowerCase() === "true";
+
+// Old/SOL TickRouter safety gate.
+// Default OFF so this router never forwards FVVO traffic to the new Multi-Swing
+// service. The new AltAssets TickRouter is now the single source for
+// Multi-Swing SOL/ETH/BNB/XRP features.
+const FORWARD_FVVO_TO_MANUAL_MULTI_SWING =
+  String(
+    process.env.FORWARD_FVVO_TO_MANUAL_MULTI_SWING || "false"
   ).toLowerCase() === "true";
 
 const ROUTE_SRC_FEATURES_TO_FVVO =
@@ -143,16 +152,41 @@ if (
   RAW_FVVO_BRAIN_URLS.push(FVVO_MANUAL_MULTI_SWING_URL);
 }
 
+function isManualMultiSwingDestination(url) {
+  const urlHost = hostFromUrl(url);
+  return Boolean(
+    urlHost &&
+      FVVO_MANUAL_MULTI_SWING_HOST &&
+      urlHost === FVVO_MANUAL_MULTI_SWING_HOST
+  );
+}
+
+// IMPORTANT:
+// Filter Multi-Swing from the EFFECTIVE target list when the safety gate is OFF.
+// This works even if Railway still has the Multi-Swing URL inside FVVO_BRAIN_URLS
+// and/or AUTO_ADD_FVVO_MANUAL_MULTI_SWING=true.
+const EFFECTIVE_FVVO_BRAIN_URLS =
+  FORWARD_FVVO_TO_MANUAL_MULTI_SWING
+    ? [...RAW_FVVO_BRAIN_URLS]
+    : RAW_FVVO_BRAIN_URLS.filter(
+        (url) => !isManualMultiSwingDestination(url)
+      );
+
 // An FVVO URL wins if it accidentally appears in both lists.
 const fvvoUrlSet = new Set(
-  RAW_FVVO_BRAIN_URLS.map((url) => url.toLowerCase())
+  EFFECTIVE_FVVO_BRAIN_URLS.map((url) => url.toLowerCase())
 );
 
 const BRAIN_URLS = RAW_BRAIN_URLS.filter(
-  (url) => !fvvoUrlSet.has(url.toLowerCase())
+  (url) =>
+    !fvvoUrlSet.has(url.toLowerCase()) &&
+    !(
+      !FORWARD_FVVO_TO_MANUAL_MULTI_SWING &&
+      isManualMultiSwingDestination(url)
+    )
 );
 
-const FVVO_BRAIN_URLS = RAW_FVVO_BRAIN_URLS;
+const FVVO_BRAIN_URLS = EFFECTIVE_FVVO_BRAIN_URLS;
 
 const BRAIN_SECRET_MAP = parseJsonMap("BRAIN_SECRET_MAP_JSON");
 const FVVO_SECRET_MAP = parseJsonMap("FVVO_SECRET_MAP_JSON");
@@ -824,6 +858,8 @@ app.get("/", (_req, res) => {
     fvvoManualMultiSwingUrl: FVVO_MANUAL_MULTI_SWING_URL,
     fvvoManualMultiSwingHost: FVVO_MANUAL_MULTI_SWING_HOST,
     autoAddFvvoManualMultiSwing: AUTO_ADD_FVVO_MANUAL_MULTI_SWING,
+    forwardFvvoToManualMultiSwing:
+      FORWARD_FVVO_TO_MANUAL_MULTI_SWING,
 
     perBrainSecrets: {
       hasDefault: Boolean(BRAIN_SECRET),
@@ -1151,6 +1187,14 @@ app.listen(PORT, () => {
     `FVVO_MANUAL_MULTI_SWING_URL=${
       FVVO_MANUAL_MULTI_SWING_URL || "(not set)"
     } AUTO_ADD=${AUTO_ADD_FVVO_MANUAL_MULTI_SWING ? "true" : "false"}`
+  );
+
+  console.log(
+    `FORWARD_FVVO_TO_MANUAL_MULTI_SWING=${
+      FORWARD_FVVO_TO_MANUAL_MULTI_SWING ? "true" : "false"
+    } (effective ${
+      FORWARD_FVVO_TO_MANUAL_MULTI_SWING ? "ENABLED" : "DISABLED"
+    })`
   );
 
   console.log(
