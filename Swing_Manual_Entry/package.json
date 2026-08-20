@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-swing-v1h-5m-bear-veto-fast-release-campaign",
-  "version": "1.7.0-live-paper",
+  "name": "brainfvvo-swing-xrp-v1i-symbol-safe-paper-live",
+  "version": "1.8.0-paper-live",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -12,7 +12,8 @@
     "validate:regression": "node breakout_adaptive_expiry_smoke_v1e.js && node swing_emergency_fast_smoke_v1c.js && node swing_emergency_shadow_compare_smoke_v1c.js && node swing_structure_exit_smoke_v1c.js && node breakout_confirm_retest_reclaim_smoke_v1ac.js && node dual_dip_breakout_smoke_v1aa.js && node swing_trigger_lifecycle_smoke_v1a.js",
     "test:strategy": "npm run check && npm run validate && npm run validate:campaign && npm run validate:shallow && npm run validate:entryguard && npm run validate:regression",
     "replay": "node replay_full_swing_v1e.js",
-    "validate:entryguard": "node entry_5m_bear_guard_smoke_v1h.js"
+    "validate:entryguard": "node entry_5m_bear_guard_smoke_v1h.js",
+    "validate:xrp": "node xrp_symbol_precision_smoke_v1i.js"
   },
   "engines": {
     "node": ">=18"
@@ -20,5 +21,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Swing v1h LIVE execution for a dedicated 3Commas PAPER account; replay-validated v1h strategy unchanged."
+  "description": "XRP-specific BrainFVVO Swing v1i forwarding to a dedicated 3Commas paper bot with symbol, UUID and price-precision safeguards."
 }

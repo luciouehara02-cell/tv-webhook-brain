@@ -1,6 +1,6 @@
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
-// SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
+// XRPUSDT dedicated Signal Bot manual-entry / brain-exit service — paper-live validation build.
 // ------------------------------------------------------------
 // Swing v1h DEMO: preserves v1g exits, campaign arbitration, dynamic reclaim, breakout retest, and shallow-hold breakout logic.
 // Adds a Preferred/Deep-only strong-bear 5m context veto with a fast 15s structural release.
@@ -76,9 +76,9 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1i_SYMBOL_SAFE_PAPER_LIVE"),
   PORT: envNum("PORT", 8080),
-  SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
+  SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
 
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
@@ -123,7 +123,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-v1h-live-paper-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-xrp-v1i-paper-live-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -274,7 +274,7 @@ const CFG = {
 
   // v1h one-stop / optional fixed-target controls.
   MANUAL_ONE_STOP_PROFILE_ENABLED: envBool("MANUAL_ONE_STOP_PROFILE_ENABLED", true),
-  MANUAL_ONE_STOP_PRICE_STEP: envNum("MANUAL_ONE_STOP_PRICE_STEP", 0.01),
+  MANUAL_ONE_STOP_PRICE_STEP: envNum("MANUAL_ONE_STOP_PRICE_STEP", 0.0001),
   MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT: envNum("MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT", 0.25),
   MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT: envNum("MAX_STOP_DISTANCE_PCT", envNum("MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT", 2.0)),
   MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT: envNum("MAX_PROFIT_TARGET_DISTANCE_PCT", envNum("MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT", 4.0)),
@@ -594,7 +594,15 @@ function finite(value, fallback = null) { if (value === null || value === undefi
 function firstFinite(...values) { for (const value of values) { const parsed = finite(value, null); if (parsed !== null) return parsed; } return null; }
 function round(value, digits = 6) { return Number(Number(value).toFixed(digits)); }
 function cleanSymbol(value) { return String(value || "").trim().toUpperCase(); }
+function tradingViewMarket(symbol = CFG.SYMBOL) {
+  const match = /^([A-Z0-9_]+):([A-Z0-9]+)$/.exec(cleanSymbol(symbol));
+  return match ? { exchange: match[1], instrument: match[2] } : null;
+}
+function validBotUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
 function percentPnl(entry, price) { return ((price - entry) / entry) * 100; }
+function pctFromTo(entry, price) { return percentPnl(entry, price); }
 function percentageBelow(entry, price) { return ((entry - price) / entry) * 100; }
 function pctPriceBelow(entry, pct) { return entry * (1 - pct / 100); }
 function pnlAudit(position, price) {
@@ -848,10 +856,16 @@ function persistState(reason) {
 
 function configProblems() {
   const problems = [];
+  const market = tradingViewMarket();
+  const botUuid = getBotUuid();
+  if (!CFG.C3_DRY_RUN && cleanSymbol(CFG.SYMBOL) !== "BINANCE:XRPUSDT") problems.push("XRP_BUILD_REQUIRES_BINANCE_XRPUSDT");
+  if (!market) problems.push("SYMBOL_MUST_BE_EXCHANGE_COLON_INSTRUMENT");
+  else if (!CFG.C3_DRY_RUN && (market.exchange !== "BINANCE" || market.instrument !== "XRPUSDT")) problems.push("C3_MARKET_MUST_BE_BINANCE_XRPUSDT");
   if (!CFG.WEBHOOK_SECRET) problems.push("WEBHOOK_SECRET_REQUIRED");
   if (!CFG.MANUAL_WEBHOOK_SECRET) problems.push("MANUAL_WEBHOOK_SECRET_REQUIRED");
   if (!CFG.C3_SIGNAL_SECRET) problems.push("C3_SIGNAL_SECRET_REQUIRED");
-  if (!getBotUuid()) problems.push("C3_BOT_UUID_REQUIRED");
+  if (!botUuid) problems.push("C3_BOT_UUID_REQUIRED");
+  else if (!CFG.C3_DRY_RUN && !validBotUuid(botUuid)) problems.push("C3_BOT_UUID_MUST_BE_VALID_UUID");
   if (!CFG.ENABLE_HTTP_FORWARD) problems.push("ENABLE_HTTP_FORWARD_MUST_BE_TRUE");
   if (!["demo", "live"].includes(CFG.EXECUTION_MODE)) problems.push("EXECUTION_MODE_MUST_BE_DEMO_OR_LIVE");
   if (CFG.SHADOW_ONLY) problems.push("SHADOW_ONLY_MUST_BE_FALSE");
@@ -1110,15 +1124,19 @@ function c3NumberString(value) {
 function buildC3Signal(action, price, options = {}, current = nowMs()) {
   const trigger = c3NumberString(price);
   if (!trigger) throw new Error("C3_TRIGGER_PRICE_INVALID");
+  const market = tradingViewMarket();
+  if (!market || (!CFG.C3_DRY_RUN && (market.exchange !== "BINANCE" || market.instrument !== "XRPUSDT"))) throw new Error("C3_XRP_SYMBOL_CONSISTENCY_FAILED");
+  const botUuid = getBotUuid();
+  if (!CFG.C3_DRY_RUN && !validBotUuid(botUuid)) throw new Error("C3_BOT_UUID_INVALID");
   const body = {
     secret: CFG.C3_SIGNAL_SECRET,
     max_lag: String(Math.floor(CFG.C3_MAX_LAG_SEC)),
     timestamp: new Date(current).toISOString(),
     trigger_price: trigger,
-    tv_exchange: "BINANCE",
-    tv_instrument: "SOLUSDT",
+    tv_exchange: market.exchange,
+    tv_instrument: market.instrument,
     action,
-    bot_uuid: getBotUuid(),
+    bot_uuid: botUuid,
   };
   if (action === "enter_long") {
     // v1h deliberately omits body.order. The Signal Bot's own fixed entry size/type owns execution.
