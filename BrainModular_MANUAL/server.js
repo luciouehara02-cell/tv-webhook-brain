@@ -1,5 +1,5 @@
 // ============================================================
-// BrainFVVO_Daily_v1j_5M_BEAR_GUARD_UUID_HOTFIX_DEMO
+// BrainFVVO_Daily_v1k_MFE_RECOVERY_GRACE_LIVE
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
 // ------------------------------------------------------------
 // v1h DEMO candidate: parallel shallow/normal daily breakout reclaim plus order-independent campaign arming.
@@ -75,7 +75,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1j_5M_BEAR_GUARD_UUID_HOTFIX_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Daily_v1k_MFE_RECOVERY_GRACE_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -120,7 +120,7 @@ const CFG = {
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1j-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-daily-v1k-live-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -314,6 +314,20 @@ const CFG = {
   LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC: envNum("LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC", 0),
   LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR: envBool("LOSS_SIDE_THESIS_FAIL_REQUIRE_RAY_BEAR", true),
   LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18: envBool("LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18", true),
+
+  // v1k: a single bounded recovery opportunity for a trade that already proved
+  // itself with meaningful MFE before the strict loss-side thesis failed.
+  // The absolute stop remains immediate and higher priority.
+  LOSS_RECOVERY_GRACE_MODE: envStr("LOSS_RECOVERY_GRACE_MODE", "live").toLowerCase(),
+  LOSS_RECOVERY_GRACE_MIN_MFE_PCT: envNum("LOSS_RECOVERY_GRACE_MIN_MFE_PCT", 0.30),
+  LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT: envNum("LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT", -0.65),
+  LOSS_RECOVERY_GRACE_MIN_STOP_BUFFER_PCT: envNum("LOSS_RECOVERY_GRACE_MIN_STOP_BUFFER_PCT", 0.25),
+  LOSS_RECOVERY_GRACE_MAX_SEC: envNum("LOSS_RECOVERY_GRACE_MAX_SEC", 300),
+  LOSS_RECOVERY_GRACE_RELEASE_MIN_FVVO: envNum("LOSS_RECOVERY_GRACE_RELEASE_MIN_FVVO", 0),
+  LOSS_RECOVERY_GRACE_RELEASE_MIN_SLOPE: envNum("LOSS_RECOVERY_GRACE_RELEASE_MIN_SLOPE", 0),
+  LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_ABOVE_EMA18: envBool("LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_ABOVE_EMA18", true),
+  LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_RAY_NOT_BEAR: envBool("LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_RAY_NOT_BEAR", true),
+  LOSS_RECOVERY_GRACE_RELEASE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("LOSS_RECOVERY_GRACE_RELEASE_CONFIRM_OBSERVATIONS", 2))),
 
   DAILY_FAILED_RECOVERY_MODE: envStr("DAILY_FAILED_RECOVERY_MODE", "shadow").toLowerCase(),
   DAILY_FAILED_RECOVERY_MIN_HOLD_SEC: envNum("DAILY_FAILED_RECOVERY_MIN_HOLD_SEC", 1200),
@@ -686,6 +700,17 @@ function normalizeState(raw) {
     }
   }
   p.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: null, shadowLogged: false, ...(p.lossSideThesis || {}) };
+  p.lossRecoveryGrace = {
+    active: Boolean(p.lossRecoveryGrace?.active),
+    consumed: Boolean(p.lossRecoveryGrace?.consumed),
+    startedAtMs: finite(p.lossRecoveryGrace?.startedAtMs, 0),
+    expiresAtMs: finite(p.lossRecoveryGrace?.expiresAtMs, 0),
+    baselineExitPrice: finite(p.lossRecoveryGrace?.baselineExitPrice, null),
+    baselinePnlPct: finite(p.lossRecoveryGrace?.baselinePnlPct, 0),
+    peakPnlPct: finite(p.lossRecoveryGrace?.peakPnlPct, 0),
+    releaseObservations: Math.max(0, Math.floor(finite(p.lossRecoveryGrace?.releaseObservations, 0))),
+    lastReleaseEvidence: p.lossRecoveryGrace?.lastReleaseEvidence || null,
+  };
   p.exitRequestedAt = p.exitRequestedAt || null;
   p.exitReason = p.exitReason || null;
   p.entryAcceptedAtMs = finite(p.entryAcceptedAtMs, 0);
@@ -793,6 +818,8 @@ function configProblems() {
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
   if (!["disabled", "shadow", "live"].includes(CFG.LOSS_SIDE_THESIS_FAIL_MODE)) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_MODE");
   if (CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT >= 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC < 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS < 1 || CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI <= 0 || CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX < 0) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_THRESHOLDS");
+  if (!["disabled", "shadow", "live"].includes(CFG.LOSS_RECOVERY_GRACE_MODE)) problems.push("INVALID_LOSS_RECOVERY_GRACE_MODE");
+  if (CFG.LOSS_RECOVERY_GRACE_MIN_MFE_PCT < 0 || CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT >= 0 || CFG.LOSS_RECOVERY_GRACE_MIN_STOP_BUFFER_PCT < 0 || CFG.LOSS_RECOVERY_GRACE_MAX_SEC <= 0 || CFG.LOSS_RECOVERY_GRACE_RELEASE_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_LOSS_RECOVERY_GRACE_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.DYNAMIC_PULLBACK_GRACE_MODE)) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_MODE");
   if (CFG.DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT < CFG.DYNAMIC_PROFIT_ARM_MFE_PCT || CFG.DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_MAX_SEC < 0 || CFG.DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC <= 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_TOLERANCE_PCT < 0 || CFG.DYNAMIC_PULLBACK_GRACE_PINK_BREAK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PULLBACK_GRACE_THRESHOLDS");
   if (!["live", "shadow", "disabled"].includes(CFG.RUNNER_EXIT_MODE)) problems.push("INVALID_RUNNER_EXIT_MODE");
@@ -979,6 +1006,17 @@ function buildPosition(entryPrice, levels, options = {}) {
     latestPnlPct: 0,
     peakPnlPct: 0,
     maxFavorableExcursionPct: 0,
+    lossRecoveryGrace: {
+      active: false,
+      consumed: false,
+      startedAtMs: 0,
+      expiresAtMs: 0,
+      baselineExitPrice: null,
+      baselinePnlPct: 0,
+      peakPnlPct: 0,
+      releaseObservations: 0,
+      lastReleaseEvidence: null,
+    },
     exitRequestedAt: null,
     exitReason: null,
   };
@@ -1264,6 +1302,16 @@ function statusPayload() {
       requireBelowEma8AndEma18: CFG.LOSS_SIDE_THESIS_FAIL_REQUIRE_BELOW_EMA8_AND_EMA18,
       exitsOnlyBeforeDynamicProfitArmed: true,
     },
+    lossRecoveryGraceContract: {
+      mode: lossRecoveryGraceMode(),
+      minMfePct: CFG.LOSS_RECOVERY_GRACE_MIN_MFE_PCT,
+      hardExitPnlPct: CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT,
+      minStopBufferPct: CFG.LOSS_RECOVERY_GRACE_MIN_STOP_BUFFER_PCT,
+      maxSec: CFG.LOSS_RECOVERY_GRACE_MAX_SEC,
+      releaseMinFvvo: CFG.LOSS_RECOVERY_GRACE_RELEASE_MIN_FVVO,
+      releaseMinSlope: CFG.LOSS_RECOVERY_GRACE_RELEASE_MIN_SLOPE,
+      releaseConfirmObservations: CFG.LOSS_RECOVERY_GRACE_RELEASE_CONFIRM_OBSERVATIONS,
+    },
     dailyLossProtectionAudit: {
       failedRecoveryMode: dailyProtectionMode(CFG.DAILY_FAILED_RECOVERY_MODE),
       failedRecoveryMinHoldSec: CFG.DAILY_FAILED_RECOVERY_MIN_HOLD_SEC,
@@ -1321,6 +1369,7 @@ function statusPayload() {
         lastReason: state.position.lossSideThesis.lastReason || null,
         shadowLogged: Boolean(state.position.lossSideThesis.shadowLogged),
       } : null,
+      lossRecoveryGrace: state.position.lossRecoveryGrace || null,
       dynamicProfit: state.position.dynamicProfit ? {
         armed: Boolean(state.position.dynamicProfit.armed),
         armedAtPnlPct: state.position.dynamicProfit.armedAtPnlPct || 0,
@@ -1906,6 +1955,88 @@ function lossSideThesisFailureConfirmed(position, feature, price, pnlPct) {
   return { confirmed: observations >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS && elapsed >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC, reason: "LOSS_SIDE_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, evidence };
 }
 
+function lossRecoveryGraceMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.LOSS_RECOVERY_GRACE_MODE)
+    ? CFG.LOSS_RECOVERY_GRACE_MODE
+    : "shadow";
+}
+
+function lossRecoveryGraceState(position) {
+  if (!position.lossRecoveryGrace || typeof position.lossRecoveryGrace !== "object") {
+    position.lossRecoveryGrace = {
+      active: false, consumed: false, startedAtMs: 0, expiresAtMs: 0,
+      baselineExitPrice: null, baselinePnlPct: 0, peakPnlPct: 0,
+      releaseObservations: 0, lastReleaseEvidence: null,
+    };
+  }
+  return position.lossRecoveryGrace;
+}
+
+function lossRecoveryReleaseEvidence(feature, price) {
+  const ema18 = finite(feature?.ema18, null);
+  const fvvo = finite(feature?.fvvo, null);
+  const slope = finite(feature?.slope, null);
+  const ray = String(feature?.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const aboveEma18 = !CFG.LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_ABOVE_EMA18 || (ema18 !== null && price >= ema18);
+  const fvvoOk = fvvo !== null && fvvo >= CFG.LOSS_RECOVERY_GRACE_RELEASE_MIN_FVVO;
+  const slopeOk = slope !== null && slope >= CFG.LOSS_RECOVERY_GRACE_RELEASE_MIN_SLOPE;
+  const rayOk = !CFG.LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_RAY_NOT_BEAR || !ray.startsWith("RAY_BEAR");
+  return { confirmed: feature?.kind === CFG.FVVO_FEATURE_TICK_EVENT && aboveEma18 && fvvoOk && slopeOk && rayOk, price, ema18, fvvo, slope, ray, aboveEma18, fvvoOk, slopeOk, rayOk };
+}
+
+function lossRecoveryGraceEligibility(position, feature, price, pnlPct) {
+  const mode = lossRecoveryGraceMode();
+  const grace = lossRecoveryGraceState(position);
+  const peakPnlPct = Math.max(finite(position.peakPnlPct, 0), finite(position.maxFavorableExcursionPct, 0));
+  const stopBufferPct = percentageBelow(price, position.stopPrice);
+  const reasons = [];
+  if (mode === "disabled") reasons.push("MODE_DISABLED");
+  if (grace.consumed || grace.active) reasons.push("GRACE_ALREADY_USED");
+  if (feature?.kind !== CFG.FVVO_FEATURE_TICK_EVENT) reasons.push("NOT_FEATURE_TICK");
+  if (peakPnlPct + 1e-9 < CFG.LOSS_RECOVERY_GRACE_MIN_MFE_PCT) reasons.push("MFE_BELOW_MIN");
+  if (pnlPct <= CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT + 1e-9) reasons.push("HARD_EXIT_PNL_REACHED");
+  if (stopBufferPct + 1e-9 < CFG.LOSS_RECOVERY_GRACE_MIN_STOP_BUFFER_PCT) reasons.push("STOP_BUFFER_TOO_SMALL");
+  return { eligible: reasons.length === 0, mode, reasons, peakPnlPct, pnlPct, stopBufferPct };
+}
+
+function armLossRecoveryGrace(position, feature, price, pnlPct) {
+  const eligibility = lossRecoveryGraceEligibility(position, feature, price, pnlPct);
+  if (!eligibility.eligible) return { armed: false, eligibility };
+  const grace = lossRecoveryGraceState(position);
+  const current = nowMs();
+  grace.active = true;
+  grace.consumed = true;
+  grace.startedAtMs = current;
+  grace.expiresAtMs = current + CFG.LOSS_RECOVERY_GRACE_MAX_SEC * 1000;
+  grace.baselineExitPrice = price;
+  grace.baselinePnlPct = pnlPct;
+  grace.peakPnlPct = eligibility.peakPnlPct;
+  grace.releaseObservations = 0;
+  grace.lastReleaseEvidence = null;
+  return { armed: true, eligibility, grace };
+}
+
+function evaluateActiveLossRecoveryGrace(position, feature, price, pnlPct) {
+  const grace = lossRecoveryGraceState(position);
+  if (!grace.active) return { active: false };
+  if (pnlPct <= CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT + 1e-9) {
+    grace.active = false;
+    return { active: false, exit: true, reason: "LOSS_RECOVERY_GRACE_HARD_FLOOR", grace };
+  }
+  if (nowMs() >= grace.expiresAtMs) {
+    grace.active = false;
+    return { active: false, exit: true, reason: "LOSS_RECOVERY_GRACE_TIMEOUT", grace };
+  }
+  const evidence = lossRecoveryReleaseEvidence(feature, price);
+  grace.lastReleaseEvidence = evidence;
+  grace.releaseObservations = evidence.confirmed ? grace.releaseObservations + 1 : 0;
+  if (grace.releaseObservations >= CFG.LOSS_RECOVERY_GRACE_RELEASE_CONFIRM_OBSERVATIONS) {
+    grace.active = false;
+    return { active: false, recovered: true, reason: "LOSS_RECOVERY_GRACE_RELEASE_CONFIRMED", grace, evidence };
+  }
+  return { active: true, suppressBaselineExit: true, grace, evidence };
+}
+
 function dailyProtectionMode(value) {
   return ["disabled", "shadow", "live"].includes(String(value || "").toLowerCase())
     ? String(value).toLowerCase()
@@ -2241,6 +2372,27 @@ async function manageExit(feature) {
     }
   }
 
+  // v1k: once armed, the bounded loss-recovery grace is subordinate only to
+  // the absolute stop and its own hard floor/timeout.
+  const activeLossRecovery = evaluateActiveLossRecoveryGrace(p, feature, price, pnl);
+  if (activeLossRecovery.exit) {
+    log("WARN", "FVVO_LOSS_RECOVERY_GRACE_EXIT", { reason: activeLossRecovery.reason, price, latestPnlPct: round(pnl, 6), baselineExitPrice: activeLossRecovery.grace.baselineExitPrice, baselinePnlPct: round(activeLossRecovery.grace.baselinePnlPct, 6), peakPnlPct: round(activeLossRecovery.grace.peakPnlPct, 6) });
+    await persistState(`loss_recovery_grace_exit_${feature.kind}`);
+    await requestFullExit(`FVVO_${activeLossRecovery.reason}`, price, feature.kind);
+    return;
+  }
+  if (activeLossRecovery.recovered) {
+    resetLossSideThesis(p, activeLossRecovery.reason);
+    log("INFO", "FVVO_LOSS_RECOVERY_GRACE_RELEASED", { price, latestPnlPct: round(pnl, 6), baselineExitPrice: activeLossRecovery.grace.baselineExitPrice, baselinePnlPct: round(activeLossRecovery.grace.baselinePnlPct, 6), peakPnlPct: round(activeLossRecovery.grace.peakPnlPct, 6), releaseObservations: activeLossRecovery.grace.releaseObservations, evidence: activeLossRecovery.evidence });
+    await persistState(`loss_recovery_grace_released_${feature.kind}`);
+    return;
+  }
+  if (activeLossRecovery.active) {
+    log("INFO", "FVVO_LOSS_RECOVERY_GRACE_HOLD", { price, latestPnlPct: round(pnl, 6), hardExitPnlPct: CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT, expiresAt: new Date(activeLossRecovery.grace.expiresAtMs).toISOString(), releaseObservations: activeLossRecovery.grace.releaseObservations, evidence: activeLossRecovery.evidence });
+    await persistState(`loss_recovery_grace_hold_${feature.kind}`);
+    return;
+  }
+
   // v1y: strict loss-side thesis failure is subordinate to the manual stop but can audit/exit before the full stop if an unprotected trade clearly breaks down.
   const lossSide = lossSideThesisFailureConfirmed(p, feature, price, pnl);
   if (lossSide.confirmed) {
@@ -2252,6 +2404,17 @@ async function manageExit(feature) {
         log("WARN", "FVVO_LOSS_SIDE_THESIS_FAIL_SHADOW_CANDIDATE", { entryPrice: p.entryPriceReference, entryOrigin: p.entryOrigin, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(p.peakPnlPct, 6), stopPrice: p.stopPrice, stopDistanceRemainingPct: round(percentageBelow(price, p.stopPrice), 6), minLossPct: CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT, requiredObservations: CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS, observations: lossSide.observations, evidence: lossSide.evidence, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
       }
     } else if (mode === "live") {
+      const recovery = armLossRecoveryGrace(p, feature, price, pnl);
+      if (recovery.armed && recovery.eligibility.mode === "live") {
+        resetLossSideThesis(p, "LOSS_RECOVERY_GRACE_ARMED");
+        log("WARN", "FVVO_LOSS_RECOVERY_GRACE_ARMED", { entryPrice: p.entryPriceReference, entryOrigin: p.entryOrigin, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(recovery.eligibility.peakPnlPct, 6), stopPrice: p.stopPrice, stopDistanceRemainingPct: round(recovery.eligibility.stopBufferPct, 6), hardExitPnlPct: CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT, expiresAt: new Date(recovery.grace.expiresAtMs).toISOString(), maxSec: CFG.LOSS_RECOVERY_GRACE_MAX_SEC, action: "DEFER_LOSS_SIDE_EXIT" });
+        await persistState(`loss_recovery_grace_armed_${feature.kind}`);
+        return;
+      }
+      if (recovery.armed && recovery.eligibility.mode === "shadow") {
+        recovery.grace.active = false;
+        log("WARN", "FVVO_LOSS_RECOVERY_GRACE_SHADOW_CANDIDATE", { entryPrice: p.entryPriceReference, entryOrigin: p.entryOrigin, price, latestPnlPct: round(pnl, 6), peakPnlPct: round(recovery.eligibility.peakPnlPct, 6), stopPrice: p.stopPrice, stopDistanceRemainingPct: round(recovery.eligibility.stopBufferPct, 6), action: "BASELINE_LOSS_SIDE_EXIT_REMAINS_ACTIVE" });
+      }
       await persistState(`loss_side_thesis_fail_${feature.kind}`);
       await requestFullExit(`FVVO_LOSS_SIDE_THESIS_FAIL_${lossSide.reason}`, price, feature.kind);
       return;
@@ -4672,6 +4835,19 @@ async function start() {
     reentry15sEarlyTurnMode: CFG.REENTRY_15S_EARLY_TURN_MODE, reentry15sEarlyTurnMinPriorImpulsePct: CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT, reentry15sEarlyTurnMinPullbackPct: CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT, reentry15sEarlyTurnMinRsi: CFG.REENTRY_15S_EARLY_TURN_MIN_RSI, reentry15sEarlyTurnMinAdx: CFG.REENTRY_15S_EARLY_TURN_MIN_ADX, reentry15sEarlyTurnMinFvvo: CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO, reentry15sEarlyTurnMinSlope: CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE,
     postExitRecoveredBaseMode: postExitRecoveredBaseMode(), postExitRecoveredBaseWindowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC, postExitRecoveredBaseMinPriorImpulsePct: CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT, postExitRecoveredBaseMinRecoveryPct: CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT, postExitRecoveredBaseMaxChaseFromLowPct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT, postExitRecoveredBaseConfirmObservations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS, postExitRecoveredBaseMinRsi: CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI, postExitRecoveredBaseMinAdx: CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX, postExitRecoveredBaseMinFvvo: CFG.POST_EXIT_RECOVERED_BASE_MIN_FVVO, postExitRecoveredBaseMinSlope: CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE,
     reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, dailyAdaptiveBreakoutMode: dailyAdaptiveBreakoutMode(), dailyAdaptiveBreakoutConfirmObservations: CFG.DAILY_ADAPTIVE_BREAKOUT_CONFIRM_OBSERVATIONS, dailyAdaptiveBreakoutHoldTolerancePct: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_TOLERANCE_PCT, dailyAdaptiveBreakoutHoldMaxSec: CFG.DAILY_ADAPTIVE_BREAKOUT_HOLD_MAX_SEC, dailyBreakoutRetestReclaimPct: CFG.DAILY_BREAKOUT_RETEST_RECLAIM_PCT, dailyBreakoutRetestMaxEntryAboveHighPct: CFG.DAILY_BREAKOUT_RETEST_MAX_ENTRY_ABOVE_HIGH_PCT, dailyBreakoutRetestMinPenetrationPct: CFG.DAILY_BREAKOUT_RETEST_MIN_PENETRATION_PCT, dailyBreakoutRetestFailBelowLowBufferPct: CFG.DAILY_BREAKOUT_RETEST_FAIL_BELOW_LOW_BUFFER_PCT, dailyBreakoutRetestMaxTrackSec: CFG.DAILY_BREAKOUT_RETEST_MAX_TRACK_SEC, dailyBreakoutReclaimMaxTrackSec: CFG.DAILY_BREAKOUT_RECLAIM_MAX_TRACK_SEC, dailyBreakoutReclaimMinSlope: CFG.DAILY_BREAKOUT_RECLAIM_MIN_SLOPE, dailyBreakoutReclaimMinFvvo: CFG.DAILY_BREAKOUT_RECLAIM_MIN_FVVO, dailyBreakoutExpiryWarningSec: CFG.DAILY_BREAKOUT_EXPIRY_WARNING_SEC, dailyBreakoutPostExpiryShadowEnabled: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_ENABLED, dailyBreakoutPostExpiryShadowWindowSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_SHADOW_WINDOW_SEC, dailyBreakoutPostExpiryPerformanceTrackSec: CFG.DAILY_BREAKOUT_POST_EXPIRY_PERFORMANCE_TRACK_SEC, persistenceReady, configurationProblems: problems });
+  log("INFO", "FVVO_LOSS_RECOVERY_GRACE_STARTUP", {
+    mode: lossRecoveryGraceMode(),
+    minMfePct: CFG.LOSS_RECOVERY_GRACE_MIN_MFE_PCT,
+    hardExitPnlPct: CFG.LOSS_RECOVERY_GRACE_HARD_EXIT_PNL_PCT,
+    minStopBufferPct: CFG.LOSS_RECOVERY_GRACE_MIN_STOP_BUFFER_PCT,
+    maxSec: CFG.LOSS_RECOVERY_GRACE_MAX_SEC,
+    releaseMinFvvo: CFG.LOSS_RECOVERY_GRACE_RELEASE_MIN_FVVO,
+    releaseMinSlope: CFG.LOSS_RECOVERY_GRACE_RELEASE_MIN_SLOPE,
+    releaseRequireAboveEma18: CFG.LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_ABOVE_EMA18,
+    releaseRequireRayNotBear: CFG.LOSS_RECOVERY_GRACE_RELEASE_REQUIRE_RAY_NOT_BEAR,
+    releaseConfirmObservations: CFG.LOSS_RECOVERY_GRACE_RELEASE_CONFIRM_OBSERVATIONS,
+    absoluteStopPrecedence: true,
+  });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 

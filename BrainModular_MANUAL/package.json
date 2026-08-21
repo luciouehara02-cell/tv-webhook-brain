@@ -1,12 +1,13 @@
 {
-  "name": "brainfvvo-daily-v1j-5m-bear-guard-uuid-hotfix-demo",
-  "version": "1.4.0",
+  "name": "brainfvvo-daily-v1k-mfe-recovery-grace-live",
+  "version": "1.5.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js",
     "validate": "node validation_v1j.js",
+    "replay:loss-recovery": "node loss_recovery_grace_replay_v1k.js",
     "smoke:entry-5m-bear-guard": "node entry_5m_bear_guard_smoke_v1j.js",
     "smoke:uuid": "node uuid_validation_smoke_v1j.js",
     "replay:v1i-loss": "node replay_daily_v1i_loss_protection.js ${REPLAY_DATA_DIR:-/mnt/data}",
@@ -39,5 +40,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "BrainFVVO Daily v1j: Preferred/Deep strong-bear 5m entry hold with fast release, UUID fail-closed validation, and preserved v1i exits."
+  "description": "BrainFVVO Daily v1k: v1j entry protections plus MFE-qualified, time-boxed loss recovery grace with an immutable absolute stop and hard-loss floor."
 }
