@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-swing-xrp-v1i-symbol-safe-paper-live",
-  "version": "1.8.0-paper-live",
+  "name": "brainfvvo-swing-xrp-v1k-breakout-no-chase-wait-tight-cap-paper-live",
+  "version": "1.10.0-paper-live",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -10,10 +10,13 @@
     "validate:campaign": "node multi_setup_campaign_smoke_v1f.js && node multi_setup_campaign_extended_smoke_v1f.js && node campaign_arm_order_regression_v1f1.js && node shallow_campaign_aug09_integration_smoke_v1g.js",
     "validate:shallow": "node shallow_hold_reclaim_smoke_v1g.js",
     "validate:regression": "node breakout_adaptive_expiry_smoke_v1e.js && node swing_emergency_fast_smoke_v1c.js && node swing_emergency_shadow_compare_smoke_v1c.js && node swing_structure_exit_smoke_v1c.js && node breakout_confirm_retest_reclaim_smoke_v1ac.js && node dual_dip_breakout_smoke_v1aa.js && node swing_trigger_lifecycle_smoke_v1a.js",
-    "test:strategy": "npm run check && npm run validate && npm run validate:campaign && npm run validate:shallow && npm run validate:entryguard && npm run validate:regression",
+    "test:strategy": "npm run check && npm run validate && npm run validate:campaign && npm run validate:shallow && npm run validate:entryguard && npm run validate:regression && npm run validate:no-chase && npm run validate:cap && npm run validate:xrp",
     "replay": "node replay_full_swing_v1e.js",
     "validate:entryguard": "node entry_5m_bear_guard_smoke_v1h.js",
-    "validate:xrp": "node xrp_symbol_precision_smoke_v1i.js"
+    "validate:xrp": "node xrp_symbol_precision_smoke_v1j.js",
+    "validate:no-chase": "node breakout_no_chase_wait_smoke_v1j.js && node breakout_chase_policy_cancel_smoke_v1j.js",
+    "replay:aug21": "node replay_xrp_aug21_chase_cap_v1k.js /mnt/data/Manual_SwingAugXRPAug21.log 0.154",
+    "validate:cap": "node xrp_breakout_cap_boundary_smoke_v1k.js"
   },
   "engines": {
     "node": ">=18"
@@ -21,5 +24,5 @@
   "dependencies": {
     "express": "^4.21.2"
   },
-  "description": "XRP-specific BrainFVVO Swing v1i forwarding to a dedicated 3Commas paper bot with symbol, UUID and price-precision safeguards."
+  "description": "XRP BrainFVVO Swing v1k paper-live test: retains v1j no-chase wait and sets the breakout retest max-entry-above-high cap to the replay-selected 0.154%, the minimum tested value that captures the Aug-21 healthy recovery tick."
 }
