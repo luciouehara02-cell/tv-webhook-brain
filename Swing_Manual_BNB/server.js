@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1b_C3_DYNAMIC_INSTRUMENT_HOTFIX_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1c_BREAKOUT_KEEP_ALIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -281,6 +281,11 @@ const CFG = {
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE", 0.10),
   BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR: envBool("BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR", true),
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO", -0.50),
+  // v1c: an already-qualified retest is not permanently cancelled merely because
+  // recovery temporarily moves above the configured entry cap. The engine waits
+  // without chasing and resumes the unchanged recovery gates only after price
+  // returns inside the original max-entry window. "cancel" restores v1b behavior.
+  BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY: envStr("BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY", "wait_no_chase").toLowerCase(),
 
   // v1g shallow hold/reclaim path: fills the price gap above the manually supplied
   // retest zone, but keeps the original structural retest path intact.
@@ -948,6 +953,7 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.TRAILING_DIP_RECLAIM_MODE)) problems.push("INVALID_TRAILING_DIP_RECLAIM_MODE");
   if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
   if (!['disabled', 'shadow', 'live'].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_MODE");
+  if (!["cancel", "wait_no_chase"].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY");
   if (!["disabled", "shadow", "live"].includes(CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE)) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE");
   if (CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS < 1 || CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT || CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE < -10) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_THRESHOLDS");
   if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS < 1 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE < -10) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_THRESHOLDS");
@@ -4098,6 +4104,7 @@ function priceEntryStatusPayload() {
       adaptiveHoldMaxSec: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_MAX_SEC,
       minTickSlope: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE,
       minFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO,
+      chasePolicy: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY,
       shallowHoldReclaim: {
         mode: breakoutShallowHoldReclaimMode(),
         maxTrackSec: CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC,
@@ -4970,10 +4977,39 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
     t.maxEntryPrice = round(rangeHigh * (1 + CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT / 100), 8);
     if (feature.price + 1e-9 < t.reclaimTargetPrice) { await persistState("breakout_retest_reclaim_zone_track_reclaim"); return; }
     if (feature.price > t.maxEntryPrice + 1e-9) {
-      const cancelled = resolvePriceEntryPending("CANCELLED", "BREAKOUT_RETEST_RECLAIM_ZONE_RECOVERY_CHASE_TOO_LARGE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
-      await persistState("breakout_retest_reclaim_zone_chase_cancelled");
-      log("WARN", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, executionPrice: feature.price });
+      if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY === "cancel") {
+        const cancelled = resolvePriceEntryPending("CANCELLED", "BREAKOUT_RETEST_RECLAIM_ZONE_RECOVERY_CHASE_TOO_LARGE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+        await persistState("breakout_retest_reclaim_zone_chase_cancelled");
+        log("WARN", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, executionPrice: feature.price, chasePolicy: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY });
+        return;
+      }
+
+      const firstWait = !t.recoveryNoChaseActive;
+      if (firstWait) {
+        t.recoveryNoChaseSince = nowIso();
+        t.recoveryNoChaseSinceMs = current;
+        t.recoveryNoChaseWaitObservations = 0;
+        t.recoveryNoChaseMaxObservedPrice = 0;
+      }
+      t.recoveryNoChaseActive = true;
+      t.recoveryNoChaseWaitObservations = Math.max(0, Math.floor(finite(t.recoveryNoChaseWaitObservations, 0))) + 1;
+      t.recoveryNoChaseMaxObservedPrice = round(Math.max(finite(t.recoveryNoChaseMaxObservedPrice, 0), feature.price), 8);
+      t.recoveryNoChaseLastPrice = round(feature.price, 8);
+      t.recoveryNoChaseLastAt = nowIso();
+      await persistState("breakout_retest_reclaim_zone_no_chase_wait");
+      log("INFO", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_NO_CHASE_WAIT", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, executionPrice: feature.price, waitObservations: t.recoveryNoChaseWaitObservations, maxObservedPrice: t.recoveryNoChaseMaxObservedPrice, firstWait, trackingExpiresAt: t.trackingExpiresAt, action: "KEEP_QUALIFIED_RETEST_ALIVE_NO_CHASE" });
       return;
+    }
+
+    if (t.recoveryNoChaseActive) {
+      const waitStartedAt = t.recoveryNoChaseSince || null;
+      const waitStartedAtMs = finite(t.recoveryNoChaseSinceMs, 0);
+      const waitSec = waitStartedAtMs > 0 ? Math.max(0, (current - waitStartedAtMs) / 1000) : null;
+      t.recoveryNoChaseActive = false;
+      t.recoveryNoChaseReturnedAt = nowIso();
+      t.recoveryNoChaseReturnedAtMs = current;
+      await persistState("breakout_retest_reclaim_zone_returned_to_entry_window");
+      log("INFO", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_RETURNED_TO_ENTRY_WINDOW", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, maxEntryPrice: t.maxEntryPrice, executionPrice: feature.price, waitStartedAt, waitSec: waitSec === null ? null : round(waitSec, 3), priorMaxObservedPrice: finite(t.recoveryNoChaseMaxObservedPrice, null), action: "RESUME_EXISTING_TICK_RECOVERY_GATES" });
     }
     if (!breakoutRetestZoneTickRecoveryOk(feature)) {
       await persistState("breakout_retest_reclaim_zone_wait_tick_recovery");

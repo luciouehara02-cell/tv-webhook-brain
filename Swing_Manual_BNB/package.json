@@ -1,17 +1,17 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1b-c3-dynamic-instrument-hotfix",
-  "version": "1.0.1-live-paper",
+  "name": "brainfvvo-swing-multiasset-v1c-breakout-keep-alive-paper",
+  "version": "1.0.0",
   "private": true,
+  "description": "BrainFVVO Swing MultiAsset v1c paper runtime for SOL, ETH and BNB",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "express": "^4.21.2"
-  },
-  "description": "Single Railway service supervising isolated SOL/ETH/BNB BrainFVVO Swing v1h workers. v1b fixes 3Commas tv_instrument to derive dynamically from each worker symbol."
+  }
 }
