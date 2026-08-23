@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1d_CONFIRMED_PULLBACK_ENTRY_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1e_INTELLIGENT_TP_SHADOW_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -331,6 +331,34 @@ const CFG = {
   MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS: envNum("MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS", 1),
   MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE: envBool("MANUAL_ONE_STOP_5M_CLOSE_IMMEDIATE", true),
   MANUAL_ONE_STOP_TARGET_EXIT_ENABLED: envBool("MANUAL_ONE_STOP_TARGET_EXIT_ENABLED", true),
+
+  // v1e Stage 2: full-position intelligent TP observer. Shadow is the safe default;
+  // no partial exits are ever used and shadow mode can never forward an exit.
+  INTELLIGENT_TP_MODE: envStr("INTELLIGENT_TP_MODE", "shadow").toLowerCase(),
+  INTELLIGENT_TP_MAX_DISTANCE_PCT: envNum("INTELLIGENT_TP_MAX_DISTANCE_PCT", 10.0),
+  INTELLIGENT_TP_DECISION_WINDOW_SEC: envNum("INTELLIGENT_TP_DECISION_WINDOW_SEC", 180),
+  INTELLIGENT_TP_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("INTELLIGENT_TP_CONFIRM_OBSERVATIONS", 2))),
+  INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS: Math.max(1, Math.floor(envNum("INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS", 2))),
+  INTELLIGENT_TP_PROTECTION_BUFFER_PCT: envNum("INTELLIGENT_TP_PROTECTION_BUFFER_PCT", 0.12),
+  INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS", 2))),
+  INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT: envNum("INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT", 0.12),
+  INTELLIGENT_TP_REQUIRE_ABOVE_EMA8: envBool("INTELLIGENT_TP_REQUIRE_ABOVE_EMA8", true),
+  INTELLIGENT_TP_REQUIRE_POSITIVE_FVVO: envBool("INTELLIGENT_TP_REQUIRE_POSITIVE_FVVO", true),
+  INTELLIGENT_TP_REQUIRE_POSITIVE_SLOPE: envBool("INTELLIGENT_TP_REQUIRE_POSITIVE_SLOPE", true),
+  INTELLIGENT_TP_REQUIRE_RAY_NOT_BEAR: envBool("INTELLIGENT_TP_REQUIRE_RAY_NOT_BEAR", true),
+  INTELLIGENT_TP1_BREAKOUT_BUFFER_PCT: envNum("INTELLIGENT_TP1_BREAKOUT_BUFFER_PCT", 0.05),
+  INTELLIGENT_TP1_REJECTION_BUFFER_PCT: envNum("INTELLIGENT_TP1_REJECTION_BUFFER_PCT", 0.10),
+  INTELLIGENT_TP2_BREAKOUT_BUFFER_PCT: envNum("INTELLIGENT_TP2_BREAKOUT_BUFFER_PCT", 0.06),
+  INTELLIGENT_TP2_REJECTION_BUFFER_PCT: envNum("INTELLIGENT_TP2_REJECTION_BUFFER_PCT", 0.12),
+  INTELLIGENT_TP3_BREAKOUT_BUFFER_PCT: envNum("INTELLIGENT_TP3_BREAKOUT_BUFFER_PCT", 0.08),
+  INTELLIGENT_TP3_REJECTION_BUFFER_PCT: envNum("INTELLIGENT_TP3_REJECTION_BUFFER_PCT", 0.15),
+  INTELLIGENT_TP3_RUNNER_ENABLED: envBool("INTELLIGENT_TP3_RUNNER_ENABLED", true),
+  INTELLIGENT_TP3_RUNNER_MIN_FVVO: envNum("INTELLIGENT_TP3_RUNNER_MIN_FVVO", 1.0),
+  INTELLIGENT_TP3_RUNNER_MIN_SLOPE: envNum("INTELLIGENT_TP3_RUNNER_MIN_SLOPE", 0.50),
+  INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT: envNum("INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT", 0.15),
+  INTELLIGENT_TP3_RUNNER_TRAIL_GIVEBACK_PCT: envNum("INTELLIGENT_TP3_RUNNER_TRAIL_GIVEBACK_PCT", 0.25),
+  INTELLIGENT_TP3_RUNNER_HARD_BREAK_PCT: envNum("INTELLIGENT_TP3_RUNNER_HARD_BREAK_PCT", 0.12),
+  INTELLIGENT_TP3_RUNNER_MAX_SEC: envNum("INTELLIGENT_TP3_RUNNER_MAX_SEC", 21600),
 
   // v1h dynamic brain-managed profit exit. Every emitted close remains 100%.
   DYNAMIC_PROFIT_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_EXIT_ENABLED", true),
@@ -769,6 +797,14 @@ function normalizeState(raw) {
   p.stopPct = entry && p.stopPrice ? round(percentageBelow(entry, p.stopPrice), 6) : finite(p.stopPct, 0);
   p.profitTargetPrice = migratedTarget > 0 ? migratedTarget : 0;
   p.profitTargetPct = entry && p.profitTargetPrice > 0 ? round(percentPnl(entry, p.profitTargetPrice), 6) : 0;
+  if (p.intelligentTp && typeof p.intelligentTp === "object") {
+    const priorTp = p.intelligentTp;
+    p.intelligentTp = {
+      ...buildIntelligentTpState({ intelligentTp: { tp1Price: finite(priorTp.tp1Price, 0), tp2Price: finite(priorTp.tp2Price, 0), tp3Price: finite(priorTp.tp3Price, 0) } }),
+      ...priorTp,
+      history: Array.isArray(priorTp.history) ? priorTp.history.slice(-20) : [],
+    };
+  } else p.intelligentTp = null;
   p.stop = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(p.stop || {}) };
   const priorPeak = Math.max(0, finite(p.peakPnlPct, 0));
   const priorDynamic = p.dynamicProfit && typeof p.dynamicProfit === "object" ? p.dynamicProfit : {};
@@ -916,6 +952,9 @@ function configProblems() {
   if (CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT < 0) problems.push("INVALID_MAX_TARGET_DISTANCE_PCT");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC < 0) problems.push("INVALID_STOP_CONFIRM_SEC");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_STOP_CONFIRM_OBSERVATIONS");
+  if (!["disabled", "shadow"].includes(CFG.INTELLIGENT_TP_MODE)) problems.push("INTELLIGENT_TP_MODE_MUST_BE_DISABLED_OR_SHADOW_IN_V1E");
+  if (CFG.INTELLIGENT_TP_MAX_DISTANCE_PCT <= 0 || CFG.INTELLIGENT_TP_DECISION_WINDOW_SEC <= 0 || CFG.INTELLIGENT_TP_CONFIRM_OBSERVATIONS < 1 || CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS < 1 || CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_INTELLIGENT_TP_CORE_CONFIG");
+  if (CFG.INTELLIGENT_TP_PROTECTION_BUFFER_PCT < 0 || CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_TRAIL_GIVEBACK_PCT <= 0 || CFG.INTELLIGENT_TP3_RUNNER_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_MAX_SEC <= 0) problems.push("INVALID_INTELLIGENT_TP_PROTECTION_CONFIG");
   if (CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC < 15 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC > 900 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_MAX_PRICE_DEVIATION_PCT < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_RSI <= 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_ADX < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS < 1 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS > 5) problems.push("INVALID_MANUAL_ENTRY_OVERHEAT_CONFIRMATION_CONFIG");
   if (CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT < 0 || CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT > 2) problems.push("INVALID_PNL_ESTIMATED_ROUND_TRIP_COST_PCT");
   if (CFG.MANUAL_ENTRY_FILL_MAX_DEVIATION_PCT <= 0 || CFG.MANUAL_ENTRY_FILL_MAX_DEVIATION_PCT > 5) problems.push("INVALID_MANUAL_ENTRY_FILL_MAX_DEVIATION_PCT");
@@ -1028,6 +1067,9 @@ function validateOneStopCommand(body, entryPrice) {
 
   const stop = oneOf(body, ["stop_price", "stopPrice"]);
   const target = oneOf(body, ["profit_target_price", "profitTargetPrice", "target_price", "targetPrice"]);
+  const tp1 = oneOf(body, ["tp1_price", "tp1Price"]);
+  const tp2 = oneOf(body, ["tp2_price", "tp2Price"]);
+  const tp3 = oneOf(body, ["tp3_price", "tp3Price"]);
   if (!stop.present || !Number.isFinite(stop.value)) return { ok: false, error: "STOP_PRICE_REQUIRED" };
   if (!validStep(stop.value)) return { ok: false, error: "STOP_PRICE_NOT_ALIGNED_TO_MANUAL_ONE_STOP_PRICE_STEP" };
   if (stop.value >= entryPrice) return { ok: false, error: "STOP_PRICE_MUST_BE_BELOW_ENTRY_REFERENCE" };
@@ -1045,7 +1087,18 @@ function validateOneStopCommand(body, entryPrice) {
     targetPrice = target.value;
   }
 
-  return { ok: true, stopPrice: round(stop.value, 8), stopPct: round(stopPct, 6), profitTargetPrice: round(targetPrice, 8), profitTargetPct: round(targetPct, 6) };
+  const anyIntelligentTp = tp1.present || tp2.present || tp3.present;
+  if (anyIntelligentTp && targetPrice > 0) return { ok: false, error: "FIXED_PROFIT_TARGET_AND_INTELLIGENT_TP_LADDER_ARE_MUTUALLY_EXCLUSIVE" };
+  let intelligentTp = null;
+  if (anyIntelligentTp) {
+    if (![tp1, tp2, tp3].every((item) => item.present && Number.isFinite(item.value))) return { ok: false, error: "TP1_TP2_TP3_ALL_REQUIRED" };
+    if (![tp1.value, tp2.value, tp3.value].every(validStep)) return { ok: false, error: "INTELLIGENT_TP_PRICE_NOT_ALIGNED_TO_MANUAL_ONE_STOP_PRICE_STEP" };
+    if (!(entryPrice < tp1.value && tp1.value < tp2.value && tp2.value < tp3.value)) return { ok: false, error: "INTELLIGENT_TP_ORDER_MUST_BE_ENTRY_LT_TP1_LT_TP2_LT_TP3" };
+    if (percentPnl(entryPrice, tp3.value) > CFG.INTELLIGENT_TP_MAX_DISTANCE_PCT + 1e-9) return { ok: false, error: "INTELLIGENT_TP3_DISTANCE_EXCEEDS_MAX" };
+    intelligentTp = { tp1Price: round(tp1.value, 8), tp2Price: round(tp2.value, 8), tp3Price: round(tp3.value, 8) };
+  }
+
+  return { ok: true, stopPrice: round(stop.value, 8), stopPct: round(stopPct, 6), profitTargetPrice: round(targetPrice, 8), profitTargetPct: round(targetPct, 6), intelligentTp };
 }
 
 function normalizeFeature(payload) {
@@ -1105,6 +1158,20 @@ function updateFeature(feature) {
   return true;
 }
 
+function buildIntelligentTpState(levels) {
+  const ladder = levels?.intelligentTp;
+  if (!ladder) return null;
+  return {
+    mode: CFG.INTELLIGENT_TP_MODE, enabled: CFG.INTELLIGENT_TP_MODE !== "disabled",
+    tp1Price: ladder.tp1Price, tp2Price: ladder.tp2Price, tp3Price: ladder.tp3Price,
+    currentIndex: 0, highestConfirmedIndex: -1, phase: "WATCH_TARGET",
+    touchedAtMs: 0, touchedAt: null, breakoutObservations: 0, rejectionObservations: 0,
+    protectedFloorPrice: null, protectedByTarget: null, floorObservations: 0,
+    runnerActive: false, runnerStartedAtMs: 0, runnerPeakPrice: null, runnerFloorPrice: null,
+    shadowExitCandidate: null, history: [],
+  };
+}
+
 function buildPosition(entryPrice, levels, options = {}) {
   return {
     symbol: CFG.SYMBOL,
@@ -1128,6 +1195,7 @@ function buildPosition(entryPrice, levels, options = {}) {
     stopPct: levels.stopPct,
     profitTargetPrice: levels.profitTargetPrice,
     profitTargetPct: levels.profitTargetPct,
+    intelligentTp: buildIntelligentTpState(levels),
     stop: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
     dynamicProfit: {
       armed: false,
@@ -1589,7 +1657,7 @@ function manualEntryOverheatSignalSnapshot(entryPrice) {
 function manualEntryConfirmationPublicPayload(pending = state.manual?.entryConfirmation) {
   if (!pending) return null;
   const expiresAtMs = finite(pending.expiresAtMs, 0);
-  return { id: pending.id, status: expiresAtMs > nowMs() ? "PENDING" : "EXPIRED", createdAt: pending.createdAt, expiresAt: pending.expiresAt, entryPriceReference: pending.entryPriceReference, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, reason: pending.reason || "", overheat: pending.overheat || null };
+  return { id: pending.id, status: expiresAtMs > nowMs() ? "PENDING" : "EXPIRED", createdAt: pending.createdAt, expiresAt: pending.expiresAt, entryPriceReference: pending.entryPriceReference, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, intelligentTp: pending.intelligentTp || null, reason: pending.reason || "", overheat: pending.overheat || null };
 }
 async function expireManualEntryConfirmationIfNeeded(source = "manual_action") {
   const pending = state.manual?.entryConfirmation;
@@ -1601,7 +1669,7 @@ async function expireManualEntryConfirmationIfNeeded(source = "manual_action") {
 }
 async function createManualEntryOverheatConfirmation(body, entry, levels, overheat) {
   const createdAtMs = nowMs(), expiresAtMs = createdAtMs + CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC * 1000;
-  const pending = { id: crypto.randomUUID(), createdAt: nowIso(), createdAtMs, expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs, entryPriceReference: round(entry, 8), stopPrice: levels.stopPrice, profitTargetPrice: levels.profitTargetPrice || 0, profile: PROFILE, reason: String(body.reason || "manual_entry_latest_price"), overheat };
+  const pending = { id: crypto.randomUUID(), createdAt: nowIso(), createdAtMs, expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs, entryPriceReference: round(entry, 8), stopPrice: levels.stopPrice, profitTargetPrice: levels.profitTargetPrice || 0, intelligentTp: levels.intelligentTp ? clone(levels.intelligentTp) : null, profile: PROFILE, reason: String(body.reason || "manual_entry_latest_price"), overheat };
   state.manual = { ...state.manual, entryConfirmation: pending, lastAction: "manual_entry_confirmation_required", lastActionAt: nowIso() };
   await persistState("manual_entry_overheat_confirmation_required");
   log("WARN", "FVVO_MANUAL_ENTRY_OVERHEAT_CONFIRMATION_REQUIRED", { confirmationId: pending.id, entryPriceReference: pending.entryPriceReference, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, signalCount: overheat.signalCount, minSignals: overheat.minSignals, signals: overheat.signals, feature: overheat.feature });
@@ -1663,7 +1731,9 @@ async function confirmManualEntry(body) {
     log("WARN", "FVVO_MANUAL_ENTRY_OVERHEAT_CONFIRMATION_PRICE_CHANGED", { confirmationId: pending.id, originalEntryPriceReference: pending.entryPriceReference, currentEntryPriceReference: entry, deviationPct: round(deviationPct, 6), maxDeviationPct: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_MAX_PRICE_DEVIATION_PCT });
     return { status: 409, body: { ok: false, error: "MANUAL_ENTRY_CONFIRMATION_PRICE_CHANGED_REARM_REQUIRED", deviationPct: round(deviationPct, 6), maxDeviationPct: CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_MAX_PRICE_DEVIATION_PCT } };
   }
-  const levels = validateOneStopCommand({ stop_price: pending.stopPrice, profit_target_price: pending.profitTargetPrice || 0 }, entry);
+  const confirmationLevels = { stop_price: pending.stopPrice, profit_target_price: pending.profitTargetPrice || 0 };
+  if (pending.intelligentTp) Object.assign(confirmationLevels, { tp1_price: pending.intelligentTp.tp1Price, tp2_price: pending.intelligentTp.tp2Price, tp3_price: pending.intelligentTp.tp3Price });
+  const levels = validateOneStopCommand(confirmationLevels, entry);
   if (!levels.ok) return { status: 409, body: { ok: false, error: `MANUAL_ENTRY_CONFIRMATION_LEVELS_INVALID_${levels.error}` } };
   return executeManualEntry(entry, levels, { confirmation: pending });
 }
@@ -2862,6 +2932,106 @@ function evaluateYellowTpShadow(feature) {
   return true;
 }
 
+function intelligentTpBearEvidence(feature, price) {
+  const signals = [];
+  if (finite(feature.fvvo, null) !== null && feature.fvvo <= 0) signals.push("FVVO_NON_POSITIVE");
+  if (finite(feature.slope, null) !== null && feature.slope <= 0) signals.push("SLOPE_NON_POSITIVE");
+  if (String(feature.rayRegime || "").toUpperCase().includes("BEAR")) signals.push("RAY_BEAR");
+  if (finite(feature.ema8, null) !== null && price < feature.ema8) signals.push("BELOW_EMA8");
+  if (feature.crossDown) signals.push("CROSS_DOWN");
+  return { count: signals.length, signals };
+}
+
+function intelligentTpContinuationEvidence(feature, price, threshold, tp3Strong = false) {
+  const fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null), ema8 = finite(feature.ema8, null);
+  const priceOk = price + 1e-9 >= threshold;
+  const fvvoOk = !CFG.INTELLIGENT_TP_REQUIRE_POSITIVE_FVVO || (fvvo !== null && fvvo >= (tp3Strong ? CFG.INTELLIGENT_TP3_RUNNER_MIN_FVVO : 0));
+  const slopeOk = !CFG.INTELLIGENT_TP_REQUIRE_POSITIVE_SLOPE || (slope !== null && slope >= (tp3Strong ? CFG.INTELLIGENT_TP3_RUNNER_MIN_SLOPE : 0));
+  const rayOk = !CFG.INTELLIGENT_TP_REQUIRE_RAY_NOT_BEAR || !String(feature.rayRegime || "").toUpperCase().includes("BEAR");
+  const ema8Ok = !CFG.INTELLIGENT_TP_REQUIRE_ABOVE_EMA8 || ema8 === null || price + 1e-9 >= ema8;
+  return { qualifies: priceOk && fvvoOk && slopeOk && rayOk && ema8Ok, priceOk, fvvoOk, slopeOk, rayOk, ema8Ok, fvvo, slope, ema8, rayRegime: feature.rayRegime || null };
+}
+
+function intelligentTpRecordCandidate(position, stateTp, reason, price, feature, extra = {}) {
+  if (stateTp.shadowExitCandidate) return stateTp.shadowExitCandidate;
+  const candidate = { reason, price: round(price, 8), pnlPct: round(percentPnl(position.entryPriceReference, price), 6), at: nowIso(), atMs: nowMs(), featureKind: feature.kind, ...extra };
+  stateTp.shadowExitCandidate = candidate;
+  stateTp.phase = "SHADOW_EXIT_CANDIDATE";
+  stateTp.history.push({ type: "SHADOW_EXIT_CANDIDATE", ...candidate });
+  stateTp.history = stateTp.history.slice(-20);
+  log("WARN", "FVVO_INTELLIGENT_TP_SHADOW_EXIT_CANDIDATE", { ...candidate, tp1Price: stateTp.tp1Price, tp2Price: stateTp.tp2Price, tp3Price: stateTp.tp3Price, action: "NO_EXIT_CHANGE_SHADOW_ONLY", exitPercentCounterfactual: 100 });
+  return candidate;
+}
+
+function evaluateIntelligentTpShadow(position, feature, price) {
+  const t = position?.intelligentTp;
+  if (!t?.enabled || CFG.INTELLIGENT_TP_MODE === "disabled" || t.shadowExitCandidate) return null;
+  const levels = [t.tp1Price, t.tp2Price, t.tp3Price];
+  if (!levels.every((x) => finite(x, 0) > 0)) return null;
+  const current = nowMs();
+  const bear = intelligentTpBearEvidence(feature, price);
+
+  if (t.runnerActive) {
+    t.runnerPeakPrice = Math.max(finite(t.runnerPeakPrice, price), price);
+    const initialFloor = t.tp3Price * (1 - CFG.INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT / 100);
+    const trailingFloor = t.runnerPeakPrice * (1 - CFG.INTELLIGENT_TP3_RUNNER_TRAIL_GIVEBACK_PCT / 100);
+    t.runnerFloorPrice = round(Math.max(initialFloor, trailingFloor), 8);
+    const hardFloor = t.runnerFloorPrice * (1 - CFG.INTELLIGENT_TP3_RUNNER_HARD_BREAK_PCT / 100);
+    if (price <= hardFloor + 1e-9) return intelligentTpRecordCandidate(position, t, "TP3_RUNNER_HARD_FLOOR_BREAK", price, feature, { runnerPeakPrice: t.runnerPeakPrice, runnerFloorPrice: t.runnerFloorPrice, bear });
+    if (price <= t.runnerFloorPrice + 1e-9 && bear.count >= CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS) t.floorObservations = Math.max(0, finite(t.floorObservations, 0)) + 1;
+    else t.floorObservations = 0;
+    if (t.floorObservations >= CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS) return intelligentTpRecordCandidate(position, t, "TP3_RUNNER_TRAIL_CONFIRMED", price, feature, { runnerPeakPrice: t.runnerPeakPrice, runnerFloorPrice: t.runnerFloorPrice, bear });
+    if (current - finite(t.runnerStartedAtMs, current) >= CFG.INTELLIGENT_TP3_RUNNER_MAX_SEC * 1000) return intelligentTpRecordCandidate(position, t, "TP3_RUNNER_MAX_DURATION", price, feature, { runnerPeakPrice: t.runnerPeakPrice, runnerFloorPrice: t.runnerFloorPrice, bear });
+    return null;
+  }
+
+  if (t.protectedFloorPrice) {
+    const effectiveFloor = Math.max(t.protectedFloorPrice, finite(position.dynamicProfit?.protectedPrice, 0), finite(position.dynamicProfit?.runner?.protectedPrice, 0));
+    const hardFloor = effectiveFloor * (1 - CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT / 100);
+    if (price <= hardFloor + 1e-9) return intelligentTpRecordCandidate(position, t, `${t.protectedByTarget}_PROTECTED_HARD_BREAK`, price, feature, { protectedFloorPrice: t.protectedFloorPrice, effectiveFloor, bear });
+    if (price <= effectiveFloor + 1e-9 && bear.count >= CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS) t.floorObservations = Math.max(0, finite(t.floorObservations, 0)) + 1;
+    else t.floorObservations = 0;
+    if (t.floorObservations >= CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS) return intelligentTpRecordCandidate(position, t, `${t.protectedByTarget}_PROTECTED_FLOOR_BREAK`, price, feature, { protectedFloorPrice: t.protectedFloorPrice, effectiveFloor, bear });
+  }
+
+  const index = Math.max(0, Math.min(2, Math.floor(finite(t.currentIndex, 0))));
+  const target = levels[index];
+  const label = `TP${index + 1}`;
+  const breakoutBuffer = [CFG.INTELLIGENT_TP1_BREAKOUT_BUFFER_PCT, CFG.INTELLIGENT_TP2_BREAKOUT_BUFFER_PCT, CFG.INTELLIGENT_TP3_BREAKOUT_BUFFER_PCT][index];
+  const rejectionBuffer = [CFG.INTELLIGENT_TP1_REJECTION_BUFFER_PCT, CFG.INTELLIGENT_TP2_REJECTION_BUFFER_PCT, CFG.INTELLIGENT_TP3_REJECTION_BUFFER_PCT][index];
+  if (t.phase === "WATCH_TARGET" && price + 1e-9 >= target) {
+    Object.assign(t, { phase: "DECISION_WINDOW", touchedAtMs: current, touchedAt: nowIso(), breakoutObservations: 0, rejectionObservations: 0 });
+    t.history.push({ type: "TARGET_TOUCHED", target: label, price: round(price, 8), at: nowIso() });
+    log("INFO", "FVVO_INTELLIGENT_TP_SHADOW_TARGET_TOUCHED", { target: label, targetPrice: target, price, immediateFixedTpPnlPct: round(percentPnl(position.entryPriceReference, price), 6), action: "WAIT_BREAKOUT_OR_REJECTION_SHADOW_ONLY" });
+  }
+  if (t.phase !== "DECISION_WINDOW") return null;
+  const breakoutThreshold = target * (1 + breakoutBuffer / 100);
+  const rejectionFloor = target * (1 - rejectionBuffer / 100);
+  const continuation = intelligentTpContinuationEvidence(feature, price, breakoutThreshold, index === 2);
+  t.breakoutObservations = continuation.qualifies ? t.breakoutObservations + 1 : 0;
+  t.rejectionObservations = price <= rejectionFloor + 1e-9 && bear.count >= CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS ? t.rejectionObservations + 1 : 0;
+  if (t.rejectionObservations >= CFG.INTELLIGENT_TP_CONFIRM_OBSERVATIONS) return intelligentTpRecordCandidate(position, t, `${label}_REJECTION_CONFIRMED`, price, feature, { targetPrice: target, rejectionFloor: round(rejectionFloor, 8), bear });
+  if (t.breakoutObservations >= CFG.INTELLIGENT_TP_CONFIRM_OBSERVATIONS) {
+    if (index === 2) {
+      if (!CFG.INTELLIGENT_TP3_RUNNER_ENABLED) return intelligentTpRecordCandidate(position, t, "TP3_CLEAN_BREAKOUT_RUNNER_DISABLED", price, feature, { targetPrice: target, continuation });
+      Object.assign(t, { phase: "TP3_RUNNER", runnerActive: true, runnerStartedAtMs: current, runnerPeakPrice: price, runnerFloorPrice: round(target * (1 - CFG.INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT / 100), 8), floorObservations: 0, highestConfirmedIndex: 2 });
+      t.history.push({ type: "CLEAN_BREAKOUT", target: label, price: round(price, 8), at: nowIso(), runner: true });
+      log("INFO", "FVVO_INTELLIGENT_TP_SHADOW_TP3_RUNNER_ARMED", { targetPrice: target, price, runnerFloorPrice: t.runnerFloorPrice, continuation, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
+      return null;
+    }
+    t.highestConfirmedIndex = index;
+    t.protectedByTarget = label;
+    t.protectedFloorPrice = round(target * (1 - CFG.INTELLIGENT_TP_PROTECTION_BUFFER_PCT / 100), 8);
+    t.currentIndex = index + 1;
+    Object.assign(t, { phase: "WATCH_TARGET", touchedAtMs: 0, touchedAt: null, breakoutObservations: 0, rejectionObservations: 0, floorObservations: 0 });
+    t.history.push({ type: "CLEAN_BREAKOUT", target: label, price: round(price, 8), at: nowIso(), protectedFloorPrice: t.protectedFloorPrice });
+    log("INFO", "FVVO_INTELLIGENT_TP_SHADOW_CLEAN_BREAKOUT", { target: label, targetPrice: target, price, nextTarget: `TP${index + 2}`, protectedFloorPrice: t.protectedFloorPrice, continuation, action: "HOLD_100_PERCENT_SHADOW_ONLY" });
+    return null;
+  }
+  if (current - finite(t.touchedAtMs, current) >= CFG.INTELLIGENT_TP_DECISION_WINDOW_SEC * 1000 && price <= target + 1e-9 && bear.count >= CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS) return intelligentTpRecordCandidate(position, t, `${label}_DECISION_TIMEOUT_WEAK`, price, feature, { targetPrice: target, bear });
+  return null;
+}
+
 async function manageExit(feature) {
   const p = state.position;
   if (!p || state.manual.handoffActive || String(p.lifecycle || "").startsWith("EXIT_")) return;
@@ -2896,6 +3066,8 @@ async function manageExit(feature) {
     runner.lastLoggedProtectedPnlPct = runner.protectedPnlPct;
     log("INFO", runnerLiveEnabled() ? "FVVO_RUNNER_TIGHT_TRAIL_RAISED" : "FVVO_RUNNER_TIGHT_TRAIL_SHADOW_RAISED", { peakPnlPct: d.peakPnlPct, protectedPnlPct: runner.protectedPnlPct, protectedPrice: runner.protectedPrice, price, allowedGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, mode: CFG.RUNNER_EXIT_MODE });
   }
+
+  evaluateIntelligentTpShadow(p, feature, price);
 
   // Optional fixed ceiling remains available. profit_target_price=0 means no fixed ceiling.
   if (CFG.MANUAL_ONE_STOP_TARGET_EXIT_ENABLED && p.profitTargetPrice > 0 && price >= p.profitTargetPrice) {
@@ -4080,6 +4252,7 @@ function priceEntryStatusPayload() {
     stopPctAtTrigger: item.stopPctAtTrigger,
     profitTargetPrice: item.profitTargetPrice || null,
     profitTargetPctAtTrigger: item.profitTargetPctAtTrigger || 0,
+    intelligentTp: item.intelligentTp || null,
     armedAt: item.armedAt,
     expiresAt: item.expiresAt,
     lastObservedPrice: item.lastObservedPrice,
@@ -4273,6 +4446,7 @@ function validatePriceTriggerCommand(body, currentPrice) {
 function validateStoredPriceTriggerAtExecution(pending, executionPrice) {
   if (!Number.isFinite(executionPrice) || executionPrice <= 0) return { ok: false, error: "INVALID_EXECUTION_PRICE" };
   const body = { stop_price: pending.stopPrice, profit_target_price: pending.profitTargetPrice || 0 };
+  if (pending.intelligentTp) Object.assign(body, { tp1_price: pending.intelligentTp.tp1Price, tp2_price: pending.intelligentTp.tp2Price, tp3_price: pending.intelligentTp.tp3Price });
   const levels = validateOneStopCommand(body, executionPrice);
   if (!levels.ok) return { ok: false, error: `EXECUTION_LEVELS_INVALID_${levels.error}` };
   return { ok: true, levels };
@@ -4569,6 +4743,7 @@ async function armPriceEntry(body) {
     armedReferencePrice: validated.armPrice, triggerDistancePct: validated.triggerDistancePct,
     stopPrice: validated.levels.stopPrice, stopPctAtTrigger: validated.levels.stopPct,
     profitTargetPrice: validated.levels.profitTargetPrice, profitTargetPctAtTrigger: validated.levels.profitTargetPct,
+    intelligentTp: validated.levels.intelligentTp ? clone(validated.levels.intelligentTp) : null,
     armedAt: nowIso(), armedAtMs: current, expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs,
     lastObservedPrice: validated.armPrice, lastObservedAt: nowIso(), lastObservedAtMs: current,
     reason: String(body.reason || "manual_price_trigger_entry"),
@@ -5642,6 +5817,8 @@ if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_START
 
 module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
 
+Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
+
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
   const express = require("express");
@@ -5676,7 +5853,7 @@ module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntr
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1d_CONFIRMED_PULLBACK_ENTRY_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1e_INTELLIGENT_TP_SHADOW_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),

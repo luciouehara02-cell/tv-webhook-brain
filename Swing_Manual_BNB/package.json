@@ -1,13 +1,17 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1d-confirmed-pullback-live-paper",
+  "name": "brainfvvo-swing-multiasset-v1c-breakout-keep-alive-paper",
   "version": "1.0.0",
   "private": true,
-  "description": "Stage 1 confirmed Preferred/Deep entries for SOL, ETH, BNB and XRP live-paper workers",
+  "description": "BrainFVVO Swing MultiAsset v1c paper runtime for SOL, ETH and BNB",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js"
   },
-  "engines": { "node": ">=20" },
-  "dependencies": { "express": "^4.21.2" }
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
 }
