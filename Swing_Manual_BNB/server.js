@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1c_BREAKOUT_KEEP_ALIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1d_CONFIRMED_PULLBACK_ENTRY_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -240,6 +240,25 @@ const CFG = {
   TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY: envBool("TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY", true),
   TRAILING_DIP_RECLAIM_ZONE_MIN_TICK_SLOPE: envNum("TRAILING_DIP_RECLAIM_ZONE_MIN_TICK_SLOPE", 0),
   TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR: envBool("TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR", true),
+
+  // v1d role-specific confirmed pullback. Preferred/Deep must first touch their support zone,
+  // then receive an aligned confirmed 15m close above breakout_confirm_price, retest/hold that
+  // recovery level, and finally pass two fast recovery observations before a paper order is sent.
+  CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE: envStr("CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE", "live").toLowerCase(),
+  CONFIRMED_PULLBACK_MIN_PENETRATION_PCT: envNum("CONFIRMED_PULLBACK_MIN_PENETRATION_PCT", 0.05),
+  CONFIRMED_PULLBACK_MAX_TRACK_SEC: envNum("CONFIRMED_PULLBACK_MAX_TRACK_SEC", 21600),
+  CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT: envNum("CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT", 0.10),
+  CONFIRMED_PULLBACK_15M_ALIGNMENT_MINUTE: Math.max(0, Math.min(14, Math.floor(envNum("CONFIRMED_PULLBACK_15M_ALIGNMENT_MINUTE", 0)))),
+  CONFIRMED_PULLBACK_15M_CONFIRM_BUFFER_PCT: envNum("CONFIRMED_PULLBACK_15M_CONFIRM_BUFFER_PCT", 0.00),
+  CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT: envNum("CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT", 0.10),
+  CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT: envNum("CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT", 0.10),
+  CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT: envNum("CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT", 0.12),
+  CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS", 2))),
+  CONFIRMED_PULLBACK_FAST_MIN_FVVO: envNum("CONFIRMED_PULLBACK_FAST_MIN_FVVO", 0.0),
+  CONFIRMED_PULLBACK_FAST_MIN_SLOPE: envNum("CONFIRMED_PULLBACK_FAST_MIN_SLOPE", 0.0),
+  CONFIRMED_PULLBACK_FAST_REQUIRE_RAY_NOT_BEAR: envBool("CONFIRMED_PULLBACK_FAST_REQUIRE_RAY_NOT_BEAR", true),
+  CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED: envBool("CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED", true),
+  CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT: envNum("CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT", 0.0),
 
   // v1h Preferred/Deep context guard. The confirmed 5m stream is used only to veto an otherwise
   // qualified 15s reclaim when the larger structure is strongly bearish. Once latched, release is
@@ -675,7 +694,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 18,
+    schemaVersion: 19,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -687,7 +706,7 @@ function defaultState() {
     reentry: { campaign: null, recentTickPrices: [] },
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
-    priceEntry: { pending: null, pending2: null, pending3: null, last: null },
+    priceEntry: { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null },
     audit: { runnerRescuePostExit: null, profitFloorMicroShadow: null, profitFloorPostExitReclaimShadow: null, breakoutPostExpiryShadows: [], lastBarTimeByKind: {} },
   };
 }
@@ -697,7 +716,7 @@ function normalizeState(raw) {
   if (!raw || typeof raw !== "object") return fallback;
   const next = { ...fallback, ...raw };
   // v1h schema migration marker: preserve compatible fields but always persist the current schema.
-  next.schemaVersion = 18;
+  next.schemaVersion = 19;
   next.forward = { ...fallback.forward, ...(raw.forward || {}) };
   next.manual = { ...fallback.manual, ...(raw.manual || {}) };
   if (next.manual.entryConfirmation && typeof next.manual.entryConfirmation !== "object") next.manual.entryConfirmation = null;
@@ -709,6 +728,7 @@ function normalizeState(raw) {
   next.autoExitRelease.releaseAtMs = finite(next.autoExitRelease.releaseAtMs, 0);
   next.autoExitRelease.positionOpenedAtMs = finite(next.autoExitRelease.positionOpenedAtMs, 0);
   next.priceEntry = { ...fallback.priceEntry, ...(raw.priceEntry || {}) };
+  if (next.priceEntry.dormantDeepFallback && typeof next.priceEntry.dormantDeepFallback !== "object") next.priceEntry.dormantDeepFallback = null;
   next.audit = { ...fallback.audit, ...(raw.audit || {}) };
   next.audit.lastBarTimeByKind = next.audit.lastBarTimeByKind && typeof next.audit.lastBarTimeByKind === "object" ? next.audit.lastBarTimeByKind : {};
   if (next.audit.runnerRescuePostExit && typeof next.audit.runnerRescuePostExit !== "object") next.audit.runnerRescuePostExit = null;
@@ -953,6 +973,8 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.TRAILING_DIP_RECLAIM_MODE)) problems.push("INVALID_TRAILING_DIP_RECLAIM_MODE");
   if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
   if (!['disabled', 'shadow', 'live'].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_MODE");
+  if (!["disabled", "shadow", "live"].includes(CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE)) problems.push("INVALID_CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE");
+  if (CFG.CONFIRMED_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.CONFIRMED_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT < 0 || CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT < 0 || CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_CONFIRMED_PULLBACK_THRESHOLDS");
   if (!["cancel", "wait_no_chase"].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY");
   if (!["disabled", "shadow", "live"].includes(CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE)) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE");
   if (CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS < 1 || CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT || CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE < -10) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_THRESHOLDS");
@@ -1348,12 +1370,13 @@ async function finalizeAutoExitRelease(source = "timer") {
   }
   state.position = null;
   state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
-  const campaign = armReentryCampaignAfterConfirmedExit(prior);
+  const deepFallback = reactivateDormantDeepFallback(prior, source);
+  const campaign = deepFallback ? null : armReentryCampaignAfterConfirmedExit(prior);
   state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "auto_exit_release", lastActionAt: nowIso() };
   state.autoExitRelease = { ...pending, active: false, status: "RELEASED_ASSUMED_FLAT", releasedAt: nowIso() };
   clearAutoExitReleaseTimer();
   await persistState("auto_exit_release_assumed_flat");
-  log("INFO", "FVVO_EXIT_AUTO_RECONCILED_ASSUMED_FLAT", { source, priorExitReason: prior.exitReason, requestId: pending.requestId || null, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null, reentryAutoEnabled: reentryAutoEnabled() });
+  log("INFO", "FVVO_EXIT_AUTO_RECONCILED_ASSUMED_FLAT", { source, priorExitReason: prior.exitReason, requestId: pending.requestId || null, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, dormantDeepFallbackReactivated: Boolean(deepFallback), reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null, reentryAutoEnabled: reentryAutoEnabled() });
   return true;
 }
 
@@ -3898,7 +3921,8 @@ async function evaluateReentryShadow(feature) {
 }
 
 function ensurePriceEntryState() {
-  if (!state.priceEntry || typeof state.priceEntry !== "object") state.priceEntry = { pending: null, pending2: null, pending3: null, last: null };
+  if (!state.priceEntry || typeof state.priceEntry !== "object") state.priceEntry = { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null };
+  if (state.priceEntry.dormantDeepFallback && typeof state.priceEntry.dormantDeepFallback !== "object") state.priceEntry.dormantDeepFallback = null;
   if (state.priceEntry.pending && typeof state.priceEntry.pending !== "object") state.priceEntry.pending = null;
   if (state.priceEntry.pending2 && typeof state.priceEntry.pending2 !== "object") state.priceEntry.pending2 = null;
   if (state.priceEntry.pending3 && typeof state.priceEntry.pending3 !== "object") state.priceEntry.pending3 = null;
@@ -3996,15 +4020,16 @@ function entry5mFastReleaseEvidence(feature, guard) {
 }
 function isTrailingDipReclaim(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim"; }
 function isTrailingDipReclaimZone(pending) { return String(pending?.triggerMode || "").toLowerCase() === "trailing_dip_reclaim_zone"; }
+function isConfirmedPullbackReclaimZone(pending) { return String(pending?.triggerMode || "").toLowerCase() === "confirmed_pullback_reclaim_zone"; }
 function isBreakoutRetestReclaimZone(pending) { return String(pending?.triggerMode || "").toLowerCase() === "breakout_retest_reclaim_zone"; }
-function isAnyTrailingDipReclaim(pending) { return isTrailingDipReclaim(pending) || isTrailingDipReclaimZone(pending); }
+function isAnyTrailingDipReclaim(pending) { return isTrailingDipReclaim(pending) || isTrailingDipReclaimZone(pending) || isConfirmedPullbackReclaimZone(pending); }
 function nonBearRay(value) { return !String(value || "").toUpperCase().includes("BEAR"); }
 
 function trailingDipReclaimPublic(item) {
   const t = item?.trailing;
   if (!t || typeof t !== "object") return null;
   return {
-    mode: isTrailingDipReclaimZone(item) ? trailingDipReclaimZoneMode() : trailingDipReclaimMode(),
+    mode: isConfirmedPullbackReclaimZone(item) ? CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE : (isTrailingDipReclaimZone(item) ? trailingDipReclaimZoneMode() : trailingDipReclaimMode()),
     phase: t.phase || "ARMED",
     activatedAt: t.activatedAt || null,
     activationPrice: item.activationPrice || item.triggerPrice || null,
@@ -4018,6 +4043,11 @@ function trailingDipReclaimPublic(item) {
     reclaimTargetPrice: t.reclaimTargetPrice || null,
     maxEntryPrice: t.maxEntryPrice || null,
     trackingExpiresAt: t.trackingExpiresAt || null,
+    confirmed15mAt: t.confirmed15mAt || null,
+    confirmed15mClose: t.confirmed15mClose || null,
+    retestSeen: Boolean(t.retestSeen),
+    fastConfirmObservations: Math.max(0, Math.floor(finite(t.fastConfirmObservations, 0))),
+    lastFastEvidence: t.lastFastEvidence || null,
     tickRecoveryRequired: Boolean(isTrailingDipReclaimZone(item) ? CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY : CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY),
     entry5mBearGuard: t.entry5mBearGuard ? { active: Boolean(t.entry5mBearGuard.active), armedAt: t.entry5mBearGuard.armedAt || null, role: item.entryRole || "standalone", referenceEma8: finite(t.entry5mBearGuard.referenceEma8, null), referenceEma18: finite(t.entry5mBearGuard.referenceEma18, null), releaseObservations: Math.max(0, Math.floor(finite(t.entry5mBearGuard.releaseObservations, 0))), lastEvidence: t.entry5mBearGuard.lastEvidence || null } : null,
   };
@@ -4091,6 +4121,19 @@ function priceEntryStatusPayload() {
       minLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT,
       requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY,
     },
+    confirmedPullbackReclaimZone: {
+      enabled: CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE !== "disabled",
+      mode: CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE,
+      minPenetrationPct: CFG.CONFIRMED_PULLBACK_MIN_PENETRATION_PCT,
+      confirmBufferPct: CFG.CONFIRMED_PULLBACK_15M_CONFIRM_BUFFER_PCT,
+      aligned15mMinute: CFG.CONFIRMED_PULLBACK_15M_ALIGNMENT_MINUTE,
+      retestTouchAbovePct: CFG.CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT,
+      retestHoldBelowPct: CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT,
+      maxEntryAboveConfirmPct: CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT,
+      fastConfirmObservations: CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS,
+      dormantDeepFallbackEnabled: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED,
+      dormantDeepMaxPriorExitPnlPct: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT,
+    },
     breakoutRetestReclaimZone: {
       enabled: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE !== "disabled",
       mode: breakoutRetestReclaimZoneMode(),
@@ -4140,6 +4183,7 @@ function priceEntryStatusPayload() {
     pending2: serialize(pending2),
     pending3: serialize(pending3),
     pendingList: pendingList.map(serialize),
+    dormantDeepFallback: pe.dormantDeepFallback ? { id: pe.dormantDeepFallback.id, status: pe.dormantDeepFallback.status, entryCampaign: pe.dormantDeepFallback.entryCampaign || null, entryRole: pe.dormantDeepFallback.entryRole || null, expiresAt: pe.dormantDeepFallback.expiresAt || null, preferredTriggerId: pe.dormantDeepFallback.preferredTriggerId || null } : null,
     last: serialize(pe.last),
   };
 }
@@ -4150,7 +4194,7 @@ function isPriceTriggerFeature(feature) {
 
 function validTriggerMode(value) {
   const mode = String(value || "").trim().toLowerCase();
-  return ["dip", "breakout", "trailing_dip_reclaim", "trailing_dip_reclaim_zone", "breakout_retest_reclaim_zone"].includes(mode) ? mode : "";
+  return ["dip", "breakout", "trailing_dip_reclaim", "trailing_dip_reclaim_zone", "confirmed_pullback_reclaim_zone", "breakout_retest_reclaim_zone"].includes(mode) ? mode : "";
 }
 
 function resolvePriceTriggerExpiry(body) {
@@ -4168,12 +4212,14 @@ function validatePriceTriggerCommand(body, currentPrice) {
   if (!mode) return { ok: false, error: "TRIGGER_MODE_MUST_BE_DIP_BREAKOUT_TRAILING_DIP_RECLAIM_ZONE_OR_BREAKOUT_RETEST_ZONE" };
   const isTrailing = mode === "trailing_dip_reclaim";
   const isZone = mode === "trailing_dip_reclaim_zone";
+  const isConfirmedPullback = mode === "confirmed_pullback_reclaim_zone";
   const isBreakoutRetestZone = mode === "breakout_retest_reclaim_zone";
   if (isTrailing && trailingDipReclaimMode() === "disabled") return { ok: false, error: "TRAILING_DIP_RECLAIM_DISABLED" };
   if (isZone && trailingDipReclaimZoneMode() === "disabled") return { ok: false, error: "TRAILING_DIP_RECLAIM_ZONE_DISABLED" };
+  if (isConfirmedPullback && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "disabled") return { ok: false, error: "CONFIRMED_PULLBACK_RECLAIM_ZONE_DISABLED" };
   if (isBreakoutRetestZone && breakoutRetestReclaimZoneMode() === "disabled") return { ok: false, error: "BREAKOUT_RETEST_RECLAIM_ZONE_DISABLED" };
 
-  if (isZone || isBreakoutRetestZone) {
+  if (isZone || isConfirmedPullback || isBreakoutRetestZone) {
     if (isZone && ["trigger_price", "triggerPrice", "activation_price", "activationPrice", "breakout_confirm_price", "breakoutConfirmPrice", "retest_range_low", "retestRangeLow", "retest_range_high", "retestRangeHigh"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "USE_ACTIVATION_RANGE_LOW_HIGH_FOR_TRAILING_DIP_RECLAIM_ZONE" };
     if (isBreakoutRetestZone && ["trigger_price", "triggerPrice", "activation_price", "activationPrice"].some((key) => Object.prototype.hasOwnProperty.call(body, key))) return { ok: false, error: "USE_BREAKOUT_CONFIRM_PRICE_AND_RETEST_RANGE_LOW_HIGH_FOR_BREAKOUT_RETEST_RECLAIM_ZONE" };
 
@@ -4186,16 +4232,16 @@ function validatePriceTriggerCommand(body, currentPrice) {
     if (!(rangeLow > 0) || !(rangeHigh > 0) || rangeLow >= rangeHigh) return { ok: false, error: isBreakoutRetestZone ? "RETEST_RANGE_LOW_MUST_BE_BELOW_HIGH" : "ACTIVATION_RANGE_LOW_MUST_BE_BELOW_HIGH" };
 
     let breakoutConfirmPrice = null;
-    if (isBreakoutRetestZone) {
+    if (isBreakoutRetestZone || isConfirmedPullback) {
       const confirmField = oneOf(body, ["breakout_confirm_price", "breakoutConfirmPrice", "breakout_price", "breakoutPrice"]);
-      breakoutConfirmPrice = confirmField.present ? round(confirmField.value, 8) : rangeHigh;
+      breakoutConfirmPrice = confirmField.present ? round(confirmField.value, 8) : null;
       if (!Number.isFinite(breakoutConfirmPrice) || !validStep(breakoutConfirmPrice) || breakoutConfirmPrice <= 0) return { ok: false, error: "VALID_BREAKOUT_CONFIRM_PRICE_ALIGNED_TO_PRICE_STEP_REQUIRED" };
       if (breakoutConfirmPrice < rangeHigh) return { ok: false, error: "BREAKOUT_CONFIRM_PRICE_MUST_BE_AT_OR_ABOVE_RETEST_RANGE_HIGH" };
-      if (breakoutConfirmPrice <= currentPrice) return { ok: false, error: "BREAKOUT_CONFIRM_PRICE_MUST_BE_ABOVE_CURRENT_PRICE" };
+      if (isBreakoutRetestZone && breakoutConfirmPrice <= currentPrice) return { ok: false, error: "BREAKOUT_CONFIRM_PRICE_MUST_BE_ABOVE_CURRENT_PRICE" };
     }
 
-    if (isZone && rangeHigh >= currentPrice) return { ok: false, error: "ACTIVATION_RANGE_HIGH_MUST_BE_BELOW_CURRENT_PRICE" };
-    const triggerReference = isBreakoutRetestZone ? breakoutConfirmPrice : rangeHigh;
+    if ((isZone || isConfirmedPullback) && rangeHigh >= currentPrice) return { ok: false, error: "ACTIVATION_RANGE_HIGH_MUST_BE_BELOW_CURRENT_PRICE" };
+    const triggerReference = (isBreakoutRetestZone || isConfirmedPullback) ? breakoutConfirmPrice : rangeHigh;
     const gapPct = isBreakoutRetestZone ? percentPnl(currentPrice, triggerReference) : percentageBelow(currentPrice, rangeHigh);
     if (gapPct + 1e-9 < CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT) return { ok: false, error: isBreakoutRetestZone ? "BREAKOUT_CONFIRM_PRICE_TOO_CLOSE_TO_CURRENT_PRICE" : "TRIGGER_RANGE_TOO_CLOSE_TO_CURRENT_PRICE" };
     if (gapPct > CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT + 1e-9) return { ok: false, error: isBreakoutRetestZone ? "BREAKOUT_CONFIRM_PRICE_TOO_FAR_FROM_CURRENT_PRICE" : "TRIGGER_RANGE_TOO_FAR_FROM_CURRENT_PRICE" };
@@ -4205,7 +4251,7 @@ function validatePriceTriggerCommand(body, currentPrice) {
     if (!levels.ok) return { ok: false, error: levels.error };
     const expiry = resolvePriceTriggerExpiry(body);
     if (!expiry.ok) return expiry;
-    return { ok: true, triggerMode: mode, triggerPrice: triggerReference, activationPrice: triggerReference, activationRangeLow: rangeLow, activationRangeHigh: rangeHigh, breakoutConfirmPrice: isBreakoutRetestZone ? breakoutConfirmPrice : null, retestRangeLow: isBreakoutRetestZone ? rangeLow : null, retestRangeHigh: isBreakoutRetestZone ? rangeHigh : null, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
+    return { ok: true, triggerMode: mode, triggerPrice: triggerReference, activationPrice: isConfirmedPullback ? rangeHigh : triggerReference, activationRangeLow: rangeLow, activationRangeHigh: rangeHigh, breakoutConfirmPrice: (isBreakoutRetestZone || isConfirmedPullback) ? breakoutConfirmPrice : null, retestRangeLow: isBreakoutRetestZone ? rangeLow : null, retestRangeHigh: isBreakoutRetestZone ? rangeHigh : null, armPrice: round(currentPrice, 8), triggerDistancePct: round(gapPct, 6), levels, expirySec: expiry.seconds };
   }
 
   const level = isTrailing ? oneOf(body, ["activation_price", "activationPrice"]) : oneOf(body, ["trigger_price", "triggerPrice"]);
@@ -4238,6 +4284,10 @@ function priceTriggerCrossed(pending, previousPrice, currentPrice) {
   const epsilon = Math.max(CFG.MANUAL_ONE_STOP_PRICE_STEP / 10, 1e-9);
   if (pending.triggerMode === "dip" || pending.triggerMode === "trailing_dip_reclaim") return previousPrice > trigger + epsilon && currentPrice <= trigger + epsilon;
   if (pending.triggerMode === "trailing_dip_reclaim_zone") {
+    const rangeHigh = finite(pending.activationRangeHigh, trigger);
+    return previousPrice > rangeHigh + epsilon && currentPrice <= rangeHigh + epsilon;
+  }
+  if (pending.triggerMode === "confirmed_pullback_reclaim_zone") {
     const rangeHigh = finite(pending.activationRangeHigh, trigger);
     return previousPrice > rangeHigh + epsilon && currentPrice <= rangeHigh + epsilon;
   }
@@ -4276,6 +4326,38 @@ function cancelOtherPriceEntries(triggeredId, reason, extra = {}) {
     if (resolved) cancelled.push(resolved);
   }
   return cancelled;
+}
+
+function captureDormantDeepFallback(preferred) {
+  if (!CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED || String(preferred?.entryRole || "").toLowerCase() !== "preferred") return null;
+  const deep = activePriceEntryItems().find((item) => item.id !== preferred.id && item.entryCampaign && item.entryCampaign === preferred.entryCampaign && String(item.entryRole || "").toLowerCase() === "deep_alternative");
+  if (!deep) return null;
+  return { ...clone(deep), status: "DORMANT_AFTER_PREFERRED_ENTRY", dormantAt: nowIso(), dormantAtMs: nowMs(), preferredTriggerId: preferred.id, originalExpiresAt: deep.expiresAt, originalExpiresAtMs: deep.expiresAtMs };
+}
+
+function reactivateDormantDeepFallback(prior, source = "exit_release") {
+  const pe = ensurePriceEntryState();
+  const dormant = pe.dormantDeepFallback;
+  if (!CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED || !dormant) return null;
+  if (String(prior?.priceTrigger?.entryRole || "").toLowerCase() !== "preferred") return null;
+  if (finite(prior?.latestPnlPct, 0) > CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT + 1e-9) {
+    pe.dormantDeepFallback = null;
+    log("INFO", "FVVO_DORMANT_DEEP_FALLBACK_DISCARDED_PROFIT_EXIT", { source, priorExitPnlPct: prior?.latestPnlPct, maxPnlPct: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT });
+    return null;
+  }
+  if (nowMs() >= finite(dormant.originalExpiresAtMs, dormant.expiresAtMs)) {
+    pe.dormantDeepFallback = null;
+    log("INFO", "FVVO_DORMANT_DEEP_FALLBACK_EXPIRED", { source, triggerId: dormant.id, expiresAt: dormant.originalExpiresAt || dormant.expiresAt || null });
+    return null;
+  }
+  if (activePriceEntryItems().length >= CFG.PRICE_ENTRY_MAX_PENDING) return null;
+  const restored = clone(dormant);
+  Object.assign(restored, { status: "ARMED", reactivatedAt: nowIso(), reactivatedAtMs: nowMs(), lastObservedPrice: state.lastFeature?.price || restored.lastObservedPrice, lastObservedAt: nowIso(), lastObservedAtMs: nowMs(), expiresAt: dormant.originalExpiresAt || dormant.expiresAt, expiresAtMs: dormant.originalExpiresAtMs || dormant.expiresAtMs, resolutionReason: null, triggeredAt: null, triggeredAtMs: 0, triggeredPrice: null, requestId: null });
+  restored.trailing = { phase: "ARMED" };
+  const slot = setPriceEntrySlot(restored);
+  pe.dormantDeepFallback = null;
+  log("INFO", "FVVO_DORMANT_DEEP_FALLBACK_REACTIVATED", { source, triggerId: restored.id, entryCampaign: restored.entryCampaign || null, entryRole: restored.entryRole, slot, expiresAt: restored.expiresAt, priorExitPnlPct: prior?.latestPnlPct });
+  return restored;
 }
 
 function trailingTickRecoveryOk(feature) {
@@ -4413,7 +4495,7 @@ function validateCampaignArm(body, validated, active) {
 
   // Campaign orchestration is copied from Daily v1g, while Swing trigger logic is retained.
   if (entryRole === "breakout" && validated.triggerMode !== "breakout_retest_reclaim_zone") return { ok: false, error: "SWING_BREAKOUT_ROLE_REQUIRES_BREAKOUT_RETEST_RECLAIM_ZONE" };
-  if (["preferred", "deep_alternative"].includes(entryRole) && validated.triggerMode !== "trailing_dip_reclaim_zone") return { ok: false, error: "PREFERRED_AND_DEEP_ROLES_REQUIRE_TRAILING_DIP_RECLAIM_ZONE" };
+  if (["preferred", "deep_alternative"].includes(entryRole) && !["trailing_dip_reclaim_zone", "confirmed_pullback_reclaim_zone"].includes(validated.triggerMode)) return { ok: false, error: "PREFERRED_AND_DEEP_ROLES_REQUIRE_TRAILING_OR_CONFIRMED_PULLBACK_RECLAIM_ZONE" };
 
   // Preferred/deep ordering applies ONLY when arming one of the two dip roles.
   // Breakout has no activationRangeLow/High and must never be evaluated by this check.
@@ -4478,7 +4560,7 @@ async function armPriceEntry(body) {
   }
   const current = nowMs();
   const expiresAtMs = current + validated.expirySec * 1000;
-  const isTrailing = validated.triggerMode === "trailing_dip_reclaim" || validated.triggerMode === "trailing_dip_reclaim_zone";
+  const isTrailing = validated.triggerMode === "trailing_dip_reclaim" || validated.triggerMode === "trailing_dip_reclaim_zone" || validated.triggerMode === "confirmed_pullback_reclaim_zone";
   const pending = {
     id: crypto.randomUUID(), status: "ARMED", profile: PROFILE,
     entryCampaign: campaign.entryCampaign, entryRole: campaign.entryRole, campaignOrdinal: campaign.campaignOrdinal,
@@ -4549,7 +4631,12 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
   // resolved locally first, preserving the one-symbol/one-deal contract even on same-tick races.
   const consumed = resolvePriceEntryPending("TRIGGERED_FORWARDING", modeReason, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current, sourceEvent: feature.kind }, pending);
   if (!consumed) return;
+  const dormantDeep = captureDormantDeepFallback(consumed);
   const siblingCancelled = cancelOtherPriceEntries(consumed.id, "SIBLING_PRICE_TRIGGER_FIRED", { stateBlock: "ENTRY_TRIGGERED_BY_OTHER_SETUP" });
+  if (dormantDeep) {
+    pe.dormantDeepFallback = dormantDeep;
+    log("INFO", "FVVO_DEEP_FALLBACK_STORED_DORMANT", { triggerId: dormantDeep.id, entryCampaign: dormantDeep.entryCampaign, preferredTriggerId: consumed.id, expiresAt: dormantDeep.originalExpiresAt || dormantDeep.expiresAt });
+  }
   const closedCampaignShadows = closeCampaignBreakoutPostExpiryShadows(consumed.entryCampaign, consumed.entryRole, consumed.id);
 
   for (const item of siblingCancelled) {
@@ -4574,7 +4661,7 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
   }
   log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: consumed.id, entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole || "standalone", campaignOrdinal: consumed.campaignOrdinal || 0, cancelledSiblingCount: siblingCancelled.length, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, activationRangeLow: consumed.activationRangeLow || null, activationRangeHigh: consumed.activationRangeHigh || null, breakoutConfirmPrice: consumed.breakoutConfirmPrice || null, retestRangeLow: consumed.retestRangeLow || null, retestRangeHigh: consumed.retestRangeHigh || null, previousPrice: consumed.lastObservedPrice, executionReferencePrice: feature.price, stopPrice: checked.levels.stopPrice, profitTargetPrice: checked.levels.profitTargetPrice || null, marketOrderWillBeSent: true });
 
-  const result = await forward3Commas("enter_long", feature.price, modeReason === "TRAILING_DIP_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM" : (modeReason === "TRAILING_DIP_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM_ZONE" : (modeReason === "BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE" : (modeReason === "BREAKOUT_SHALLOW_HOLD_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_SHALLOW_HOLD_RECLAIM" : `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`))), { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
+  const result = await forward3Commas("enter_long", feature.price, modeReason === "CONFIRMED_PULLBACK_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_CONFIRMED_PULLBACK_RECLAIM" : (modeReason === "TRAILING_DIP_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM" : (modeReason === "TRAILING_DIP_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM_ZONE" : (modeReason === "BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE" : (modeReason === "BREAKOUT_SHALLOW_HOLD_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_SHALLOW_HOLD_RECLAIM" : `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`)))), { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
   if (!result.ok) {
     state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
     state.manual.recoveryRequired = true;
@@ -4824,6 +4911,133 @@ async function evaluateTrailingDipReclaimZone(pending, previousPrice, feature) {
       return;
     }
     await enterFromPriceTrigger(pending, feature, "TRAILING_DIP_RECLAIM_ZONE_CONFIRMED");
+  }
+}
+
+function confirmedPullbackAligned15mContext(pending) {
+  const ctx = state.lastFeature5m;
+  const barTimeMs = finite(ctx?.barTimeMs, 0);
+  if (!ctx || !(barTimeMs > 0)) return { available: false, reason: "NO_CONFIRMED_5M_CONTEXT" };
+  const minute = new Date(barTimeMs).getUTCMinutes();
+  const aligned = minute % 15 === CFG.CONFIRMED_PULLBACK_15M_ALIGNMENT_MINUTE;
+  const close = finite(ctx.close, finite(ctx.price, null));
+  const fresh = ageSec(ctx) <= CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC;
+  const afterZoneTouch = barTimeMs >= finite(pending?.trailing?.zoneQualifiedAtMs, finite(pending?.trailing?.activatedAtMs, 0));
+  return { available: aligned && fresh && afterZoneTouch && close !== null, aligned, fresh, afterZoneTouch, close, barTimeMs, receivedAt: ctx.receivedAt || null, rayRegime: ctx.rayRegime || null, fvvo: finite(ctx.fvvo, null), slope: finite(ctx.slope, null), rsi: finite(ctx.rsi, null), adx: finite(ctx.adx, null) };
+}
+
+function confirmedPullbackFastEvidence(feature, confirmPrice) {
+  const fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null);
+  const priceOk = feature.price + 1e-9 >= confirmPrice;
+  const fvvoOk = fvvo !== null && fvvo >= CFG.CONFIRMED_PULLBACK_FAST_MIN_FVVO;
+  const slopeOk = slope !== null && slope >= CFG.CONFIRMED_PULLBACK_FAST_MIN_SLOPE;
+  const rayOk = !CFG.CONFIRMED_PULLBACK_FAST_REQUIRE_RAY_NOT_BEAR || nonBearRay(feature.rayRegime);
+  return { qualifies: priceOk && fvvoOk && slopeOk && rayOk, priceOk, fvvoOk, slopeOk, rayOk, price: feature.price, fvvo, slope, rayRegime: feature.rayRegime || null };
+}
+
+async function evaluateConfirmedPullbackReclaimZone(pending, previousPrice, feature) {
+  const current = nowMs();
+  const t = pending.trailing || (pending.trailing = {});
+  const rangeLow = finite(pending.activationRangeLow, null);
+  const rangeHigh = finite(pending.activationRangeHigh, null);
+  const confirmPrice = finite(pending.breakoutConfirmPrice, null);
+  if (!(rangeLow > 0) || !(rangeHigh > rangeLow) || !(confirmPrice >= rangeHigh)) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", "CONFIRMED_PULLBACK_INVALID_LEVELS", { trailing: t }, pending);
+    await persistState("confirmed_pullback_invalid_levels");
+    log("WARN", "FVVO_CONFIRMED_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: "CONFIRMED_PULLBACK_INVALID_LEVELS", rangeLow, rangeHigh, confirmPrice });
+    return;
+  }
+  if (!t.phase) t.phase = "ARMED";
+  if (feature.price <= pending.stopPrice + 1e-9) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", "CONFIRMED_PULLBACK_LOW_AT_OR_BELOW_STOP", { trailing: t }, pending);
+    await persistState("confirmed_pullback_low_at_stop");
+    log("WARN", "FVVO_CONFIRMED_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: "CONFIRMED_PULLBACK_LOW_AT_OR_BELOW_STOP", price: feature.price, stopPrice: pending.stopPrice });
+    return;
+  }
+  if (t.phase === "ARMED") {
+    const crossed = CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS ? priceTriggerCrossed(pending, previousPrice, feature.price) : feature.price <= rangeHigh;
+    if (!crossed) return;
+    Object.assign(t, { phase: "WATCHING_ZONE_TOUCH", activatedAt: nowIso(), activatedAtMs: current, observedLowPrice: round(feature.price, 8), observedLowAt: feature.receivedAt, observedLowAtMs: feature.receivedAtMs, zoneQualifiedAtMs: 0, trackingExpiresAtMs: 0, last15mBarTimeMs: 0, confirmed15mAtMs: 0, retestSeen: false, fastConfirmObservations: 0 });
+    log("INFO", "FVVO_CONFIRMED_PULLBACK_ZONE_ACTIVATED", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, rangeLow, rangeHigh, confirmPrice, price: feature.price });
+  }
+  if (feature.price < finite(t.observedLowPrice, Infinity)) {
+    t.observedLowPrice = round(feature.price, 8); t.observedLowAt = feature.receivedAt; t.observedLowAtMs = feature.receivedAtMs;
+  }
+  const low = finite(t.observedLowPrice, feature.price);
+  const penetrationPct = percentageBelow(rangeHigh, low);
+  const lowStopBufferPct = low > pending.stopPrice ? percentageBelow(low, pending.stopPrice) : 0;
+  if (lowStopBufferPct + 1e-9 < CFG.CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", "CONFIRMED_PULLBACK_LOW_TOO_CLOSE_TO_STOP", { trailing: t }, pending);
+    await persistState("confirmed_pullback_low_too_close_stop");
+    log("WARN", "FVVO_CONFIRMED_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: "CONFIRMED_PULLBACK_LOW_TOO_CLOSE_TO_STOP", low, stopPrice: pending.stopPrice, lowStopBufferPct });
+    return;
+  }
+  if (t.phase === "WATCHING_ZONE_TOUCH") {
+    if (penetrationPct + 1e-9 < CFG.CONFIRMED_PULLBACK_MIN_PENETRATION_PCT) { await persistState("confirmed_pullback_watch_zone"); return; }
+    const trackingExpiresAtMs = Math.min(finite(pending.expiresAtMs, current + CFG.CONFIRMED_PULLBACK_MAX_TRACK_SEC * 1000), current + CFG.CONFIRMED_PULLBACK_MAX_TRACK_SEC * 1000);
+    Object.assign(t, { phase: "WAIT_15M_RECOVERY_CONFIRM", zoneQualifiedAtMs: current, zoneQualifiedAt: nowIso(), trackingExpiresAtMs, trackingExpiresAt: new Date(trackingExpiresAtMs).toISOString() });
+    log("INFO", "FVVO_CONFIRMED_PULLBACK_ZONE_QUALIFIED", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, rangeLow, rangeHigh, observedLowPrice: low, penetrationPct, confirmPrice, trackingExpiresAt: t.trackingExpiresAt });
+  }
+  if (current > finite(t.trackingExpiresAtMs, 0)) {
+    const cancelled = resolvePriceEntryPending("CANCELLED", "CONFIRMED_PULLBACK_TRACK_TIMEOUT", { trailing: t }, pending);
+    await persistState("confirmed_pullback_timeout");
+    log("WARN", "FVVO_CONFIRMED_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: "CONFIRMED_PULLBACK_TRACK_TIMEOUT", observedLowPrice: low, confirmPrice });
+    return;
+  }
+  if (t.phase === "WAIT_15M_RECOVERY_CONFIRM") {
+    const ctx = confirmedPullbackAligned15mContext(pending);
+    const threshold = confirmPrice * (1 + CFG.CONFIRMED_PULLBACK_15M_CONFIRM_BUFFER_PCT / 100);
+    if (ctx.available && ctx.barTimeMs > finite(t.last15mBarTimeMs, 0)) {
+      t.last15mBarTimeMs = ctx.barTimeMs;
+      if (ctx.close + 1e-9 >= threshold) {
+        Object.assign(t, { phase: "WAIT_CONFIRM_LEVEL_RETEST", confirmed15mAtMs: ctx.barTimeMs, confirmed15mAt: ctx.receivedAt || nowIso(), confirmed15mClose: round(ctx.close, 8), retestSeen: false, fastConfirmObservations: 0 });
+        log("INFO", "FVVO_CONFIRMED_PULLBACK_15M_CLOSE_CONFIRMED", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, confirmPrice, confirmThreshold: round(threshold, 8), close: ctx.close, barTimeMs: ctx.barTimeMs, context: ctx });
+      } else {
+        log("INFO", "FVVO_CONFIRMED_PULLBACK_WAIT_15M_CLOSE", { triggerId: pending.id, confirmPrice, confirmThreshold: round(threshold, 8), close: ctx.close, barTimeMs: ctx.barTimeMs });
+      }
+      await persistState("confirmed_pullback_15m_update");
+    }
+    return;
+  }
+  if (t.phase === "WAIT_CONFIRM_LEVEL_RETEST" || t.phase === "WAIT_FAST_RECOVERY") {
+    const holdFloor = confirmPrice * (1 - CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT / 100);
+    const touchCeiling = confirmPrice * (1 + CFG.CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT / 100);
+    const maxEntryPrice = confirmPrice * (1 + CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT / 100);
+    if (feature.price < holdFloor - 1e-9) {
+      Object.assign(t, { phase: "WAIT_15M_RECOVERY_CONFIRM", confirmed15mAtMs: 0, confirmed15mAt: null, confirmed15mClose: null, retestSeen: false, fastConfirmObservations: 0 });
+      await persistState("confirmed_pullback_retest_failed_reconfirm");
+      log("WARN", "FVVO_CONFIRMED_PULLBACK_RETEST_FAILED_WAIT_RECONFIRM", { triggerId: pending.id, confirmPrice, holdFloor: round(holdFloor, 8), price: feature.price, action: "WAIT_NEW_ALIGNED_15M_CLOSE" });
+      return;
+    }
+    if (!t.retestSeen && feature.price <= touchCeiling + 1e-9) {
+      t.retestSeen = true; t.retestSeenAt = nowIso(); t.retestSeenAtMs = current; t.phase = "WAIT_FAST_RECOVERY";
+      log("INFO", "FVVO_CONFIRMED_PULLBACK_RETEST_HELD", { triggerId: pending.id, confirmPrice, holdFloor: round(holdFloor, 8), touchCeiling: round(touchCeiling, 8), retestPrice: feature.price });
+    }
+    if (!t.retestSeen) { await persistState("confirmed_pullback_wait_retest"); return; }
+    if (feature.price > maxEntryPrice + 1e-9) { t.fastConfirmObservations = 0; await persistState("confirmed_pullback_wait_no_chase"); return; }
+    const evidence = confirmedPullbackFastEvidence(feature, confirmPrice);
+    t.lastFastEvidence = evidence;
+    t.fastConfirmObservations = evidence.qualifies ? Math.max(0, Math.floor(finite(t.fastConfirmObservations, 0))) + 1 : 0;
+    const required = CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS;
+    if (t.fastConfirmObservations < required) {
+      await persistState("confirmed_pullback_wait_fast_recovery");
+      log("INFO", "FVVO_CONFIRMED_PULLBACK_FAST_CONFIRMING", { triggerId: pending.id, confirmPrice, observations: t.fastConfirmObservations, required, maxEntryPrice: round(maxEntryPrice, 8), evidence });
+      return;
+    }
+    const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+    if (!checked.ok) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { trailing: t }, pending);
+      await persistState("confirmed_pullback_execution_invalid");
+      log("WARN", "FVVO_CONFIRMED_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: checked.error, executionPrice: feature.price });
+      return;
+    }
+    if (CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "shadow") {
+      const shadow = resolvePriceEntryPending("SHADOW_CANDIDATE", "CONFIRMED_PULLBACK_SHADOW_CANDIDATE", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
+      await persistState("confirmed_pullback_shadow_candidate");
+      log("INFO", "FVVO_CONFIRMED_PULLBACK_SHADOW_CANDIDATE", { triggerId: shadow?.id || pending.id, confirmPrice, executionPrice: feature.price, stopPrice: pending.stopPrice, automaticOrderSent: false });
+      return;
+    }
+    await enterFromPriceTrigger(pending, feature, "CONFIRMED_PULLBACK_RECLAIM_CONFIRMED");
   }
 }
 
@@ -5237,6 +5451,10 @@ async function evaluatePriceTriggerEntry(feature) {
         await evaluateTrailingDipReclaimZone(pending, previousPrice, feature);
         continue;
       }
+      if (isConfirmedPullbackReclaimZone(pending)) {
+        await evaluateConfirmedPullbackReclaimZone(pending, previousPrice, feature);
+        continue;
+      }
       if (isBreakoutRetestReclaimZone(pending)) {
         await evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature);
         continue;
@@ -5422,7 +5640,7 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateBreakoutRetestReclaimZone, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
+module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
@@ -5458,7 +5676,7 @@ module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntr
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1b_C3_DYNAMIC_INSTRUMENT_HOTFIX_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1d_CONFIRMED_PULLBACK_ENTRY_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -5468,7 +5686,7 @@ module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntr
     workerReadyTimeoutMs: Math.max(2000, Math.floor(envNum("MULTI_WORKER_READY_TIMEOUT_MS", 20000))),
     requestTimeoutMs: Math.max(1000, Math.floor(envNum("MULTI_PROXY_TIMEOUT_MS", 15000))),
     requireSymbol: envBool("MULTI_REQUIRE_SYMBOL", true),
-    assets: envStr("MULTI_ASSETS", "SOL,ETH,BNB")
+    assets: envStr("MULTI_ASSETS", "SOL,ETH,BNB,XRP")
       .split(",")
       .map((x) => x.trim().toUpperCase())
       .filter(Boolean),
@@ -5512,7 +5730,7 @@ module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntr
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1b_${alias}_v1h_C3_DYNAMIC_INSTRUMENT_HOTFIX_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1d_${alias}_CONFIRMED_PULLBACK_ENTRY_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
