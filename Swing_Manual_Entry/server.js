@@ -76,7 +76,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1k_BREAKOUT_NO_CHASE_WAIT_TIGHT_CAP_PAPER_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1l_REENTRY_5M_ALIGNMENT_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -474,6 +474,15 @@ const CFG = {
   REENTRY_MIN_SLOPE: envNum("REENTRY_MIN_SLOPE", 0.50),
   REENTRY_MAX_CHASE_ABOVE_EMA8_PCT: envNum("REENTRY_MAX_CHASE_ABOVE_EMA8_PCT", 0.30),
   REENTRY_RECLAIM_CONFIRM_OBSERVATIONS: Math.floor(envNum("REENTRY_RECLAIM_CONFIRM_OBSERVATIONS", 2)),
+  // v1l: prevent a reclaim from using a 5m candle formed before the final pullback low.
+  REENTRY_POST_PULLBACK_5M_ALIGNMENT_ENABLED: envBool("REENTRY_POST_PULLBACK_5M_ALIGNMENT_ENABLED", true),
+  REENTRY_POST_PULLBACK_5M_REQUIRE_CLOSE_ABOVE_EMA8: envBool("REENTRY_POST_PULLBACK_5M_REQUIRE_CLOSE_ABOVE_EMA8", true),
+  REENTRY_POST_PULLBACK_5M_REQUIRE_EMA8_ABOVE_EMA18: envBool("REENTRY_POST_PULLBACK_5M_REQUIRE_EMA8_ABOVE_EMA18", true),
+  REENTRY_POST_PULLBACK_5M_MIN_FVVO: envNum("REENTRY_POST_PULLBACK_5M_MIN_FVVO", 0),
+  REENTRY_POST_PULLBACK_5M_REQUIRE_RAY_NOT_BEAR: envBool("REENTRY_POST_PULLBACK_5M_REQUIRE_RAY_NOT_BEAR", true),
+  REENTRY_POST_PULLBACK_5M_MIN_SLOPE: envNum("REENTRY_POST_PULLBACK_5M_MIN_SLOPE", -0.65),
+  REENTRY_POST_PULLBACK_5M_POSITIVE_SLOPE_BYPASS: envNum("REENTRY_POST_PULLBACK_5M_POSITIVE_SLOPE_BYPASS", 0),
+  REENTRY_POST_PULLBACK_5M_MIN_SLOPE_IMPROVEMENT: envNum("REENTRY_POST_PULLBACK_5M_MIN_SLOPE_IMPROVEMENT", 0.10),
   REENTRY_STOP_BUFFER_PCT: envNum("REENTRY_STOP_BUFFER_PCT", 0.15),
   REENTRY_MIN_STOP_DISTANCE_PCT: envNum("REENTRY_MIN_STOP_DISTANCE_PCT", 0.25),
   REENTRY_MAX_STOP_DISTANCE_PCT: envNum("REENTRY_MAX_STOP_DISTANCE_PCT", 1.20),
@@ -924,6 +933,7 @@ function configProblems() {
   if (CFG.REENTRY_MAX_BELOW_EMA18_PCT < 0 || CFG.REENTRY_MIN_BOUNCE_FROM_LOW_PCT <= 0 || CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT < 0 || CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT < 0) problems.push("INVALID_REENTRY_RECLAIM_STRUCTURE");
   if (CFG.REENTRY_MIN_RSI <= 0 || CFG.REENTRY_MAX_RSI < CFG.REENTRY_MIN_RSI || CFG.REENTRY_MIN_ADX < 0) problems.push("INVALID_REENTRY_MOMENTUM_RANGE");
   if (CFG.REENTRY_RECLAIM_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_REENTRY_RECLAIM_CONFIRM_OBSERVATIONS");
+  if (CFG.REENTRY_POST_PULLBACK_5M_MIN_SLOPE_IMPROVEMENT < 0 || CFG.REENTRY_POST_PULLBACK_5M_MIN_FVVO < -10 || CFG.REENTRY_POST_PULLBACK_5M_MIN_SLOPE < -10) problems.push("INVALID_REENTRY_POST_PULLBACK_5M_ALIGNMENT_CONFIG");
   if (CFG.REENTRY_STOP_BUFFER_PCT < 0 || CFG.REENTRY_MIN_STOP_DISTANCE_PCT <= 0 || CFG.REENTRY_MAX_STOP_DISTANCE_PCT < CFG.REENTRY_MIN_STOP_DISTANCE_PCT) problems.push("INVALID_REENTRY_STOP_PROJECTION");
   if (CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_RSI <= 0 || CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_ADX < 0 || CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_SLOPE < 0 || CFG.REENTRY_FAST_RECLAIM_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.REENTRY_FAST_RECLAIM_OVERRIDE_MAX_RSI < CFG.REENTRY_PRE_RELEASE_OVERRIDE_MIN_RSI) problems.push("INVALID_REENTRY_PRE_RELEASE_OVERRIDE");
   if (!["disabled", "shadow", "live"].includes(CFG.REENTRY_15S_FAST_LAUNCH_MODE) || !["disabled", "shadow", "live"].includes(CFG.REENTRY_15S_EARLY_TURN_MODE)) problems.push("INVALID_REENTRY_15S_LAUNCH_MODE");
@@ -3251,6 +3261,32 @@ function reentryContext(feature) {
   return { ctx, ctxAge, close, ema8, ema18, fvvo, ray, fresh, emaBull, rayBull, fvvoOk, ok: fresh && emaBull && rayBull && fvvoOk };
 }
 
+function reentryPostPullback5mAlignment(campaign, context) {
+  if (!CFG.REENTRY_POST_PULLBACK_5M_ALIGNMENT_ENABLED) return { ok: true, reason: "DISABLED" };
+  const ctx = context?.ctx;
+  const contextAtMs = finite(ctx?.receivedAtMs, finite(ctx?.barTimeMs, 0));
+  const pullbackLowAtMs = finite(campaign?.pullbackLowAtMs, finite(campaign?.pullbackSeenAtMs, 0));
+  const tracker = campaign.postPullback5mAlignment = campaign.postPullback5mAlignment && typeof campaign.postPullback5mAlignment === "object" ? campaign.postPullback5mAlignment : { barTimeMs: 0, priorSlope: null, currentSlope: null, slopeImprovement: null };
+  const barTimeMs = finite(ctx?.barTimeMs, contextAtMs);
+  if (barTimeMs > finite(tracker.barTimeMs, 0)) {
+    tracker.priorSlope = finite(tracker.currentSlope, null);
+    tracker.currentSlope = finite(ctx?.slope, null);
+    tracker.slopeImprovement = tracker.priorSlope !== null && tracker.currentSlope !== null ? tracker.currentSlope - tracker.priorSlope : null;
+    tracker.barTimeMs = barTimeMs;
+  }
+  const newerThanLow = contextAtMs > pullbackLowAtMs;
+  const closeAboveEma8 = !CFG.REENTRY_POST_PULLBACK_5M_REQUIRE_CLOSE_ABOVE_EMA8 || (context.close !== null && context.ema8 !== null && context.close >= context.ema8);
+  const emaStack = !CFG.REENTRY_POST_PULLBACK_5M_REQUIRE_EMA8_ABOVE_EMA18 || (context.ema8 !== null && context.ema18 !== null && context.ema8 >= context.ema18);
+  const fvvoOk = context.fvvo !== null && context.fvvo >= CFG.REENTRY_POST_PULLBACK_5M_MIN_FVVO;
+  const rayOk = !CFG.REENTRY_POST_PULLBACK_5M_REQUIRE_RAY_NOT_BEAR || context.ray !== "RAY_BEAR";
+  const slope = finite(ctx?.slope, null);
+  const positiveSlope = slope !== null && slope >= CFG.REENTRY_POST_PULLBACK_5M_POSITIVE_SLOPE_BYPASS;
+  const improvingSlope = slope !== null && slope >= CFG.REENTRY_POST_PULLBACK_5M_MIN_SLOPE && tracker.slopeImprovement !== null && tracker.slopeImprovement >= CFG.REENTRY_POST_PULLBACK_5M_MIN_SLOPE_IMPROVEMENT;
+  const slopeOk = positiveSlope || improvingSlope;
+  const ok = Boolean(context.ok && newerThanLow && closeAboveEma8 && emaStack && fvvoOk && rayOk && slopeOk);
+  return { ok, reason: ok ? "POST_PULLBACK_5M_ALIGNED" : "WAIT_POST_PULLBACK_5M_ALIGNMENT", barTimeMs, contextAtMs, pullbackLowAtMs, newerThanLow, closeAboveEma8, emaStack, fvvoOk, rayOk, slopeOk, positiveSlope, improvingSlope, slope, priorSlope: tracker.priorSlope, slopeImprovement: tracker.slopeImprovement, close: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, ray: context.ray };
+}
+
 function resetReentryReclaim(campaign) {
   campaign.reclaim = { observations: 0, firstAtMs: 0, lastPrice: null };
 }
@@ -3707,7 +3743,7 @@ async function evaluateReentryShadow(feature) {
   if (price > finite(c.highestPrice, 0) + 1e-9) {
     c.highestPrice = round(price, 8);
     c.phase = "WAIT_PULLBACK";
-    c.pullbackLowPrice = null; c.pullbackDepthPct = 0; c.pullbackSeenAtMs = 0; c.pullbackSeenAt = null;
+    c.pullbackLowPrice = null; c.pullbackDepthPct = 0; c.pullbackSeenAtMs = 0; c.pullbackSeenAt = null; c.pullbackLowAtMs = 0; c.pullbackLowAt = null; c.postPullback5mAlignment = null;
     resetReentryReclaim(c);
   }
   const impulsePct = percentPnl(c.baseEntryPrice, c.highestPrice);
@@ -3732,6 +3768,9 @@ async function evaluateReentryShadow(feature) {
       c.pullbackDepthPct = round(pullbackDepthPct, 6);
       c.pullbackSeenAtMs = current;
       c.pullbackSeenAt = nowIso();
+      c.pullbackLowAtMs = current;
+      c.pullbackLowAt = nowIso();
+      c.postPullback5mAlignment = null;
       resetReentryReclaim(c);
       await persistState("reentry_pullback_seen");
       log("INFO", "FVVO_REENTRY_PULLBACK_SEEN", { campaignId: c.id, highestPrice: c.highestPrice, pullbackLowPrice: c.pullbackLowPrice, pullbackDepthPct: c.pullbackDepthPct, belowEma18Pct: round(belowEma18Pct, 6), contextReady: context.ok });
@@ -3743,6 +3782,9 @@ async function evaluateReentryShadow(feature) {
   if (price < finite(c.pullbackLowPrice, Infinity)) {
     c.pullbackLowPrice = round(price, 8);
     c.pullbackDepthPct = round(percentageBelow(c.highestPrice, price), 6);
+    c.pullbackLowAtMs = current;
+    c.pullbackLowAt = nowIso();
+    c.postPullback5mAlignment = null;
     resetReentryReclaim(c);
   }
   if (belowEma18Pct > CFG.REENTRY_MAX_BELOW_EMA18_PCT && belowEma18Pct <= CFG.REENTRY_MAX_BELOW_EMA18_PCT + CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT) reentryPullbackHysteresisAudit(c, feature, belowEma18Pct, "NEAR_INVALIDATION");
@@ -3764,6 +3806,7 @@ async function evaluateReentryShadow(feature) {
   const reclaimEma8Ok = !CFG.REENTRY_REQUIRE_RECLAIM_EMA8 || (tickEma8 !== null && price >= tickEma8);
   const chasePct = tickEma8 !== null && price > tickEma8 ? percentPnl(tickEma8, price) : 0;
   const preReleaseOverride = reentryTickContextOverride(c, feature, price, tickEma8, tickEma18, rsi, adx, fvvo, slope);
+  const postPullbackAlignment = reentryPostPullback5mAlignment(c, context);
   const contextGate = context.ok || preReleaseOverride.ok;
   const conditions = contextGate &&
     tickEma18 !== null && price >= tickEma18 * (1 - CFG.REENTRY_MAX_BELOW_EMA18_PCT / 100) &&
@@ -3788,9 +3831,13 @@ async function evaluateReentryShadow(feature) {
   const liveFastLaunch = CFG.REENTRY_15S_FAST_LAUNCH_MODE === "live" && fastLaunch.eligible;
   const liveEarlyTurn = CFG.REENTRY_15S_EARLY_TURN_MODE === "live" && earlyTurn.eligible;
   const launchPath = liveFastLaunch ? "FAST_LAUNCH_15S" : (liveEarlyTurn ? "EARLY_TURN_15S" : null);
-  const effectiveConditions = conditions || Boolean(launchPath);
+  const effectiveConditions = (conditions || Boolean(launchPath)) && postPullbackAlignment.ok;
 
   if (!effectiveConditions) {
+    if ((conditions || Boolean(launchPath)) && !postPullbackAlignment.ok && finite(c.lastPostPullbackAlignmentWaitBarTimeMs, 0) !== finite(postPullbackAlignment.barTimeMs, 0)) {
+      c.lastPostPullbackAlignmentWaitBarTimeMs = finite(postPullbackAlignment.barTimeMs, 0);
+      log("INFO", "FVVO_REENTRY_POST_PULLBACK_5M_ALIGNMENT_WAIT", { campaignId: c.id, price, ...postPullbackAlignment, action: "NO_REENTRY_UNTIL_NEW_5M_ALIGNMENT" });
+    }
     resetReentryReclaim(c);
     await persistState("reentry_wait_reclaim");
     return;
@@ -3823,6 +3870,7 @@ async function evaluateReentryShadow(feature) {
     context5m: { price: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, rayRegime: context.ray, ageSec: round(context.ctxAge, 2) },
     reentryContextMode: context.ok ? "5M_CONTEXT" : (preReleaseOverride.ok ? preReleaseOverride.source : "NONE"),
     preReleasePullbackCarried: Boolean(c.preReleasePullback?.eligible),
+    postPullback5mAlignment: postPullbackAlignment,
     mode: CFG.REENTRY_PHASE, launchPath: launchPath || "STANDARD_TWO_CONFIRM", automaticOrderSent: false,
   };
   c.observedCandidates = Number(c.observedCandidates || 0) + 1;
