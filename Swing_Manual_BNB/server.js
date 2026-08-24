@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1e_INTELLIGENT_TP_SHADOW_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1f_INTELLIGENT_TP_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -952,7 +952,7 @@ function configProblems() {
   if (CFG.MANUAL_ONE_STOP_MAX_TARGET_DISTANCE_PCT < 0) problems.push("INVALID_MAX_TARGET_DISTANCE_PCT");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC < 0) problems.push("INVALID_STOP_CONFIRM_SEC");
   if (CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_STOP_CONFIRM_OBSERVATIONS");
-  if (!["disabled", "shadow"].includes(CFG.INTELLIGENT_TP_MODE)) problems.push("INTELLIGENT_TP_MODE_MUST_BE_DISABLED_OR_SHADOW_IN_V1E");
+  if (!["disabled", "shadow", "live"].includes(CFG.INTELLIGENT_TP_MODE)) problems.push("INVALID_INTELLIGENT_TP_MODE");
   if (CFG.INTELLIGENT_TP_MAX_DISTANCE_PCT <= 0 || CFG.INTELLIGENT_TP_DECISION_WINDOW_SEC <= 0 || CFG.INTELLIGENT_TP_CONFIRM_OBSERVATIONS < 1 || CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS < 1 || CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_INTELLIGENT_TP_CORE_CONFIG");
   if (CFG.INTELLIGENT_TP_PROTECTION_BUFFER_PCT < 0 || CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_TRAIL_GIVEBACK_PCT <= 0 || CFG.INTELLIGENT_TP3_RUNNER_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_MAX_SEC <= 0) problems.push("INVALID_INTELLIGENT_TP_PROTECTION_CONFIG");
   if (CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC < 15 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC > 900 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_MAX_PRICE_DEVIATION_PCT < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_RSI <= 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_ADX < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS < 1 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS > 5) problems.push("INVALID_MANUAL_ENTRY_OVERHEAT_CONFIRMATION_CONFIG");
@@ -2959,7 +2959,7 @@ function intelligentTpRecordCandidate(position, stateTp, reason, price, feature,
   stateTp.phase = "SHADOW_EXIT_CANDIDATE";
   stateTp.history.push({ type: "SHADOW_EXIT_CANDIDATE", ...candidate });
   stateTp.history = stateTp.history.slice(-20);
-  log("WARN", "FVVO_INTELLIGENT_TP_SHADOW_EXIT_CANDIDATE", { ...candidate, tp1Price: stateTp.tp1Price, tp2Price: stateTp.tp2Price, tp3Price: stateTp.tp3Price, action: "NO_EXIT_CHANGE_SHADOW_ONLY", exitPercentCounterfactual: 100 });
+  log("WARN", CFG.INTELLIGENT_TP_MODE === "live" ? "FVVO_INTELLIGENT_TP_LIVE_EXIT_CONFIRMED" : "FVVO_INTELLIGENT_TP_SHADOW_EXIT_CANDIDATE", { ...candidate, tp1Price: stateTp.tp1Price, tp2Price: stateTp.tp2Price, tp3Price: stateTp.tp3Price, mode: CFG.INTELLIGENT_TP_MODE, action: CFG.INTELLIGENT_TP_MODE === "live" ? "EXIT_LONG_100_PERCENT" : "NO_EXIT_CHANGE_SHADOW_ONLY", exitPercent: 100 });
   return candidate;
 }
 
@@ -3067,7 +3067,12 @@ async function manageExit(feature) {
     log("INFO", runnerLiveEnabled() ? "FVVO_RUNNER_TIGHT_TRAIL_RAISED" : "FVVO_RUNNER_TIGHT_TRAIL_SHADOW_RAISED", { peakPnlPct: d.peakPnlPct, protectedPnlPct: runner.protectedPnlPct, protectedPrice: runner.protectedPrice, price, allowedGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, mode: CFG.RUNNER_EXIT_MODE });
   }
 
-  evaluateIntelligentTpShadow(p, feature, price);
+  const intelligentTpCandidate = evaluateIntelligentTpShadow(p, feature, price);
+  if (intelligentTpCandidate && CFG.INTELLIGENT_TP_MODE === "live") {
+    await persistState(`intelligent_tp_live_${intelligentTpCandidate.reason}`);
+    await requestFullExit(`FVVO_INTELLIGENT_TP_${intelligentTpCandidate.reason}`, price, feature.kind);
+    return;
+  }
 
   // Optional fixed ceiling remains available. profit_target_price=0 means no fixed ceiling.
   if (CFG.MANUAL_ONE_STOP_TARGET_EXIT_ENABLED && p.profitTargetPrice > 0 && price >= p.profitTargetPrice) {
@@ -5853,7 +5858,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1e_INTELLIGENT_TP_SHADOW_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1f_INTELLIGENT_TP_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
