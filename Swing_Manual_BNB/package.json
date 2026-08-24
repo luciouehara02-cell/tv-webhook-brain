@@ -1,12 +1,13 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1c-breakout-keep-alive-paper",
+  "name": "brainfvvo-swing-multiasset-v1g-intelligent-tp-profit-lock-paper",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing MultiAsset v1c paper runtime for SOL, ETH and BNB",
+  "description": "BrainFVVO Swing MultiAsset v1g paper-live runtime for SOL, ETH, BNB and XRP",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js && node validate_v1g_profit_locks.js",
+    "replay": "node replay_v1g_profit_locks.js"
   },
   "engines": {
     "node": ">=20"

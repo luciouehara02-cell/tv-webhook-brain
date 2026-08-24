@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1f_INTELLIGENT_TP_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1g_INTELLIGENT_TP_PROFIT_LOCK_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -342,6 +342,18 @@ const CFG = {
   INTELLIGENT_TP_PROTECTION_BUFFER_PCT: envNum("INTELLIGENT_TP_PROTECTION_BUFFER_PCT", 0.12),
   INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS", 2))),
   INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT: envNum("INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT", 0.12),
+  // v1g: retain a positive estimated net result after TP1 has been reached.
+  INTELLIGENT_TP1_COST_AWARE_FLOOR_ENABLED: envBool("INTELLIGENT_TP1_COST_AWARE_FLOOR_ENABLED", true),
+  INTELLIGENT_TP1_MIN_NET_LOCK_PCT: envNum("INTELLIGENT_TP1_MIN_NET_LOCK_PCT", 0.05),
+  // v1g: once TP2 is clean, protect the best price rather than only the static TP2 floor.
+  INTELLIGENT_TP2_PEAK_TRAIL_ENABLED: envBool("INTELLIGENT_TP2_PEAK_TRAIL_ENABLED", true),
+  INTELLIGENT_TP2_PEAK_TRAIL_GIVEBACK_PCT: envNum("INTELLIGENT_TP2_PEAK_TRAIL_GIVEBACK_PCT", 0.30),
+  INTELLIGENT_TP2_PEAK_TRAIL_HARD_BREAK_PCT: envNum("INTELLIGENT_TP2_PEAK_TRAIL_HARD_BREAK_PCT", 0.05),
+  // v1g: near TP3 is not a TP3 hit, but it earns a tighter peak trail.
+  INTELLIGENT_TP3_NEAR_MISS_ENABLED: envBool("INTELLIGENT_TP3_NEAR_MISS_ENABLED", true),
+  INTELLIGENT_TP3_NEAR_MISS_DISTANCE_PCT: envNum("INTELLIGENT_TP3_NEAR_MISS_DISTANCE_PCT", 0.05),
+  INTELLIGENT_TP3_NEAR_MISS_TRAIL_GIVEBACK_PCT: envNum("INTELLIGENT_TP3_NEAR_MISS_TRAIL_GIVEBACK_PCT", 0.25),
+  INTELLIGENT_TP3_NEAR_MISS_HARD_BREAK_PCT: envNum("INTELLIGENT_TP3_NEAR_MISS_HARD_BREAK_PCT", 0.05),
   INTELLIGENT_TP_REQUIRE_ABOVE_EMA8: envBool("INTELLIGENT_TP_REQUIRE_ABOVE_EMA8", true),
   INTELLIGENT_TP_REQUIRE_POSITIVE_FVVO: envBool("INTELLIGENT_TP_REQUIRE_POSITIVE_FVVO", true),
   INTELLIGENT_TP_REQUIRE_POSITIVE_SLOPE: envBool("INTELLIGENT_TP_REQUIRE_POSITIVE_SLOPE", true),
@@ -955,6 +967,7 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.INTELLIGENT_TP_MODE)) problems.push("INVALID_INTELLIGENT_TP_MODE");
   if (CFG.INTELLIGENT_TP_MAX_DISTANCE_PCT <= 0 || CFG.INTELLIGENT_TP_DECISION_WINDOW_SEC <= 0 || CFG.INTELLIGENT_TP_CONFIRM_OBSERVATIONS < 1 || CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS < 1 || CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_INTELLIGENT_TP_CORE_CONFIG");
   if (CFG.INTELLIGENT_TP_PROTECTION_BUFFER_PCT < 0 || CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_INITIAL_FLOOR_BELOW_TP3_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_TRAIL_GIVEBACK_PCT <= 0 || CFG.INTELLIGENT_TP3_RUNNER_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_RUNNER_MAX_SEC <= 0) problems.push("INVALID_INTELLIGENT_TP_PROTECTION_CONFIG");
+  if (CFG.INTELLIGENT_TP1_MIN_NET_LOCK_PCT < 0 || CFG.INTELLIGENT_TP2_PEAK_TRAIL_GIVEBACK_PCT <= 0 || CFG.INTELLIGENT_TP2_PEAK_TRAIL_HARD_BREAK_PCT < 0 || CFG.INTELLIGENT_TP3_NEAR_MISS_DISTANCE_PCT <= 0 || CFG.INTELLIGENT_TP3_NEAR_MISS_TRAIL_GIVEBACK_PCT <= 0 || CFG.INTELLIGENT_TP3_NEAR_MISS_HARD_BREAK_PCT < 0) problems.push("INVALID_INTELLIGENT_TP_V1G_PROFIT_LOCK_CONFIG");
   if (CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC < 15 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_EXPIRY_SEC > 900 || CFG.MANUAL_ENTRY_OVERHEAT_CONFIRM_MAX_PRICE_DEVIATION_PCT < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_RSI <= 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_ADX < 0 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS < 1 || CFG.MANUAL_ENTRY_OVERHEAT_MIN_SIGNALS > 5) problems.push("INVALID_MANUAL_ENTRY_OVERHEAT_CONFIRMATION_CONFIG");
   if (CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT < 0 || CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT > 2) problems.push("INVALID_PNL_ESTIMATED_ROUND_TRIP_COST_PCT");
   if (CFG.MANUAL_ENTRY_FILL_MAX_DEVIATION_PCT <= 0 || CFG.MANUAL_ENTRY_FILL_MAX_DEVIATION_PCT > 5) problems.push("INVALID_MANUAL_ENTRY_FILL_MAX_DEVIATION_PCT");
@@ -1167,6 +1180,8 @@ function buildIntelligentTpState(levels) {
     currentIndex: 0, highestConfirmedIndex: -1, phase: "WATCH_TARGET",
     touchedAtMs: 0, touchedAt: null, breakoutObservations: 0, rejectionObservations: 0,
     protectedFloorPrice: null, protectedByTarget: null, floorObservations: 0,
+    costAwareFloorPrice: null, peakTrailActive: false, peakTrailPeakPrice: null, peakTrailFloorPrice: null,
+    nearMissActive: false, nearMissPeakPrice: null, nearMissFloorPrice: null,
     runnerActive: false, runnerStartedAtMs: 0, runnerPeakPrice: null, runnerFloorPrice: null,
     shadowExitCandidate: null, history: [],
   };
@@ -2985,13 +3000,37 @@ function evaluateIntelligentTpShadow(position, feature, price) {
     return null;
   }
 
-  if (t.protectedFloorPrice) {
-    const effectiveFloor = Math.max(t.protectedFloorPrice, finite(position.dynamicProfit?.protectedPrice, 0), finite(position.dynamicProfit?.runner?.protectedPrice, 0));
-    const hardFloor = effectiveFloor * (1 - CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT / 100);
-    if (price <= hardFloor + 1e-9) return intelligentTpRecordCandidate(position, t, `${t.protectedByTarget}_PROTECTED_HARD_BREAK`, price, feature, { protectedFloorPrice: t.protectedFloorPrice, effectiveFloor, bear });
+  if (t.peakTrailActive && CFG.INTELLIGENT_TP2_PEAK_TRAIL_ENABLED) {
+    t.peakTrailPeakPrice = Math.max(finite(t.peakTrailPeakPrice, price), price);
+    t.peakTrailFloorPrice = round(t.peakTrailPeakPrice * (1 - CFG.INTELLIGENT_TP2_PEAK_TRAIL_GIVEBACK_PCT / 100), 8);
+  }
+  if (!t.runnerActive && CFG.INTELLIGENT_TP3_NEAR_MISS_ENABLED && finite(t.currentIndex, 0) === 2 && price < t.tp3Price && price + 1e-9 >= t.tp3Price * (1 - CFG.INTELLIGENT_TP3_NEAR_MISS_DISTANCE_PCT / 100)) {
+    if (!t.nearMissActive) log("INFO", CFG.INTELLIGENT_TP_MODE === "live" ? "FVVO_INTELLIGENT_TP_LIVE_TP3_NEAR_MISS_ARMED" : "FVVO_INTELLIGENT_TP_SHADOW_TP3_NEAR_MISS_ARMED", { tp3Price: t.tp3Price, price, distancePct: round(percentPnl(price, t.tp3Price), 6), action: "TIGHTEN_PEAK_PROTECTION_WITHOUT_DECLARING_TP3_HIT" });
+    t.nearMissActive = true;
+    t.nearMissPeakPrice = Math.max(finite(t.nearMissPeakPrice, price), price);
+    t.nearMissFloorPrice = round(t.nearMissPeakPrice * (1 - CFG.INTELLIGENT_TP3_NEAR_MISS_TRAIL_GIVEBACK_PCT / 100), 8);
+  } else if (t.nearMissActive) {
+    t.nearMissPeakPrice = Math.max(finite(t.nearMissPeakPrice, price), price);
+    t.nearMissFloorPrice = round(t.nearMissPeakPrice * (1 - CFG.INTELLIGENT_TP3_NEAR_MISS_TRAIL_GIVEBACK_PCT / 100), 8);
+  }
+
+  const floorOptions = [
+    { source: t.protectedByTarget ? `${t.protectedByTarget}_PROTECTED` : "STATIC_PROTECTED", price: finite(t.protectedFloorPrice, 0), hardBreakPct: CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT },
+    { source: "DYNAMIC_PROFIT", price: finite(position.dynamicProfit?.protectedPrice, 0), hardBreakPct: CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT },
+    { source: "RUNNER", price: finite(position.dynamicProfit?.runner?.protectedPrice, 0), hardBreakPct: CFG.INTELLIGENT_TP_PROTECTION_HARD_BREAK_PCT },
+    { source: "TP1_COST_AWARE", price: finite(t.costAwareFloorPrice, 0), hardBreakPct: 0 },
+    { source: "TP2_PEAK_TRAIL", price: finite(t.peakTrailFloorPrice, 0), hardBreakPct: CFG.INTELLIGENT_TP2_PEAK_TRAIL_HARD_BREAK_PCT },
+    { source: "TP3_NEAR_MISS_TRAIL", price: finite(t.nearMissFloorPrice, 0), hardBreakPct: CFG.INTELLIGENT_TP3_NEAR_MISS_HARD_BREAK_PCT },
+  ].filter((x) => x.price > 0).sort((a, b) => b.price - a.price);
+  if (floorOptions.length) {
+    const strongest = floorOptions[0];
+    const effectiveFloor = strongest.price;
+    const hardFloor = effectiveFloor * (1 - strongest.hardBreakPct / 100);
+    const details = { floorSource: strongest.source, effectiveFloor, hardFloor: round(hardFloor, 8), protectedFloorPrice: t.protectedFloorPrice, costAwareFloorPrice: t.costAwareFloorPrice, peakTrailPeakPrice: t.peakTrailPeakPrice, peakTrailFloorPrice: t.peakTrailFloorPrice, nearMissPeakPrice: t.nearMissPeakPrice, nearMissFloorPrice: t.nearMissFloorPrice, bear };
+    if (price <= hardFloor + 1e-9) return intelligentTpRecordCandidate(position, t, `${strongest.source}_HARD_FLOOR_BREAK`, price, feature, details);
     if (price <= effectiveFloor + 1e-9 && bear.count >= CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS) t.floorObservations = Math.max(0, finite(t.floorObservations, 0)) + 1;
     else t.floorObservations = 0;
-    if (t.floorObservations >= CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS) return intelligentTpRecordCandidate(position, t, `${t.protectedByTarget}_PROTECTED_FLOOR_BREAK`, price, feature, { protectedFloorPrice: t.protectedFloorPrice, effectiveFloor, bear });
+    if (t.floorObservations >= CFG.INTELLIGENT_TP_PROTECTION_CONFIRM_OBSERVATIONS) return intelligentTpRecordCandidate(position, t, `${strongest.source}_FLOOR_BREAK`, price, feature, details);
   }
 
   const index = Math.max(0, Math.min(2, Math.floor(finite(t.currentIndex, 0))));
@@ -3001,8 +3040,9 @@ function evaluateIntelligentTpShadow(position, feature, price) {
   const rejectionBuffer = [CFG.INTELLIGENT_TP1_REJECTION_BUFFER_PCT, CFG.INTELLIGENT_TP2_REJECTION_BUFFER_PCT, CFG.INTELLIGENT_TP3_REJECTION_BUFFER_PCT][index];
   if (t.phase === "WATCH_TARGET" && price + 1e-9 >= target) {
     Object.assign(t, { phase: "DECISION_WINDOW", touchedAtMs: current, touchedAt: nowIso(), breakoutObservations: 0, rejectionObservations: 0 });
+    if (index === 0 && CFG.INTELLIGENT_TP1_COST_AWARE_FLOOR_ENABLED) t.costAwareFloorPrice = round(position.entryPriceReference * (1 + (Math.max(0, CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT) + CFG.INTELLIGENT_TP1_MIN_NET_LOCK_PCT) / 100), 8);
     t.history.push({ type: "TARGET_TOUCHED", target: label, price: round(price, 8), at: nowIso() });
-    log("INFO", "FVVO_INTELLIGENT_TP_SHADOW_TARGET_TOUCHED", { target: label, targetPrice: target, price, immediateFixedTpPnlPct: round(percentPnl(position.entryPriceReference, price), 6), action: "WAIT_BREAKOUT_OR_REJECTION_SHADOW_ONLY" });
+    log("INFO", CFG.INTELLIGENT_TP_MODE === "live" ? "FVVO_INTELLIGENT_TP_LIVE_TARGET_TOUCHED" : "FVVO_INTELLIGENT_TP_SHADOW_TARGET_TOUCHED", { target: label, targetPrice: target, price, costAwareFloorPrice: t.costAwareFloorPrice, immediateFixedTpPnlPct: round(percentPnl(position.entryPriceReference, price), 6), action: CFG.INTELLIGENT_TP_MODE === "live" ? "WAIT_BREAKOUT_OR_REJECTION_LIVE_MANAGED" : "WAIT_BREAKOUT_OR_REJECTION_SHADOW_ONLY" });
   }
   if (t.phase !== "DECISION_WINDOW") return null;
   const breakoutThreshold = target * (1 + breakoutBuffer / 100);
@@ -3022,10 +3062,11 @@ function evaluateIntelligentTpShadow(position, feature, price) {
     t.highestConfirmedIndex = index;
     t.protectedByTarget = label;
     t.protectedFloorPrice = round(target * (1 - CFG.INTELLIGENT_TP_PROTECTION_BUFFER_PCT / 100), 8);
+    if (index === 1 && CFG.INTELLIGENT_TP2_PEAK_TRAIL_ENABLED) Object.assign(t, { peakTrailActive: true, peakTrailPeakPrice: price, peakTrailFloorPrice: round(price * (1 - CFG.INTELLIGENT_TP2_PEAK_TRAIL_GIVEBACK_PCT / 100), 8) });
     t.currentIndex = index + 1;
     Object.assign(t, { phase: "WATCH_TARGET", touchedAtMs: 0, touchedAt: null, breakoutObservations: 0, rejectionObservations: 0, floorObservations: 0 });
     t.history.push({ type: "CLEAN_BREAKOUT", target: label, price: round(price, 8), at: nowIso(), protectedFloorPrice: t.protectedFloorPrice });
-    log("INFO", "FVVO_INTELLIGENT_TP_SHADOW_CLEAN_BREAKOUT", { target: label, targetPrice: target, price, nextTarget: `TP${index + 2}`, protectedFloorPrice: t.protectedFloorPrice, continuation, action: "HOLD_100_PERCENT_SHADOW_ONLY" });
+    log("INFO", CFG.INTELLIGENT_TP_MODE === "live" ? "FVVO_INTELLIGENT_TP_LIVE_CLEAN_BREAKOUT" : "FVVO_INTELLIGENT_TP_SHADOW_CLEAN_BREAKOUT", { target: label, targetPrice: target, price, nextTarget: `TP${index + 2}`, protectedFloorPrice: t.protectedFloorPrice, peakTrailFloorPrice: t.peakTrailFloorPrice, continuation, action: CFG.INTELLIGENT_TP_MODE === "live" ? "HOLD_100_PERCENT_LIVE_MANAGED" : "HOLD_100_PERCENT_SHADOW_ONLY" });
     return null;
   }
   if (current - finite(t.touchedAtMs, current) >= CFG.INTELLIGENT_TP_DECISION_WINDOW_SEC * 1000 && price <= target + 1e-9 && bear.count >= CFG.INTELLIGENT_TP_REJECTION_MIN_BEAR_SIGNALS) return intelligentTpRecordCandidate(position, t, `${label}_DECISION_TIMEOUT_WEAK`, price, feature, { targetPrice: target, bear });
@@ -4811,6 +4852,17 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
   // resolved locally first, preserving the one-symbol/one-deal contract even on same-tick races.
   const consumed = resolvePriceEntryPending("TRIGGERED_FORWARDING", modeReason, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current, sourceEvent: feature.kind }, pending);
   if (!consumed) return;
+  if (["preferred", "deep"].includes(String(consumed.entryRole || "").toLowerCase())) {
+    const tick = feature || state.lastFeature || {};
+    const five = state.lastFeature5m || {};
+    const price = finite(tick.price, null), ema8 = finite(tick.ema8, null), ema18 = finite(tick.ema18, finite(tick.pink, null));
+    const belowBoth = price !== null && ema8 !== null && ema18 !== null && price < ema8 && price < ema18;
+    const weakSlope = finite(tick.slope, null) !== null && tick.slope < 0.10;
+    const freshFive = finite(five.receivedAtMs, null) !== null && current - five.receivedAtMs <= CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC * 1000;
+    const negativeFive = freshFive && finite(five.fvvo, null) !== null && five.fvvo <= -1;
+    const wouldDelay = (belowBoth && weakSlope) || negativeFive;
+    log("INFO", "FVVO_ENTRY_ALIGNMENT_SHADOW_AUDIT", { entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole, triggerId: consumed.id, executionReferencePrice: price, tickEma8: ema8, tickEma18: ema18, tickSlope: finite(tick.slope, null), fiveMinuteFvvo: finite(five.fvvo, null), fiveMinuteFresh: freshFive, belowTickEma8AndEma18: belowBoth, negativeFiveMinuteFvvo: negativeFive, wouldDelayUnderCandidate: wouldDelay, candidateRequirement: negativeFive ? "STRONGER_TICK_CONFIRMATION" : (belowBoth && weakSlope ? "EMA8_RECLAIM_OR_TWO_POSITIVE_SLOPE_OBSERVATIONS" : "ENTER_WITHOUT_DELAY"), action: "AUDIT_ONLY_NO_ENTRY_CHANGE" });
+  }
   const dormantDeep = captureDormantDeepFallback(consumed);
   const siblingCancelled = cancelOtherPriceEntries(consumed.id, "SIBLING_PRICE_TRIGGER_FIRED", { stateBlock: "ENTRY_TRIGGERED_BY_OTHER_SETUP" });
   if (dormantDeep) {
@@ -5858,7 +5910,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1f_INTELLIGENT_TP_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1g_INTELLIGENT_TP_PROFIT_LOCK_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
