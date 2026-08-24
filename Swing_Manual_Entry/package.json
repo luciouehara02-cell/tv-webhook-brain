@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-xrp-v1l-reentry-5m-alignment-live",
+  "name": "brainfvvo-swing-xrp-v1m-fee-aware-profit-lock-live",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing XRP v1l live re-entry 5m alignment fix",
+  "description": "BrainFVVO Swing XRP v1m live fee-aware profit lock",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1l_reentry_alignment.js",
-    "replay": "node replay_xrp_live_v1l.js"
+    "check": "node --check server.js && node validate_xrp_v1m_fee_aware_profit_lock.js",
+    "replay": "node replay_xrp_live_v1m.js"
   },
   "engines": {
     "node": ">=20"
