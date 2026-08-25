@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1i_HYBRID_PULLBACK_BULL_CONTINUATION_SHADOW_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1j_HYBRID_PULLBACK_BULL_CONTINUATION_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -263,7 +263,7 @@ const CFG = {
   // v1i: faster pullback confirmation without removing the existing confirmed
   // pullback mode. The first valid path wins: spaced fast votes, or a confirmed
   // 5m close fallback. Shadow is the default for all workers.
-  HYBRID_PULLBACK_FAST_PATH_MODE: envStr("HYBRID_PULLBACK_FAST_PATH_MODE", "shadow").toLowerCase(),
+  HYBRID_PULLBACK_FAST_PATH_MODE: envStr("HYBRID_PULLBACK_FAST_PATH_MODE", "live").toLowerCase(),
   HYBRID_PULLBACK_MIN_PENETRATION_PCT: envNum("HYBRID_PULLBACK_MIN_PENETRATION_PCT", 0.05),
   HYBRID_PULLBACK_MIN_REBOUND_PCT: envNum("HYBRID_PULLBACK_MIN_REBOUND_PCT", 0.09),
   HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT: envNum("HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT", 0.12),
@@ -351,7 +351,7 @@ const CFG = {
   // v1i wider continuation observer. It does not relax wait_no_chase or the
   // existing shallow-hold path. Generic defaults apply to SOL/ETH/BNB/XRP and
   // may be overridden per worker with SOL_/ETH_/BNB_/XRP_ prefixes.
-  BREAKOUT_BULL_CONTINUATION_MODE: envStr("BREAKOUT_BULL_CONTINUATION_MODE", "shadow").toLowerCase(),
+  BREAKOUT_BULL_CONTINUATION_MODE: envStr("BREAKOUT_BULL_CONTINUATION_MODE", "live").toLowerCase(),
   BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC: envNum("BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC", 1200),
   BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT: envNum("BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT", 0.20),
   BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT: envNum("BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT", 1.25),
@@ -6227,7 +6227,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1i_HYBRID_PULLBACK_BULL_CONTINUATION_SHADOW_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1j_HYBRID_PULLBACK_BULL_CONTINUATION_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6281,7 +6281,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1i_${alias}_HYBRID_PULLBACK_BULL_CONTINUATION_SHADOW_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1j_${alias}_HYBRID_PULLBACK_BULL_CONTINUATION_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
