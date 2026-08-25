@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1g-intelligent-tp-profit-lock-paper",
+  "name": "brainfvvo-swing-multiasset-v1i-hybrid-pullback-bull-continuation-shadow-paper",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing MultiAsset v1g paper-live runtime for SOL, ETH, BNB and XRP",
+  "description": "BrainFVVO Swing MultiAsset v1i hybrid pullback and bullish continuation shadow runtime",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_v1g_profit_locks.js",
-    "replay": "node replay_v1g_profit_locks.js"
+    "check": "node --check server.js && node validate_v1i_hybrid.js",
+    "replay": "node replay_multiasset_v1i_hybrid.js"
   },
   "engines": {
     "node": ">=20"
