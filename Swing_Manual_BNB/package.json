@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1j-hybrid-pullback-bull-continuation-live-paper",
+  "name": "brainfvvo-swing-multiasset-v1k-profitable-emergency-recovery-live-paper",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing MultiAsset v1j hybrid pullback and bullish continuation live-paper runtime",
+  "description": "BrainFVVO Swing MultiAsset v1k profitable emergency recovery live-paper runtime",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_v1j_live_paper.js",
-    "replay": "node replay_multiasset_v1i_hybrid.js"
+    "check": "node --check server.js && node validate_v1k_live_paper.js",
+    "replay": "node replay_multiasset_v1k_emergency.js"
   },
   "engines": {
     "node": ">=20"
