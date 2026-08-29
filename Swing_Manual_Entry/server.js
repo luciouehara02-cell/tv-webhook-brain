@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1p_MULTI_MATCH_PROFITABLE_EMERGENCY_RECOVERY_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1q_BREAKOUT_BULL_CONTINUATION_SHADOW_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -4532,6 +4532,27 @@ function priceEntryStatusPayload() {
       maxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC,
       requireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY,
     },
+    breakoutBullContinuation: {
+      enabled: breakoutBullContinuationMode() !== "disabled",
+      mode: breakoutBullContinuationMode(),
+      executionEffect: breakoutBullContinuationMode() === "shadow" ? "NONE_SHADOW_ONLY" : "ENTRY_ORDER_ALLOWED",
+      parentTriggerMode: "breakout_retest_reclaim_zone",
+      maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC,
+      minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT,
+      maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT,
+      minPullbackFromHighPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT,
+      minObservations: CFG.BREAKOUT_BULL_CONTINUATION_MIN_OBSERVATIONS,
+      reclaimPct: CFG.BREAKOUT_BULL_CONTINUATION_RECLAIM_PCT,
+      maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT,
+      minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX,
+      minFvvo: CFG.BREAKOUT_BULL_CONTINUATION_MIN_FVVO,
+      minSlope: CFG.BREAKOUT_BULL_CONTINUATION_MIN_SLOPE,
+      maxRsi: CFG.BREAKOUT_BULL_CONTINUATION_MAX_RSI,
+      maxExtensionFromEma8Pct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT,
+      requireEma8AboveEma18: CFG.BREAKOUT_BULL_CONTINUATION_REQUIRE_EMA8_ABOVE_EMA18,
+      requireRayBull: CFG.BREAKOUT_BULL_CONTINUATION_REQUIRE_RAY_BULL,
+      stopDistanceCapPct: CFG.BREAKOUT_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT,
+    },
     campaign: (() => {
       const members = pendingList.filter((item) => item.entryCampaign);
       if (!members.length) return null;
@@ -6272,7 +6293,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v1p_MULTI_MATCH_PROFITABLE_EMERGENCY_RECOVERY_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v1q_BREAKOUT_BULL_CONTINUATION_SHADOW_LIVE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6326,7 +6347,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1p_MULTI_MATCH_PROFITABLE_EMERGENCY_RECOVERY_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1q_BREAKOUT_BULL_CONTINUATION_SHADOW_LIVE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,

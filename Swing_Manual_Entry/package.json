@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-xrp-v1p-multi-match-profitable-emergency-recovery-live",
+  "name": "brainfvvo-swing-xrp-v1q-breakout-bull-continuation-shadow-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP live runtime matching MultiAsset v1k with retained fee-aware profit lock",
+  "description": "Standalone XRP v1q with Breakout bull continuation shadow audit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1p.js && node validate_v1g_profit_locks.js && node validate_v1h_reentry_alignment.js && node validate_v1i_hybrid.js",
-    "replay": "node replay_multiasset_v1k_emergency.js"
+    "check": "node --check server.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js",
+    "replay": "node replay_xrp_v1q_breakout_continuation.js"
   },
   "engines": {
     "node": ">=20"
