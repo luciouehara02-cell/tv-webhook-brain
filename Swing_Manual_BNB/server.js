@@ -1,8 +1,8 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1h_REENTRY_ALIGNMENT_INTELLIGENT_TP_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
-// Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
+// BrainFVVO_Swing_MultiAsset_v1l_HYBRID_BULL_CONTINUATION_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// Supervisor + retained Swing engine and v1l Hybrid continuation in ONE server.js.
 //
 // Main thread:
 //   - exposes one external /webhook + /manual + /health service
@@ -10,7 +10,7 @@
 //   - runs one isolated worker per enabled asset (default SOL, ETH, BNB)
 //
 // Worker thread:
-//   - runs the exact replay-validated Swing v1h engine below
+//   - runs the retained replay-validated Swing engine plus v1l entry path below
 //   - has its own SYMBOL, bot UUID, state file, strategy env, locks and campaigns
 //
 // Any per-symbol env override uses the asset prefix, e.g.:
@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1k_PROFITABLE_EMERGENCY_RECOVERY_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1l_HYBRID_BULL_CONTINUATION_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -286,6 +286,28 @@ const CFG = {
   HYBRID_PULLBACK_FALLBACK_5M_ENABLED: envBool("HYBRID_PULLBACK_FALLBACK_5M_ENABLED", true),
   HYBRID_PULLBACK_FALLBACK_5M_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("HYBRID_PULLBACK_FALLBACK_5M_CONFIRM_OBSERVATIONS", 1))),
   HYBRID_PULLBACK_VOTE_MAX_SEC: envNum("HYBRID_PULLBACK_VOTE_MAX_SEC", 90),
+
+  // v1l: a separate continuation rescue for a qualified Hybrid pullback that
+  // recovered too quickly for the normal no-chase window. It never widens the
+  // ordinary Hybrid entry cap. Instead it requires extension, a controlled
+  // pullback, a bullish reclaim and a new structure-derived stop.
+  HYBRID_PULLBACK_BULL_CONTINUATION_MODE: envStr("HYBRID_PULLBACK_BULL_CONTINUATION_MODE", "live").toLowerCase(),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC", 1200),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT", 0.20),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT", 1.25),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT", 0.12),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MIN_OBSERVATIONS: Math.max(2, Math.floor(envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MIN_OBSERVATIONS", 2))),
+  HYBRID_PULLBACK_BULL_CONTINUATION_RECLAIM_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_RECLAIM_PCT", 0.07),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT", 0.75),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MIN_ADX: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MIN_ADX", 22),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MIN_FVVO: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MIN_FVVO", 0.75),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MIN_SLOPE: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MIN_SLOPE", 0.15),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MAX_RSI: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MAX_RSI", 76),
+  HYBRID_PULLBACK_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT", 0.30),
+  HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_EMA8_ABOVE_EMA18: envBool("HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_EMA8_ABOVE_EMA18", true),
+  HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_RAY_BULL: envBool("HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_RAY_BULL", true),
+  HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT", 0.20),
+  HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT: envNum("HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT", 2.50),
 
   // v1h Preferred/Deep context guard. The confirmed 5m stream is used only to veto an otherwise
   // qualified 15s reclaim when the larger structure is strongly bearish. Once latched, release is
@@ -1092,6 +1114,8 @@ function configProblems() {
   if (CFG.CONFIRMED_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.CONFIRMED_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT < 0 || CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT < 0 || CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_CONFIRMED_PULLBACK_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.HYBRID_PULLBACK_FAST_PATH_MODE)) problems.push("INVALID_HYBRID_PULLBACK_FAST_PATH_MODE");
   if (CFG.HYBRID_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.HYBRID_PULLBACK_MIN_REBOUND_PCT <= 0 || CFG.HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT <= 0 || CFG.HYBRID_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.HYBRID_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.HYBRID_PULLBACK_MIN_SPACING_SEC <= 0 || CFG.HYBRID_PULLBACK_VOTE_MAX_SEC <= 0 || CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED > CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT || CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE > CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED || CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED > CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT || CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE > CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED || CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC <= 0 || CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC <= 0) problems.push("INVALID_HYBRID_PULLBACK_THRESHOLDS");
+  if (!["disabled", "shadow", "live"].includes(CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MODE)) problems.push("INVALID_HYBRID_PULLBACK_BULL_CONTINUATION_MODE");
+  if (CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT < CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_OBSERVATIONS < 2 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_RECLAIM_PCT <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.HYBRID_PULLBACK_BULL_CONTINUATION_RECLAIM_PCT || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_ADX < 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_RSI <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT <= 0 || CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT <= 0) problems.push("INVALID_HYBRID_PULLBACK_BULL_CONTINUATION_THRESHOLDS");
   if (!["cancel", "wait_no_chase"].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY");
   if (!["disabled", "shadow", "live"].includes(CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE)) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE");
   if (CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS < 1 || CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT || CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE < -10) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_THRESHOLDS");
@@ -4485,6 +4509,26 @@ function priceEntryStatusPayload() {
       dormantDeepFallbackEnabled: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED,
       dormantDeepMaxPriorExitPnlPct: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT,
     },
+    hybridPullbackBullContinuation: {
+      enabled: hybridPullbackBullContinuationMode() !== "disabled",
+      mode: hybridPullbackBullContinuationMode(),
+      maxTrackSec: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC,
+      minPeakExtensionPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT,
+      maxPeakExtensionPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT,
+      minPullbackFromHighPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT,
+      minObservations: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_OBSERVATIONS,
+      reclaimPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_RECLAIM_PCT,
+      maxEntryAboveConfirmPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT,
+      minAdx: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_ADX,
+      minFvvo: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_FVVO,
+      minSlope: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_SLOPE,
+      maxRsi: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_RSI,
+      maxExtensionFromEma8Pct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT,
+      requireEma8AboveEma18: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_EMA8_ABOVE_EMA18,
+      requireRayBull: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_RAY_BULL,
+      stopBufferPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT,
+      stopDistanceCapPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT,
+    },
     breakoutRetestReclaimZone: {
       enabled: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE !== "disabled",
       mode: breakoutRetestReclaimZoneMode(),
@@ -5071,7 +5115,8 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
   }
   log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: consumed.id, entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole || "standalone", campaignOrdinal: consumed.campaignOrdinal || 0, cancelledSiblingCount: siblingCancelled.length, triggerMode: consumed.triggerMode, triggerPrice: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, activationRangeLow: consumed.activationRangeLow || null, activationRangeHigh: consumed.activationRangeHigh || null, breakoutConfirmPrice: consumed.breakoutConfirmPrice || null, retestRangeLow: consumed.retestRangeLow || null, retestRangeHigh: consumed.retestRangeHigh || null, previousPrice: consumed.lastObservedPrice, executionReferencePrice: feature.price, stopPrice: checked.levels.stopPrice, profitTargetPrice: checked.levels.profitTargetPrice || null, marketOrderWillBeSent: true });
 
-  const result = await forward3Commas("enter_long", feature.price, modeReason === "CONFIRMED_PULLBACK_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_CONFIRMED_PULLBACK_RECLAIM" : (modeReason === "HYBRID_PULLBACK_FAST_CONFIRMED" ? "PRICE_TRIGGER_HYBRID_PULLBACK_FAST" : (modeReason === "HYBRID_PULLBACK_5M_FALLBACK_CONFIRMED" ? "PRICE_TRIGGER_HYBRID_PULLBACK_5M_FALLBACK" : (modeReason === "TRAILING_DIP_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM" : (modeReason === "TRAILING_DIP_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_TRAILING_DIP_RECLAIM_ZONE" : (modeReason === "BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE" : (modeReason === "BREAKOUT_SHALLOW_HOLD_RECLAIM_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_SHALLOW_HOLD_RECLAIM" : (modeReason === "BREAKOUT_BULL_CONTINUATION_CONFIRMED" ? "PRICE_TRIGGER_BREAKOUT_BULL_CONTINUATION" : `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`))))))), { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
+  const entryReasons = { CONFIRMED_PULLBACK_RECLAIM_CONFIRMED: "PRICE_TRIGGER_CONFIRMED_PULLBACK_RECLAIM", HYBRID_PULLBACK_FAST_CONFIRMED: "PRICE_TRIGGER_HYBRID_PULLBACK_FAST", HYBRID_PULLBACK_5M_FALLBACK_CONFIRMED: "PRICE_TRIGGER_HYBRID_PULLBACK_5M_FALLBACK", HYBRID_PULLBACK_BULL_CONTINUATION_CONFIRMED: "PRICE_TRIGGER_HYBRID_PULLBACK_BULL_CONTINUATION", TRAILING_DIP_RECLAIM_CONFIRMED: "PRICE_TRIGGER_TRAILING_DIP_RECLAIM", TRAILING_DIP_RECLAIM_ZONE_CONFIRMED: "PRICE_TRIGGER_TRAILING_DIP_RECLAIM_ZONE", BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRMED: "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE", BREAKOUT_SHALLOW_HOLD_RECLAIM_CONFIRMED: "PRICE_TRIGGER_BREAKOUT_SHALLOW_HOLD_RECLAIM", BREAKOUT_BULL_CONTINUATION_CONFIRMED: "PRICE_TRIGGER_BREAKOUT_BULL_CONTINUATION" };
+  const result = await forward3Commas("enter_long", feature.price, entryReasons[modeReason] || `PRICE_TRIGGER_${String(consumed.triggerMode || "").toUpperCase()}_CROSS`, { dedupeKey: `price_trigger_enter_${consumed.id}`, stopPct: checked.levels.stopPct });
   if (!result.ok) {
     state.position.lifecycle = "ENTRY_UNKNOWN_AFTER_FORWARD_ERROR";
     state.manual.recoveryRequired = true;
@@ -5409,6 +5454,57 @@ async function completeHybridPullbackCandidate(pending, feature, path, details) 
   return true;
 }
 
+function hybridPullbackBullContinuationMode() { return CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MODE; }
+function hybridPullbackBullContinuationRecovery(feature) {
+  const ema8 = finite(feature.ema8, null), ema18 = finite(feature.ema18, null), rsi = finite(feature.rsi, null), adx = finite(feature.adx, null), fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null);
+  const extensionFromEma8Pct = ema8 !== null && ema8 > 0 ? Math.max(0, percentPnl(ema8, feature.price)) : Infinity;
+  const evidence = { aboveEma8: ema8 !== null && feature.price >= ema8, ema8AboveEma18: ema8 !== null && ema18 !== null && ema8 > ema18, rsiOk: rsi !== null && rsi <= CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_RSI, adxOk: adx !== null && adx >= CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_ADX, fvvoOk: fvvo !== null && fvvo >= CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_FVVO, slopeOk: slope !== null && slope >= CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_SLOPE, extensionFromEma8Pct: round(extensionFromEma8Pct, 6), emaExtensionOk: extensionFromEma8Pct <= CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT + 1e-9, rayBullOk: String(feature.rayRegime || "").toUpperCase() === "RAY_BULL" };
+  evidence.ok = evidence.aboveEma8 && (!CFG.HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_EMA8_ABOVE_EMA18 || evidence.ema8AboveEma18) && evidence.rsiOk && evidence.adxOk && evidence.fvvoOk && evidence.slopeOk && evidence.emaExtensionOk && (!CFG.HYBRID_PULLBACK_BULL_CONTINUATION_REQUIRE_RAY_BULL || evidence.rayBullOk);
+  return evidence;
+}
+
+async function evaluateHybridPullbackBullContinuation(pending, feature, confirmPrice) {
+  const mode = hybridPullbackBullContinuationMode();
+  if (mode === "disabled") return false;
+  const t = pending.trailing || (pending.trailing = {}), current = nowMs();
+  if (!t.hybridContinuationActive) return false;
+  const startedAtMs = finite(t.hybridContinuationStartedAtMs, 0);
+  if (!(startedAtMs > 0) || current - startedAtMs > CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC * 1000) return false;
+  t.hybridContinuationHighestPrice = round(Math.max(finite(t.hybridContinuationHighestPrice, feature.price), feature.price), 8);
+  const highest = t.hybridContinuationHighestPrice, peakExtensionPct = percentPnl(confirmPrice, highest);
+  if (peakExtensionPct > CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT + 1e-9) {
+    if (!t.hybridContinuationBlowoffVeto) log("INFO", "FVVO_HYBRID_PULLBACK_BULL_CONTINUATION_BLOWOFF_VETO", { triggerId: pending.id, highestPrice: highest, confirmPrice, peakExtensionPct: round(peakExtensionPct, 6) });
+    t.hybridContinuationBlowoffVeto = true; return false;
+  }
+  if (t.hybridContinuationBlowoffVeto || peakExtensionPct + 1e-9 < CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT) return false;
+  const pullbackFromHighPct = percentageBelow(highest, feature.price), maxEntryPrice = confirmPrice * (1 + CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT / 100);
+  if (feature.price <= maxEntryPrice + 1e-9 && pullbackFromHighPct + 1e-9 >= CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT) {
+    const priorLow = finite(t.hybridContinuationLowPrice, null);
+    if (priorLow === null || feature.price < priorLow - 1e-9) { t.hybridContinuationLowPrice = round(feature.price, 8); t.hybridContinuationLowAtMs = feature.receivedAtMs || current; t.hybridContinuationObservations = 1; t.hybridContinuationShadowCandidateLowPrice = null; }
+    else t.hybridContinuationObservations = Math.floor(finite(t.hybridContinuationObservations, 0)) + 1;
+  }
+  const low = finite(t.hybridContinuationLowPrice, null), observations = Math.floor(finite(t.hybridContinuationObservations, 0));
+  if (low === null || observations < CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_OBSERVATIONS) return false;
+  const reclaimTarget = low * (1 + CFG.HYBRID_PULLBACK_BULL_CONTINUATION_RECLAIM_PCT / 100);
+  if (feature.price + 1e-9 < reclaimTarget || feature.price > maxEntryPrice + 1e-9) return false;
+  const recovery = hybridPullbackBullContinuationRecovery(feature);
+  if (!recovery.ok) return false;
+  const originalStopPrice = finite(pending.stopPrice, null), structuralStop = low * (1 - CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT / 100), minDistanceStopCeiling = feature.price * (1 - CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT / 100);
+  const adaptiveStopPrice = round(Math.max(originalStopPrice, Math.min(structuralStop, minDistanceStopCeiling)), 8);
+  const checked = validateStoredPriceTriggerAtExecution({ ...pending, stopPrice: adaptiveStopPrice }, feature.price);
+  if (!checked.ok || checked.levels.stopPct > CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT + 1e-9) return false;
+  const candidate = { triggerId: pending.id, entryRole: pending.entryRole || null, confirmPrice, highestPrice: highest, peakExtensionPct: round(peakExtensionPct, 6), lowPrice: low, observations, pullbackFromHighPct: round(percentageBelow(highest, low), 6), reclaimTargetPrice: round(reclaimTarget, 8), maxEntryPrice: round(maxEntryPrice, 8), candidateEntryPrice: feature.price, originalStopPrice, adaptiveStopPrice, stopDistancePct: checked.levels.stopPct, recovery };
+  if (mode === "shadow") {
+    if (finite(t.hybridContinuationShadowCandidateLowPrice, null) !== low) { t.hybridContinuationShadowCandidateLowPrice = low; log("INFO", "FVVO_HYBRID_PULLBACK_BULL_CONTINUATION_SHADOW_CANDIDATE", { ...candidate, action: "NO_ORDER_SHADOW_ONLY" }); }
+    return false;
+  }
+  pending.originalStopPriceBeforeHybridContinuation = originalStopPrice;
+  pending.stopPrice = adaptiveStopPrice;
+  log("INFO", "FVVO_HYBRID_PULLBACK_BULL_CONTINUATION_CONFIRMED", candidate);
+  await enterFromPriceTrigger(pending, feature, "HYBRID_PULLBACK_BULL_CONTINUATION_CONFIRMED");
+  return true;
+}
+
 async function evaluateHybridPullbackReclaimZone(pending, previousPrice, feature) {
   const current = nowMs();
   const t = pending.trailing || (pending.trailing = {});
@@ -5472,7 +5568,13 @@ async function evaluateHybridPullbackReclaimZone(pending, previousPrice, feature
   const reboundPct = percentPnl(low, feature.price);
   if (reboundPct + 1e-9 < CFG.HYBRID_PULLBACK_MIN_REBOUND_PCT || feature.price + 1e-9 < confirmPrice) { await persistState("hybrid_pullback_wait_recovery_cross"); return; }
   const maxEntryPrice = confirmPrice * (1 + CFG.HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT / 100);
+  if (t.hybridContinuationActive && await evaluateHybridPullbackBullContinuation(pending, feature, confirmPrice)) return;
   if (feature.price > maxEntryPrice + 1e-9) {
+    if (!t.hybridContinuationActive && hybridPullbackBullContinuationMode() !== "disabled") {
+      Object.assign(t, { hybridContinuationActive: true, hybridContinuationStartedAtMs: current, hybridContinuationHighestPrice: round(feature.price, 8), hybridContinuationLowPrice: null, hybridContinuationLowAtMs: 0, hybridContinuationObservations: 0, hybridContinuationBlowoffVeto: false, hybridContinuationShadowCandidateLowPrice: null });
+      log("INFO", "FVVO_HYBRID_PULLBACK_BULL_CONTINUATION_ARMED", { triggerId: pending.id, entryRole: pending.entryRole || null, confirmPrice, normalMaxEntryPrice: round(maxEntryPrice, 8), price: feature.price, mode: hybridPullbackBullContinuationMode() });
+    }
+    if (await evaluateHybridPullbackBullContinuation(pending, feature, confirmPrice)) return;
     t.votes = []; t.voteStartedAtMs = 0; t.consecutivePasses = 0; t.lastVoteAtMs = 0;
     await persistState("hybrid_pullback_wait_no_chase");
     log("INFO", "FVVO_HYBRID_PULLBACK_WAIT_NO_CHASE", { triggerId: pending.id, confirmPrice, maxEntryPrice: round(maxEntryPrice, 8), price: feature.price });
@@ -6215,13 +6317,14 @@ async function start() {
     postExitRecoveredBaseMode: postExitRecoveredBaseMode(), postExitRecoveredBaseWindowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC, postExitRecoveredBaseMinPriorImpulsePct: CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT, postExitRecoveredBaseMinRecoveryPct: CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT, postExitRecoveredBaseMaxChaseFromLowPct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT, postExitRecoveredBaseConfirmObservations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS, postExitRecoveredBaseMinRsi: CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI, postExitRecoveredBaseMinAdx: CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX, postExitRecoveredBaseMinFvvo: CFG.POST_EXIT_RECOVERED_BASE_MIN_FVVO, postExitRecoveredBaseMinSlope: CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE,
     reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneRequireRayNotBear: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardMode: entry5mBearGuardMode(), entry5mBearGuardMaxAgeSec: CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC, entry5mBearGuardMaxFvvo: CFG.ENTRY_5M_BEAR_GUARD_MAX_FVVO, entry5mBearGuardRequireRayBear: CFG.ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR, entry5mBearGuardApplyPreferred: CFG.ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED, entry5mBearGuardApplyDeep: CFG.ENTRY_5M_BEAR_GUARD_APPLY_DEEP, entry5mBearGuardReleaseReference: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE, entry5mBearGuardReleaseStructureTolerancePct: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT, entry5mBearGuardReleaseMinFvvo: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO, entry5mBearGuardReleaseMinSlope: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE, entry5mBearGuardReleaseRequireRayNotBear: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardReleaseConfirmObservations: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestAdaptiveConfirmEnabled: CFG.BREAKOUT_RETEST_ADAPTIVE_CONFIRM_ENABLED, breakoutRetestAdaptiveHoldTolerancePct: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT, breakoutRetestAdaptiveHoldMaxSec: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_MAX_SEC, breakoutRetestReclaimZoneMinTickSlope: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE, breakoutRetestReclaimZoneMinFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO, priceTriggerExpiryWarningSec: CFG.PRICE_TRIGGER_EXPIRY_WARNING_SEC, breakoutRetestPostExpiryShadowEnabled: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_ENABLED, breakoutRetestPostExpiryShadowSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_SEC, breakoutRetestPostExpiryShadowPerformanceSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_PERFORMANCE_SEC, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutShallowHoldReclaimMode: breakoutShallowHoldReclaimMode(), breakoutShallowHoldMaxTrackSec: CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC, breakoutShallowHoldMaxAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinPullbackFromHighPct: CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT, breakoutShallowHoldMinObservations: CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS, breakoutShallowHoldReclaimPct: CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT, breakoutShallowHoldMaxEntryAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinAdx: CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX, breakoutShallowHoldMinFvvo: CFG.BREAKOUT_SHALLOW_HOLD_MIN_FVVO, breakoutShallowHoldMinSlope: CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE, persistenceReady, configurationProblems: problems });
   log("INFO", "FVVO_HYBRID_PULLBACK_STARTUP", { mode: CFG.HYBRID_PULLBACK_FAST_PATH_MODE, preferredVotes: `${CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT}`, preferredFinalConsecutive: CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE, preferredMinSpanSec: CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC, deepVotes: `${CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT}`, deepFinalConsecutive: CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE, deepMinSpanSec: CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC, fallback5mEnabled: CFG.HYBRID_PULLBACK_FALLBACK_5M_ENABLED, chasePolicy: "wait_no_chase", configurationProblems: problems });
+  log("INFO", "FVVO_HYBRID_PULLBACK_BULL_CONTINUATION_STARTUP", { mode: hybridPullbackBullContinuationMode(), maxTrackSec: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, maxEntryAboveConfirmPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, stopBufferPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT, stopDistanceCapPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT, configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
+module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers };
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
 
@@ -6259,7 +6362,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1k_PROFITABLE_EMERGENCY_RECOVERY_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1l_HYBRID_BULL_CONTINUATION_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6313,7 +6416,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1k_${alias}_PROFITABLE_EMERGENCY_RECOVERY_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1l_${alias}_HYBRID_BULL_CONTINUATION_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
