@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1l-profitable-emergency-recovery-live-paper",
+  "name": "brainfvvo-swing-multiasset-v1n-htf-long-run-guardian-live-paper",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing MultiAsset v1l profitable emergency recovery live-paper runtime",
+  "description": "BrainFVVO Swing MultiAsset v1n HTF long-run guardian live-paper runtime",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_v1l_live_paper.js",
-    "replay": "node replay_multiasset_v1l_emergency.js"
+    "check": "node --check server.js && node validate_v1k_live_paper.js && node validate_v1l_hybrid_bull_continuation.js && node validate_v1m_bullish_momentum_hold.js && node validate_v1n_htf_long_run.js",
+    "replay": "node replay_multiasset_v1n_htf_long_run.js"
   },
   "engines": {
     "node": ">=20"
