@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1n_HTF_LONG_RUN_GUARDIAN_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1p_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + retained Swing engine and v1n HTF long-run guardian in ONE server.js.
 //
 // Main thread:
@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1n_HTF_LONG_RUN_GUARDIAN_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1p_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -114,8 +114,8 @@ const CFG = {
 
   SHADOW_ONLY: envBool("SHADOW_ONLY", false),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
-  // v1o: deploy exactly the same code to DEMO or LIVE. The sole environment selector is this variable.
-  // Valid values: demo | live. The legacy DEMO_FORWARD_ALLOWED/LIVE_FORWARD_ALLOWED flags are ignored by v1o.
+  // v1p: deploy exactly the same code to DEMO or LIVE. The sole environment selector is this variable.
+  // Valid values: demo | live. The legacy DEMO_FORWARD_ALLOWED/LIVE_FORWARD_ALLOWED flags are ignored by v1p.
   EXECUTION_MODE: envStr("EXECUTION_MODE", "live").toLowerCase(),
   C3_DRY_RUN: envBool("C3_DRY_RUN", false),
   FVVO_EMERGENCY_DISABLE_ALL_FORWARDS: envBool("FVVO_EMERGENCY_DISABLE_ALL_FORWARDS", false),
@@ -490,6 +490,24 @@ const CFG = {
   HTF_LONG_RUN_PULLBACK_EXCEPTIONAL_PCT: envNum("HTF_LONG_RUN_PULLBACK_EXCEPTIONAL_PCT", 1.50),
   HTF_LONG_RUN_MFE_HIGH_PCT: envNum("HTF_LONG_RUN_MFE_HIGH_PCT", 3.00),
   HTF_LONG_RUN_MFE_EXCEPTIONAL_PCT: envNum("HTF_LONG_RUN_MFE_EXCEPTIONAL_PCT", 6.00),
+  HTF_BOOTSTRAP_MODE: envStr("HTF_BOOTSTRAP_MODE", "live").toLowerCase(),
+  HTF_BOOTSTRAP_5M_BULLISH_BARS: Math.max(2, Math.floor(envNum("HTF_BOOTSTRAP_5M_BULLISH_BARS", 3))),
+  HTF_BOOTSTRAP_15M_BULLISH_BARS: Math.max(2, Math.floor(envNum("HTF_BOOTSTRAP_15M_BULLISH_BARS", 3))),
+  HTF_BOOTSTRAP_MAX_5M_AGE_SEC: Math.max(60, envNum("HTF_BOOTSTRAP_MAX_5M_AGE_SEC", 420)),
+  HTF_BOOTSTRAP_MIN_FVVO: envNum("HTF_BOOTSTRAP_MIN_FVVO", 0),
+  HTF_BOOTSTRAP_MIN_SLOPE: envNum("HTF_BOOTSTRAP_MIN_SLOPE", 0),
+  HTF_BOOTSTRAP_REQUIRE_RAY_NOT_BEAR: envBool("HTF_BOOTSTRAP_REQUIRE_RAY_NOT_BEAR", true),
+  // v1p: bridge the early +0.90% to +3.00% MFE gap using completed 5m
+  // structure, and confirm fast emergency releases against bearish 5m context.
+  HTF_EARLY_BRIDGE_MODE: envStr("HTF_EARLY_BRIDGE_MODE", "live").toLowerCase(),
+  HTF_EARLY_BRIDGE_MIN_MFE_PCT: envNum("HTF_EARLY_BRIDGE_MIN_MFE_PCT", 0.90),
+  HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT: envNum("HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT", 0.25),
+  HTF_EARLY_BRIDGE_BULLISH_5M_BARS: Math.max(1, Math.floor(envNum("HTF_EARLY_BRIDGE_BULLISH_5M_BARS", 2))),
+  HTF_EARLY_BRIDGE_BEARISH_5M_BARS: Math.max(1, Math.floor(envNum("HTF_EARLY_BRIDGE_BEARISH_5M_BARS", 2))),
+  HTF_EARLY_BRIDGE_MAX_5M_AGE_SEC: Math.max(300, envNum("HTF_EARLY_BRIDGE_MAX_5M_AGE_SEC", 900)),
+  HTF_LONG_RUN_SEVERE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("HTF_LONG_RUN_SEVERE_CONFIRM_OBSERVATIONS", 2))),
+  HTF_LONG_RUN_SEVERE_CONFIRM_MIN_SPAN_SEC: Math.max(0, envNum("HTF_LONG_RUN_SEVERE_CONFIRM_MIN_SPAN_SEC", 12)),
+  HTF_LONG_RUN_SEVERE_REQUIRE_5M_BEARISH: envBool("HTF_LONG_RUN_SEVERE_REQUIRE_5M_BEARISH", true),
 
   // v1d shadow-only observer A: compare the current two-tick live dynamic-profit floor
   // against a smoothed 15s micro confirmation. This observer can never forward an order.
@@ -851,7 +869,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 20,
+    schemaVersion: 22,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -864,7 +882,7 @@ function defaultState() {
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
     priceEntry: { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null },
-    htf: { m15: defaultHtfFrame(), h1: defaultHtfFrame() },
+    htf: { m5Bootstrap: defaultHtfBootstrap5m(), m15: defaultHtfFrame(), h1: defaultHtfFrame() },
     audit: { runnerRescuePostExit: null, profitFloorMicroShadow: null, profitFloorPostExitReclaimShadow: null, breakoutPostExpiryShadows: [], lastBarTimeByKind: {} },
   };
 }
@@ -874,7 +892,7 @@ function normalizeState(raw) {
   if (!raw || typeof raw !== "object") return fallback;
   const next = { ...fallback, ...raw };
   // v1h schema migration marker: preserve compatible fields but always persist the current schema.
-  next.schemaVersion = 20;
+  next.schemaVersion = 22;
   next.forward = { ...fallback.forward, ...(raw.forward || {}) };
   next.manual = { ...fallback.manual, ...(raw.manual || {}) };
   if (next.manual.entryConfirmation && typeof next.manual.entryConfirmation !== "object") next.manual.entryConfirmation = null;
@@ -887,9 +905,13 @@ function normalizeState(raw) {
   next.autoExitRelease.positionOpenedAtMs = finite(next.autoExitRelease.positionOpenedAtMs, 0);
   next.priceEntry = { ...fallback.priceEntry, ...(raw.priceEntry || {}) };
   next.htf = {
+    m5Bootstrap: normalizeHtfBootstrap5m(raw.htf?.m5Bootstrap),
     m15: normalizeHtfFrame(raw.htf?.m15),
     h1: normalizeHtfFrame(raw.htf?.h1),
   };
+  if (!next.htf.m5Bootstrap.lastBarTimeMs && raw.lastFeature5m && typeof raw.lastFeature5m === "object") {
+    next.htf.m5Bootstrap = normalizeHtfBootstrap5m({ lastBarTimeMs: finite(raw.lastFeature5m.barTimeMs, 0), lastReceivedAtMs: finite(raw.lastFeature5m.receivedAtMs, 0), lastClose: finite(raw.lastFeature5m.price, null), ema8: finite(raw.lastFeature5m.ema8, null), ema18: finite(raw.lastFeature5m.ema18, null) });
+  }
   if (next.priceEntry.dormantDeepFallback && typeof next.priceEntry.dormantDeepFallback !== "object") next.priceEntry.dormantDeepFallback = null;
   next.audit = { ...fallback.audit, ...(raw.audit || {}) };
   next.audit.lastBarTimeByKind = next.audit.lastBarTimeByKind && typeof next.audit.lastBarTimeByKind === "object" ? next.audit.lastBarTimeByKind : {};
@@ -1005,6 +1027,9 @@ function normalizeState(raw) {
     armedAtMs: finite(p.htfLongRunGuardian?.armedAtMs, 0),
     lastLoggedAtMs: finite(p.htfLongRunGuardian?.lastLoggedAtMs, 0),
     deferrals: Math.max(0, Math.floor(finite(p.htfLongRunGuardian?.deferrals, 0))),
+    structureSource: p.htfLongRunGuardian?.structureSource || null,
+    severeFirstAtMs: finite(p.htfLongRunGuardian?.severeFirstAtMs, 0),
+    severeObservations: Math.max(0, Math.floor(finite(p.htfLongRunGuardian?.severeObservations, 0))),
   };
   p.swingExit = normalizeSwingExitState(p.swingExit);
   p.exitRequestedAt = p.exitRequestedAt || null;
@@ -1154,6 +1179,10 @@ function configProblems() {
   if (!['disabled', 'shadow', 'live'].includes(CFG.POST_EXIT_RECOVERED_BASE_MODE)) problems.push("INVALID_POST_EXIT_RECOVERED_BASE_MODE");
   if (!["disabled", "shadow", "live"].includes(CFG.HTF_LONG_RUN_GUARDIAN_MODE)) problems.push("INVALID_HTF_LONG_RUN_GUARDIAN_MODE");
   if (CFG.HTF_LONG_RUN_MIN_MFE_PCT <= 0 || CFG.HTF_LONG_RUN_MIN_LOCK_PNL_PCT < 0 || CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS < 1 || CFG.HTF_LONG_RUN_MAX_DATA_AGE_SEC <= 0 || CFG.HTF_LONG_RUN_PULLBACK_MID_PCT <= 0 || CFG.HTF_LONG_RUN_PULLBACK_HIGH_PCT < CFG.HTF_LONG_RUN_PULLBACK_MID_PCT || CFG.HTF_LONG_RUN_PULLBACK_EXCEPTIONAL_PCT < CFG.HTF_LONG_RUN_PULLBACK_HIGH_PCT || CFG.HTF_LONG_RUN_MFE_HIGH_PCT < CFG.HTF_LONG_RUN_MIN_MFE_PCT || CFG.HTF_LONG_RUN_MFE_EXCEPTIONAL_PCT < CFG.HTF_LONG_RUN_MFE_HIGH_PCT) problems.push("INVALID_HTF_LONG_RUN_GUARDIAN_THRESHOLDS");
+  if (!["disabled", "shadow", "live"].includes(CFG.HTF_BOOTSTRAP_MODE)) problems.push("INVALID_HTF_BOOTSTRAP_MODE");
+  if (CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS < 2 || CFG.HTF_BOOTSTRAP_15M_BULLISH_BARS < 2 || CFG.HTF_BOOTSTRAP_MAX_5M_AGE_SEC < 60 || CFG.HTF_BOOTSTRAP_MIN_FVVO < -10 || CFG.HTF_BOOTSTRAP_MIN_SLOPE < -10) problems.push("INVALID_HTF_BOOTSTRAP_THRESHOLDS");
+  if (!["disabled", "shadow", "live"].includes(CFG.HTF_EARLY_BRIDGE_MODE)) problems.push("INVALID_HTF_EARLY_BRIDGE_MODE");
+  if (CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT <= 0 || CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT > CFG.HTF_LONG_RUN_MIN_MFE_PCT || CFG.HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT < 0 || CFG.HTF_EARLY_BRIDGE_BULLISH_5M_BARS < 1 || CFG.HTF_EARLY_BRIDGE_BEARISH_5M_BARS < 1 || CFG.HTF_EARLY_BRIDGE_MAX_5M_AGE_SEC < 300 || CFG.HTF_LONG_RUN_SEVERE_CONFIRM_OBSERVATIONS < 1 || CFG.HTF_LONG_RUN_SEVERE_CONFIRM_MIN_SPAN_SEC < 0) problems.push("INVALID_HTF_EARLY_BRIDGE_THRESHOLDS");
   if (CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT < CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT || CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS < 2 || CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI <= 0 || CFG.POST_EXIT_RECOVERED_BASE_MAX_RSI < CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI || CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX < 0 || CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE < 0) problems.push("INVALID_POST_EXIT_RECOVERED_BASE_THRESHOLDS");
   if (CFG.POST_EXIT_RECOVERED_BASE_MODE === 'live' && (!CFG.REENTRY_ENABLED || CFG.REENTRY_PHASE !== 'auto' || !CFG.REENTRY_AUTO_FORWARD_ENABLED)) problems.push("POST_EXIT_RECOVERED_BASE_LIVE_REQUIRES_AUTO_REENTRY_FORWARD");
   if (CFG.YELLOW_TP_SHADOW_MIN_MFE_PCT < 0 || CFG.YELLOW_TP_SHADOW_MIN_PNL_PCT < 0) problems.push("INVALID_YELLOW_TP_SHADOW_THRESHOLDS");
@@ -1309,7 +1338,17 @@ function featureTimeGuard(feature) {
 }
 
 function defaultHtfFrame() {
-  return { currentBucketMs: 0, currentClose: null, samples: 0, ema8: null, ema18: null, priorEma18: null, bars: 0, lastClosedAtMs: 0, lastClose: null, ready: false, bullish: false, bearish: false, consecutiveBullish: 0, consecutiveBearish: 0 };
+  return { currentBucketMs: 0, currentClose: null, samples: 0, ema8: null, ema18: null, priorEma18: null, bars: 0, lastClosedAtMs: 0, lastClose: null, ready: false, provisionalBullish: false, provisionalBearish: false, bullish: false, bearish: false, consecutiveBullish: 0, consecutiveBearish: 0 };
+}
+
+function defaultHtfBootstrap5m() {
+  return { currentBucketMs: 0, currentFeature: null, lastBarTimeMs: 0, lastReceivedAtMs: 0, lastClose: null, ema8: null, ema18: null, priorEma18: null, bullish: false, bearish: false, structuralBullish: false, structuralBearish: false, consecutiveBullish: 0, consecutiveBearish: 0, consecutiveStructuralBullish: 0, consecutiveStructuralBearish: 0, bars: 0 };
+}
+
+function normalizeHtfBootstrap5m(raw) {
+  const base = defaultHtfBootstrap5m();
+  if (!raw || typeof raw !== "object") return base;
+  return { ...base, ...raw, currentBucketMs: finite(raw.currentBucketMs, 0), currentFeature: raw.currentFeature && typeof raw.currentFeature === "object" ? raw.currentFeature : null, lastBarTimeMs: finite(raw.lastBarTimeMs, 0), lastReceivedAtMs: finite(raw.lastReceivedAtMs, 0), lastClose: finite(raw.lastClose, null), ema8: finite(raw.ema8, null), ema18: finite(raw.ema18, null), priorEma18: finite(raw.priorEma18, null), bullish: Boolean(raw.bullish), bearish: Boolean(raw.bearish), structuralBullish: Boolean(raw.structuralBullish), structuralBearish: Boolean(raw.structuralBearish), consecutiveBullish: Math.max(0, Math.floor(finite(raw.consecutiveBullish, 0))), consecutiveBearish: Math.max(0, Math.floor(finite(raw.consecutiveBearish, 0))), consecutiveStructuralBullish: Math.max(0, Math.floor(finite(raw.consecutiveStructuralBullish, 0))), consecutiveStructuralBearish: Math.max(0, Math.floor(finite(raw.consecutiveStructuralBearish, 0))), bars: Math.max(0, Math.floor(finite(raw.bars, 0))) };
 }
 
 function normalizeHtfFrame(raw) {
@@ -1319,13 +1358,13 @@ function normalizeHtfFrame(raw) {
     ...base, ...raw,
     currentBucketMs: finite(raw.currentBucketMs, 0), currentClose: finite(raw.currentClose, null), samples: Math.max(0, Math.floor(finite(raw.samples, 0))),
     ema8: finite(raw.ema8, null), ema18: finite(raw.ema18, null), priorEma18: finite(raw.priorEma18, null), bars: Math.max(0, Math.floor(finite(raw.bars, 0))),
-    lastClosedAtMs: finite(raw.lastClosedAtMs, 0), lastClose: finite(raw.lastClose, null), ready: Boolean(raw.ready), bullish: Boolean(raw.bullish), bearish: Boolean(raw.bearish),
+    lastClosedAtMs: finite(raw.lastClosedAtMs, 0), lastClose: finite(raw.lastClose, null), ready: Boolean(raw.ready), provisionalBullish: Boolean(raw.provisionalBullish), provisionalBearish: Boolean(raw.provisionalBearish), bullish: Boolean(raw.bullish), bearish: Boolean(raw.bearish),
     consecutiveBullish: Math.max(0, Math.floor(finite(raw.consecutiveBullish, 0))), consecutiveBearish: Math.max(0, Math.floor(finite(raw.consecutiveBearish, 0))),
   };
 }
 
 function updateHtfFrame(key, periodMs, feature) {
-  state.htf = state.htf && typeof state.htf === "object" ? state.htf : { m15: defaultHtfFrame(), h1: defaultHtfFrame() };
+  state.htf = state.htf && typeof state.htf === "object" ? state.htf : { m5Bootstrap: defaultHtfBootstrap5m(), m15: defaultHtfFrame(), h1: defaultHtfFrame() };
   const frame = state.htf[key] = normalizeHtfFrame(state.htf[key]);
   const timestamp = finite(feature.barTimeMs, null), close = finite(feature.price, null);
   if (timestamp === null || close === null || close <= 0) return;
@@ -1343,18 +1382,45 @@ function updateHtfFrame(key, periodMs, feature) {
     frame.priorEma18 = prior18;
     frame.bars += 1; frame.lastClose = completedClose; frame.lastClosedAtMs = frame.currentBucketMs + periodMs;
     frame.ready = frame.bars >= 18 && frame.ema8 !== null && frame.ema18 !== null && prior18 !== null;
-    frame.bullish = Boolean(frame.ready && completedClose >= frame.ema18 && frame.ema8 >= frame.ema18 && frame.ema18 >= prior18);
-    frame.bearish = Boolean(frame.ready && completedClose < frame.ema18 && frame.ema8 < frame.ema18);
-    frame.consecutiveBullish = frame.bullish ? frame.consecutiveBullish + 1 : 0;
-    frame.consecutiveBearish = frame.bearish ? frame.consecutiveBearish + 1 : 0;
-    log("INFO", key === "m15" ? "FVVO_HTF_15M_BAR_CLOSED" : "FVVO_HTF_1H_BAR_CLOSED", { close: round(completedClose, 8), ema8: round(frame.ema8, 8), ema18: round(frame.ema18, 8), ready: frame.ready, bullish: frame.bullish, bearish: frame.bearish, consecutiveBullish: frame.consecutiveBullish, consecutiveBearish: frame.consecutiveBearish, bars: frame.bars, barTimeMs: frame.lastClosedAtMs });
+    frame.provisionalBullish = Boolean(prior18 !== null && completedClose >= frame.ema18 && frame.ema8 >= frame.ema18 && frame.ema18 >= prior18);
+    frame.provisionalBearish = Boolean(prior18 !== null && completedClose < frame.ema18 && frame.ema8 < frame.ema18);
+    frame.bullish = Boolean(frame.ready && frame.provisionalBullish);
+    frame.bearish = Boolean(frame.ready && frame.provisionalBearish);
+    frame.consecutiveBullish = frame.provisionalBullish ? frame.consecutiveBullish + 1 : 0;
+    frame.consecutiveBearish = frame.provisionalBearish ? frame.consecutiveBearish + 1 : 0;
+    log("INFO", key === "m15" ? "FVVO_HTF_15M_BAR_CLOSED" : "FVVO_HTF_1H_BAR_CLOSED", { close: round(completedClose, 8), ema8: round(frame.ema8, 8), ema18: round(frame.ema18, 8), ready: frame.ready, provisionalBullish: frame.provisionalBullish, provisionalBearish: frame.provisionalBearish, bullish: frame.bullish, bearish: frame.bearish, consecutiveBullish: frame.consecutiveBullish, consecutiveBearish: frame.consecutiveBearish, bars: frame.bars, barTimeMs: frame.lastClosedAtMs });
   }
   frame.currentBucketMs = bucket; frame.currentClose = close; frame.samples = 1;
 }
 
 function updateHigherTimeframes(feature) {
+  updateHtfBootstrap5m(feature);
   updateHtfFrame("m15", 15 * 60 * 1000, feature);
   updateHtfFrame("h1", 60 * 60 * 1000, feature);
+}
+
+function updateHtfBootstrap5m(feature) {
+  state.htf = state.htf && typeof state.htf === "object" ? state.htf : { m5Bootstrap: defaultHtfBootstrap5m(), m15: defaultHtfFrame(), h1: defaultHtfFrame() };
+  const b = state.htf.m5Bootstrap = normalizeHtfBootstrap5m(state.htf.m5Bootstrap);
+  const eventTimeMs = finite(feature.barTimeMs, 0);
+  if (!eventTimeMs) return;
+  const bucket = Math.floor(eventTimeMs / 300000) * 300000;
+  const snapshot = { price: finite(feature.price, null), ema8: finite(feature.ema8, null), ema18: finite(feature.ema18, null), fvvo: finite(feature.fvvo, null), slope: finite(feature.slope, null), rayRegime: String(feature.rayRegime || "RAY_NEUTRAL"), redPulse: feature.redPulse === true, receivedAtMs: finite(feature.receivedAtMs, nowMs()), eventTimeMs };
+  if (!b.currentBucketMs) { b.currentBucketMs = bucket; b.currentFeature = snapshot; return; }
+  if (bucket < b.currentBucketMs) return;
+  if (bucket === b.currentBucketMs) { b.currentFeature = snapshot; return; }
+  const completed = b.currentFeature;
+  if (!completed) { b.currentBucketMs = bucket; b.currentFeature = snapshot; return; }
+  const barTimeMs = b.currentBucketMs + 300000;
+  const close = finite(completed.price, null), ema8 = finite(completed.ema8, null), ema18 = finite(completed.ema18, null), fvvo = finite(completed.fvvo, null), slope = finite(completed.slope, null);
+  const ray = String(completed.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const risingEma18 = b.ema18 !== null && ema18 !== null && ema18 >= b.ema18;
+  const bullish = Boolean(close !== null && ema8 !== null && ema18 !== null && close >= ema18 && ema8 >= ema18 && risingEma18 && fvvo !== null && fvvo >= CFG.HTF_BOOTSTRAP_MIN_FVVO && slope !== null && slope >= CFG.HTF_BOOTSTRAP_MIN_SLOPE && (!CFG.HTF_BOOTSTRAP_REQUIRE_RAY_NOT_BEAR || !ray.startsWith("RAY_BEAR")) && completed.redPulse !== true);
+  const bearish = Boolean(close !== null && ema8 !== null && ema18 !== null && close < ema18 && ema8 < ema18);
+  const structuralBullish = Boolean(close !== null && ema8 !== null && ema18 !== null && close >= ema18 && ema8 >= ema18);
+  const structuralBearish = bearish;
+  Object.assign(b, { currentBucketMs: bucket, currentFeature: snapshot, lastBarTimeMs: barTimeMs, lastReceivedAtMs: completed.receivedAtMs, lastClose: close, priorEma18: b.ema18, ema8, ema18, bullish, bearish, structuralBullish, structuralBearish, consecutiveBullish: bullish ? b.consecutiveBullish + 1 : 0, consecutiveBearish: bearish ? b.consecutiveBearish + 1 : 0, consecutiveStructuralBullish: structuralBullish ? b.consecutiveStructuralBullish + 1 : 0, consecutiveStructuralBearish: structuralBearish ? b.consecutiveStructuralBearish + 1 : 0, bars: b.bars + 1 });
+  log("INFO", "FVVO_HTF_BOOTSTRAP_5M_UPDATED", { close, ema8, ema18, fvvo, slope, rayRegime: ray, bullish, bearish, structuralBullish, structuralBearish, consecutiveBullish: b.consecutiveBullish, consecutiveBearish: b.consecutiveBearish, consecutiveStructuralBullish: b.consecutiveStructuralBullish, consecutiveStructuralBearish: b.consecutiveStructuralBearish, requiredBullishBars: CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS, earlyBridgeRequiredBullishBars: CFG.HTF_EARLY_BRIDGE_BULLISH_5M_BARS, barTimeMs });
 }
 
 function updateFeature(feature) {
@@ -1431,7 +1497,7 @@ function buildPosition(entryPrice, levels, options = {}) {
     maxAdverseExcursionPct: 0,
     swingExit: normalizeSwingExitState(null),
     bullishMomentumHold: { active: false, baselineReason: null, baselinePrice: null, startedAtMs: 0, weakAtMs: 0, weakObservations: 0, deferrals: 0 },
-    htfLongRunGuardian: { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0 },
+    htfLongRunGuardian: { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0, structureSource: null, severeFirstAtMs: 0, severeObservations: 0 },
     exitRequestedAt: null,
     exitReason: null,
   };
@@ -1744,9 +1810,12 @@ function statusPayload() {
       mode: htfLongRunMode(), minMfePct: CFG.HTF_LONG_RUN_MIN_MFE_PCT, minLockPnlPct: CFG.HTF_LONG_RUN_MIN_LOCK_PNL_PCT,
       pullbackPct: { normal: CFG.HTF_LONG_RUN_PULLBACK_MID_PCT, high: CFG.HTF_LONG_RUN_PULLBACK_HIGH_PCT, exceptional: CFG.HTF_LONG_RUN_PULLBACK_EXCEPTIONAL_PCT },
       bearish15mBarsToRelease: CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS, require1hNotBear: CFG.HTF_LONG_RUN_REQUIRE_1H_NOT_BEAR,
-      neverOverrides: ["MANUAL_STOP", "LOSS_SIDE_THESIS", "SEVERE_FAST_BREAK", "NO_PROGRESS", "HARD_MAX_HOLD"],
+      severeRelease: { observations: CFG.HTF_LONG_RUN_SEVERE_CONFIRM_OBSERVATIONS, minSpanSec: CFG.HTF_LONG_RUN_SEVERE_CONFIRM_MIN_SPAN_SEC, requireCompleted5mBearish: CFG.HTF_LONG_RUN_SEVERE_REQUIRE_5M_BEARISH },
+      neverOverrides: ["MANUAL_STOP", "LOSS_SIDE_THESIS", "CONFIRMED_5M_ALIGNED_SEVERE_BREAK", "NO_PROGRESS", "HARD_MAX_HOLD"],
       frames: state.htf, activeState: state.position?.htfLongRunGuardian || null,
     },
+    htfBootstrapContract: { mode: htfBootstrapMode(), fiveMinuteBullishBars: CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS, provisional15mBullishBars: CFG.HTF_BOOTSTRAP_15M_BULLISH_BARS, max5mAgeSec: CFG.HTF_BOOTSTRAP_MAX_5M_AGE_SEC, minFvvo: CFG.HTF_BOOTSTRAP_MIN_FVVO, minSlope: CFG.HTF_BOOTSTRAP_MIN_SLOPE, requireRayNotBear: CFG.HTF_BOOTSTRAP_REQUIRE_RAY_NOT_BEAR },
+    htfEarlyBridgeContract: { mode: htfEarlyBridgeMode(), minMfePct: CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT, minLockPnlPct: CFG.HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT, bullish5mBarsToArm: CFG.HTF_EARLY_BRIDGE_BULLISH_5M_BARS, bearish5mBarsToRelease: CFG.HTF_EARLY_BRIDGE_BEARISH_5M_BARS, max5mAgeSec: CFG.HTF_EARLY_BRIDGE_MAX_5M_AGE_SEC },
     profitFloorShadowMonitoring: profitFloorShadowStatusPayload(),
     lossSideThesisFailContract: {
       mode: lossSideThesisFailMode(),
@@ -3403,48 +3472,105 @@ function htfLongRunMode() {
   return ["disabled", "shadow", "live"].includes(CFG.HTF_LONG_RUN_GUARDIAN_MODE) ? CFG.HTF_LONG_RUN_GUARDIAN_MODE : "disabled";
 }
 
+function htfBootstrapMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.HTF_BOOTSTRAP_MODE) ? CFG.HTF_BOOTSTRAP_MODE : "disabled";
+}
+
+function htfEarlyBridgeMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.HTF_EARLY_BRIDGE_MODE) ? CFG.HTF_EARLY_BRIDGE_MODE : "disabled";
+}
+
 function htfLongRunEvidence(position, feature, pnlPct) {
   const peak = Math.max(finite(position.peakPnlPct, 0), finite(position.dynamicProfit?.peakPnlPct, 0));
-  const m15 = normalizeHtfFrame(state.htf?.m15), h1 = normalizeHtfFrame(state.htf?.h1);
+  const m5 = normalizeHtfBootstrap5m(state.htf?.m5Bootstrap), m15 = normalizeHtfFrame(state.htf?.m15), h1 = normalizeHtfFrame(state.htf?.h1);
   const current = nowMs();
   const m15AgeSec = m15.lastClosedAtMs ? Math.max(0, (current - m15.lastClosedAtMs) / 1000) : Infinity;
   const h1AgeSec = h1.lastClosedAtMs ? Math.max(0, (current - h1.lastClosedAtMs) / 1000) : Infinity;
+  const m5AgeSec = m5.lastReceivedAtMs ? Math.max(0, (current - m5.lastReceivedAtMs) / 1000) : Infinity;
   const allowedPullbackPct = peak >= CFG.HTF_LONG_RUN_MFE_EXCEPTIONAL_PCT ? CFG.HTF_LONG_RUN_PULLBACK_EXCEPTIONAL_PCT : (peak >= CFG.HTF_LONG_RUN_MFE_HIGH_PCT ? CFG.HTF_LONG_RUN_PULLBACK_HIGH_PCT : CFG.HTF_LONG_RUN_PULLBACK_MID_PCT);
   const hardLockPnlPct = Math.max(CFG.HTF_LONG_RUN_MIN_LOCK_PNL_PCT, peak - allowedPullbackPct);
-  const severeFastBreak = Boolean(feature.redPulse) || (String(feature.rayRegime || "").startsWith("RAY_BEAR") && finite(feature.fvvo, 0) <= -3 && finite(feature.ema18, null) !== null && finite(feature.price, Infinity) < feature.ema18);
+  const severeFastBreakRaw = Boolean(feature.redPulse) || (String(feature.rayRegime || "").startsWith("RAY_BEAR") && finite(feature.fvvo, 0) <= -3 && finite(feature.ema18, null) !== null && finite(feature.price, Infinity) < feature.ema18);
   const heldSec = Math.max(0, (current - finite(position.openedAtMs, current)) / 1000);
   const m15Valid = m15.ready && m15AgeSec <= CFG.HTF_LONG_RUN_MAX_DATA_AGE_SEC;
   const h1Blocks = Boolean(CFG.HTF_LONG_RUN_REQUIRE_1H_NOT_BEAR && h1.ready && h1AgeSec <= CFG.HTF_LONG_RUN_MAX_DATA_AGE_SEC && h1.bearish);
   const alreadyActive = Boolean(position.htfLongRunGuardian?.active);
-  const m15Supports = alreadyActive ? m15.consecutiveBearish < CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS : m15.bullish;
-  const qualifies = peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && pnlPct >= hardLockPnlPct && m15Valid && m15Supports && !h1Blocks && !severeFastBreak && heldSec < CFG.SWING_HARD_MAX_HOLD_SEC;
-  return { qualifies, peakPnlPct: peak, pnlPct, allowedPullbackPct, hardLockPnlPct, heldSec, severeFastBreak, m15AgeSec, h1AgeSec, m15Supports, alreadyActive, m15, h1, h1Blocks };
+  const priorSource = position.htfLongRunGuardian?.structureSource || null;
+  const m5Fresh = m5AgeSec <= CFG.HTF_BOOTSTRAP_MAX_5M_AGE_SEC;
+  const m5Initial = m5Fresh && m5.consecutiveBullish >= CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS;
+  const m5Active = m5Fresh && m5.consecutiveBearish < 2;
+  const earlyFresh = m5AgeSec <= CFG.HTF_EARLY_BRIDGE_MAX_5M_AGE_SEC;
+  const earlyInitial = earlyFresh && m5.consecutiveStructuralBullish >= CFG.HTF_EARLY_BRIDGE_BULLISH_5M_BARS;
+  const earlyActive = earlyFresh && m5.consecutiveStructuralBearish < CFG.HTF_EARLY_BRIDGE_BEARISH_5M_BARS;
+  const provisional15Initial = m15.bars >= CFG.HTF_BOOTSTRAP_15M_BULLISH_BARS && m15AgeSec <= CFG.HTF_LONG_RUN_MAX_DATA_AGE_SEC && m15.consecutiveBullish >= CFG.HTF_BOOTSTRAP_15M_BULLISH_BARS && m5Initial;
+  const provisional15Active = m15AgeSec <= CFG.HTF_LONG_RUN_MAX_DATA_AGE_SEC && m15.consecutiveBearish < CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS;
+  const mature15Supports = m15Valid && (alreadyActive ? m15.consecutiveBearish < CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS : m15.bullish);
+  let structureSource = null, structureSupports = false;
+  if (alreadyActive && priorSource === "EARLY_5M_BRIDGE" && peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && mature15Supports) { structureSource = "MATURE_15M"; structureSupports = true; }
+  else if (alreadyActive && priorSource === "EARLY_5M_BRIDGE" && peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && provisional15Initial) { structureSource = "PROVISIONAL_15M"; structureSupports = true; }
+  else if (alreadyActive && priorSource === "MATURE_15M") { structureSource = priorSource; structureSupports = mature15Supports; }
+  else if (alreadyActive && priorSource === "PROVISIONAL_15M" && htfBootstrapMode() !== "disabled") { structureSource = priorSource; structureSupports = provisional15Active; }
+  else if (alreadyActive && priorSource === "PROVISIONAL_5M" && htfBootstrapMode() !== "disabled") { structureSource = priorSource; structureSupports = m5Active; }
+  else if (alreadyActive && priorSource === "EARLY_5M_BRIDGE" && htfEarlyBridgeMode() !== "disabled") { structureSource = priorSource; structureSupports = earlyActive; }
+  else if (peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && mature15Supports) { structureSource = "MATURE_15M"; structureSupports = true; }
+  else if (peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && htfBootstrapMode() !== "disabled" && provisional15Initial) { structureSource = "PROVISIONAL_15M"; structureSupports = true; }
+  else if (peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && htfBootstrapMode() !== "disabled" && m5Initial) { structureSource = "PROVISIONAL_5M"; structureSupports = true; }
+  else if (htfEarlyBridgeMode() !== "disabled" && earlyInitial) { structureSource = "EARLY_5M_BRIDGE"; structureSupports = true; }
+  const earlySource = structureSource === "EARLY_5M_BRIDGE";
+  const requiredMfePct = earlySource ? CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT : CFG.HTF_LONG_RUN_MIN_MFE_PCT;
+  const effectiveHardLockPnlPct = earlySource ? Math.max(CFG.HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT, peak - allowedPullbackPct) : hardLockPnlPct;
+  const profitFloorIntact = pnlPct >= effectiveHardLockPnlPct;
+  // Once the guardian is active, bullish completed-bar structure—not a transient
+  // tick-level floor touch—owns the normal exit. Stops and emergency exits retain
+  // priority in manageExit; a confirmed structural/severe break releases this hold.
+  const qualifies = peak >= requiredMfePct && structureSupports && !h1Blocks && heldSec < CFG.SWING_HARD_MAX_HOLD_SEC;
+  return { qualifies, peakPnlPct: peak, pnlPct, requiredMfePct, allowedPullbackPct, hardLockPnlPct: effectiveHardLockPnlPct, profitFloorIntact, heldSec, severeFastBreakRaw, structureSource, structureSupports, m5AgeSec, m15AgeSec, h1AgeSec, m5Initial, earlyFresh, earlyInitial, earlyActive, provisional15Initial, mature15Supports, alreadyActive, m5, m15, h1, h1Blocks };
+}
+
+function htfConfirmedSevereBreak(tracker, evidence) {
+  const fiveMinuteConfirmed = !CFG.HTF_LONG_RUN_SEVERE_REQUIRE_5M_BEARISH || Boolean(evidence.m5?.structuralBearish);
+  if (!evidence.severeFastBreakRaw || !fiveMinuteConfirmed) {
+    tracker.severeFirstAtMs = 0; tracker.severeObservations = 0;
+    return { confirmed: false, observations: 0, spanSec: 0, fiveMinuteConfirmed };
+  }
+  const current = nowMs();
+  if (!tracker.severeFirstAtMs) { tracker.severeFirstAtMs = current; tracker.severeObservations = 1; }
+  else tracker.severeObservations = Number(tracker.severeObservations || 0) + 1;
+  const spanSec = Math.max(0, (current - tracker.severeFirstAtMs) / 1000);
+  return { confirmed: tracker.severeObservations >= CFG.HTF_LONG_RUN_SEVERE_CONFIRM_OBSERVATIONS && spanSec >= CFG.HTF_LONG_RUN_SEVERE_CONFIRM_MIN_SPAN_SEC, observations: tracker.severeObservations, spanSec, fiveMinuteConfirmed };
 }
 
 function htfLongRunGuardianExit(position, feature, price, pnlPct, baselineReason) {
   const mode = htfLongRunMode();
   if (mode === "disabled") return false;
   const evidence = htfLongRunEvidence(position, feature, pnlPct);
-  const tracker = position.htfLongRunGuardian = position.htfLongRunGuardian && typeof position.htfLongRunGuardian === "object" ? position.htfLongRunGuardian : { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0 };
+  const effectiveMode = evidence.structureSource === "EARLY_5M_BRIDGE" ? htfEarlyBridgeMode() : (String(evidence.structureSource || "").startsWith("PROVISIONAL_") ? htfBootstrapMode() : mode);
+  const tracker = position.htfLongRunGuardian = position.htfLongRunGuardian && typeof position.htfLongRunGuardian === "object" ? position.htfLongRunGuardian : { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0, structureSource: null, severeFirstAtMs: 0, severeObservations: 0 };
+  const severe = htfConfirmedSevereBreak(tracker, evidence);
+  if (tracker.active && severe.confirmed) {
+    log("WARN", "FVVO_HTF_LONG_RUN_CONFIRMED_SEVERE_RELEASE", { baselineReason, price, evidence, severe, action: "BASELINE_EXIT_RELEASED" });
+    Object.assign(tracker, { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0, structureSource: null, severeFirstAtMs: 0, severeObservations: 0 });
+    return false;
+  }
   if (!evidence.qualifies) {
     if (tracker.active) log("WARN", "FVVO_HTF_LONG_RUN_GUARDIAN_RELEASED", { baselineReason, price, evidence, action: "BASELINE_EXIT_RELEASED" });
-    Object.assign(tracker, { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0 });
+    Object.assign(tracker, { active: false, baselineReason: null, armedAtMs: 0, lastLoggedAtMs: 0, deferrals: 0, structureSource: null, severeFirstAtMs: 0, severeObservations: 0 });
     return false;
   }
   const current = nowMs();
-  if (!tracker.active || tracker.baselineReason !== baselineReason) Object.assign(tracker, { active: true, baselineReason, armedAtMs: current, lastLoggedAtMs: 0, deferrals: 0 });
+  if (!tracker.active || tracker.baselineReason !== baselineReason) Object.assign(tracker, { active: true, baselineReason, armedAtMs: current, lastLoggedAtMs: 0, deferrals: 0, structureSource: evidence.structureSource });
+  else if (tracker.structureSource !== evidence.structureSource) tracker.structureSource = evidence.structureSource;
   tracker.deferrals += 1;
   if (!tracker.lastLoggedAtMs || current - tracker.lastLoggedAtMs >= 60000) {
     tracker.lastLoggedAtMs = current;
-    log("INFO", mode === "live" ? "FVVO_HTF_LONG_RUN_EXIT_DEFERRED" : "FVVO_HTF_LONG_RUN_SHADOW_CANDIDATE", { baselineReason, price, evidence, deferrals: tracker.deferrals, action: mode === "live" ? "DEFER_EXIT" : "NO_EXIT_CHANGE_SHADOW_ONLY" });
+    log("INFO", effectiveMode === "live" ? "FVVO_HTF_LONG_RUN_EXIT_DEFERRED" : "FVVO_HTF_LONG_RUN_SHADOW_CANDIDATE", { baselineReason, price, evidence, deferrals: tracker.deferrals, action: effectiveMode === "live" ? "DEFER_EXIT" : "NO_EXIT_CHANGE_SHADOW_ONLY" });
   }
-  return mode === "live";
+  return effectiveMode === "live";
 }
 
 function bullishMomentumHoldExit(position, feature, price, pnlPct, baselineReason) {
   if (htfLongRunGuardianExit(position, feature, price, pnlPct, baselineReason)) return true;
   const htf = htfLongRunEvidence(position, feature, pnlPct);
-  if (htfLongRunMode() !== "disabled" && htf.peakPnlPct >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && htf.m15.ready) return false;
+  if (htfLongRunMode() !== "disabled" && htf.peakPnlPct >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && (htf.m15.ready || htf.m5.bars >= CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS)) return false;
   return shortBullishMomentumHoldExit(position, feature, price, pnlPct, baselineReason);
 }
 
@@ -6589,6 +6715,8 @@ async function start() {
   log("INFO", "FVVO_HYBRID_PULLBACK_STARTUP", { mode: CFG.HYBRID_PULLBACK_FAST_PATH_MODE, preferredVotes: `${CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT}`, preferredFinalConsecutive: CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE, preferredMinSpanSec: CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC, deepVotes: `${CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT}`, deepFinalConsecutive: CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE, deepMinSpanSec: CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC, fallback5mEnabled: CFG.HYBRID_PULLBACK_FALLBACK_5M_ENABLED, chasePolicy: "wait_no_chase", configurationProblems: problems });
   log("INFO", "FVVO_BULLISH_MOMENTUM_HOLD_STARTUP", { mode: bullishMomentumHoldMode(), minMfePct: CFG.BULLISH_MOMENTUM_HOLD_MIN_MFE_PCT, minCurrentPnlPct: CFG.BULLISH_MOMENTUM_HOLD_MIN_PNL_PCT, minimumBullSignals: CFG.BULLISH_MOMENTUM_HOLD_MIN_SIGNALS, maxHoldSec: CFG.BULLISH_MOMENTUM_HOLD_MAX_SEC, deteriorationConfirmObservations: CFG.BULLISH_MOMENTUM_HOLD_CONFIRM_OBSERVATIONS, deteriorationMinSpanSec: CFG.BULLISH_MOMENTUM_HOLD_MIN_CONFIRM_SPAN_SEC, mandatory: { priceAboveEma18: CFG.BULLISH_MOMENTUM_HOLD_REQUIRE_PRICE_ABOVE_EMA18, emaBull: CFG.BULLISH_MOMENTUM_HOLD_REQUIRE_EMA_BULL, positiveFvvo: CFG.BULLISH_MOMENTUM_HOLD_REQUIRE_POSITIVE_FVVO, positiveSlope: CFG.BULLISH_MOMENTUM_HOLD_REQUIRE_POSITIVE_SLOPE, rayNotBear: CFG.BULLISH_MOMENTUM_HOLD_REQUIRE_RAY_NOT_BEAR }, neverOverrides: ["MANUAL_STOP", "LOSS_SIDE_THESIS", "SWING_EMERGENCY", "NO_PROGRESS", "HARD_MAX_HOLD"], configurationProblems: problems });
   log("INFO", "FVVO_HTF_LONG_RUN_GUARDIAN_STARTUP", { mode: htfLongRunMode(), minMfePct: CFG.HTF_LONG_RUN_MIN_MFE_PCT, minLockPnlPct: CFG.HTF_LONG_RUN_MIN_LOCK_PNL_PCT, pullbackPct: { normal: CFG.HTF_LONG_RUN_PULLBACK_MID_PCT, high: CFG.HTF_LONG_RUN_PULLBACK_HIGH_PCT, exceptional: CFG.HTF_LONG_RUN_PULLBACK_EXCEPTIONAL_PCT }, bearish15mBarsToRelease: CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS, require1hNotBear: CFG.HTF_LONG_RUN_REQUIRE_1H_NOT_BEAR, hardMaxHoldSec: CFG.SWING_HARD_MAX_HOLD_SEC, configurationProblems: problems });
+  log("INFO", "FVVO_HTF_BOOTSTRAP_STARTUP", { mode: htfBootstrapMode(), fiveMinuteBullishBars: CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS, provisional15mBullishBars: CFG.HTF_BOOTSTRAP_15M_BULLISH_BARS, max5mAgeSec: CFG.HTF_BOOTSTRAP_MAX_5M_AGE_SEC, minFvvo: CFG.HTF_BOOTSTRAP_MIN_FVVO, minSlope: CFG.HTF_BOOTSTRAP_MIN_SLOPE, requireRayNotBear: CFG.HTF_BOOTSTRAP_REQUIRE_RAY_NOT_BEAR, configurationProblems: problems });
+  log("INFO", "FVVO_HTF_EARLY_BRIDGE_STARTUP", { mode: htfEarlyBridgeMode(), minMfePct: CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT, minLockPnlPct: CFG.HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT, bullish5mBarsToArm: CFG.HTF_EARLY_BRIDGE_BULLISH_5M_BARS, bearish5mBarsToRelease: CFG.HTF_EARLY_BRIDGE_BEARISH_5M_BARS, max5mAgeSec: CFG.HTF_EARLY_BRIDGE_MAX_5M_AGE_SEC, severeRelease: { observations: CFG.HTF_LONG_RUN_SEVERE_CONFIRM_OBSERVATIONS, minSpanSec: CFG.HTF_LONG_RUN_SEVERE_CONFIRM_MIN_SPAN_SEC, requireCompleted5mBearish: CFG.HTF_LONG_RUN_SEVERE_REQUIRE_5M_BEARISH }, configurationProblems: problems });
   log("INFO", "FVVO_HYBRID_PULLBACK_BULL_CONTINUATION_STARTUP", { mode: hybridPullbackBullContinuationMode(), maxTrackSec: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, maxEntryAboveConfirmPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, stopBufferPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_BUFFER_PCT, stopDistanceCapPct: CFG.HYBRID_PULLBACK_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT, configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
@@ -6596,7 +6724,7 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, defaultHtfFrame, normalizeHtfFrame, updateHigherTimeframes, htfLongRunEvidence, htfLongRunGuardianExit };
+module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, defaultHtfFrame, normalizeHtfFrame, defaultHtfBootstrap5m, normalizeHtfBootstrap5m, updateHigherTimeframes, updateHtfBootstrap5m, htfLongRunEvidence, htfConfirmedSevereBreak, htfLongRunGuardianExit, htfBootstrapMode, htfEarlyBridgeMode };
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
 
@@ -6634,7 +6762,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1n_HTF_LONG_RUN_GUARDIAN_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1p_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6688,7 +6816,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1n_${alias}_HTF_LONG_RUN_GUARDIAN_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1p_${alias}_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
