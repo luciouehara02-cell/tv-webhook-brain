@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = "TickRouter_v4.4_SOL_MULTI_SWING_FORWARD_DISABLED";
+const ROUTER_NAME = "TickRouter_v4.5_DESTINATION_SYMBOL_ISOLATION";
 const PORT = Number(process.env.PORT || 8080);
 
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "");
@@ -190,6 +190,56 @@ const FVVO_BRAIN_URLS = EFFECTIVE_FVVO_BRAIN_URLS;
 
 const BRAIN_SECRET_MAP = parseJsonMap("BRAIN_SECRET_MAP_JSON");
 const FVVO_SECRET_MAP = parseJsonMap("FVVO_SECRET_MAP_JSON");
+const DEST_SYMBOL_MAP = parseJsonMap("DEST_SYMBOL_MAP_JSON");
+
+function normalizeSymbol(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "";
+  return raw.includes(":") ? raw : `BINANCE:${raw}`;
+}
+
+function configuredSymbolsFor(url) {
+  const host = hostFromUrl(url);
+  const configured = DEST_SYMBOL_MAP?.[host] ?? DEST_SYMBOL_MAP?.[url] ?? DEST_SYMBOL_MAP?.["*"];
+
+  if (configured == null || configured === "") return [];
+
+  const values = Array.isArray(configured)
+    ? configured
+    : String(configured).split(",");
+
+  return values.map(normalizeSymbol).filter(Boolean);
+}
+
+function destinationAllowsSymbol(url, symbol) {
+  const allowed = configuredSymbolsFor(url);
+
+  // Backward-compatible when a destination has not yet been mapped.
+  // Set REQUIRE_DEST_SYMBOL_MAP=true to block every unmapped destination.
+  if (!allowed.length) {
+    const requireMap =
+      String(process.env.REQUIRE_DEST_SYMBOL_MAP || "false").toLowerCase() ===
+      "true";
+    return !requireMap;
+  }
+
+  return allowed.includes(normalizeSymbol(symbol));
+}
+
+function targetsForSymbol(urls, symbol, family) {
+  return urls.filter((url) => {
+    const allowed = destinationAllowsSymbol(url, symbol);
+
+    if (!allowed) {
+      console.log(
+        `🛑 SYMBOL_ROUTE_BLOCK family=${family} host=${hostFromUrl(url)} ` +
+          `symbol=${normalizeSymbol(symbol)} allowed=${configuredSymbolsFor(url).join(",") || "UNMAPPED"}`
+      );
+    }
+
+    return allowed;
+  });
+}
 
 function extractSecret(payload) {
   return String(
@@ -296,7 +346,7 @@ function normalizeTimeValue(value) {
 }
 
 function normalizeTickPayload(inbound) {
-  const symbol = String(inbound?.symbol || inbound?.ticker || "").trim();
+  const symbol = normalizeSymbol(inbound?.symbol || inbound?.ticker || "");
 
   const price = Number(
     inbound?.price ??
@@ -851,6 +901,16 @@ app.get("/", (_req, res) => {
       Object.keys(FVVO_SECRET_MAP || {}).length
     ),
 
+    hasDestSymbolMapJson: Boolean(
+      Object.keys(DEST_SYMBOL_MAP || {}).length
+    ),
+
+    requireDestSymbolMap:
+      String(process.env.REQUIRE_DEST_SYMBOL_MAP || "false").toLowerCase() ===
+      "true",
+
+    destinationSymbolHosts: Object.keys(DEST_SYMBOL_MAP || {}),
+
     fvvoManualEntryHost: FVVO_MANUAL_ENTRY_HOST,
     fvvoSwingManualEntryUrl: FVVO_SWING_MANUAL_ENTRY_URL,
     fvvoSwingManualEntryHost: FVVO_SWING_MANUAL_ENTRY_HOST,
@@ -962,11 +1022,18 @@ app.post("/webhook", async (req, res) => {
       (kind === "fvvo_fast_tick" &&
         FORWARD_FVVO_FAST_TICK_TO_LEGACY);
 
-    const legacyTargets = mirrorFvvoFastTickToLegacy
-      ? BRAIN_URLS.length
-      : 0;
+    const eligibleLegacyUrls = mirrorFvvoFastTickToLegacy
+      ? targetsForSymbol(BRAIN_URLS, tick.symbol, "legacy_tick")
+      : [];
 
-    const fvvoTargets = FVVO_BRAIN_URLS.length;
+    const eligibleFvvoUrls = targetsForSymbol(
+      FVVO_BRAIN_URLS,
+      tick.symbol,
+      "fvvo_tick"
+    );
+
+    const legacyTargets = eligibleLegacyUrls.length;
+    const fvvoTargets = eligibleFvvoUrls.length;
 
     res.status(200).json({
       ok: true,
@@ -987,11 +1054,9 @@ app.post("/webhook", async (req, res) => {
     );
 
     const jobs = [
-      ...(mirrorFvvoFastTickToLegacy
-        ? BRAIN_URLS.map((url) => forwardLegacyTick(url, tick))
-        : []),
+      ...eligibleLegacyUrls.map((url) => forwardLegacyTick(url, tick)),
 
-      ...FVVO_BRAIN_URLS.map((url) => forwardFvvoTick(url, tick)),
+      ...eligibleFvvoUrls.map((url) => forwardFvvoTick(url, tick)),
     ];
 
     const results = await Promise.all(jobs);
@@ -1042,14 +1107,21 @@ app.post("/webhook", async (req, res) => {
       kind === "fvvo_feature_tick" &&
       FORWARD_FVVO_FEATURE_TICK_AS_FVVO_FAST_TICK;
 
-    const legacyTargets = mirrorFeatureTickToLegacy
-      ? BRAIN_URLS.length
-      : 0;
+    const eligibleLegacyUrls = mirrorFeatureTickToLegacy
+      ? targetsForSymbol(BRAIN_URLS, feature.symbol, "feature_legacy_tick")
+      : [];
 
-    const fvvoFeatureTargets = FVVO_BRAIN_URLS.length;
+    const eligibleFvvoUrls = targetsForSymbol(
+      FVVO_BRAIN_URLS,
+      feature.symbol,
+      "fvvo_feature"
+    );
+
+    const legacyTargets = eligibleLegacyUrls.length;
+    const fvvoFeatureTargets = eligibleFvvoUrls.length;
 
     const fvvoFastTickTargets = mirrorFeatureTickAsFvvoFastTick
-      ? FVVO_BRAIN_URLS.length
+      ? eligibleFvvoUrls.length
       : 0;
 
     res.status(200).json({
@@ -1077,16 +1149,14 @@ app.post("/webhook", async (req, res) => {
     );
 
     const jobs = [
-      ...(mirrorFeatureTickToLegacy
-        ? BRAIN_URLS.map((url) => forwardLegacyTick(url, feature))
-        : []),
+      ...eligibleLegacyUrls.map((url) => forwardLegacyTick(url, feature)),
 
-      ...FVVO_BRAIN_URLS.map((url) =>
+      ...eligibleFvvoUrls.map((url) =>
         forwardFvvoFeature(url, inbound, feature)
       ),
 
       ...(mirrorFeatureTickAsFvvoFastTick
-        ? FVVO_BRAIN_URLS.map((url) => forwardFvvoTick(url, feature))
+        ? eligibleFvvoUrls.map((url) => forwardFvvoTick(url, feature))
         : []),
     ];
 
@@ -1171,6 +1241,17 @@ app.listen(PORT, () => {
     `FvvoSecretMapJSON=${
       Object.keys(FVVO_SECRET_MAP || {}).length ? "ON" : "OFF"
     }`
+  );
+
+  console.log(
+    `DEST_SYMBOL_MAP_JSON=${
+      Object.keys(DEST_SYMBOL_MAP || {}).length ? "ON" : "OFF"
+    } REQUIRE_DEST_SYMBOL_MAP=${
+      String(process.env.REQUIRE_DEST_SYMBOL_MAP || "false").toLowerCase() ===
+      "true"
+        ? "true"
+        : "false"
+    } hosts=${Object.keys(DEST_SYMBOL_MAP || {}).join(",") || "(none)"}`
   );
 
   console.log(

@@ -1,8 +1,8 @@
 {
-  "name": "tickrouter-v4-feature-tick-legacy-mirror",
-  "version": "4.0.0",
+  "name": "tickrouter-v4-5-symbol-isolation",
+  "version": "4.5.0",
+  "private": true,
   "type": "module",
-  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js"
