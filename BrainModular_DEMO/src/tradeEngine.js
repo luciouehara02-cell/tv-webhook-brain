@@ -23,6 +23,7 @@ async function exit(p, reason) {
 export async function onFeature(p) {
   if (!["5", "15", "60", "240"].includes(p.tf) || !p.confirmed) return;
   S.previous[p.tf] = S.frames[p.tf]; S.frames[p.tf] = p;
+  log("📊 MTF_FEATURE", { tf: p.tf, close: p.close, ema8: p.ema8, ema18: p.ema18, rsi: p.rsi, adx: p.adx, atr: p.atr, fvvo: p.fvvo, fvvoSlope: p.fvvoSlope, phase: S.phase, inPosition: Boolean(S.position) });
   if (p.tf === "240" && !bull4h(p) && !S.position) { S.phase = "FLAT"; S.setup = null; }
   if (p.tf === "60") {
     if (S.position) { S.position.bars1h++; S.position.last1hLow = p.low; if ((p.close < p.ema18 && p.fvvo < 0 && p.fvvoSlope < 0) || (S.ray["60"]?.event === "BEARISH_TREND_CHANGE" && ageSecAt(S.ray["60"].time, p.time) < 5400)) await exit(p, "ONE_H_THESIS_INVALIDATED"); }
