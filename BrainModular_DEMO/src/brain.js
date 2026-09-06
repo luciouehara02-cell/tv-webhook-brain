@@ -22,10 +22,19 @@ export async function handleWebhook(raw) {
   }
   const key = keyOf(p); if (S.dedup.includes(key)) { S.counters.duplicate++; return { status: 200, body: { ok: true, duplicate: true } }; }
   S.dedup.push(key); if (S.dedup.length > CONFIG.EVENT_DEDUP_LIMIT) S.dedup.shift();
-  log("📩 WEBHOOK_ACCEPTED", { src: p.src, event: p.event, tf: p.tf, symbol: p.symbol, price: p.price, time: p.time });
-  if (p.src.includes("tick") || p.event.includes("TICK")) await onTick(p);
-  else if (p.src.includes("ray") || p.event.includes("TREND") || p.event.includes("BOS")) await onRay(p);
-  else if (p.src.includes("feature") || p.event.includes("FEATURE")) await onFeature(p);
+  const isTick = p.src.includes("tick") || p.event.includes("TICK");
+  const isRay = p.src.includes("ray") || p.event.includes("TREND") || p.event.includes("BOS");
+  const isLongRunFeature = p.event === "LONGRUN_FEATURE" && p.src.includes("longrun_feature");
+  const isLegacy5mFeature = p.event === "FEATURE_5M_FVVO";
+  if (isTick) {
+    if (CONFIG.LOG_TICKS) log("⚡ TICK", { src: p.src, event: p.event, symbol: p.symbol, price: p.price, time: p.time });
+    await onTick(p);
+  }
+  else if (isRay) await onRay(p);
+  else if (isLongRunFeature) await onFeature(p);
+  else if (isLegacy5mFeature) {
+    log("📊 LEGACY_5M_SIGNAL_IGNORED", { event: p.event, tf: p.tf, symbol: p.symbol, price: p.price, reason: "LONGRUN_FEATURE_IS_AUTHORITATIVE" });
+  }
   else { log("⚪ UNKNOWN_EVENT", { src: p.src, event: p.event }); return { status: 422, body: { ok: false, error: "unknown_event" } }; }
   return { status: 200, body: { ok: true, phase: S.phase, inPosition: Boolean(S.position) } };
 }
