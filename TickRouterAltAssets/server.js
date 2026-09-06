@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1d_SOL_ETH_BNB_XRP_5M_3DEST";
+const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1e_EVENT_FILTER";
 const PORT = Number(process.env.PORT || 8080);
 const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "").trim();
@@ -15,23 +15,25 @@ function clean(value) {
 function normalizeSymbol(value) { return clean(value).toUpperCase(); }
 function parseCsv(value) { return clean(value).replace(/\r?\n/g, "").split(",").map(clean).filter(Boolean); }
 function parseSymbolSet(value) { return new Set(parseCsv(value).map(normalizeSymbol)); }
+function parseKindSet(value) { return new Set(parseCsv(value).map((x) => x.toLowerCase())); }
 function hostFromUrl(url) { try { return new URL(url).host.toLowerCase(); } catch { return ""; } }
 
 const ALLOWED_SYMBOLS = parseSymbolSet(
   process.env.ALLOWED_SYMBOLS || "BINANCE:SOLUSDT,BINANCE:ETHUSDT,BINANCE:BNBUSDT,BINANCE:XRPUSDT"
 );
 
-function normalizeDestination(index, label, urlEnv, secretEnv, symbolsEnv) {
+function normalizeDestination(index, label, urlEnv, secretEnv, symbolsEnv, kindsEnv) {
   const url = clean(process.env[urlEnv] || "");
   const secret = String(process.env[secretEnv] || "").trim();
   const symbols = parseSymbolSet(process.env[symbolsEnv] || "");
-  return { index, label, urlEnv, secretEnv, symbolsEnv, url, host: hostFromUrl(url), secret, symbols, enabled: Boolean(url && hostFromUrl(url)) };
+  const kinds = parseKindSet(process.env[kindsEnv] || "");
+  return { index, label, urlEnv, secretEnv, symbolsEnv, kindsEnv, url, host: hostFromUrl(url), secret, symbols, kinds, enabled: Boolean(url && hostFromUrl(url)) };
 }
 
 const DESTINATIONS = [
-  normalizeDestination(1, "PRIMARY_MULTI_SWING", "DEST_1_URL", "DEST_1_SECRET", "DEST_1_SYMBOLS"),
-  normalizeDestination(2, "SPARE_RAILWAY_1", "DEST_2_URL", "DEST_2_SECRET", "DEST_2_SYMBOLS"),
-  normalizeDestination(3, "SPARE_RAILWAY_2", "DEST_3_URL", "DEST_3_SECRET", "DEST_3_SYMBOLS"),
+  normalizeDestination(1, "PRIMARY_MULTI_SWING", "DEST_1_URL", "DEST_1_SECRET", "DEST_1_SYMBOLS", "DEST_1_KINDS"),
+  normalizeDestination(2, "SPARE_RAILWAY_1", "DEST_2_URL", "DEST_2_SECRET", "DEST_2_SYMBOLS", "DEST_2_KINDS"),
+  normalizeDestination(3, "SPARE_RAILWAY_2", "DEST_3_URL", "DEST_3_SECRET", "DEST_3_SYMBOLS", "DEST_3_KINDS"),
 ];
 
 function extractInboundSecret(payload) {
@@ -104,7 +106,14 @@ function destinationAcceptsSymbol(dest, symbol) {
   if (!dest.symbols.size) return true;
   return dest.symbols.has(symbol);
 }
-function activeDestinationsFor(symbol) { return DESTINATIONS.filter((d) => destinationAcceptsSymbol(d, symbol)); }
+function destinationAcceptsKind(dest, kind) {
+  if (!dest.enabled) return false;
+  if (!dest.kinds.size) return true;
+  return dest.kinds.has(String(kind || "").toLowerCase());
+}
+function activeDestinationsFor(symbol, kind) {
+  return DESTINATIONS.filter((d) => destinationAcceptsSymbol(d, symbol) && destinationAcceptsKind(d, kind));
+}
 
 async function forwardOne(dest, normalized, kind) {
   if (!dest.secret) return { label: dest.label, url: dest.url, host: dest.host, ok: false, skipped: true, status: 0, reason: "MISSING_DESTINATION_SECRET", kind };
@@ -122,7 +131,7 @@ async function forwardOne(dest, normalized, kind) {
 }
 
 function publicDestination(dest) {
-  return { index: dest.index, label: dest.label, enabled: dest.enabled, url: dest.url || null, host: dest.host || null, hasSecret: Boolean(dest.secret), symbols: dest.symbols.size ? [...dest.symbols] : ["ALL_ALLOWED_SYMBOLS"] };
+  return { index: dest.index, label: dest.label, enabled: dest.enabled, url: dest.url || null, host: dest.host || null, hasSecret: Boolean(dest.secret), symbols: dest.symbols.size ? [...dest.symbols] : ["ALL_ALLOWED_SYMBOLS"], kinds: dest.kinds.size ? [...dest.kinds] : ["ALL_SUPPORTED_KINDS"] };
 }
 function healthSnapshot() {
   return {
@@ -140,7 +149,12 @@ app.get("/", (_req, res) => res.json(healthSnapshot()));
 app.get("/health", (_req, res) => res.json(healthSnapshot()));
 app.get("/routes", (_req, res) => {
   const routes = {};
-  for (const symbol of ALLOWED_SYMBOLS) routes[symbol] = activeDestinationsFor(symbol).map((d) => ({ label: d.label, url: d.url }));
+  for (const symbol of ALLOWED_SYMBOLS) {
+    routes[symbol] = {};
+    for (const kind of ["fvvo_feature_tick", "fvvo_feature_5m", "fvvo_fast_tick"]) {
+      routes[symbol][kind] = activeDestinationsFor(symbol, kind).map((d) => ({ label: d.label, url: d.url }));
+    }
+  }
   res.json({ ok: true, router: ROUTER_NAME, routes });
 });
 
@@ -159,8 +173,11 @@ app.post("/webhook", async (req, res) => {
   const normalized = normalizePayload(inbound, kind);
   if (!normalized.ok) return res.status(normalized.error === "SYMBOL_NOT_ALLOWED" ? 403 : 400).json(normalized);
 
-  const destinations = activeDestinationsFor(normalized.symbol);
-  if (!destinations.length) return res.status(503).json({ ok: false, error: "NO_ENABLED_DESTINATION_FOR_SYMBOL", symbol: normalized.symbol, configuredDestinations: DESTINATIONS.map(publicDestination) });
+  const destinations = activeDestinationsFor(normalized.symbol, kind);
+  if (!destinations.length) {
+    console.warn(`⚪ ALT_ROUTER_NO_ROUTE kind=${kind} symbol=${normalized.symbol}`);
+    return res.status(200).json({ ok: true, accepted: true, ignored: true, reason: "NO_DESTINATION_FOR_SYMBOL_AND_KIND", kind, symbol: normalized.symbol });
+  }
 
   const marker = kind === "fvvo_feature_5m" ? "📊" : "📍";
   console.log(`${marker} ALT_ROUTER_IN kind=${kind} event=${normalized.out.event || "-"} src=${normalized.out.src || "-"} symbol=${normalized.symbol} price=${normalized.price} targets=${destinations.length}`);
@@ -186,12 +203,14 @@ app.post("/webhook", async (req, res) => {
   });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+if (process.env.NODE_ENV !== "test") app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ ${ROUTER_NAME} listening on port ${PORT}`);
   console.log(`Allowed symbols: ${[...ALLOWED_SYMBOLS].join(", ")}`);
   console.log(`Inbound secret check: ${REQUIRE_INBOUND_SECRET || WEBHOOK_SECRET ? "ON" : "OFF"}`);
   for (const dest of DESTINATIONS) {
-    console.log(`Destination ${dest.index} ${dest.label}: ${dest.enabled ? dest.url : "(disabled)"} secret=${dest.secret ? "YES" : "NO"} symbols=${dest.symbols.size ? [...dest.symbols].join(",") : "ALL_ALLOWED_SYMBOLS"}`);
+    console.log(`Destination ${dest.index} ${dest.label}: ${dest.enabled ? dest.url : "(disabled)"} secret=${dest.secret ? "YES" : "NO"} symbols=${dest.symbols.size ? [...dest.symbols].join(",") : "ALL_ALLOWED_SYMBOLS"} kinds=${dest.kinds.size ? [...dest.kinds].join(",") : "ALL_SUPPORTED_KINDS"}`);
   }
   console.log("Supported routes: FEATURE_TICK_FVVO, FEATURE_5M_FVVO, FAST_TICK_FVVO");
 });
+
+export { payloadKind, normalizePayload, activeDestinationsFor, healthSnapshot };
