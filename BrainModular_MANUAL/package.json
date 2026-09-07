@@ -1,44 +1,18 @@
 {
-  "name": "brainfvvo-daily-v1k-mfe-recovery-grace-live",
-  "version": "1.5.0",
+  "name": "brainfvvo-swing-xrp-v1s-failed-breakout-guard-live",
+  "version": "1.0.0",
   "private": true,
+  "description": "Standalone XRP v1s with fast trailing dip reclaim and failed-breakout guard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js",
-    "validate": "node validation_v1j.js",
-    "replay:loss-recovery": "node loss_recovery_grace_replay_v1k.js",
-    "smoke:entry-5m-bear-guard": "node entry_5m_bear_guard_smoke_v1j.js",
-    "smoke:uuid": "node uuid_validation_smoke_v1j.js",
-    "replay:v1i-loss": "node replay_daily_v1i_loss_protection.js ${REPLAY_DATA_DIR:-/mnt/data}",
-    "replay": "node replay_full_v1x.js",
-    "replay:trailing": "node replay_trailing_dip_reclaim_v1w.js",
-    "smoke:trailing": "node trailing_dip_reclaim_smoke_v1w.js",
-    "smoke:manual-confirm": "node manual_overheat_confirmation_smoke_v1u.js",
-    "smoke:runner-audit": "RUNNER_CONTINUATION_RESCUE_POST_EXIT_AUDIT_HORIZONS_SEC=1,2 node runner_rescue_audit_smoke_v1u.js",
-    "smoke:demo": "SMOKE_MODE=demo node runtime_mode_smoke_v1s.js",
-    "smoke:live": "SMOKE_MODE=live node runtime_mode_smoke_v1s.js",
-    "smoke:yellow": "node yellow_shadow_smoke_v1s.js",
-    "smoke:pullback-shadow": "PULLBACK_TEST_MODE=shadow node dynamic_pullback_grace_smoke_v1s.js",
-    "smoke:runner-live": "RUNNER_RESCUE_TEST_MODE=live node runner_continuation_rescue_smoke_v1t.js",
-    "smoke:post-exit-recovered-base": "node post_exit_recovered_base_smoke_v1x.js",
-    "smoke:loss-side": "node loss_side_thesis_fail_smoke_v1y.js",
-    "smoke:trailing-zone": "node trailing_dip_reclaim_zone_smoke_v1z.js",
-    "smoke:dual": "node dual_dip_breakout_smoke_v1aa.js",
-    "smoke:breakout-retest": "node breakout_retest_reclaim_zone_smoke_v1ab.js",
-    "smoke:breakout-confirm-retest": "node breakout_confirm_retest_reclaim_smoke_v1ac.js",
-    "smoke:daily-adaptive-breakout": "node daily_adaptive_breakout_smoke_v1f.js",
-    "smoke:multi-setup-campaign": "node multi_setup_campaign_smoke_v1g.js",
-    "smoke:daily-shallow-order": "node daily_shallow_order_hotfix_smoke_v1h.js",
-    "replay:aug09-shallow": "node replay_daily_v1h_aug09_shallow.js",
-    "replay:aug08": "node replay_daily_v1g_aug08.js",
-    "replay:v1f": "REPLAY_DATA_DIR=/mnt/data node replay_full_v1x.js"
+    "check": "node --check server.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "express": "^4.21.2"
-  },
-  "description": "BrainFVVO Daily v1k: v1j entry protections plus MFE-qualified, time-boxed loss recovery grace with an immutable absolute stop and hard-loss floor."
+  }
 }
