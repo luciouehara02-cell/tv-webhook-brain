@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1q_BREAKOUT_BULL_CONTINUATION_SHADOW_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1s_FAILED_BREAKOUT_GUARD_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -221,15 +221,18 @@ const CFG = {
   // v1w user-armed one-input trailing dip reclaim. The operator supplies only activation_price
   // and stop_price. Once activation is crossed down, the brain records the lowest observed feature
   // price and enters on a percentage rebound. `shadow` never forwards; `live` forwards one market entry.
-  TRAILING_DIP_RECLAIM_MODE: envStr("TRAILING_DIP_RECLAIM_MODE", "shadow").toLowerCase(),
-  TRAILING_DIP_RECLAIM_MIN_DROP_PCT: envNum("TRAILING_DIP_RECLAIM_MIN_DROP_PCT", 0.10),
-  TRAILING_DIP_RECLAIM_RECLAIM_PCT: envNum("TRAILING_DIP_RECLAIM_RECLAIM_PCT", 0.05),
-  TRAILING_DIP_RECLAIM_MAX_CHASE_PCT: envNum("TRAILING_DIP_RECLAIM_MAX_CHASE_PCT", 0.12),
+  TRAILING_DIP_RECLAIM_MODE: envStr("TRAILING_DIP_RECLAIM_MODE", "live").toLowerCase(),
+  TRAILING_DIP_RECLAIM_MIN_DROP_PCT: envNum("TRAILING_DIP_RECLAIM_MIN_DROP_PCT", 0.20),
+  TRAILING_DIP_RECLAIM_RECLAIM_PCT: envNum("TRAILING_DIP_RECLAIM_RECLAIM_PCT", 0.10),
+  TRAILING_DIP_RECLAIM_MAX_CHASE_PCT: envNum("TRAILING_DIP_RECLAIM_MAX_CHASE_PCT", 0.35),
   TRAILING_DIP_RECLAIM_MAX_TRACK_SEC: envNum("TRAILING_DIP_RECLAIM_MAX_TRACK_SEC", 600),
   TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT: envNum("TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT", 0.10),
-  TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY: envBool("TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY", false),
+  TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY: envBool("TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY", true),
   TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE: envNum("TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE", 0),
-  TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR: envBool("TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR", false),
+  TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR: envBool("TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR", true),
+  TRAILING_DIP_RECLAIM_MIN_TICK_FVVO: envNum("TRAILING_DIP_RECLAIM_MIN_TICK_FVVO", 0),
+  TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS", 2))),
+  TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC: Math.max(0, envNum("TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC", 12)),
 
   // v1z range-based flush-reclaim. Activates when price crosses into activation_range_low/high
   // from above, then enters on low-based reclaim while capped by the top-of-zone chase limit.
@@ -329,6 +332,15 @@ const CFG = {
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE", 0.10),
   BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR: envBool("BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR", true),
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO", -0.50),
+  // v1s: invalidate a breakout thesis after a material peak-to-retest collapse,
+  // and require the latest completed 5m structure to recover before entry.
+  BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT: Math.max(0, envNum("BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT", 0.60)),
+  BREAKOUT_RETEST_REQUIRE_RECOVERED_5M: envBool("BREAKOUT_RETEST_REQUIRE_RECOVERED_5M", true),
+  BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC: Math.max(1, envNum("BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC", 900)),
+  BREAKOUT_RETEST_RECOVERED_5M_MIN_FVVO: envNum("BREAKOUT_RETEST_RECOVERED_5M_MIN_FVVO", 0),
+  BREAKOUT_RETEST_RECOVERED_5M_MIN_SLOPE: envNum("BREAKOUT_RETEST_RECOVERED_5M_MIN_SLOPE", 0),
+  BREAKOUT_RETEST_RECOVERED_5M_REQUIRE_EMA_ORDER: envBool("BREAKOUT_RETEST_RECOVERED_5M_REQUIRE_EMA_ORDER", true),
+  BREAKOUT_RETEST_RECOVERED_5M_REQUIRE_RAY_NOT_BEAR: envBool("BREAKOUT_RETEST_RECOVERED_5M_REQUIRE_RAY_NOT_BEAR", true),
   // v1c: an already-qualified retest is not permanently cancelled merely because
   // recovery temporarily moves above the configured entry cap. The engine waits
   // without chasing and resumes the unchanged recovery gates only after price
@@ -606,7 +618,7 @@ const CFG = {
   REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT: envNum("REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT", 0.05),
   REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT: envNum("REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT", 0.03),
   REENTRY_MIN_BOUNCE_FROM_LOW_PCT: envNum("REENTRY_MIN_BOUNCE_FROM_LOW_PCT", 0.25),
-  // v1r: optional late-reclaim ceiling. 0 disables the ceiling. This controls entry timing only; it never changes stops.
+  // v1s: optional late-reclaim ceiling. 0 disables the ceiling. This controls entry timing only; it never changes stops.
   REENTRY_MAX_BOUNCE_FROM_LOW_PCT: envNum("REENTRY_MAX_BOUNCE_FROM_LOW_PCT", 0),
   REENTRY_REQUIRE_RECLAIM_EMA8: envBool("REENTRY_REQUIRE_RECLAIM_EMA8", true),
   REENTRY_MIN_RSI: envNum("REENTRY_MIN_RSI", 54),
@@ -691,7 +703,7 @@ const CFG = {
   POST_EXIT_RECOVERED_BASE_REQUIRE_5M_CONTEXT: envBool("POST_EXIT_RECOVERED_BASE_REQUIRE_5M_CONTEXT", true),
   POST_EXIT_RECOVERED_BASE_REQUIRE_EMA8_ABOVE_EMA18: envBool("POST_EXIT_RECOVERED_BASE_REQUIRE_EMA8_ABOVE_EMA18", true),
 
-  // v1r: when a profitable AUTO_REENTRY sees a transient tick-thesis failure while the 5m thesis remains strongly bullish,
+  // v1s: when a profitable AUTO_REENTRY sees a transient tick-thesis failure while the 5m thesis remains strongly bullish,
   // optionally defer that one exit until a short recovery cross or timeout. Manual/price-trigger first legs are untouched.
   // disabled | shadow | live. Default is shadow so missing variables cannot alter production exits.
   REENTRY_CONTINUATION_GRACE_MODE: envStr("REENTRY_CONTINUATION_GRACE_MODE", "shadow").toLowerCase(),
@@ -1092,7 +1104,7 @@ function configProblems() {
   if (!["ema8", "ema18"].includes(CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE)) problems.push("INVALID_ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE");
   if (CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC < 60 || CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT < 0 || CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT > 0.20 || CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS < 1 || CFG.ENTRY_5M_BEAR_GUARD_WAIT_LOG_SEC < 15) problems.push("INVALID_ENTRY_5M_BEAR_GUARD_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.TRAILING_DIP_RECLAIM_MODE)) problems.push("INVALID_TRAILING_DIP_RECLAIM_MODE");
-  if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
+  if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS < 1 || CFG.TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
   if (!['disabled', 'shadow', 'live'].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_MODE");
   if (!["disabled", "shadow", "live"].includes(CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE)) problems.push("INVALID_CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE");
   if (CFG.CONFIRMED_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.CONFIRMED_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT < 0 || CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT < 0 || CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_CONFIRMED_PULLBACK_THRESHOLDS");
@@ -1103,7 +1115,7 @@ function configProblems() {
   if (CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS < 1 || CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT || CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE < -10) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.BREAKOUT_BULL_CONTINUATION_MODE)) problems.push("INVALID_BREAKOUT_BULL_CONTINUATION_MODE");
   if (CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT <= 0 || CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT < CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT || CFG.BREAKOUT_BULL_CONTINUATION_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.BREAKOUT_BULL_CONTINUATION_MIN_OBSERVATIONS < 2 || CFG.BREAKOUT_BULL_CONTINUATION_RECLAIM_PCT <= 0 || CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.BREAKOUT_BULL_CONTINUATION_RECLAIM_PCT || CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX < 0 || CFG.BREAKOUT_BULL_CONTINUATION_MAX_RSI <= 0 || CFG.BREAKOUT_BULL_CONTINUATION_MAX_EXTENSION_FROM_EMA8_PCT <= 0 || CFG.BREAKOUT_BULL_CONTINUATION_STOP_DISTANCE_CAP_PCT <= 0) problems.push("INVALID_BREAKOUT_BULL_CONTINUATION_THRESHOLDS");
-  if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS < 1 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE < -10) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_THRESHOLDS");
+  if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS < 1 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE < -10 || CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT < 0 || CFG.BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC <= 0) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_THRESHOLDS");
   if (CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT < 0 || CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT > 0.10 || CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_MAX_SEC <= 0) problems.push("INVALID_BREAKOUT_ADAPTIVE_CONFIRM_THRESHOLDS");
   if (CFG.PRICE_TRIGGER_EXPIRY_WARNING_SEC < 0 || CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_SEC <= 0 || CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_PERFORMANCE_SEC <= 0) problems.push("INVALID_BREAKOUT_EXPIRY_AUDIT_THRESHOLDS");
   if (CFG.STATE_PERSISTENCE_REQUIRED && !persistenceReady) problems.push("PERSISTENCE_NOT_READY");
@@ -3368,7 +3380,7 @@ async function manageExit(feature) {
     return;
   }
 
-  // v1r: an already-armed re-entry continuation grace never bypasses the manual stop, dynamic floor, or runner trail above.
+  // v1s: an already-armed re-entry continuation grace never bypasses the manual stop, dynamic floor, or runner trail above.
   // It can only resolve with a short recovery-capture exit or a timeout.
   const activeGrace = await evaluateReentryContinuationGrace(p, feature, price, pnl);
   if (activeGrace.resolved) {
@@ -4474,6 +4486,9 @@ function priceEntryStatusPayload() {
       maxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC,
       minLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT,
       requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY,
+      minTickFvvo: CFG.TRAILING_DIP_RECLAIM_MIN_TICK_FVVO,
+      confirmObservations: CFG.TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS,
+      confirmMinSpanSec: CFG.TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC,
     },
     trailingDipReclaimZone: {
       enabled: CFG.TRAILING_DIP_RECLAIM_ZONE_MODE !== "disabled",
@@ -4756,7 +4771,8 @@ function trailingTickRecoveryOk(feature) {
   if (!CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY) return true;
   const ema8 = finite(feature.ema8, null);
   const slope = finite(feature.slope, null);
-  if (ema8 === null || feature.price < ema8 || slope === null || slope < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE) return false;
+  const fvvo = finite(feature.fvvo, null);
+  if (ema8 === null || feature.price < ema8 || slope === null || slope < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE || fvvo === null || fvvo < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_FVVO || feature.redPulse === true) return false;
   if (CFG.TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR && !nonBearRay(feature.rayRegime)) return false;
   return true;
 }
@@ -4778,6 +4794,37 @@ function breakoutRetestZoneTickRecoveryOk(feature) {
   if (fvvo === null || fvvo < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO) return false;
   if (CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR && !nonBearRay(feature.rayRegime)) return false;
   return true;
+}
+
+function breakoutRetestRecovered5mEvidence() {
+  const ctx = state.lastFeature5m;
+  if (!ctx) return { qualifies: false, reason: "NO_COMPLETED_5M_CONTEXT" };
+  const close = finite(ctx.close, finite(ctx.price, null));
+  const ema8 = finite(ctx.ema8, null);
+  const ema18 = finite(ctx.ema18, null);
+  const fvvo = finite(ctx.fvvo, null);
+  const slope = finite(ctx.slope, null);
+  const age = ageSec(ctx);
+  const evidence = {
+    qualifies: false,
+    close,
+    ema8,
+    ema18,
+    fvvo,
+    slope,
+    rayRegime: ctx.rayRegime || null,
+    barTimeMs: finite(ctx.barTimeMs, 0),
+    ageSec: round(age, 3),
+    fresh: age <= CFG.BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC,
+    closeAboveEma8: close !== null && ema8 !== null && close >= ema8,
+    emaOrderOk: !CFG.BREAKOUT_RETEST_RECOVERED_5M_REQUIRE_EMA_ORDER || (ema8 !== null && ema18 !== null && ema8 >= ema18),
+    fvvoOk: fvvo !== null && fvvo >= CFG.BREAKOUT_RETEST_RECOVERED_5M_MIN_FVVO,
+    slopeOk: slope !== null && slope >= CFG.BREAKOUT_RETEST_RECOVERED_5M_MIN_SLOPE,
+    rayOk: !CFG.BREAKOUT_RETEST_RECOVERED_5M_REQUIRE_RAY_NOT_BEAR || nonBearRay(ctx.rayRegime),
+  };
+  evidence.qualifies = evidence.fresh && evidence.closeAboveEma8 && evidence.emaOrderOk && evidence.fvvoOk && evidence.slopeOk && evidence.rayOk;
+  evidence.reason = evidence.qualifies ? "RECOVERED_5M_CONFIRMED" : "RECOVERED_5M_NOT_READY";
+  return evidence;
 }
 
 function breakoutBullContinuationMode() { return CFG.BREAKOUT_BULL_CONTINUATION_MODE; }
@@ -4927,7 +4974,7 @@ function validateCampaignArm(body, validated, active) {
 
   // Campaign orchestration is copied from Daily v1g, while Swing trigger logic is retained.
   if (entryRole === "breakout" && validated.triggerMode !== "breakout_retest_reclaim_zone") return { ok: false, error: "SWING_BREAKOUT_ROLE_REQUIRES_BREAKOUT_RETEST_RECLAIM_ZONE" };
-  if (["preferred", "deep_alternative"].includes(entryRole) && !["trailing_dip_reclaim_zone", "confirmed_pullback_reclaim_zone", "hybrid_pullback_reclaim_zone"].includes(validated.triggerMode)) return { ok: false, error: "PREFERRED_AND_DEEP_ROLES_REQUIRE_TRAILING_CONFIRMED_OR_HYBRID_PULLBACK_RECLAIM_ZONE" };
+  if (["preferred", "deep_alternative"].includes(entryRole) && !["trailing_dip_reclaim", "trailing_dip_reclaim_zone", "confirmed_pullback_reclaim_zone", "hybrid_pullback_reclaim_zone"].includes(validated.triggerMode)) return { ok: false, error: "PREFERRED_AND_DEEP_ROLES_REQUIRE_TRAILING_CONFIRMED_OR_HYBRID_PULLBACK_RECLAIM" };
 
   // Preferred/deep ordering applies ONLY when arming one of the two dip roles.
   // Breakout has no activationRangeLow/High and must never be evaluated by this check.
@@ -4935,10 +4982,10 @@ function validateCampaignArm(body, validated, active) {
     const counterpartRole = entryRole === "preferred" ? "deep_alternative" : "preferred";
     const otherDip = active.find((item) => item.entryRole === counterpartRole);
     if (otherDip) {
-      const newLow = Number(validated.activationRangeLow);
-      const newHigh = Number(validated.activationRangeHigh);
-      const oldLow = Number(otherDip.activationRangeLow);
-      const oldHigh = Number(otherDip.activationRangeHigh);
+      const newLow = Number(validated.activationRangeLow ?? validated.activationPrice);
+      const newHigh = Number(validated.activationRangeHigh ?? validated.activationPrice);
+      const oldLow = Number(otherDip.activationRangeLow ?? otherDip.activationPrice);
+      const oldHigh = Number(otherDip.activationRangeHigh ?? otherDip.activationPrice);
       if (![newLow, newHigh, oldLow, oldHigh].every(Number.isFinite)) {
         return { ok: false, error: "CAMPAIGN_DIP_ZONE_RANGE_REQUIRED" };
       }
@@ -5147,6 +5194,8 @@ async function evaluateTrailingDipReclaim(pending, previousPrice, feature) {
       t.observedLowPrice = round(feature.price, 8);
       t.observedLowAt = feature.receivedAt;
       t.observedLowAtMs = feature.receivedAtMs;
+      t.fastConfirmObservations = 0;
+      t.fastConfirmStartedAtMs = 0;
     }
     const low = finite(t.observedLowPrice, feature.price);
     const dropPct = percentageBelow(activation, low);
@@ -5203,8 +5252,18 @@ async function evaluateTrailingDipReclaim(pending, previousPrice, feature) {
       return;
     }
     if (!trailingTickRecoveryOk(feature)) {
+      t.fastConfirmObservations = 0;
+      t.fastConfirmStartedAtMs = 0;
       await persistState("trailing_dip_reclaim_wait_tick_recovery");
       log("INFO", "FVVO_TRAILING_DIP_RECLAIM_WAIT_TICK_RECOVERY", { triggerId: pending.id, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY });
+      return;
+    }
+    if (!(t.fastConfirmStartedAtMs > 0)) t.fastConfirmStartedAtMs = current;
+    t.fastConfirmObservations = Math.max(0, Math.floor(finite(t.fastConfirmObservations, 0))) + 1;
+    const confirmSpanSec = (current - t.fastConfirmStartedAtMs) / 1000;
+    if (t.fastConfirmObservations < CFG.TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS || confirmSpanSec + 1e-9 < CFG.TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC) {
+      await persistState("trailing_dip_reclaim_fast_confirming");
+      log("INFO", "FVVO_TRAILING_DIP_RECLAIM_FAST_CONFIRMING", { triggerId: pending.id, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, observations: t.fastConfirmObservations, requiredObservations: CFG.TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS, spanSec: round(confirmSpanSec, 3), minSpanSec: CFG.TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC, fvvo: finite(feature.fvvo, null), slope: finite(feature.slope, null), rayRegime: feature.rayRegime || null });
       return;
     }
     const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
@@ -5786,8 +5845,17 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
     }
     const low = finite(t.retestLowPrice, feature.price);
     const lowStopBufferPct = low > pending.stopPrice ? percentageBelow(low, pending.stopPrice) : 0;
+    const highestBreakoutPrice = finite(t.highestBreakoutPrice, breakoutConfirmPrice);
+    const peakPullbackPct = highestBreakoutPrice > 0 ? percentageBelow(highestBreakoutPrice, low) : 0;
     t.retestPenetrationPct = round(percentageBelow(rangeHigh, low), 6);
     t.lowStopBufferPct = round(lowStopBufferPct, 6);
+    t.peakPullbackPct = round(peakPullbackPct, 6);
+    if (CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT > 0 && peakPullbackPct + 1e-9 >= CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "BREAKOUT_RETEST_FAILED_PEAK_PULLBACK", { trailing: t }, pending);
+      await persistState("breakout_retest_failed_peak_pullback");
+      log("WARN", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, breakoutConfirmPrice, highestBreakoutPrice, retestLowPrice: low, peakPullbackPct: round(peakPullbackPct, 6), maxPeakPullbackPct: CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT, executionPrice: feature.price, action: "INVALIDATE_FAILED_BREAKOUT" });
+      return;
+    }
     if (low <= pending.stopPrice + 1e-9 || lowStopBufferPct + 1e-9 < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT) {
       const reason = low <= pending.stopPrice + 1e-9 ? "BREAKOUT_RETEST_RECLAIM_ZONE_LOW_AT_OR_BELOW_STOP" : "BREAKOUT_RETEST_RECLAIM_ZONE_LOW_TOO_CLOSE_TO_STOP";
       const cancelled = resolvePriceEntryPending("CANCELLED", reason, { trailing: t }, pending);
@@ -5838,6 +5906,15 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
       await persistState("breakout_retest_reclaim_zone_wait_tick_recovery");
       log("INFO", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_WAIT_TICK_RECOVERY", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, requireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, minFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO });
       return;
+    }
+    if (CFG.BREAKOUT_RETEST_REQUIRE_RECOVERED_5M) {
+      const recovered5m = breakoutRetestRecovered5mEvidence();
+      t.lastRecovered5mEvidence = recovered5m;
+      if (!recovered5m.qualifies) {
+        await persistState("breakout_retest_wait_recovered_5m");
+        log("INFO", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_WAIT_RECOVERED_5M", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, recovered5m });
+        return;
+      }
     }
     const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
     if (!checked.ok) {
@@ -6247,7 +6324,7 @@ async function start() {
     reentry15sFastLaunchMode: CFG.REENTRY_15S_FAST_LAUNCH_MODE, reentry15sFastLaunchMinPriorImpulsePct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PRIOR_IMPULSE_PCT, reentry15sFastLaunchMinPullbackPct: CFG.REENTRY_15S_FAST_LAUNCH_MIN_PULLBACK_PCT, reentry15sFastLaunchMinRsi: CFG.REENTRY_15S_FAST_LAUNCH_MIN_RSI, reentry15sFastLaunchMinAdx: CFG.REENTRY_15S_FAST_LAUNCH_MIN_ADX, reentry15sFastLaunchMinFvvo: CFG.REENTRY_15S_FAST_LAUNCH_MIN_FVVO, reentry15sFastLaunchMinSlope: CFG.REENTRY_15S_FAST_LAUNCH_MIN_SLOPE,
     reentry15sEarlyTurnMode: CFG.REENTRY_15S_EARLY_TURN_MODE, reentry15sEarlyTurnMinPriorImpulsePct: CFG.REENTRY_15S_EARLY_TURN_MIN_PRIOR_IMPULSE_PCT, reentry15sEarlyTurnMinPullbackPct: CFG.REENTRY_15S_EARLY_TURN_MIN_PULLBACK_PCT, reentry15sEarlyTurnMinRsi: CFG.REENTRY_15S_EARLY_TURN_MIN_RSI, reentry15sEarlyTurnMinAdx: CFG.REENTRY_15S_EARLY_TURN_MIN_ADX, reentry15sEarlyTurnMinFvvo: CFG.REENTRY_15S_EARLY_TURN_MIN_FVVO, reentry15sEarlyTurnMinSlope: CFG.REENTRY_15S_EARLY_TURN_MIN_SLOPE,
     postExitRecoveredBaseMode: postExitRecoveredBaseMode(), postExitRecoveredBaseWindowSec: CFG.POST_EXIT_RECOVERED_BASE_WINDOW_SEC, postExitRecoveredBaseMinPriorImpulsePct: CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT, postExitRecoveredBaseMinRecoveryPct: CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT, postExitRecoveredBaseMaxChaseFromLowPct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT, postExitRecoveredBaseConfirmObservations: CFG.POST_EXIT_RECOVERED_BASE_CONFIRM_OBSERVATIONS, postExitRecoveredBaseMinRsi: CFG.POST_EXIT_RECOVERED_BASE_MIN_RSI, postExitRecoveredBaseMinAdx: CFG.POST_EXIT_RECOVERED_BASE_MIN_ADX, postExitRecoveredBaseMinFvvo: CFG.POST_EXIT_RECOVERED_BASE_MIN_FVVO, postExitRecoveredBaseMinSlope: CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE,
-    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneRequireRayNotBear: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardMode: entry5mBearGuardMode(), entry5mBearGuardMaxAgeSec: CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC, entry5mBearGuardMaxFvvo: CFG.ENTRY_5M_BEAR_GUARD_MAX_FVVO, entry5mBearGuardRequireRayBear: CFG.ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR, entry5mBearGuardApplyPreferred: CFG.ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED, entry5mBearGuardApplyDeep: CFG.ENTRY_5M_BEAR_GUARD_APPLY_DEEP, entry5mBearGuardReleaseReference: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE, entry5mBearGuardReleaseStructureTolerancePct: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT, entry5mBearGuardReleaseMinFvvo: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO, entry5mBearGuardReleaseMinSlope: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE, entry5mBearGuardReleaseRequireRayNotBear: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardReleaseConfirmObservations: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestAdaptiveConfirmEnabled: CFG.BREAKOUT_RETEST_ADAPTIVE_CONFIRM_ENABLED, breakoutRetestAdaptiveHoldTolerancePct: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT, breakoutRetestAdaptiveHoldMaxSec: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_MAX_SEC, breakoutRetestReclaimZoneMinTickSlope: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE, breakoutRetestReclaimZoneMinFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO, priceTriggerExpiryWarningSec: CFG.PRICE_TRIGGER_EXPIRY_WARNING_SEC, breakoutRetestPostExpiryShadowEnabled: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_ENABLED, breakoutRetestPostExpiryShadowSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_SEC, breakoutRetestPostExpiryShadowPerformanceSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_PERFORMANCE_SEC, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutShallowHoldReclaimMode: breakoutShallowHoldReclaimMode(), breakoutShallowHoldMaxTrackSec: CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC, breakoutShallowHoldMaxAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinPullbackFromHighPct: CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT, breakoutShallowHoldMinObservations: CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS, breakoutShallowHoldReclaimPct: CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT, breakoutShallowHoldMaxEntryAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinAdx: CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX, breakoutShallowHoldMinFvvo: CFG.BREAKOUT_SHALLOW_HOLD_MIN_FVVO, breakoutShallowHoldMinSlope: CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE, persistenceReady, configurationProblems: problems });
+    reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneRequireRayNotBear: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardMode: entry5mBearGuardMode(), entry5mBearGuardMaxAgeSec: CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC, entry5mBearGuardMaxFvvo: CFG.ENTRY_5M_BEAR_GUARD_MAX_FVVO, entry5mBearGuardRequireRayBear: CFG.ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR, entry5mBearGuardApplyPreferred: CFG.ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED, entry5mBearGuardApplyDeep: CFG.ENTRY_5M_BEAR_GUARD_APPLY_DEEP, entry5mBearGuardReleaseReference: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE, entry5mBearGuardReleaseStructureTolerancePct: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT, entry5mBearGuardReleaseMinFvvo: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO, entry5mBearGuardReleaseMinSlope: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE, entry5mBearGuardReleaseRequireRayNotBear: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardReleaseConfirmObservations: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestAdaptiveConfirmEnabled: CFG.BREAKOUT_RETEST_ADAPTIVE_CONFIRM_ENABLED, breakoutRetestAdaptiveHoldTolerancePct: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT, breakoutRetestAdaptiveHoldMaxSec: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_MAX_SEC, breakoutRetestReclaimZoneMinTickSlope: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE, breakoutRetestReclaimZoneMinFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO, breakoutRetestMaxPeakPullbackPct: CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT, breakoutRetestRequireRecovered5m: CFG.BREAKOUT_RETEST_REQUIRE_RECOVERED_5M, breakoutRetestRecovered5mMaxAgeSec: CFG.BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC, priceTriggerExpiryWarningSec: CFG.PRICE_TRIGGER_EXPIRY_WARNING_SEC, breakoutRetestPostExpiryShadowEnabled: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_ENABLED, breakoutRetestPostExpiryShadowSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_SEC, breakoutRetestPostExpiryShadowPerformanceSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_PERFORMANCE_SEC, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutShallowHoldReclaimMode: breakoutShallowHoldReclaimMode(), breakoutShallowHoldMaxTrackSec: CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC, breakoutShallowHoldMaxAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinPullbackFromHighPct: CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT, breakoutShallowHoldMinObservations: CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS, breakoutShallowHoldReclaimPct: CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT, breakoutShallowHoldMaxEntryAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinAdx: CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX, breakoutShallowHoldMinFvvo: CFG.BREAKOUT_SHALLOW_HOLD_MIN_FVVO, breakoutShallowHoldMinSlope: CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE, persistenceReady, configurationProblems: problems });
   log("INFO", "FVVO_HYBRID_PULLBACK_STARTUP", { mode: CFG.HYBRID_PULLBACK_FAST_PATH_MODE, preferredVotes: `${CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT}`, preferredFinalConsecutive: CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE, preferredMinSpanSec: CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC, deepVotes: `${CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT}`, deepFinalConsecutive: CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE, deepMinSpanSec: CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC, fallback5mEnabled: CFG.HYBRID_PULLBACK_FALLBACK_5M_ENABLED, chasePolicy: "wait_no_chase", configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
@@ -6293,7 +6370,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v1q_BREAKOUT_BULL_CONTINUATION_SHADOW_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v1s_FAILED_BREAKOUT_GUARD_LIVE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6347,7 +6424,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1q_BREAKOUT_BULL_CONTINUATION_SHADOW_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1s_FAILED_BREAKOUT_GUARD_LIVE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,

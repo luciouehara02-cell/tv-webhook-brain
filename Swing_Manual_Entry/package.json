@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-xrp-v1q-breakout-bull-continuation-shadow-live",
+  "name": "brainfvvo-swing-xrp-v1s-failed-breakout-guard-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v1q with Breakout bull continuation shadow audit",
+  "description": "Standalone XRP v1s with fast trailing dip reclaim and failed-breakout guard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js",
-    "replay": "node replay_xrp_v1q_breakout_continuation.js"
+    "check": "node --check server.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
   },
   "engines": {
     "node": ">=20"
