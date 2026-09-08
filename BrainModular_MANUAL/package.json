@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-xrp-v1s-failed-breakout-guard-live",
+  "name": "brainfvvo-swing-bnb-v1a-trailing-dip-campaign-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v1s with fast trailing dip reclaim and failed-breakout guard",
+  "description": "Standalone BNB v1a derived from XRP v1u with campaign-compatible trailing dip reclaim",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
-    "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
+    "check": "node --check server.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "replay": "node replay_bnb_v1a_corpus.js"
   },
   "engines": {
     "node": ">=20"
