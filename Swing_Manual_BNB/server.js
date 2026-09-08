@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1p_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1q_MODE_AWARE_ENTRY_EXIT_HTF_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + retained Swing engine and v1n HTF long-run guardian in ONE server.js.
 //
 // Main thread:
@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1p_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1q_MODE_AWARE_ENTRY_EXIT_HTF_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -228,6 +228,12 @@ const CFG = {
   TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY: envBool("TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY", false),
   TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE: envNum("TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE", 0),
   TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR: envBool("TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR", false),
+  TRAILING_DIP_RECLAIM_MIN_TICK_FVVO: envNum("TRAILING_DIP_RECLAIM_MIN_TICK_FVVO", 0),
+  TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS", 2))),
+  TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC: Math.max(0, envNum("TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC", 12)),
+  TRAILING_DIP_RECLAIM_SEVERE_5M_VETO_MODE: envStr("TRAILING_DIP_RECLAIM_SEVERE_5M_VETO_MODE", "shadow").toLowerCase(),
+  TRAILING_DIP_RECLAIM_SEVERE_5M_MAX_FVVO: envNum("TRAILING_DIP_RECLAIM_SEVERE_5M_MAX_FVVO", -1.0),
+  TRAILING_DIP_RECLAIM_SEVERE_5M_MAX_SLOPE: envNum("TRAILING_DIP_RECLAIM_SEVERE_5M_MAX_SLOPE", -0.80),
 
   // v1z range-based flush-reclaim. Activates when price crosses into activation_range_low/high
   // from above, then enters on low-based reclaim while capped by the top-of-zone chase limit.
@@ -286,6 +292,8 @@ const CFG = {
   HYBRID_PULLBACK_FALLBACK_5M_ENABLED: envBool("HYBRID_PULLBACK_FALLBACK_5M_ENABLED", true),
   HYBRID_PULLBACK_FALLBACK_5M_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("HYBRID_PULLBACK_FALLBACK_5M_CONFIRM_OBSERVATIONS", 1))),
   HYBRID_PULLBACK_VOTE_MAX_SEC: envNum("HYBRID_PULLBACK_VOTE_MAX_SEC", 90),
+  HYBRID_PULLBACK_MAX_REBOUND_FROM_LOW_PCT: envNum("HYBRID_PULLBACK_MAX_REBOUND_FROM_LOW_PCT", 0.65),
+  HYBRID_PULLBACK_MAX_RECOVERY_AGE_SEC: envNum("HYBRID_PULLBACK_MAX_RECOVERY_AGE_SEC", 2700),
 
   // v1l: a separate continuation rescue for a qualified Hybrid pullback that
   // recovered too quickly for the normal no-chase window. It never widens the
@@ -344,6 +352,9 @@ const CFG = {
   BREAKOUT_RETEST_ADAPTIVE_HOLD_REQUIRE_RAY_NOT_BEAR: envBool("BREAKOUT_RETEST_ADAPTIVE_HOLD_REQUIRE_RAY_NOT_BEAR", true),
   BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT", 0.03),
   BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC", 1800),
+  BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT: Math.max(0, envNum("BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT", 0.60)),
+  BREAKOUT_RETEST_REQUIRE_RECOVERED_5M: envBool("BREAKOUT_RETEST_REQUIRE_RECOVERED_5M", true),
+  BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC: envNum("BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC", 900),
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT", 0.10),
   BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY: envBool("BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY", true),
   BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE: envNum("BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE", 0.10),
@@ -457,6 +468,22 @@ const CFG = {
   DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS", 2),
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", false),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
+  MODE_PROFIT_PROTECTION_ENABLED: envBool("MODE_PROFIT_PROTECTION_ENABLED", true),
+  MODE_PROFIT_DIP_ARM_MFE_PCT: envNum("MODE_PROFIT_DIP_ARM_MFE_PCT", 0.45),
+  MODE_PROFIT_DIP_GROSS_LOCK_PCT: envNum("MODE_PROFIT_DIP_GROSS_LOCK_PCT", 0.30),
+  MODE_PROFIT_TRAILING_ZONE_ARM_MFE_PCT: envNum("MODE_PROFIT_TRAILING_ZONE_ARM_MFE_PCT", 0.60),
+  MODE_PROFIT_TRAILING_ZONE_GROSS_LOCK_PCT: envNum("MODE_PROFIT_TRAILING_ZONE_GROSS_LOCK_PCT", 0.40),
+  MODE_PROFIT_TRAILING_ARM_MFE_PCT: envNum("MODE_PROFIT_TRAILING_ARM_MFE_PCT", 0.60),
+  MODE_PROFIT_TRAILING_GROSS_LOCK_PCT: envNum("MODE_PROFIT_TRAILING_GROSS_LOCK_PCT", 0.45),
+  MODE_PROFIT_HYBRID_ARM_MFE_PCT: envNum("MODE_PROFIT_HYBRID_ARM_MFE_PCT", 0.70),
+  MODE_PROFIT_HYBRID_GROSS_LOCK_PCT: envNum("MODE_PROFIT_HYBRID_GROSS_LOCK_PCT", 0.45),
+  MODE_STRUCTURAL_EXIT_ENABLED: envBool("MODE_STRUCTURAL_EXIT_ENABLED", true),
+  MODE_STRUCTURAL_EXIT_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("MODE_STRUCTURAL_EXIT_CONFIRM_OBSERVATIONS", 2))),
+  MODE_STRUCTURAL_EXIT_CONFIRM_MIN_SPAN_SEC: Math.max(0, envNum("MODE_STRUCTURAL_EXIT_CONFIRM_MIN_SPAN_SEC", 12)),
+  MODE_STRUCTURAL_DIP_MAX_LOSS_PCT: envNum("MODE_STRUCTURAL_DIP_MAX_LOSS_PCT", 0.28),
+  MODE_STRUCTURAL_TRAILING_BELOW_LOW_PCT: envNum("MODE_STRUCTURAL_TRAILING_BELOW_LOW_PCT", 0.10),
+  MODE_STRUCTURAL_ZONE_BELOW_LOW_PCT: envNum("MODE_STRUCTURAL_ZONE_BELOW_LOW_PCT", 0.12),
+  MODE_STRUCTURAL_HYBRID_BELOW_LOW_PCT: envNum("MODE_STRUCTURAL_HYBRID_BELOW_LOW_PCT", 0.12),
 
   // v1m: defer non-emergency profit exits while broad momentum remains bullish.
   BULLISH_MOMENTUM_HOLD_MODE: envStr("BULLISH_MOMENTUM_HOLD_MODE", "live").toLowerCase(),
@@ -964,12 +991,13 @@ function normalizeState(raw) {
   p.stop = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(p.stop || {}) };
   const priorPeak = Math.max(0, finite(p.peakPnlPct, 0));
   const priorDynamic = p.dynamicProfit && typeof p.dynamicProfit === "object" ? p.dynamicProfit : {};
-  const shouldBeArmed = Boolean(priorDynamic.armed) || (CFG.DYNAMIC_PROFIT_EXIT_ENABLED && priorPeak >= CFG.DYNAMIC_PROFIT_ARM_MFE_PCT);
+  const restoredProtection = entryModeProtection(p);
+  const shouldBeArmed = Boolean(priorDynamic.armed) || (CFG.DYNAMIC_PROFIT_EXIT_ENABLED && priorPeak >= restoredProtection.armMfePct);
   p.dynamicProfit = {
     armed: shouldBeArmed,
     armedAtMs: finite(priorDynamic.armedAtMs, shouldBeArmed ? nowMs() : 0),
-    armedAtPrice: finite(priorDynamic.armedAtPrice, shouldBeArmed && entry ? entry * (1 + CFG.DYNAMIC_PROFIT_ARM_MFE_PCT / 100) : null),
-    armedAtPnlPct: finite(priorDynamic.armedAtPnlPct, shouldBeArmed ? CFG.DYNAMIC_PROFIT_ARM_MFE_PCT : 0),
+    armedAtPrice: finite(priorDynamic.armedAtPrice, shouldBeArmed && entry ? entry * (1 + restoredProtection.armMfePct / 100) : null),
+    armedAtPnlPct: finite(priorDynamic.armedAtPnlPct, shouldBeArmed ? restoredProtection.armMfePct : 0),
     peakPnlPct: Math.max(priorPeak, finite(priorDynamic.peakPnlPct, 0)),
     peakPrice: finite(priorDynamic.peakPrice, entry || 0),
     protectedPnlPct: Math.max(0, finite(priorDynamic.protectedPnlPct, 0)),
@@ -995,7 +1023,7 @@ function normalizeState(raw) {
     lastThesisReason: priorDynamic.lastThesisReason || null,
   };
   if (p.dynamicProfit.armed && entry) {
-    const computedFloor = dynamicProfitFloorPnlPct(p.dynamicProfit.peakPnlPct);
+    const computedFloor = dynamicProfitFloorPnlPct(p.dynamicProfit.peakPnlPct, p);
     p.dynamicProfit.protectedPnlPct = Math.max(p.dynamicProfit.protectedPnlPct, computedFloor);
     p.dynamicProfit.protectedPrice = round(entry * (1 + p.dynamicProfit.protectedPnlPct / 100), 8);
     const runner = p.dynamicProfit.runner;
@@ -2139,14 +2167,25 @@ function oneStopBreakConfirmed(position, feature, markPrice) {
   return { confirmed: observations >= CFG.MANUAL_ONE_STOP_TICK_CONFIRM_OBSERVATIONS && elapsed >= CFG.MANUAL_ONE_STOP_TICK_CONFIRM_SEC, reason: "STOP_TICK_CONFIRM", observations, elapsedSec: elapsed };
 }
 
-function dynamicProfitFloorPnlPct(peakPnlPct) {
+function entryModeProtection(position) {
+  const mode = String(position?.priceTrigger?.mode || "").toLowerCase();
+  if (!CFG.MODE_PROFIT_PROTECTION_ENABLED) return { mode, armMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, grossLockPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT };
+  if (mode === "dip") return { mode, armMfePct: CFG.MODE_PROFIT_DIP_ARM_MFE_PCT, grossLockPct: CFG.MODE_PROFIT_DIP_GROSS_LOCK_PCT };
+  if (mode === "trailing_dip_reclaim_zone") return { mode, armMfePct: CFG.MODE_PROFIT_TRAILING_ZONE_ARM_MFE_PCT, grossLockPct: CFG.MODE_PROFIT_TRAILING_ZONE_GROSS_LOCK_PCT };
+  if (mode === "trailing_dip_reclaim") return { mode, armMfePct: CFG.MODE_PROFIT_TRAILING_ARM_MFE_PCT, grossLockPct: CFG.MODE_PROFIT_TRAILING_GROSS_LOCK_PCT };
+  if (mode === "hybrid_pullback_reclaim_zone") return { mode, armMfePct: CFG.MODE_PROFIT_HYBRID_ARM_MFE_PCT, grossLockPct: CFG.MODE_PROFIT_HYBRID_GROSS_LOCK_PCT };
+  return { mode, armMfePct: CFG.DYNAMIC_PROFIT_ARM_MFE_PCT, grossLockPct: CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT };
+}
+
+function dynamicProfitFloorPnlPct(peakPnlPct, position = null) {
   const peak = Math.max(0, finite(peakPnlPct, 0));
-  const excessAboveArm = Math.max(0, peak - CFG.DYNAMIC_PROFIT_ARM_MFE_PCT);
+  const protection = entryModeProtection(position);
+  const excessAboveArm = Math.max(0, peak - protection.armMfePct);
   const allowedGiveback = Math.max(
     CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT,
     CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT - (excessAboveArm * CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT)
   );
-  return round(Math.max(CFG.DYNAMIC_PROFIT_MIN_LOCK_PNL_PCT, peak - allowedGiveback), 6);
+  return round(Math.max(protection.grossLockPct, peak - allowedGiveback), 6);
 }
 
 function dynamicProfitState(position) {
@@ -2395,7 +2434,8 @@ function updateDynamicProfit(position, price, pnlPct) {
   d.peakPnlPct = Math.max(finite(d.peakPnlPct, 0), pnlPct);
   if (pnlPct >= d.peakPnlPct - 1e-9) d.peakPrice = price;
   let armedNow = false;
-  if (CFG.DYNAMIC_PROFIT_EXIT_ENABLED && !d.armed && d.peakPnlPct >= CFG.DYNAMIC_PROFIT_ARM_MFE_PCT) {
+  const protection = entryModeProtection(position);
+  if (CFG.DYNAMIC_PROFIT_EXIT_ENABLED && !d.armed && d.peakPnlPct >= protection.armMfePct) {
     d.armed = true;
     d.armedAtMs = nowMs();
     d.armedAtPrice = price;
@@ -2403,7 +2443,7 @@ function updateDynamicProfit(position, price, pnlPct) {
     armedNow = true;
   }
   if (!d.armed || !CFG.DYNAMIC_PROFIT_EXIT_ENABLED) return { armedNow, floorRaised: false, dynamic: d };
-  const calculated = dynamicProfitFloorPnlPct(d.peakPnlPct);
+  const calculated = dynamicProfitFloorPnlPct(d.peakPnlPct, position);
   d.protectedPnlPct = Math.max(priorProtected, calculated);
   d.protectedPrice = round(position.entryPriceReference * (1 + d.protectedPnlPct / 100), 8);
   const floorRaised = d.protectedPnlPct > priorProtected + 1e-9;
@@ -3482,6 +3522,8 @@ function htfEarlyBridgeMode() {
 
 function htfLongRunEvidence(position, feature, pnlPct) {
   const peak = Math.max(finite(position.peakPnlPct, 0), finite(position.dynamicProfit?.peakPnlPct, 0));
+  const modeProtection = entryModeProtection(position);
+  const earlyRequiredMfePct = Math.min(CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT, modeProtection.armMfePct);
   const m5 = normalizeHtfBootstrap5m(state.htf?.m5Bootstrap), m15 = normalizeHtfFrame(state.htf?.m15), h1 = normalizeHtfFrame(state.htf?.h1);
   const current = nowMs();
   const m15AgeSec = m15.lastClosedAtMs ? Math.max(0, (current - m15.lastClosedAtMs) / 1000) : Infinity;
@@ -3516,8 +3558,8 @@ function htfLongRunEvidence(position, feature, pnlPct) {
   else if (peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && htfBootstrapMode() !== "disabled" && m5Initial) { structureSource = "PROVISIONAL_5M"; structureSupports = true; }
   else if (htfEarlyBridgeMode() !== "disabled" && earlyInitial) { structureSource = "EARLY_5M_BRIDGE"; structureSupports = true; }
   const earlySource = structureSource === "EARLY_5M_BRIDGE";
-  const requiredMfePct = earlySource ? CFG.HTF_EARLY_BRIDGE_MIN_MFE_PCT : CFG.HTF_LONG_RUN_MIN_MFE_PCT;
-  const effectiveHardLockPnlPct = earlySource ? Math.max(CFG.HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT, peak - allowedPullbackPct) : hardLockPnlPct;
+  const requiredMfePct = earlySource ? earlyRequiredMfePct : CFG.HTF_LONG_RUN_MIN_MFE_PCT;
+  const effectiveHardLockPnlPct = earlySource ? Math.max(CFG.HTF_EARLY_BRIDGE_MIN_LOCK_PNL_PCT, modeProtection.grossLockPct, peak - allowedPullbackPct) : hardLockPnlPct;
   const profitFloorIntact = pnlPct >= effectiveHardLockPnlPct;
   // Once the guardian is active, bullish completed-bar structure—not a transient
   // tick-level floor touch—owns the normal exit. Stops and emergency exits retain
@@ -3574,6 +3616,19 @@ function bullishMomentumHoldExit(position, feature, price, pnlPct, baselineReaso
   return shortBullishMomentumHoldExit(position, feature, price, pnlPct, baselineReason);
 }
 
+function modeStructuralExitFailureConfirmed(position, feature, price, pnlPct) {
+  const mode = String(position?.priceTrigger?.mode || "").toLowerCase();
+  if (!CFG.MODE_STRUCTURAL_EXIT_ENABLED || !["dip", "trailing_dip_reclaim", "trailing_dip_reclaim_zone", "hybrid_pullback_reclaim_zone"].includes(mode) || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { confirmed: false, reason: "NOT_ELIGIBLE" };
+  const s = position.modeStructuralExit = position.modeStructuralExit || { breachAtMs: 0, observations: 0 };
+  const low = finite(position?.priceTrigger?.observedLowPrice, null);
+  const buffer = mode === "trailing_dip_reclaim" ? CFG.MODE_STRUCTURAL_TRAILING_BELOW_LOW_PCT : mode === "trailing_dip_reclaim_zone" ? CFG.MODE_STRUCTURAL_ZONE_BELOW_LOW_PCT : CFG.MODE_STRUCTURAL_HYBRID_BELOW_LOW_PCT;
+  const threshold = mode === "dip" ? position.entryPriceReference * (1 - CFG.MODE_STRUCTURAL_DIP_MAX_LOSS_PCT / 100) : (low ? low * (1 - buffer / 100) : null);
+  if (!(threshold > 0) || price > threshold + 1e-9) { position.modeStructuralExit = { breachAtMs: 0, observations: 0 }; return { confirmed: false, reason: "ABOVE_FLOOR", mode, threshold }; }
+  const current = nowMs(); if (!s.breachAtMs) { s.breachAtMs = current; s.observations = 1; } else s.observations += 1;
+  const elapsedSec = (current - s.breachAtMs) / 1000;
+  return { confirmed: s.observations >= CFG.MODE_STRUCTURAL_EXIT_CONFIRM_OBSERVATIONS && elapsedSec >= CFG.MODE_STRUCTURAL_EXIT_CONFIRM_MIN_SPAN_SEC, mode, threshold: round(threshold, 8), observations: s.observations, elapsedSec, pnlPct };
+}
+
 async function manageExit(feature) {
   const p = state.position;
   if (!p || state.manual.handoffActive || String(p.lifecycle || "").startsWith("EXIT_")) return;
@@ -3623,6 +3678,13 @@ async function manageExit(feature) {
   if (stop.confirmed) {
     await persistState(`stop_price_${feature.kind}`);
     await requestFullExit(`FVVO_MANUAL_STOP_PRICE_HIT_${stop.reason}`, price, feature.kind);
+    return;
+  }
+
+  const modeStructural = modeStructuralExitFailureConfirmed(p, feature, price, pnl);
+  if (modeStructural.confirmed) {
+    await persistState(`mode_structural_exit_${feature.kind}`);
+    await requestFullExit(`FVVO_MODE_STRUCTURAL_EXIT_${modeStructural.mode.toUpperCase()}`, price, feature.kind);
     return;
   }
 
@@ -5161,10 +5223,17 @@ function reactivateDormantDeepFallback(prior, source = "exit_release") {
 function trailingTickRecoveryOk(feature) {
   if (!CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY) return true;
   const ema8 = finite(feature.ema8, null);
-  const slope = finite(feature.slope, null);
-  if (ema8 === null || feature.price < ema8 || slope === null || slope < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE) return false;
+  const slope = finite(feature.slope, null), fvvo = finite(feature.fvvo, null);
+  if (ema8 === null || feature.price < ema8 || slope === null || slope < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_SLOPE || fvvo === null || fvvo < CFG.TRAILING_DIP_RECLAIM_MIN_TICK_FVVO) return false;
   if (CFG.TRAILING_DIP_RECLAIM_REQUIRE_RAY_NOT_BEAR && !nonBearRay(feature.rayRegime)) return false;
   return true;
+}
+function trailingDipSevere5mVeto() {
+  const ctx = state.lastFeature5m;
+  if (!ctx || ageSec(ctx) > CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC) return { veto: false, reason: "NO_FRESH_5M" };
+  const close=finite(ctx.close,ctx.price), ema8=finite(ctx.ema8,null), ema18=finite(ctx.ema18,null), fvvo=finite(ctx.fvvo,null), slope=finite(ctx.slope,null);
+  const veto=close<ema8 && ema8<ema18 && fvvo<=CFG.TRAILING_DIP_RECLAIM_SEVERE_5M_MAX_FVVO && slope<=CFG.TRAILING_DIP_RECLAIM_SEVERE_5M_MAX_SLOPE && String(ctx.rayRegime||"").startsWith("RAY_BEAR");
+  return { veto, close, ema8, ema18, fvvo, slope, rayRegime:ctx.rayRegime||null };
 }
 function trailingZoneTickRecoveryOk(feature) {
   if (!CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY) return true;
@@ -5499,7 +5568,7 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
 
   if (state.reentry?.campaign) state.reentry = { campaign: null, recentTickPrices: [] };
   state.position = buildPosition(feature.price, checked.levels, { entryOrigin: "PRICE_TRIGGER", profile: PROFILE });
-  state.position.priceTrigger = { id: consumed.id, mode: consumed.triggerMode, entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole || "standalone", campaignOrdinal: Math.max(0, Math.floor(finite(consumed.campaignOrdinal, 0))), price: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, activationRangeLow: consumed.activationRangeLow || null, activationRangeHigh: consumed.activationRangeHigh || null, breakoutConfirmPrice: consumed.breakoutConfirmPrice || null, retestRangeLow: consumed.retestRangeLow || null, retestRangeHigh: consumed.retestRangeHigh || null, armedReferencePrice: consumed.armedReferencePrice, triggeredAt: consumed.triggeredAt };
+  state.position.priceTrigger = { id: consumed.id, mode: consumed.triggerMode, entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole || "standalone", campaignOrdinal: Math.max(0, Math.floor(finite(consumed.campaignOrdinal, 0))), price: consumed.triggerPrice, activationPrice: consumed.activationPrice || null, activationRangeLow: consumed.activationRangeLow || null, activationRangeHigh: consumed.activationRangeHigh || null, breakoutConfirmPrice: consumed.breakoutConfirmPrice || null, retestRangeLow: consumed.retestRangeLow || null, retestRangeHigh: consumed.retestRangeHigh || null, observedLowPrice: finite(consumed.trailing?.observedLowPrice, finite(consumed.trailing?.retestLowPrice, null)), observedLowAtMs: finite(consumed.trailing?.observedLowAtMs, finite(consumed.trailing?.retestLowAtMs, 0)), armedReferencePrice: consumed.armedReferencePrice, triggeredAt: consumed.triggeredAt };
   state.externalDealLock = { active: true, source: "price_trigger_entry", setAt: nowIso(), reason: "PRICE_TRIGGER_ENTRY_PENDING_FORWARD" };
   state.manual = { ...state.manual, handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "price_trigger_fired", lastActionAt: nowIso() };
   // Improvement over Daily v1g: keep `last` bound to the winner, not the last cancelled sibling.
@@ -5554,6 +5623,8 @@ async function evaluateTrailingDipReclaim(pending, previousPrice, feature) {
       t.observedLowPrice = round(feature.price, 8);
       t.observedLowAt = feature.receivedAt;
       t.observedLowAtMs = feature.receivedAtMs;
+      t.fastConfirmObservations = 0;
+      t.fastConfirmStartedAtMs = 0;
     }
     const low = finite(t.observedLowPrice, feature.price);
     const dropPct = percentageBelow(activation, low);
@@ -5610,9 +5681,18 @@ async function evaluateTrailingDipReclaim(pending, previousPrice, feature) {
       return;
     }
     if (!trailingTickRecoveryOk(feature)) {
+      t.fastConfirmObservations=0; t.fastConfirmStartedAtMs=0;
       await persistState("trailing_dip_reclaim_wait_tick_recovery");
       log("INFO", "FVVO_TRAILING_DIP_RECLAIM_WAIT_TICK_RECOVERY", { triggerId: pending.id, observedLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, requireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY });
       return;
+    }
+    if (!t.fastConfirmStartedAtMs) t.fastConfirmStartedAtMs=current;
+    t.fastConfirmObservations=Math.max(0,Math.floor(finite(t.fastConfirmObservations,0)))+1;
+    if (t.fastConfirmObservations<CFG.TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS || (current-t.fastConfirmStartedAtMs)/1000<CFG.TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC) { await persistState("trailing_dip_reclaim_fast_confirming"); return; }
+    const severe5m=trailingDipSevere5mVeto();
+    if (severe5m.veto) {
+      log("WARN", "FVVO_TRAILING_DIP_RECLAIM_SEVERE_5M_VETO", { triggerId:pending.id, mode:CFG.TRAILING_DIP_RECLAIM_SEVERE_5M_VETO_MODE, context5m:severe5m });
+      if (CFG.TRAILING_DIP_RECLAIM_SEVERE_5M_VETO_MODE === "live") { t.fastConfirmObservations=0; t.fastConfirmStartedAtMs=0; await persistState("trailing_dip_reclaim_severe_5m_veto"); return; }
     }
     const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
     if (!checked.ok) {
@@ -5952,6 +6032,15 @@ async function evaluateHybridPullbackReclaimZone(pending, previousPrice, feature
   }
 
   const fallback = hybridPullbackFallback5mContext(pending, confirmPrice);
+  const recoveryAgeSec = (current - finite(t.observedLowAtMs, current)) / 1000;
+  const totalReboundPct = percentPnl(low, feature.price);
+  if (totalReboundPct > CFG.HYBRID_PULLBACK_MAX_REBOUND_FROM_LOW_PCT + 1e-9 || recoveryAgeSec > CFG.HYBRID_PULLBACK_MAX_RECOVERY_AGE_SEC) {
+    const reason = totalReboundPct > CFG.HYBRID_PULLBACK_MAX_REBOUND_FROM_LOW_PCT ? "HYBRID_PULLBACK_REBOUND_CHASE_TOO_LARGE" : "HYBRID_PULLBACK_RECOVERY_TOO_OLD";
+    const cancelled = resolvePriceEntryPending("CANCELLED", reason, { trailing: t }, pending);
+    await persistState("hybrid_pullback_anti_chase_cancelled");
+    log("WARN", "FVVO_HYBRID_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason, observedLowPrice: low, executionPrice: feature.price, reboundPct: round(totalReboundPct, 6), recoveryAgeSec: round(recoveryAgeSec, 3) });
+    return;
+  }
   if (fallback.barTimeMs > finite(t.last5mBarTimeMs, 0)) {
     t.last5mBarTimeMs = fallback.barTimeMs;
     t.fallback5mObservations = fallback.qualifies ? Math.floor(finite(t.fallback5mObservations, 0)) + 1 : 0;
@@ -6196,6 +6285,14 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
     }
 
     if (feature.price > finite(t.highestBreakoutPrice, 0) + 1e-9) t.highestBreakoutPrice = round(feature.price, 8);
+    const highestBreakoutPrice = finite(t.highestBreakoutPrice, feature.price);
+    const peakPullbackPct = percentageBelow(highestBreakoutPrice, feature.price);
+    if (CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT > 0 && peakPullbackPct + 1e-9 >= CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT) {
+      const cancelled = resolvePriceEntryPending("CANCELLED", "BREAKOUT_RETEST_FAILED_PEAK_PULLBACK", { trailing: t }, pending);
+      await persistState("breakout_retest_failed_peak_pullback");
+      log("WARN", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_CANCELLED", { triggerId: cancelled.id, reason: cancelled.resolutionReason, highestBreakoutPrice, peakPullbackPct: round(peakPullbackPct, 6), maxPeakPullbackPct: CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT, executionPrice: feature.price });
+      return;
+    }
 
     if (feature.price < failBelowPrice - 1e-9) {
       const cancelled = resolvePriceEntryPending("CANCELLED", "BREAKOUT_RETEST_RECLAIM_ZONE_RETEST_FAILED_BELOW_LOW_BUFFER", { trailing: t, triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
@@ -6302,6 +6399,11 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
       await persistState("breakout_retest_reclaim_zone_wait_tick_recovery");
       log("INFO", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_WAIT_TICK_RECOVERY", { triggerId: pending.id, breakoutConfirmPrice, retestRangeLow: rangeLow, retestRangeHigh: rangeHigh, retestLowPrice: low, reclaimTargetPrice: t.reclaimTargetPrice, executionPrice: feature.price, requireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, minFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO });
       return;
+    }
+    if (CFG.BREAKOUT_RETEST_REQUIRE_RECOVERED_5M) {
+      const ctx = state.lastFeature5m, close = finite(ctx?.close, ctx?.price), ema8 = finite(ctx?.ema8, null), ema18 = finite(ctx?.ema18, null), fvvo = finite(ctx?.fvvo, null), slope = finite(ctx?.slope, null);
+      const recovered = Boolean(ctx) && ageSec(ctx) <= CFG.BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC && close >= ema8 && ema8 >= ema18 && fvvo >= 0 && slope >= 0 && nonBearRay(ctx.rayRegime);
+      if (!recovered) { await persistState("breakout_retest_wait_recovered_5m"); log("INFO", "FVVO_BREAKOUT_RETEST_WAIT_RECOVERED_5M", { triggerId: pending.id, executionPrice: feature.price, context5m: ctx || null }); return; }
     }
     const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
     if (!checked.ok) {
@@ -6724,7 +6826,7 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, defaultHtfFrame, normalizeHtfFrame, defaultHtfBootstrap5m, normalizeHtfBootstrap5m, updateHigherTimeframes, updateHtfBootstrap5m, htfLongRunEvidence, htfConfirmedSevereBreak, htfLongRunGuardianExit, htfBootstrapMode, htfEarlyBridgeMode };
+module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, modeStructuralExitFailureConfirmed, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, defaultHtfFrame, normalizeHtfFrame, defaultHtfBootstrap5m, normalizeHtfBootstrap5m, updateHigherTimeframes, updateHtfBootstrap5m, htfLongRunEvidence, htfConfirmedSevereBreak, htfLongRunGuardianExit, htfBootstrapMode, htfEarlyBridgeMode };
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
 
@@ -6762,7 +6864,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1p_EARLY_BRIDGE_CONFIRMED_BREAK_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1q_MODE_AWARE_ENTRY_EXIT_HTF_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),

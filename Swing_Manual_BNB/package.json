@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1p-early-bridge-confirmed-break-live-paper",
+  "name": "brainfvvo-swing-multiasset-v1q-mode-aware-entry-exit-htf-live-paper",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing MultiAsset v1p early bridge and confirmed severe-break long-run live-paper runtime",
+  "description": "BrainFVVO Swing MultiAsset v1q early bridge and confirmed severe-break long-run live-paper runtime",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_v1k_live_paper.js && node validate_v1l_hybrid_bull_continuation.js && node validate_v1m_bullish_momentum_hold.js && node validate_v1n_htf_long_run.js && node validate_v1o_htf_bootstrap.js && node validate_v1p_early_bridge.js",
-    "replay": "node replay_sep03_xrp_merged_bc_v1p.js && node replay_multiasset_v1p_all_logs.js"
+    "check": "node --check server.js && node validate_v1q_mode_aware.js && node validate_v1k_live_paper.js && node validate_v1l_hybrid_bull_continuation.js && node validate_v1m_bullish_momentum_hold.js && node validate_v1n_htf_long_run.js && node validate_v1o_htf_bootstrap.js && node validate_v1p_early_bridge.js",
+    "replay": "node replay_sep03_xrp_merged_bc_v1p.js && node replay_multiasset_v1p_all_logs.js && node replay_sep06_four_modes_v1q.js"
   },
   "engines": {
     "node": ">=20"
