@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1e_EVENT_FILTER";
+const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1f_STANDALONE_BNB_ROUTE";
 const PORT = Number(process.env.PORT || 8080);
 const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "").trim();
@@ -22,11 +22,11 @@ const ALLOWED_SYMBOLS = parseSymbolSet(
   process.env.ALLOWED_SYMBOLS || "BINANCE:SOLUSDT,BINANCE:ETHUSDT,BINANCE:BNBUSDT,BINANCE:XRPUSDT"
 );
 
-function normalizeDestination(index, label, urlEnv, secretEnv, symbolsEnv, kindsEnv) {
+function normalizeDestination(index, label, urlEnv, secretEnv, symbolsEnv, kindsEnv, defaultSymbols = "", defaultKinds = "") {
   const url = clean(process.env[urlEnv] || "");
   const secret = String(process.env[secretEnv] || "").trim();
-  const symbols = parseSymbolSet(process.env[symbolsEnv] || "");
-  const kinds = parseKindSet(process.env[kindsEnv] || "");
+  const symbols = parseSymbolSet(process.env[symbolsEnv] || defaultSymbols);
+  const kinds = parseKindSet(process.env[kindsEnv] || defaultKinds);
   return { index, label, urlEnv, secretEnv, symbolsEnv, kindsEnv, url, host: hostFromUrl(url), secret, symbols, kinds, enabled: Boolean(url && hostFromUrl(url)) };
 }
 
@@ -34,6 +34,9 @@ const DESTINATIONS = [
   normalizeDestination(1, "PRIMARY_MULTI_SWING", "DEST_1_URL", "DEST_1_SECRET", "DEST_1_SYMBOLS", "DEST_1_KINDS"),
   normalizeDestination(2, "SPARE_RAILWAY_1", "DEST_2_URL", "DEST_2_SECRET", "DEST_2_SYMBOLS", "DEST_2_KINDS"),
   normalizeDestination(3, "SPARE_RAILWAY_2", "DEST_3_URL", "DEST_3_SECRET", "DEST_3_SYMBOLS", "DEST_3_KINDS"),
+  // Dedicated standalone BNB route. Its symbol defaults to BNB only, even when
+  // DEST_4_SYMBOLS is omitted, preventing accidental cross-asset forwarding.
+  normalizeDestination(4, "STANDALONE_BNB", "DEST_4_URL", "DEST_4_SECRET", "DEST_4_SYMBOLS", "DEST_4_KINDS", "BINANCE:BNBUSDT"),
 ];
 
 function extractInboundSecret(payload) {

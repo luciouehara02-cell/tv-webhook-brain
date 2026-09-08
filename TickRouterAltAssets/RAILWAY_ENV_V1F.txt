@@ -1,0 +1,7 @@
+ROUTER_NAME="TickRouter_AltAssets_v1f_STANDALONE_BNB_ROUTE"
+
+# Preserve DEST_1, DEST_2 and DEST_3 exactly as currently configured.
+DEST_4_URL="https://singlemanualbnb-production.up.railway.app/webhook"
+DEST_4_SECRET="MUST_MATCH_STANDALONE_BNB_WEBHOOK_SECRET"
+DEST_4_SYMBOLS="BINANCE:BNBUSDT"
+DEST_4_KINDS="fvvo_feature_tick,fvvo_feature_5m,fvvo_fast_tick"
