@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-swing-xrp-v1t-mode-aware-entry-exit-live",
+  "name": "brainfvvo-swing-xrp-v1u-trailing-dip-campaign-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v1t with mode-aware entry and exit protection",
+  "description": "Standalone XRP v1u with campaign-compatible trailing dip reclaim",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "check": "node --check server.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
     "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
   },
   "engines": {
