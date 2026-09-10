@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-multiasset-v1r-coordinated-recovery-campaign-live-paper",
+  "name": "brainfvvo-swing-bnb-v1b-deep-reclaim-audit-live",
   "version": "1.0.0",
   "private": true,
-  "description": "BrainFVVO Swing MultiAsset v1r coordinated entry recovery, campaign and mode-aware live-paper runtime",
+  "description": "Standalone BNB v1b with live confirmed Deep reclaim and shadow fast-reclaim audit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_v1r_coordinated_recovery.js && node validate_v1q_mode_aware.js && node validate_v1k_live_paper.js && node validate_v1l_hybrid_bull_continuation.js && node validate_v1m_bullish_momentum_hold.js && node validate_v1n_htf_long_run.js && node validate_v1o_htf_bootstrap.js && node validate_v1p_early_bridge.js",
-    "replay": "node replay_sep03_xrp_merged_bc_v1p.js && node replay_multiasset_v1p_all_logs.js && node replay_sep06_four_modes_v1q.js"
+    "check": "node --check server.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "replay": "node replay_bnb_v1a_corpus.js"
   },
   "engines": {
     "node": ">=20"
