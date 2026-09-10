@@ -252,7 +252,7 @@ const CFG = {
   // v1d role-specific confirmed pullback. Preferred/Deep must first touch their support zone,
   // then receive an aligned confirmed 15m close above breakout_confirm_price, retest/hold that
   // recovery level, and finally pass two fast recovery observations before a paper order is sent.
-  CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE: envStr("CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE", "shadow").toLowerCase(),
+  CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE: envStr("CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE", "live").toLowerCase(),
   CONFIRMED_PULLBACK_MIN_PENETRATION_PCT: envNum("CONFIRMED_PULLBACK_MIN_PENETRATION_PCT", 0.05),
   CONFIRMED_PULLBACK_MAX_TRACK_SEC: envNum("CONFIRMED_PULLBACK_MAX_TRACK_SEC", 21600),
   CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT: envNum("CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT", 0.10),
@@ -265,6 +265,13 @@ const CFG = {
   CONFIRMED_PULLBACK_FAST_MIN_FVVO: envNum("CONFIRMED_PULLBACK_FAST_MIN_FVVO", 0.0),
   CONFIRMED_PULLBACK_FAST_MIN_SLOPE: envNum("CONFIRMED_PULLBACK_FAST_MIN_SLOPE", 0.0),
   CONFIRMED_PULLBACK_FAST_REQUIRE_RAY_NOT_BEAR: envBool("CONFIRMED_PULLBACK_FAST_REQUIRE_RAY_NOT_BEAR", true),
+  // v1w: observe a quicker Deep recovery before the aligned 15m close/retest path.
+  // This branch is deliberately shadow by default; it never consumes the live setup.
+  CONFIRMED_PULLBACK_FAST_RECLAIM_MODE: envStr("CONFIRMED_PULLBACK_FAST_RECLAIM_MODE", "shadow").toLowerCase(),
+  CONFIRMED_PULLBACK_FAST_RECLAIM_OBSERVATIONS: Math.max(2, Math.floor(envNum("CONFIRMED_PULLBACK_FAST_RECLAIM_OBSERVATIONS", 2))),
+  CONFIRMED_PULLBACK_FAST_RECLAIM_MIN_SPAN_SEC: Math.max(0, envNum("CONFIRMED_PULLBACK_FAST_RECLAIM_MIN_SPAN_SEC", 12)),
+  CONFIRMED_PULLBACK_FAST_RECLAIM_REQUIRE_ABOVE_EMA8: envBool("CONFIRMED_PULLBACK_FAST_RECLAIM_REQUIRE_ABOVE_EMA8", true),
+  CONFIRMED_PULLBACK_FAST_RECLAIM_WAIT_LOG_SEC: Math.max(15, envNum("CONFIRMED_PULLBACK_FAST_RECLAIM_WAIT_LOG_SEC", 60)),
   CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED: envBool("CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED", true),
   CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT: envNum("CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT", 0.0),
 
@@ -1130,6 +1137,7 @@ function configProblems() {
   if (CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT <= 0 || CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT < CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT || CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC <= 0 || CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.TRAILING_DIP_RECLAIM_CONFIRM_OBSERVATIONS < 1 || CFG.TRAILING_DIP_RECLAIM_CONFIRM_MIN_SPAN_SEC < 0) problems.push("INVALID_TRAILING_DIP_RECLAIM_THRESHOLDS");
   if (!['disabled', 'shadow', 'live'].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_MODE");
   if (!["disabled", "shadow", "live"].includes(CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE)) problems.push("INVALID_CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE");
+  if (!["disabled", "shadow"].includes(CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MODE)) problems.push("INVALID_CONFIRMED_PULLBACK_FAST_RECLAIM_MODE");
   if (CFG.CONFIRMED_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.CONFIRMED_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.CONFIRMED_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_TOUCH_ABOVE_PCT < 0 || CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT < 0 || CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT < 0 || CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_CONFIRMED_PULLBACK_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.HYBRID_PULLBACK_FAST_PATH_MODE)) problems.push("INVALID_HYBRID_PULLBACK_FAST_PATH_MODE");
   if (CFG.HYBRID_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.HYBRID_PULLBACK_MIN_REBOUND_PCT <= 0 || CFG.HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT <= 0 || CFG.HYBRID_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.HYBRID_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.HYBRID_PULLBACK_MIN_SPACING_SEC <= 0 || CFG.HYBRID_PULLBACK_VOTE_MAX_SEC <= 0 || CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED > CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT || CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE > CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED || CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED > CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT || CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE > CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED || CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC <= 0 || CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC <= 0) problems.push("INVALID_HYBRID_PULLBACK_THRESHOLDS");
@@ -4575,6 +4583,9 @@ function priceEntryStatusPayload() {
       retestHoldBelowPct: CFG.CONFIRMED_PULLBACK_RETEST_HOLD_BELOW_PCT,
       maxEntryAboveConfirmPct: CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT,
       fastConfirmObservations: CFG.CONFIRMED_PULLBACK_FAST_CONFIRM_OBSERVATIONS,
+      fastReclaimMode: CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MODE,
+      fastReclaimObservations: CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_OBSERVATIONS,
+      fastReclaimMinSpanSec: CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MIN_SPAN_SEC,
       dormantDeepFallbackEnabled: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_FALLBACK_ENABLED,
       dormantDeepMaxPriorExitPnlPct: CFG.CONFIRMED_PULLBACK_DORMANT_DEEP_MAX_PRIOR_EXIT_PNL_PCT,
     },
@@ -5132,7 +5143,8 @@ async function armPriceEntry(body) {
   const pendingSlot = setPriceEntrySlot(pending);
   state.manual = { ...state.manual, lastAction: "arm_price_entry", lastActionAt: nowIso() };
   if (!(await persistState("price_trigger_armed"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_WHILE_ARMING_PRICE_TRIGGER" } };
-  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, pendingSlot, activePendingCount: activePriceEntryItems().length, entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, activationPrice: pending.activationPrice || null, activationRangeLow: pending.activationRangeLow || null, activationRangeHigh: pending.activationRangeHigh || null, breakoutConfirmPrice: pending.breakoutConfirmPrice || null, retestRangeLow: pending.retestRangeLow || null, retestRangeHigh: pending.retestRangeHigh || null, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, marketOrderWillBeSentOnCross: (!isTrailing && pending.triggerMode !== "breakout_retest_reclaim_zone"), trailingDipReclaimMode: isTrailingDipReclaim(pending) ? trailingDipReclaimMode() : null, trailingDipReclaimZoneMode: isTrailingDipReclaimZone(pending) ? trailingDipReclaimZoneMode() : null, breakoutRetestReclaimZoneMode: pending.triggerMode === "breakout_retest_reclaim_zone" ? breakoutRetestReclaimZoneMode() : null });
+  const executionMode = isConfirmedPullbackReclaimZone(pending) ? CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE : (isTrailingDipReclaimZone(pending) ? trailingDipReclaimZoneMode() : (isTrailingDipReclaim(pending) ? trailingDipReclaimMode() : (isBreakoutRetestReclaimZone(pending) ? breakoutRetestReclaimZoneMode() : "live")));
+  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, pendingSlot, activePendingCount: activePriceEntryItems().length, entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, activationPrice: pending.activationPrice || null, activationRangeLow: pending.activationRangeLow || null, activationRangeHigh: pending.activationRangeHigh || null, breakoutConfirmPrice: pending.breakoutConfirmPrice || null, retestRangeLow: pending.retestRangeLow || null, retestRangeHigh: pending.retestRangeHigh || null, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, executionMode, initialCrossAction: isTrailing || isBreakoutRetestReclaimZone(pending) ? "START_TRACKING" : "SEND_MARKET_ORDER", confirmedAction: executionMode === "live" ? "SEND_MARKET_ORDER" : "LOG_SHADOW_CANDIDATE", marketOrderWillBeSentOnCross: (!isTrailing && pending.triggerMode !== "breakout_retest_reclaim_zone"), trailingDipReclaimMode: isTrailingDipReclaim(pending) ? trailingDipReclaimMode() : null, trailingDipReclaimZoneMode: isTrailingDipReclaimZone(pending) ? trailingDipReclaimZoneMode() : null, breakoutRetestReclaimZoneMode: pending.triggerMode === "breakout_retest_reclaim_zone" ? breakoutRetestReclaimZoneMode() : null });
   if (pending.entryCampaign) {
     log("INFO", "FVVO_CAMPAIGN_ENTRY_SETUP_ARMED", { entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerId: pending.id, pendingSlot, activeCampaignSetups: activePriceEntryItems().filter((item) => item.entryCampaign === pending.entryCampaign).length, triggerMode: pending.triggerMode, expiresAt: pending.expiresAt });
     if (pending.triggerMode === "trailing_dip_reclaim") log("INFO", "FVVO_CAMPAIGN_TRAILING_DIP_RECLAIM_ARMED", { entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerId: pending.id, activationPrice: pending.activationPrice, stopPrice: pending.stopPrice, expiresAt: pending.expiresAt, oneWinnerPolicy: true });
@@ -5188,6 +5200,7 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
   // resolved locally first, preserving the one-symbol/one-deal contract even on same-tick races.
   const consumed = resolvePriceEntryPending("TRIGGERED_FORWARDING", modeReason, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current, sourceEvent: feature.kind }, pending);
   if (!consumed) return;
+  log("INFO", "FVVO_CAMPAIGN_ENTRY_RESERVED", { entryCampaign: consumed.entryCampaign || null, candidateRole: consumed.entryRole || "standalone", candidateMode: consumed.triggerMode, triggerId: consumed.id, executionPrice: feature.price, siblingCount: activePriceEntryItems().filter((item) => item.id !== consumed.id).length });
   if (["preferred", "deep_alternative"].includes(String(consumed.entryRole || "").toLowerCase())) {
     const tick = feature || state.lastFeature || {};
     const five = state.lastFeature5m || {};
@@ -5529,6 +5542,44 @@ function confirmedPullbackFastEvidence(feature, confirmPrice) {
   return { qualifies: priceOk && fvvoOk && slopeOk && rayOk, priceOk, fvvoOk, slopeOk, rayOk, price: feature.price, fvvo, slope, rayRegime: feature.rayRegime || null };
 }
 
+function confirmedPullbackFastReclaimEvidence(feature, pending, confirmPrice) {
+  const base = confirmedPullbackFastEvidence(feature, confirmPrice);
+  const ema8 = finite(feature.ema8, null);
+  const aboveEma8 = ema8 !== null && feature.price + 1e-9 >= ema8;
+  const guard = entry5mStrongBearContext(feature);
+  const bearGuardReleased = !entry5mBearGuardApplies(pending) || (guard.available && !guard.strongBear);
+  const qualifies = base.qualifies && (!CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_REQUIRE_ABOVE_EMA8 || aboveEma8) && bearGuardReleased;
+  return { ...base, qualifies, ema8, aboveEma8, bearGuardReleased, completed5mStrongBear: guard.strongBear, completed5m: guard };
+}
+
+async function evaluateConfirmedPullbackFastReclaimShadow(pending, feature, confirmPrice) {
+  if (String(pending.entryRole || "").toLowerCase() !== "deep_alternative" || CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MODE !== "shadow" || pending.trailing?.fastReclaimShadowCandidateLogged) return;
+  const t = pending.trailing || (pending.trailing = {});
+  const current = nowMs();
+  const maxEntryPrice = confirmPrice * (1 + CFG.CONFIRMED_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT / 100);
+  const evidence = confirmedPullbackFastReclaimEvidence(feature, pending, confirmPrice);
+  t.fastReclaimVotes = Array.isArray(t.fastReclaimVotes) ? t.fastReclaimVotes : [];
+  if (feature.price > maxEntryPrice + 1e-9 || !evidence.qualifies) {
+    t.fastReclaimVotes = [];
+  } else {
+    const prior = t.fastReclaimVotes[t.fastReclaimVotes.length - 1];
+    if (!prior || current > prior.atMs) t.fastReclaimVotes.push({ atMs: current, price: feature.price });
+    t.fastReclaimVotes = t.fastReclaimVotes.slice(-CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_OBSERVATIONS);
+  }
+  const spanSec = t.fastReclaimVotes.length > 1 ? (t.fastReclaimVotes[t.fastReclaimVotes.length - 1].atMs - t.fastReclaimVotes[0].atMs) / 1000 : 0;
+  const qualified = t.fastReclaimVotes.length >= CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_OBSERVATIONS && spanSec + 1e-9 >= CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MIN_SPAN_SEC;
+  if (qualified) {
+    t.fastReclaimShadowCandidateLogged = true;
+    t.fastReclaimShadowCandidateAt = nowIso();
+    t.fastReclaimShadowCandidatePrice = round(feature.price, 8);
+    log("INFO", "FVVO_CONFIRMED_PULLBACK_FAST_RECLAIM_SHADOW_CANDIDATE", { triggerId: pending.id, entryCampaign: pending.entryCampaign || null, entryRole: pending.entryRole || null, confirmPrice, candidateEntryPrice: feature.price, observedLowPrice: t.observedLowPrice, observations: t.fastReclaimVotes.length, spanSec: round(spanSec, 3), maxEntryPrice: round(maxEntryPrice, 8), evidence, automaticOrderSent: false, liveSetupPreserved: true });
+  } else if (current - finite(t.fastReclaimLastWaitLogAtMs, 0) >= CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_WAIT_LOG_SEC * 1000) {
+    t.fastReclaimLastWaitLogAtMs = current;
+    log("INFO", "FVVO_DEEP_RECLAIM_WAITING", { triggerId: pending.id, phase: t.phase, observedLowPrice: t.observedLowPrice, confirmPrice, currentPrice: feature.price, waitingFor: feature.price < confirmPrice ? "PRICE_RECLAIM" : (feature.price > maxEntryPrice ? "NO_CHASE_RESET" : (!evidence.bearGuardReleased ? "BEAR_GUARD_RELEASE" : "FAST_CONFIRMATION")), fastReclaimMode: CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MODE, observations: t.fastReclaimVotes.length, required: CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_OBSERVATIONS, minSpanSec: CFG.CONFIRMED_PULLBACK_FAST_RECLAIM_MIN_SPAN_SEC, evidence });
+  }
+  await persistState("confirmed_pullback_fast_reclaim_shadow");
+}
+
 function hybridPullbackVoteRules(pending) {
   const deep = String(pending?.entryRole || "").toLowerCase() === "deep_alternative";
   return deep
@@ -5749,6 +5800,7 @@ async function evaluateConfirmedPullbackReclaimZone(pending, previousPrice, feat
     log("WARN", "FVVO_CONFIRMED_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: "CONFIRMED_PULLBACK_TRACK_TIMEOUT", observedLowPrice: low, confirmPrice });
     return;
   }
+  await evaluateConfirmedPullbackFastReclaimShadow(pending, feature, confirmPrice);
   if (t.phase === "WAIT_15M_RECOVERY_CONFIRM") {
     const ctx = confirmedPullbackAligned15mContext(pending);
     const threshold = confirmPrice * (1 + CFG.CONFIRMED_PULLBACK_15M_CONFIRM_BUFFER_PCT / 100);

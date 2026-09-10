@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-swing-xrp-v1v-coordinated-bear-guard-live",
+  "name": "brainfvvo-swing-xrp-v1w-deep-reclaim-audit-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v1v with coordinated bear-guard reclaim release",
+  "description": "Standalone XRP v1w with live confirmed Deep reclaim and shadow fast-reclaim audit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1v_coordinated_bear_guard.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "check": "node --check server.js && node validate_xrp_v1w_deep_reclaim.js && node validate_xrp_v1v_coordinated_bear_guard.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
     "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
   },
   "engines": {
