@@ -1,0 +1,18 @@
+{
+  "name": "brainfvvo-swing-xrp-v1x-3commas-v2-only-live",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone XRP v1x with retained v1w strategy and 3Commas V2 custom-code-only execution",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node validate_xrp_v1x_3commas_v2.js && node validate_xrp_v1w_deep_reclaim.js && node validate_xrp_v1v_coordinated_bear_guard.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
