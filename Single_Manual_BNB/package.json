@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-swing-bnb-v1d-3commas-v2-percent-sizing",
+  "name": "brainfvvo-swing-bnb-v1e-3commas-v2-percent-full-config",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone BNB v1d with safe 3Commas V2 percentage sizing",
+  "description": "Standalone BNB v1e with safe V2 percentage sizing and explicit XRP-aligned configuration",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_bnb_v1d_percent_sizing.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "check": "node --check server.js && node validate_bnb_v1e_full_config.js && node validate_bnb_v1e_env.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
     "replay": "node replay_bnb_v1a_corpus.js"
   },
   "engines": {
