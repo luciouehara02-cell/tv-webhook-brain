@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1x_3COMMAS_V2_ONLY_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1y_3COMMAS_V2_PERCENT_FULL_CONFIG_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -125,8 +125,8 @@ const CFG = {
   C3_SIGNAL_URL: envStr("C3_SIGNAL_URL", "https://3c.wtalerts.com/bot/custom"),
   C3_ENTER_LONG_CODE: envStr("C3_ENTER_LONG_CODE", ""),
   C3_EXIT_LONG_CODE: envStr("C3_EXIT_LONG_CODE", ""),
-  C3_AMOUNT_PER_TRADE: envNum("C3_AMOUNT_PER_TRADE", 20),
-  C3_AMOUNT_PER_TRADE_TYPE: envStr("C3_AMOUNT_PER_TRADE_TYPE", "quote").toLowerCase(),
+  C3_AMOUNT_PER_TRADE: envNum("C3_AMOUNT_PER_TRADE", 0.10),
+  C3_AMOUNT_PER_TRADE_TYPE: envStr("C3_AMOUNT_PER_TRADE_TYPE", "percents").toLowerCase(),
   C3_ORDER_TYPE: envStr("C3_ORDER_TYPE", "market").toLowerCase(),
   // v1h: entry size and type are intentionally owned by the Signal Bot settings.
   // No entry `order` object is emitted by the brain. Legacy C3_ENTRY_ORDER_* values are ignored.
@@ -1054,14 +1054,21 @@ function persistState(reason) {
   return persistenceQueue;
 }
 
+function c3V2SizingProblems(amount = CFG.C3_AMOUNT_PER_TRADE, type = CFG.C3_AMOUNT_PER_TRADE_TYPE) {
+  const problems = [];
+  if (!(Number.isFinite(amount) && amount > 0)) problems.push("C3_V2_AMOUNT_PER_TRADE_MUST_BE_POSITIVE");
+  if (!["quote", "percents"].includes(type)) problems.push("C3_V2_AMOUNT_TYPE_MUST_BE_QUOTE_OR_PERCENTS");
+  if (type === "percents" && amount > 1) problems.push("C3_V2_PERCENT_AMOUNT_MUST_BE_DECIMAL_AT_MOST_1");
+  return problems;
+}
+
 function configProblems() {
   const problems = [];
   if (!CFG.WEBHOOK_SECRET) problems.push("WEBHOOK_SECRET_REQUIRED");
   if (!CFG.MANUAL_WEBHOOK_SECRET) problems.push("MANUAL_WEBHOOK_SECRET_REQUIRED");
   if (!validC3V2Code(CFG.C3_ENTER_LONG_CODE, "enter_long")) problems.push("C3_V2_ENTER_LONG_CODE_INVALID_OR_WRONG_SYMBOL");
   if (!validC3V2Code(CFG.C3_EXIT_LONG_CODE, "exit_long")) problems.push("C3_V2_EXIT_LONG_CODE_INVALID_OR_WRONG_SYMBOL");
-  if (!(CFG.C3_AMOUNT_PER_TRADE > 0)) problems.push("C3_V2_AMOUNT_PER_TRADE_MUST_BE_POSITIVE");
-  if (CFG.C3_AMOUNT_PER_TRADE_TYPE !== "quote") problems.push("C3_V2_AMOUNT_TYPE_MUST_BE_QUOTE");
+  problems.push(...c3V2SizingProblems());
   if (CFG.C3_ORDER_TYPE !== "market") problems.push("C3_V2_ORDER_TYPE_MUST_BE_MARKET");
   if (!CFG.ENABLE_HTTP_FORWARD) problems.push("ENABLE_HTTP_FORWARD_MUST_BE_TRUE");
   if (!["demo", "live"].includes(CFG.EXECUTION_MODE)) problems.push("EXECUTION_MODE_MUST_BE_DEMO_OR_LIVE");
@@ -1715,9 +1722,10 @@ function statusPayload() {
       amountPerTrade: CFG.C3_AMOUNT_PER_TRADE,
       amountPerTradeType: CFG.C3_AMOUNT_PER_TRADE_TYPE,
       orderType: CFG.C3_ORDER_TYPE,
+      availableBalanceFraction: CFG.C3_AMOUNT_PER_TRADE_TYPE === "percents" ? CFG.C3_AMOUNT_PER_TRADE : null,
       entrySizeSource: c3EntrySizeSource(),
       entryOrderIncludedInWebhook: c3EntryOrderIncluded(),
-      requiredBotEntryOrder: "amountPerTrade + quote + market",
+      requiredBotEntryOrder: `amountPerTrade + ${CFG.C3_AMOUNT_PER_TRADE_TYPE} + market`,
       exitOrderIncludedInWebhook: false,
       exitPercent: 100,
       nativeStopAttachedToEntry: CFG.C3_NATIVE_STOP_ENABLED,
@@ -6499,7 +6507,7 @@ if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_START
 module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, modeStructuralExitFailureConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, validateCampaignArm, cancelOtherPriceEntries, activePriceEntryItems };
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
-Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource, c3EntryOrderIncluded });
+Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource, c3EntryOrderIncluded, c3V2SizingProblems });
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
@@ -6535,7 +6543,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v1x_3COMMAS_V2_ONLY_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v1y_3COMMAS_V2_PERCENT_FULL_CONFIG_LIVE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6590,7 +6598,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1x_3COMMAS_V2_ONLY_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v1y_3COMMAS_V2_PERCENT_FULL_CONFIG_LIVE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
@@ -6605,7 +6613,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
 
     childEnv.C3_ENTER_LONG_CODE = envStr(`${alias}_C3_ENTER_LONG_CODE`, envStr("C3_ENTER_LONG_CODE", ""));
     childEnv.C3_EXIT_LONG_CODE = envStr(`${alias}_C3_EXIT_LONG_CODE`, envStr("C3_EXIT_LONG_CODE", ""));
-    childEnv.C3_AMOUNT_PER_TRADE = String(envNum(`${alias}_C3_AMOUNT_PER_TRADE`, envNum("C3_AMOUNT_PER_TRADE", 20)));
+    childEnv.C3_AMOUNT_PER_TRADE = String(envNum(`${alias}_C3_AMOUNT_PER_TRADE`, envNum("C3_AMOUNT_PER_TRADE", 0.10)));
 
     // Optional per-symbol inbound/manual secrets; common values remain valid fallback.
     if (process.env[`${alias}_WEBHOOK_SECRET`]) {
