@@ -1,8 +1,8 @@
 {
-  "name": "brainfvvo-swing-bnb-v1e-3commas-v2-percent-full-config",
+  "name": "brainfvvo-swing-bnb-v1f-reentry-reliability-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone BNB v1e with safe V2 percentage sizing and explicit XRP-aligned configuration",
+  "description": "Standalone BNB v1f with reliable re-entry alignment, hysteresis and overextension retest",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

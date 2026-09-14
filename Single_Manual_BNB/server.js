@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1e_3COMMAS_V2_PERCENT_FULL_CONFIG_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1f_REENTRY_RELIABILITY_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:BNBUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -649,8 +649,8 @@ const CFG = {
   REENTRY_PULLBACK_MIN_PCT: envNum("REENTRY_PULLBACK_MIN_PCT", 0.35),
   REENTRY_PULLBACK_MAX_PCT: envNum("REENTRY_PULLBACK_MAX_PCT", 1.20),
   REENTRY_MAX_BELOW_EMA18_PCT: envNum("REENTRY_MAX_BELOW_EMA18_PCT", 0.15),
-  // v1u audit-only hysteresis measures noise around the EMA18 invalidation threshold. It does not
-  // alter automatic re-entry eligibility in the selected runtime configuration.
+  // v1f: bounded EMA18 hysteresis prevents a pullback being invalidated by threshold-edge noise.
+  REENTRY_PULLBACK_HYSTERESIS_MODE: envStr("REENTRY_PULLBACK_HYSTERESIS_MODE", "live").toLowerCase(),
   REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED: envBool("REENTRY_PULLBACK_HYSTERESIS_AUDIT_ENABLED", true),
   REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT: envNum("REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT", 0.05),
   REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT: envNum("REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT", 0.03),
@@ -726,7 +726,7 @@ const CFG = {
   // independent from the standard WAIT_PULLBACK path. `shadow` writes evidence only; `live`
   // is explicitly opt-in and still requires a two-tick recovery confirmation and projected stop.
   POST_EXIT_RECOVERED_BASE_MODE: envStr("POST_EXIT_RECOVERED_BASE_MODE", "shadow").toLowerCase(),
-  POST_EXIT_RECOVERED_BASE_WINDOW_SEC: envNum("POST_EXIT_RECOVERED_BASE_WINDOW_SEC", 600),
+  POST_EXIT_RECOVERED_BASE_WINDOW_SEC: envNum("POST_EXIT_RECOVERED_BASE_WINDOW_SEC", 1200),
   POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT: envNum("POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT", 0.60),
   POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT: envNum("POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT", 0.06),
   POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT: envNum("POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT", 0.18),
@@ -4074,6 +4074,8 @@ async function evaluatePostExitRecoveredBase(campaign, feature) {
     recovered.firstConfirmAt = null;
     recovered.lastConfirmPrice = null;
     recovered.crossUpSeen = false;
+    recovered.awaitingRetest = false;
+    recovered.overextendedPeakPrice = null;
     recovered.phase = "WATCHING_BASE";
     recovered.reason = "LOW_UPDATED";
     await persistState("post_exit_recovered_base_low_updated");
@@ -4109,11 +4111,40 @@ async function evaluatePostExitRecoveredBase(campaign, feature) {
     slope !== null && slope >= CFG.POST_EXIT_RECOVERED_BASE_MIN_SLOPE;
   const rayOk = !CFG.POST_EXIT_RECOVERED_BASE_REQUIRE_RAY_NOT_BEAR || !ray.includes("BEAR");
   const contextOk = !CFG.POST_EXIT_RECOVERED_BASE_REQUIRE_5M_CONTEXT || context.ok;
+  const overextended = recoveryPct > CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT + 1e-9;
+  if (overextended) {
+    recovered.awaitingRetest = true;
+    recovered.overextendedPeakPrice = Math.max(finite(recovered.overextendedPeakPrice, 0), price);
+    recovered.confirmations = 0;
+    recovered.firstConfirmAtMs = 0;
+    recovered.firstConfirmAt = null;
+    recovered.lastConfirmPrice = null;
+    if (recovered.phase !== "WAIT_RETEST_AFTER_OVEREXTENSION") {
+      recovered.phase = "WAIT_RETEST_AFTER_OVEREXTENSION";
+      recovered.reason = "RECOVERY_VALID_BUT_TOO_EXTENDED_TO_CHASE";
+      await persistState("post_exit_recovered_base_wait_retest");
+      log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_WAIT_RETEST", {
+        campaignId: campaign.id, price, baseLowPrice: recovered.baseLowPrice,
+        recoveryPct: round(recoveryPct, 6), maxChasePct: CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT,
+        action: "KEEP_RECOVERY_THESIS_WAIT_FOR_SAFE_RETEST",
+      });
+    }
+    return { entered: false, active: true, awaitingRetest: true };
+  }
   const recoveryOk = recoveryPct + 1e-9 >= CFG.POST_EXIT_RECOVERED_BASE_MIN_RECOVERY_PCT &&
     recoveryPct <= CFG.POST_EXIT_RECOVERED_BASE_MAX_CHASE_FROM_LOW_PCT + 1e-9;
   const priorImpulsePct = percentPnl(finite(campaign.baseEntryPrice, 0), finite(campaign.priorPeakPrice, 0));
   const impulseOk = priorImpulsePct + 1e-9 >= CFG.POST_EXIT_RECOVERED_BASE_MIN_PRIOR_IMPULSE_PCT;
   const qualified = structural && momentum && rayOk && contextOk && recoveryOk && impulseOk;
+  if (qualified && recovered.awaitingRetest) {
+    recovered.awaitingRetest = false;
+    recovered.phase = "RETEST_RECOVERY_CONFIRMING";
+    recovered.reason = "SAFE_RETEST_AFTER_OVEREXTENSION";
+    log("INFO", "FVVO_POST_EXIT_RECOVERED_BASE_RETEST_ACCEPTED", {
+      campaignId: campaign.id, price, baseLowPrice: recovered.baseLowPrice,
+      recoveryPct: round(recoveryPct, 6), overextendedPeakPrice: recovered.overextendedPeakPrice,
+    });
+  }
 
   if (!qualified) {
     if (recovered.confirmations > 0) {
@@ -4277,10 +4308,19 @@ async function evaluateReentryShadow(feature) {
   const tickEma18 = finite(feature.ema18, null);
   const pullbackDepthPct = percentageBelow(c.highestPrice, price);
   const belowEma18Pct = tickEma18 !== null && price < tickEma18 ? percentageBelow(tickEma18, price) : 0;
+  const liveHysteresisPct = CFG.REENTRY_PULLBACK_HYSTERESIS_MODE === "live" ? CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT : 0;
+  const effectiveMaxBelowEma18Pct = CFG.REENTRY_MAX_BELOW_EMA18_PCT + liveHysteresisPct;
+
+  if (c.hysteresisRearmRequired && CFG.REENTRY_PULLBACK_HYSTERESIS_MODE === "live") {
+    const rearmPrice = tickEma18 === null ? Infinity : tickEma18 * (1 + CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT / 100);
+    if (price + 1e-9 < rearmPrice) return;
+    c.hysteresisRearmRequired = false;
+    log("INFO", "FVVO_REENTRY_PULLBACK_HYSTERESIS_REARMED_LIVE", { campaignId: c.id, price, ema18: tickEma18, requiredAboveEma18Pct: CFG.REENTRY_PULLBACK_REARM_ABOVE_EMA18_PCT });
+  }
 
   if (c.phase === "WAIT_PULLBACK" || c.phase === "WAIT_IMPULSE") {
     reentryPullbackHysteresisAudit(c, feature, belowEma18Pct, "WAIT_PULLBACK");
-    if (pullbackDepthPct >= CFG.REENTRY_PULLBACK_MIN_PCT && pullbackDepthPct <= CFG.REENTRY_PULLBACK_MAX_PCT && belowEma18Pct <= CFG.REENTRY_MAX_BELOW_EMA18_PCT) {
+    if (pullbackDepthPct >= CFG.REENTRY_PULLBACK_MIN_PCT && pullbackDepthPct <= CFG.REENTRY_PULLBACK_MAX_PCT && belowEma18Pct <= effectiveMaxBelowEma18Pct) {
       c.phase = "WAIT_RECLAIM";
       c.reason = "HEALTHY_PULLBACK_SEEN";
       c.pullbackLowPrice = round(price, 8);
@@ -4306,14 +4346,15 @@ async function evaluateReentryShadow(feature) {
     c.postPullback5mAlignment = null;
     resetReentryReclaim(c);
   }
-  if (belowEma18Pct > CFG.REENTRY_MAX_BELOW_EMA18_PCT && belowEma18Pct <= CFG.REENTRY_MAX_BELOW_EMA18_PCT + CFG.REENTRY_PULLBACK_INVALIDATION_HYSTERESIS_PCT) reentryPullbackHysteresisAudit(c, feature, belowEma18Pct, "NEAR_INVALIDATION");
-  if (c.pullbackDepthPct > CFG.REENTRY_PULLBACK_MAX_PCT + 1e-9 || belowEma18Pct > CFG.REENTRY_MAX_BELOW_EMA18_PCT + 1e-9) {
+  if (belowEma18Pct > CFG.REENTRY_MAX_BELOW_EMA18_PCT && belowEma18Pct <= effectiveMaxBelowEma18Pct) reentryPullbackHysteresisAudit(c, feature, belowEma18Pct, "LIVE_TOLERANCE");
+  if (c.pullbackDepthPct > CFG.REENTRY_PULLBACK_MAX_PCT + 1e-9 || belowEma18Pct > effectiveMaxBelowEma18Pct + 1e-9) {
     reentryPullbackHysteresisAudit(c, feature, belowEma18Pct, "INVALIDATED");
     c.phase = "WAIT_PULLBACK";
     c.reason = "PULLBACK_INVALIDATED";
+    c.hysteresisRearmRequired = CFG.REENTRY_PULLBACK_HYSTERESIS_MODE === "live";
     resetReentryReclaim(c);
     await persistState("reentry_pullback_invalidated");
-    log("WARN", "FVVO_REENTRY_PULLBACK_INVALIDATED", { campaignId: c.id, pullbackDepthPct: c.pullbackDepthPct, belowEma18Pct: round(belowEma18Pct, 6), maxPullbackPct: CFG.REENTRY_PULLBACK_MAX_PCT, maxBelowEma18Pct: CFG.REENTRY_MAX_BELOW_EMA18_PCT });
+    log("WARN", "FVVO_REENTRY_PULLBACK_INVALIDATED", { campaignId: c.id, pullbackDepthPct: c.pullbackDepthPct, belowEma18Pct: round(belowEma18Pct, 6), maxPullbackPct: CFG.REENTRY_PULLBACK_MAX_PCT, maxBelowEma18Pct: effectiveMaxBelowEma18Pct, baseMaxBelowEma18Pct: CFG.REENTRY_MAX_BELOW_EMA18_PCT, hysteresisPct: liveHysteresisPct });
     return;
   }
 
@@ -4389,7 +4430,7 @@ async function evaluateReentryShadow(feature) {
     context5m: { price: context.close, ema8: context.ema8, ema18: context.ema18, fvvo: context.fvvo, rayRegime: context.ray, ageSec: round(context.ctxAge, 2) },
     reentryContextMode: context.ok ? "5M_CONTEXT" : (preReleaseOverride.ok ? preReleaseOverride.source : "NONE"),
     preReleasePullbackCarried: Boolean(c.preReleasePullback?.eligible),
-    postPullback5mAlignment,
+    postPullback5mAlignment: postPullbackAlignment,
     mode: CFG.REENTRY_PHASE, launchPath: launchPath || "STANDARD_TWO_CONFIRM", automaticOrderSent: false,
   };
   c.observedCandidates = Number(c.observedCandidates || 0) + 1;
