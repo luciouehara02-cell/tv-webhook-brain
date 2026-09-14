@@ -1,8 +1,8 @@
 {
-  "name": "brainfvvo-swing-xrp-v1y-3commas-v2-percent-full-config-live",
+  "name": "brainfvvo-swing-xrp-v1z-reentry-reliability-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v1y with V2-only decimal-percent sizing and full explicit configuration",
+  "description": "Standalone XRP v1z with reliable re-entry alignment, hysteresis and overextension retest",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
