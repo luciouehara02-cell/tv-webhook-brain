@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1v_REENTRY_RELIABILITY_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1w_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + retained Swing engine and v1n HTF long-run guardian in ONE server.js.
 //
 // Main thread:
@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1v_REENTRY_RELIABILITY_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1w_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -6617,10 +6617,10 @@ async function evaluateBreakoutPostExpiryShadow(feature) {
       const c = sh.candidate;
       c.peakPrice = Math.max(finite(c.peakPrice, c.entryPrice), feature.price);
       c.lowPrice = Math.min(finite(c.lowPrice, c.entryPrice), feature.price);
-      c.mfePct = round(pctFromTo(c.entryPrice, c.peakPrice), 6);
-      c.maePct = round(pctFromTo(c.entryPrice, c.lowPrice), 6);
+      c.mfePct = round(percentPnl(c.entryPrice, c.peakPrice), 6);
+      c.maePct = round(percentPnl(c.entryPrice, c.lowPrice), 6);
       c.latestPrice = round(feature.price, 8);
-      c.latestPnlPct = round(pctFromTo(c.entryPrice, feature.price), 6);
+      c.latestPnlPct = round(percentPnl(c.entryPrice, feature.price), 6);
       dirty = true;
       if (current >= finite(c.performanceEndsAtMs, 0)) {
         sh.status = "DONE";
@@ -7000,7 +7000,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1v_REENTRY_RELIABILITY_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1w_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7055,7 +7055,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1v_${alias}_REENTRY_RELIABILITY_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1w_${alias}_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
