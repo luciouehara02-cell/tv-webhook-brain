@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-xrp-v1z-reentry-reliability-live",
+  "name": "brainfvvo-swing-xrp-v2b-entry-gate-confirm-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v1z with reliable re-entry alignment, hysteresis and overextension retest",
+  "description": "Standalone XRP v2b with role-aware advisory entry gate and mandatory user confirmation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_xrp_v1y_full_config.js && node validate_xrp_v1y_env.js && node validate_xrp_v1w_deep_reclaim.js && node validate_xrp_v1v_coordinated_bear_guard.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
-    "replay": "node replay_sep07_failed_breakout.js ../upload/SWING_XRP_Sep07B.log"
+    "check": "node --check server.js && node --check entryGate.js && node validate_entry_gate_confirmation.js && node validate_xrp_v1y_full_config.js && node validate_xrp_v1w_deep_reclaim.js && node validate_xrp_v1v_coordinated_bear_guard.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js && node validate_reentry_reliability_v1z.js && node validate_xrp_v2a_near_retest.js",
+    "replay": "node replay_xrp_v2a_near_retest.js ../upload/Single_Manual_XRP_Sep15A.log"
   },
   "engines": {
     "node": ">=20"
