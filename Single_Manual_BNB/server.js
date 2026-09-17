@@ -23,6 +23,7 @@ const FVVO_ENGINE_WORKER = !isMainThread && Boolean(workerData?.fvvoEngineWorker
 
 if (FVVO_ENGINE_WORKER) {
 // ===== BEGIN SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
+const entryGate = require("./entryGate");
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
@@ -101,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1f_REENTRY_RELIABILITY_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1g_ENTRY_GATE_CONFIRM_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:BNBUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -111,6 +112,9 @@ const CFG = {
   MANUAL_CONTROL_ENABLED: envBool("MANUAL_CONTROL_ENABLED", true),
   MANUAL_WEBHOOK_PATH: envStr("MANUAL_WEBHOOK_PATH", "/manual"),
   MANUAL_WEBHOOK_SECRET: envStr("MANUAL_WEBHOOK_SECRET", ""),
+  ENTRY_GATE_CONFIRM_REQUIRED: envBool("ENTRY_GATE_CONFIRM_REQUIRED", false),
+  ENTRY_GATE_CONFIRM_TTL_SEC: Math.max(30, Math.floor(envNum("ENTRY_GATE_CONFIRM_TTL_SEC", 300))),
+  ENTRY_GATE_HISTORY_MAX_BARS: Math.max(144, Math.floor(envNum("ENTRY_GATE_HISTORY_MAX_BARS", 900))),
 
   SHADOW_ONLY: envBool("SHADOW_ONLY", false),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
@@ -857,13 +861,13 @@ function defaultState() {
     lastFastTick: null,
     position: null,
     externalDealLock: { active: false, source: "", setAt: "", reason: "" },
-    manual: { handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "", lastActionAt: "", entryConfirmation: null },
+    manual: { handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "", lastActionAt: "", entryConfirmation: null, entryGatePreview: null },
     forward: { lastByKey: {}, lastRequestId: "" },
     reentry: { campaign: null, recentTickPrices: [] },
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
     priceEntry: { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null },
-    audit: { runnerRescuePostExit: null, profitFloorMicroShadow: null, profitFloorPostExitReclaimShadow: null, breakoutPostExpiryShadows: [], lastBarTimeByKind: {} },
+    audit: { runnerRescuePostExit: null, profitFloorMicroShadow: null, profitFloorPostExitReclaimShadow: null, breakoutPostExpiryShadows: [], lastBarTimeByKind: {}, entryGate5mBars: [] },
   };
 }
 
@@ -891,6 +895,7 @@ function normalizeState(raw) {
   next.audit.profitFloorMicroShadow = normalizeProfitFloorMicroShadowState(next.audit.profitFloorMicroShadow);
   next.audit.profitFloorPostExitReclaimShadow = normalizeProfitFloorPostExitReclaimShadowState(next.audit.profitFloorPostExitReclaimShadow);
   next.audit.breakoutPostExpiryShadows = Array.isArray(next.audit.breakoutPostExpiryShadows) ? next.audit.breakoutPostExpiryShadows.filter((x) => x && typeof x === "object").slice(-4) : [];
+  next.audit.entryGate5mBars = Array.isArray(next.audit.entryGate5mBars) ? next.audit.entryGate5mBars.slice(-CFG.ENTRY_GATE_HISTORY_MAX_BARS) : [];
   if (next.priceEntry.pending && typeof next.priceEntry.pending !== "object") next.priceEntry.pending = null;
   if (next.priceEntry.pending2 && typeof next.priceEntry.pending2 !== "object") next.priceEntry.pending2 = null;
   if (next.priceEntry.pending3 && typeof next.priceEntry.pending3 !== "object") next.priceEntry.pending3 = null;
@@ -1306,7 +1311,7 @@ function featureTimeGuard(feature) {
 function updateFeature(feature) {
   if (!Number.isFinite(feature.price) || feature.price <= 0) return false;
   if (feature.kind === CFG.FVVO_FEATURE_TICK_EVENT) state.lastFeature = feature;
-  else if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT) state.lastFeature5m = feature;
+  else if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT) { state.lastFeature5m = feature; entryGate.recordFiveMinuteBar(state.audit, feature, CFG.ENTRY_GATE_HISTORY_MAX_BARS); }
   else if (feature.kind === CFG.FVVO_FAST_TICK_EVENT) state.lastFastTick = feature;
   else return false;
   return true;
@@ -5212,7 +5217,61 @@ function closeCampaignBreakoutPostExpiryShadows(entryCampaign, winningRole, winn
   return closed;
 }
 
+function entryGateSanitizedSetup(body) {
+  const copy = clone(body || {});
+  delete copy.secret;
+  delete copy.confirmation_token;
+  delete copy.confirmationToken;
+  copy.action = "arm_price_entry";
+  return copy;
+}
+
 async function armPriceEntry(body) {
+  if (!CFG.ENTRY_GATE_CONFIRM_REQUIRED) return armPriceEntryConfirmed(body);
+  const issue = configProblems()[0];
+  if (issue) return { status: 503, body: { ok: false, error: issue } };
+  if (!CFG.PRICE_ENTRY_ENABLED || !CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY) return { status: 403, body: { ok: false, error: "PRICE_TRIGGER_ENTRY_DISABLED" } };
+  if (stateBlocksNewEntry()) return { status: 409, body: { ok: false, error: stateBlocksNewEntry(), status: statusPayload() } };
+  if (CFG.MANUAL_REQUIRE_FRESH_FEATURE_TICK && !isFeatureFresh()) return { status: 409, body: { ok: false, error: "FRESH_FEATURE_TICK_REQUIRED", featureAgeSec: ageSec(state.lastFeature) } };
+  const validated = validatePriceTriggerCommand(body, finite(state.lastFeature?.price, null));
+  if (!validated.ok) return { status: 400, body: { ok: false, error: validated.error } };
+  const campaign = validateCampaignArm(body, validated, activePriceEntryItems());
+  if (!campaign.ok) return { status: 409, body: { ok: false, error: campaign.error, priceTriggerEntry: priceEntryStatusPayload() } };
+  const assessment = entryGate.assess({ audit: state.audit, fastFeature: state.lastFeature, role: campaign.entryRole });
+  const token = crypto.randomUUID();
+  const expiresAtMs = nowMs() + CFG.ENTRY_GATE_CONFIRM_TTL_SEC * 1000;
+  state.manual.entryGatePreview = { token, setup: entryGateSanitizedSetup(body), assessment, createdAt: nowIso(), createdAtMs: nowMs(), expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs };
+  await persistState("entry_gate_preview_created");
+  log("INFO", "FVVO_ENTRY_GATE_PREVIEW_CREATED", { token, entryCampaign: campaign.entryCampaign, entryRole: campaign.entryRole, triggerMode: validated.triggerMode, verdict: assessment.verdict, score: assessment.score, confidence: assessment.confidence, expiresAt: state.manual.entryGatePreview.expiresAt, setupArmed: false });
+  return { status: 202, body: { ok: true, confirmationRequired: true, setupArmed: false, confirmationToken: token, confirmationExpiresAt: state.manual.entryGatePreview.expiresAt, entryGate: assessment } };
+}
+
+async function confirmPriceEntryGate(body) {
+  const preview = state.manual?.entryGatePreview;
+  if (!preview) return { status: 409, body: { ok: false, error: "NO_ENTRY_GATE_PREVIEW" } };
+  if (nowMs() > finite(preview.expiresAtMs, 0)) { state.manual.entryGatePreview = null; await persistState("entry_gate_preview_expired"); return { status: 410, body: { ok: false, error: "ENTRY_GATE_CONFIRMATION_EXPIRED" } }; }
+  const token = String(body.confirmation_token || body.confirmationToken || "");
+  if (!safeTimingEqual(preview.token, token)) return { status: 403, body: { ok: false, error: "BAD_ENTRY_GATE_CONFIRMATION_TOKEN" } };
+  const setup = preview.setup;
+  const assessment = preview.assessment;
+  state.manual.entryGatePreview = null;
+  log("INFO", "FVVO_ENTRY_GATE_CONFIRMED", { verdict: assessment.verdict, score: assessment.score, confidence: assessment.confidence, action: "ARM_SETUP" });
+  return armPriceEntryConfirmed(setup);
+}
+
+async function declinePriceEntryGate(body) {
+  const preview = state.manual?.entryGatePreview;
+  if (!preview) return { status: 200, body: { ok: true, setupAborted: true, alreadyAbsent: true } };
+  const token = String(body.confirmation_token || body.confirmationToken || "");
+  if (token && !safeTimingEqual(preview.token, token)) return { status: 403, body: { ok: false, error: "BAD_ENTRY_GATE_CONFIRMATION_TOKEN" } };
+  state.manual.entryGatePreview = null;
+  await persistState("entry_gate_declined");
+  log("WARN", "FVVO_ENTRY_GATE_DECLINED", { verdict: preview.assessment?.verdict, score: preview.assessment?.score, reason: String(body.reason || "user_selected_no"), setupArmed: false });
+  log("WARN", "FVVO_SETUP_ABORTED_BY_USER", { reason: String(body.reason || "user_selected_no") });
+  return { status: 200, body: { ok: true, setupAborted: true, setupArmed: false } };
+}
+
+async function armPriceEntryConfirmed(body) {
   const issue = configProblems()[0];
   if (issue) return { status: 503, body: { ok: false, error: issue } };
   if (!CFG.PRICE_ENTRY_ENABLED || !CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY) return { status: 403, body: { ok: false, error: "PRICE_TRIGGER_ENTRY_DISABLED" } };
@@ -6257,10 +6316,10 @@ async function evaluateBreakoutPostExpiryShadow(feature) {
       const c = sh.candidate;
       c.peakPrice = Math.max(finite(c.peakPrice, c.entryPrice), feature.price);
       c.lowPrice = Math.min(finite(c.lowPrice, c.entryPrice), feature.price);
-      c.mfePct = round(pctFromTo(c.entryPrice, c.peakPrice), 6);
-      c.maePct = round(pctFromTo(c.entryPrice, c.lowPrice), 6);
+      c.mfePct = round(percentPnl(c.entryPrice, c.peakPrice), 6);
+      c.maePct = round(percentPnl(c.entryPrice, c.lowPrice), 6);
       c.latestPrice = round(feature.price, 8);
-      c.latestPnlPct = round(pctFromTo(c.entryPrice, feature.price), 6);
+      c.latestPnlPct = round(percentPnl(c.entryPrice, feature.price), 6);
       dirty = true;
       if (current >= finite(c.performanceEndsAtMs, 0)) {
         sh.status = "DONE";
@@ -6477,6 +6536,8 @@ async function handleManual(body) {
   if (action === "confirm_entry_fill") return confirmEntryFill(body);
   if (action === "cancel_manual_entry_confirmation") return cancelManualEntryConfirmation(body);
   if (action === "arm_price_entry") return armPriceEntry(body);
+  if (action === "confirm_price_entry_gate") return confirmPriceEntryGate(body);
+  if (action === "decline_price_entry_gate") return declinePriceEntryGate(body);
   if (action === "cancel_price_entry") return cancelPriceEntry(body);
   if (action === "exit_long") return manualExit(body);
   if (action === "confirm_exit_closed") return confirmExitClosed(body);
@@ -6589,6 +6650,7 @@ async function start() {
     reentryCampaignMaxAgeSec: CFG.REENTRY_CAMPAIGN_MAX_AGE_SEC, reentryMaxBounceFromLowPct: CFG.REENTRY_MAX_BOUNCE_FROM_LOW_PCT, reentryContinuationGraceMode: reentryContinuationGraceMode(), reentryContinuationGraceMinMfePct: CFG.REENTRY_CONTINUATION_GRACE_MIN_MFE_PCT, reentryContinuationGraceMaxSec: CFG.REENTRY_CONTINUATION_GRACE_MAX_SEC, yellowTpShadowEnabled: CFG.YELLOW_TP_SHADOW_ENABLED, priceTriggerDefaultExpirySec: CFG.PRICE_ENTRY_DEFAULT_EXPIRY_SEC, priceTriggerMinDistancePct: CFG.PRICE_ENTRY_MIN_TRIGGER_DISTANCE_PCT, priceTriggerMaxDistancePct: CFG.PRICE_ENTRY_MAX_TRIGGER_DISTANCE_PCT, priceTriggerRequireActualCross: CFG.PRICE_ENTRY_REQUIRE_ACTUAL_CROSS, priceTriggerMaxPending: CFG.PRICE_ENTRY_MAX_PENDING, priceTriggerActivePendingCount: activePriceEntryItems().length, trailingDipReclaimMode: trailingDipReclaimMode(), trailingDipReclaimMinDropPct: CFG.TRAILING_DIP_RECLAIM_MIN_DROP_PCT, trailingDipReclaimReclaimPct: CFG.TRAILING_DIP_RECLAIM_RECLAIM_PCT, trailingDipReclaimMaxChasePct: CFG.TRAILING_DIP_RECLAIM_MAX_CHASE_PCT, trailingDipReclaimMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_MAX_TRACK_SEC, trailingDipReclaimMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneMode: trailingDipReclaimZoneMode(), trailingDipReclaimZoneReclaimPct: CFG.TRAILING_DIP_RECLAIM_ZONE_RECLAIM_PCT, trailingDipReclaimZoneMaxEntryAboveHighPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, trailingDipReclaimZoneMinPenetrationPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_PENETRATION_PCT, trailingDipReclaimZoneMaxTrackSec: CFG.TRAILING_DIP_RECLAIM_ZONE_MAX_TRACK_SEC, trailingDipReclaimZoneMinLowAboveStopPct: CFG.TRAILING_DIP_RECLAIM_ZONE_MIN_LOW_ABOVE_STOP_PCT, trailingDipReclaimZoneRequireTickRecovery: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, trailingDipReclaimZoneRequireRayNotBear: CFG.TRAILING_DIP_RECLAIM_ZONE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardMode: entry5mBearGuardMode(), entry5mBearGuardMaxAgeSec: CFG.ENTRY_5M_BEAR_GUARD_MAX_AGE_SEC, entry5mBearGuardMaxFvvo: CFG.ENTRY_5M_BEAR_GUARD_MAX_FVVO, entry5mBearGuardRequireRayBear: CFG.ENTRY_5M_BEAR_GUARD_REQUIRE_RAY_BEAR, entry5mBearGuardApplyPreferred: CFG.ENTRY_5M_BEAR_GUARD_APPLY_PREFERRED, entry5mBearGuardApplyDeep: CFG.ENTRY_5M_BEAR_GUARD_APPLY_DEEP, entry5mBearGuardReleaseReference: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REFERENCE, entry5mBearGuardReleaseStructureTolerancePct: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_STRUCTURE_TOLERANCE_PCT, entry5mBearGuardReleaseMinFvvo: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_FVVO, entry5mBearGuardReleaseMinSlope: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_MIN_SLOPE, entry5mBearGuardReleaseRequireRayNotBear: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_REQUIRE_RAY_NOT_BEAR, entry5mBearGuardReleaseConfirmObservations: CFG.ENTRY_5M_BEAR_GUARD_RELEASE_CONFIRM_OBSERVATIONS, breakoutRetestReclaimZoneMode: breakoutRetestReclaimZoneMode(), breakoutRetestReclaimZoneReclaimPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_RECLAIM_PCT, breakoutRetestReclaimZoneMaxEntryAboveHighPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_ENTRY_ABOVE_HIGH_PCT, breakoutRetestReclaimZoneMinRetestPenetrationPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_RETEST_PENETRATION_PCT, breakoutRetestReclaimZoneConfirmBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_BUFFER_PCT, breakoutRetestReclaimZoneConfirmObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, breakoutRetestAdaptiveConfirmEnabled: CFG.BREAKOUT_RETEST_ADAPTIVE_CONFIRM_ENABLED, breakoutRetestAdaptiveHoldTolerancePct: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT, breakoutRetestAdaptiveHoldMaxSec: CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_MAX_SEC, breakoutRetestReclaimZoneMinTickSlope: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_TICK_SLOPE, breakoutRetestReclaimZoneMinFvvo: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MIN_FVVO, breakoutRetestMaxPeakPullbackPct: CFG.BREAKOUT_RETEST_MAX_PEAK_PULLBACK_PCT, breakoutRetestRequireRecovered5m: CFG.BREAKOUT_RETEST_REQUIRE_RECOVERED_5M, breakoutRetestRecovered5mMaxAgeSec: CFG.BREAKOUT_RETEST_RECOVERED_5M_MAX_AGE_SEC, priceTriggerExpiryWarningSec: CFG.PRICE_TRIGGER_EXPIRY_WARNING_SEC, breakoutRetestPostExpiryShadowEnabled: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_ENABLED, breakoutRetestPostExpiryShadowSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_SEC, breakoutRetestPostExpiryShadowPerformanceSec: CFG.BREAKOUT_RETEST_POST_EXPIRY_SHADOW_PERFORMANCE_SEC, breakoutRetestReclaimZoneFailBelowLowBufferPct: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_FAIL_BELOW_LOW_BUFFER_PCT, breakoutRetestReclaimZoneMaxTrackSec: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MAX_TRACK_SEC, breakoutRetestReclaimZoneRequireTickRecovery: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_REQUIRE_TICK_RECOVERY, breakoutShallowHoldReclaimMode: breakoutShallowHoldReclaimMode(), breakoutShallowHoldMaxTrackSec: CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC, breakoutShallowHoldMaxAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinPullbackFromHighPct: CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT, breakoutShallowHoldMinObservations: CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS, breakoutShallowHoldReclaimPct: CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT, breakoutShallowHoldMaxEntryAboveConfirmPct: CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT, breakoutShallowHoldMinAdx: CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX, breakoutShallowHoldMinFvvo: CFG.BREAKOUT_SHALLOW_HOLD_MIN_FVVO, breakoutShallowHoldMinSlope: CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE, persistenceReady, configurationProblems: problems });
   log("INFO", "FVVO_HYBRID_PULLBACK_STARTUP", { mode: CFG.HYBRID_PULLBACK_FAST_PATH_MODE, preferredVotes: `${CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT}`, preferredFinalConsecutive: CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE, preferredMinSpanSec: CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC, deepVotes: `${CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT}`, deepFinalConsecutive: CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE, deepMinSpanSec: CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC, fallback5mEnabled: CFG.HYBRID_PULLBACK_FALLBACK_5M_ENABLED, chasePolicy: "wait_no_chase", configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
+  log("INFO", "FVVO_ENTRY_GATE_CONFIRMATION_STARTUP", { confirmationRequired: CFG.ENTRY_GATE_CONFIRM_REQUIRED, confirmationTtlSec: CFG.ENTRY_GATE_CONFIRM_TTL_SEC, historyMaxBars: CFG.ENTRY_GATE_HISTORY_MAX_BARS, timeframes: ["15m", "1H", "4H"], informationOnly: true, noConfirmationMeansNoArm: true });
   log("INFO", "C3_EXECUTION_ADAPTER_STARTUP", { schema: CFG.C3_EXECUTION_SCHEMA, endpoint: CFG.C3_SIGNAL_URL, enterCodeConfigured: Boolean(CFG.C3_ENTER_LONG_CODE), exitCodeConfigured: Boolean(CFG.C3_EXIT_LONG_CODE), enterCodeAudit: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? redactC3V2Code(CFG.C3_ENTER_LONG_CODE) : null, exitCodeAudit: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? redactC3V2Code(CFG.C3_EXIT_LONG_CODE) : null, amountPerTrade: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? CFG.C3_AMOUNT_PER_TRADE : null, amountPerTradeType: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? CFG.C3_AMOUNT_PER_TRADE_TYPE : null, orderType: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? CFG.C3_ORDER_TYPE : null, configurationProblems: problems.filter((item) => String(item).startsWith("C3_")) });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }

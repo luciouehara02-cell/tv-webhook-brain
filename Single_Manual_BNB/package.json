@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-swing-bnb-v1f-reentry-reliability-live",
+  "name": "brainfvvo-swing-bnb-v1g-entry-gate-confirm-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone BNB v1f with reliable re-entry alignment, hysteresis and overextension retest",
+  "description": "Standalone BNB v1g with role-aware advisory entry gate and mandatory user confirmation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node validate_bnb_v1e_full_config.js && node validate_bnb_v1e_env.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "check": "node --check server.js && node --check entryGate.js && node validate_entry_gate_confirmation.js && node validate_bnb_v1e_full_config.js && node validate_bnb_v1e_env.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
     "replay": "node replay_bnb_v1a_corpus.js"
   },
   "engines": {
