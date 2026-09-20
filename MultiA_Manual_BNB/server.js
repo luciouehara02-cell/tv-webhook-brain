@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_Swing_MultiAsset_v1w_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
+// BrainFVVO_Swing_MultiAsset_v1y_PROFIT_PRIORITY_RECONCILIATION_LIVE_PAPER_SINGLE_SERVER_MULTI_SYMBOL
 // Supervisor + retained Swing engine and v1n HTF long-run guardian in ONE server.js.
 //
 // Main thread:
@@ -101,7 +101,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1w_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1y_PROFIT_PRIORITY_RECONCILIATION_LIVE_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -137,12 +137,18 @@ const CFG = {
   C3_REQUEST_TIMEOUT_MS: envNum("C3_REQUEST_TIMEOUT_MS", 10000),
   C3_FORWARD_DEDUP_MS: envNum("C3_FORWARD_DEDUP_MS", 60000),
   C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", true),
-  // v1c audit-only PnL estimate. It never changes entry, stop, or exit decisions.
+  // v1y cost estimate also contributes to the minimum hard profit floor.
+  HARD_PROFIT_FLOOR_ENABLED: envBool("HARD_PROFIT_FLOOR_ENABLED", true),
+  HARD_PROFIT_MIN_NET_PCT: envNum("HARD_PROFIT_MIN_NET_PCT", 0.10),
+  HARD_PROFIT_SLIPPAGE_BUFFER_PCT: envNum("HARD_PROFIT_SLIPPAGE_BUFFER_PCT", 0.10),
+  EXECUTION_RECONCILIATION_MODE: envStr("EXECUTION_RECONCILIATION_MODE", "manual_verified").toLowerCase(),
+  EXECUTION_RECONCILIATION_POLL_SEC: envNum("EXECUTION_RECONCILIATION_POLL_SEC", 30),
+  BINANCE_READ_API_KEY: envStr("BINANCE_READ_API_KEY", ""),
+  BINANCE_READ_API_SECRET: envStr("BINANCE_READ_API_SECRET", ""),
   PNL_ESTIMATED_ROUND_TRIP_COST_PCT: envNum("PNL_ESTIMATED_ROUND_TRIP_COST_PCT", 0.20),
   // Retired direct-clear compatibility flag. v1l requires the delayed auto-release contract instead.
   C3_ASSUME_EXIT_ACCEPTANCE: envBool("C3_ASSUME_EXIT_ACCEPTANCE", false),
-  // After a 100% exit_long is accepted by 3Commas, retain the lock for this grace
-  // period and then release the brain state as ASSUMED flat. This is intentionally identical for demo/live mode.
+  // Compatibility timer now reports missing execution evidence; it never clears a position.
   AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", false),
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
@@ -1116,7 +1122,7 @@ function persistState(reason) {
   const snapshot = clone({ ...state, updatedAt: nowIso() });
   state.updatedAt = snapshot.updatedAt;
   const sequence = ++persistenceSequence;
-  persistenceQueue = persistenceQueue.then(async () => {
+  persistenceQueue = persistenceQueue.catch(() => {}).then(async () => {
     if (!persistenceReady) {
       persistenceError = "PERSISTENCE_UNAVAILABLE";
       if (CFG.STATE_PERSISTENCE_REQUIRED) throw new Error(persistenceError);
@@ -1142,6 +1148,10 @@ function persistState(reason) {
 
 function configProblems() {
   const problems = [];
+  if (!["manual_verified", "binance_order"].includes(CFG.EXECUTION_RECONCILIATION_MODE)) problems.push("INVALID_EXECUTION_RECONCILIATION_MODE");
+  if (CFG.EXECUTION_RECONCILIATION_POLL_SEC < 10 || CFG.EXECUTION_RECONCILIATION_POLL_SEC > 300) problems.push("INVALID_EXECUTION_RECONCILIATION_POLL_SEC");
+  if (CFG.HARD_PROFIT_MIN_NET_PCT <= 0 || CFG.HARD_PROFIT_SLIPPAGE_BUFFER_PCT < 0) problems.push("INVALID_HARD_PROFIT_FLOOR");
+
   if (!CFG.WEBHOOK_SECRET) problems.push("WEBHOOK_SECRET_REQUIRED");
   if (!CFG.MANUAL_WEBHOOK_SECRET) problems.push("MANUAL_WEBHOOK_SECRET_REQUIRED");
   if (!validC3V2Code(CFG.C3_ENTER_LONG_CODE, "enter_long")) problems.push("C3_V2_ENTER_LONG_CODE_INVALID_OR_WRONG_SYMBOL");
@@ -1338,7 +1348,8 @@ function normalizeFeature(payload) {
     ema18: firstFinite(payload.ema18, payload.ema_18),
     ema50: firstFinite(payload.ema50, payload.ema_50),
     atrPct: firstFinite(payload.atrPct, payload.atr_pct),
-    barConfirmed: payload.barConfirmed === undefined ? null : Boolean(payload.barConfirmed),
+    barConfirmed: payload.barConfirmed === true,
+    barCloseTimeMs: firstFinite(payload.barCloseTimeMs, payload.time_close),
     fvvo: firstFinite(payload.fvvo, payload.fvvoValue, payload.fluxOscillator),
     slope: firstFinite(payload.slope, payload.fvvoSlope),
     rsi: firstFinite(payload.rsi, payload.rsiValue),
@@ -1406,6 +1417,11 @@ function updateHtfFrame(key, periodMs, feature) {
   if (!frame.currentBucketMs) {
     frame.currentBucketMs = bucket; frame.currentClose = close; frame.samples = 1; return;
   }
+  if (bucket - frame.currentBucketMs > periodMs) {
+    Object.assign(frame, defaultHtfFrame(), { currentBucketMs: bucket, currentClose: close, samples: 1 });
+    log("WARN", "FVVO_HTF_FRAME_GAP_RESET", { key, bucket });
+    return;
+  }
   if (bucket < frame.currentBucketMs) return;
   if (bucket === frame.currentBucketMs) { frame.currentClose = close; frame.samples += 1; return; }
   const completedClose = finite(frame.currentClose, null);
@@ -1428,6 +1444,7 @@ function updateHtfFrame(key, periodMs, feature) {
 }
 
 function updateHigherTimeframes(feature) {
+  if (feature.kind !== CFG.FVVO_FEATURE_5M_EVENT) return;
   updateHtfBootstrap5m(feature);
   updateHtfFrame("m15", 15 * 60 * 1000, feature);
   updateHtfFrame("h1", 60 * 60 * 1000, feature);
@@ -1436,11 +1453,28 @@ function updateHigherTimeframes(feature) {
 function updateHtfBootstrap5m(feature) {
   state.htf = state.htf && typeof state.htf === "object" ? state.htf : { m5Bootstrap: defaultHtfBootstrap5m(), m15: defaultHtfFrame(), h1: defaultHtfFrame() };
   const b = state.htf.m5Bootstrap = normalizeHtfBootstrap5m(state.htf.m5Bootstrap);
+  if (feature.kind !== CFG.FVVO_FEATURE_5M_EVENT) return;
+  const explicitClose = feature.barConfirmed === true && finite(feature.barCloseTimeMs, 0) > 0;
   const eventTimeMs = finite(feature.barTimeMs, 0);
   if (!eventTimeMs) return;
-  const bucket = Math.floor(eventTimeMs / 300000) * 300000;
+  if (explicitClose) {
+    const closeAt = feature.barCloseTimeMs;
+    if (closeAt > nowMs() || closeAt <= b.lastBarTimeMs) return;
+    if (b.lastBarTimeMs && closeAt - b.lastBarTimeMs !== 300000) Object.assign(b, defaultHtfBootstrap5m());
+    // Feed a completed snapshot through the same classification path, without
+    // counting it again when the next bar arrives.
+    b.currentBucketMs = closeAt - 300000;
+    b.currentFeature = { price: feature.price, ema8: feature.ema8, ema18: feature.ema18, fvvo: feature.fvvo, slope: feature.slope, rayRegime: feature.rayRegime, redPulse: feature.redPulse, receivedAtMs: nowMs(), eventTimeMs };
+    feature = { ...feature, barTimeMs: closeAt };
+  }
+  const bucket = explicitClose ? feature.barCloseTimeMs : Math.floor(eventTimeMs / 300000) * 300000;
+  if (!explicitClose && b.currentBucketMs && bucket - b.currentBucketMs > 300000) {
+    log("WARN", "FVVO_HTF_5M_GAP_RESET", { priorBucketMs: b.currentBucketMs, bucket });
+    Object.assign(b, defaultHtfBootstrap5m());
+  }
   const snapshot = { price: finite(feature.price, null), ema8: finite(feature.ema8, null), ema18: finite(feature.ema18, null), fvvo: finite(feature.fvvo, null), slope: finite(feature.slope, null), rayRegime: String(feature.rayRegime || "RAY_NEUTRAL"), redPulse: feature.redPulse === true, receivedAtMs: finite(feature.receivedAtMs, nowMs()), eventTimeMs };
   if (!b.currentBucketMs) { b.currentBucketMs = bucket; b.currentFeature = snapshot; return; }
+  if (!explicitClose && b.lastBarTimeMs && bucket <= b.lastBarTimeMs && !b.currentFeature) { b.currentBucketMs = bucket; b.currentFeature = snapshot; return; }
   if (bucket < b.currentBucketMs) return;
   if (bucket === b.currentBucketMs) { b.currentFeature = snapshot; return; }
   const completed = b.currentFeature;
@@ -1454,6 +1488,7 @@ function updateHtfBootstrap5m(feature) {
   const structuralBullish = Boolean(close !== null && ema8 !== null && ema18 !== null && close >= ema18 && ema8 >= ema18);
   const structuralBearish = bearish;
   Object.assign(b, { currentBucketMs: bucket, currentFeature: snapshot, lastBarTimeMs: barTimeMs, lastReceivedAtMs: completed.receivedAtMs, lastClose: close, priorEma18: b.ema18, ema8, ema18, bullish, bearish, structuralBullish, structuralBearish, consecutiveBullish: bullish ? b.consecutiveBullish + 1 : 0, consecutiveBearish: bearish ? b.consecutiveBearish + 1 : 0, consecutiveStructuralBullish: structuralBullish ? b.consecutiveStructuralBullish + 1 : 0, consecutiveStructuralBearish: structuralBearish ? b.consecutiveStructuralBearish + 1 : 0, bars: b.bars + 1 });
+  if (explicitClose) { b.currentFeature = null; b.lastReceivedAtMs = nowMs(); }
   log("INFO", "FVVO_HTF_BOOTSTRAP_5M_UPDATED", { close, ema8, ema18, fvvo, slope, rayRegime: ray, bullish, bearish, structuralBullish, structuralBearish, consecutiveBullish: b.consecutiveBullish, consecutiveBearish: b.consecutiveBearish, consecutiveStructuralBullish: b.consecutiveStructuralBullish, consecutiveStructuralBearish: b.consecutiveStructuralBearish, requiredBullishBars: CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS, earlyBridgeRequiredBullishBars: CFG.HTF_EARLY_BRIDGE_BULLISH_5M_BARS, barTimeMs });
 }
 
@@ -1606,6 +1641,10 @@ async function forward3Commas(action, price, reason, options = {}) {
 
   state.forward.lastByKey = { ...(state.forward.lastByKey || {}), [dedupeKey]: current };
   state.forward.lastRequestId = requestId;
+  if (state.position) {
+    if (action === "enter_long") state.position.entryForwardRequestId = requestId;
+    if (action === "exit_long") state.position.exitForwardRequestId = requestId;
+  }
   await persistState(`c3_${dedupeKey}_requested`);
 
   log("INFO", "C3_FORWARD_SEND", { action, reason, symbol: CFG.SYMBOL, price, requestId, executionSchema: "v2_custom_code", commandCode: redactC3V2Code(body.code), amountPerTrade: action === "enter_long" ? CFG.C3_AMOUNT_PER_TRADE : null, amountPerTradeType: action === "enter_long" ? CFG.C3_AMOUNT_PER_TRADE_TYPE : null, orderType: action === "enter_long" ? CFG.C3_ORDER_TYPE : null, entrySizeSource: action === "enter_long" ? c3EntrySizeSource() : null, entryOrderIncludedInWebhook: action === "enter_long", dryRun: CFG.C3_DRY_RUN });
@@ -1673,7 +1712,7 @@ function armAutoExitRelease(position, requestId, reason) {
   const releaseAtMs = current + CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC * 1000;
   state.autoExitRelease = {
     active: true,
-    status: "PENDING_ASSUMED_FLAT_RELEASE",
+    status: "PENDING_EXECUTION_EVIDENCE",
     positionOpenedAtMs: finite(position?.openedAtMs, 0),
     releaseAtMs,
     armedAt: nowIso(),
@@ -1743,29 +1782,19 @@ async function capturePreReleaseReentryPullback(feature) {
 
 async function finalizeAutoExitRelease(source = "timer") {
   const pending = state.autoExitRelease;
-  if (!autoExitReconciliationActive() || !pending?.active) return false;
-  const remainingMs = finite(pending.releaseAtMs, 0) - nowMs();
-  if (remainingMs > 0) {
-    scheduleAutoExitRelease();
-    return false;
-  }
+  if (!pending?.active) return false;
+  // A grace timer is never evidence of exchange closure.
+  if (finite(pending.releaseAtMs, 0) > nowMs()) { scheduleAutoExitRelease(); return false; }
   const prior = state.position;
-  if (!prior || !String(prior.lifecycle || "").startsWith("EXIT_ACCEPTED_AUTO_RELEASE")) {
-    state.autoExitRelease = { ...pending, active: false, status: "CANCELLED_NO_MATCHING_EXIT", releasedAt: nowIso() };
-    await persistState("auto_exit_release_cancelled_no_position");
-    log("WARN", "FVVO_EXIT_AUTO_RELEASE_CANCELLED", { source, reason: "NO_MATCHING_EXIT_POSITION", requestId: pending.requestId || null });
-    return false;
-  }
-  state.position = null;
-  state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
-  const deepFallback = reactivateDormantDeepFallback(prior, source);
-  const campaign = deepFallback ? null : armReentryCampaignAfterConfirmedExit(prior);
-  state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "auto_exit_release", lastActionAt: nowIso() };
-  state.autoExitRelease = { ...pending, active: false, status: "RELEASED_ASSUMED_FLAT", releasedAt: nowIso() };
+  if (!prior || !String(prior.lifecycle || "").startsWith("EXIT_")) return false;
+  pending.active = false;
+  pending.status = "AWAITING_EXECUTION_EVIDENCE";
+  state.manual.recoveryRequired = true;
+  state.manual.recoveryReason = "EXIT_EXECUTION_UNVERIFIED";
   clearAutoExitReleaseTimer();
-  await persistState("auto_exit_release_assumed_flat");
-  log("INFO", "FVVO_EXIT_AUTO_RECONCILED_ASSUMED_FLAT", { source, priorExitReason: prior.exitReason, requestId: pending.requestId || null, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, dormantDeepFallbackReactivated: Boolean(deepFallback), reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null, reentryAutoEnabled: reentryAutoEnabled() });
-  return true;
+  await persistState("exit_waiting_execution_evidence");
+  log("WARN", "FVVO_EXIT_RECONCILIATION_REQUIRED", { source, requestId: prior.exitForwardRequestId, automaticFlatAssumption: false });
+  return false;
 }
 
 function scheduleAutoExitRelease() {
@@ -1780,6 +1809,7 @@ function scheduleAutoExitRelease() {
 }
 
 function stateBlocksNewEntry() {
+  if (executionReconcileBusy) return "RECONCILIATION_BUSY";
   if (CFG.FVVO_EMERGENCY_DISABLE_NEW_ENTRIES) return "EMERGENCY_NEW_ENTRIES_DISABLED";
   const pendingConfirmation = state.manual?.entryConfirmation;
   if (pendingConfirmation && finite(pendingConfirmation.expiresAtMs, 0) > nowMs()) return "MANUAL_ENTRY_CONFIRMATION_PENDING";
@@ -1795,6 +1825,7 @@ function statusPayload() {
     ok: true,
     brain: CFG.BRAIN_NAME,
     symbol: CFG.SYMBOL,
+    executionReconciliation: { mode: CFG.EXECUTION_RECONCILIATION_MODE, credentialsConfigured: Boolean(CFG.BINANCE_READ_API_KEY && CFG.BINANCE_READ_API_SECRET), binding: state.position?.executionBinding || null, positionOpenedAtMs: state.position?.openedAtMs || null, entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastExit: state.executionLastExit || null, automaticFlatAssumption: false },
     executionMode: CFG.EXECUTION_MODE,
     demoOnly: demoMode(),
     automaticEntriesEnabled: reentryAutoEnabled(),
@@ -2119,6 +2150,8 @@ async function beginManualEnter(body) {
   return executeManualEntry(entry, levels, {});
 }
 async function confirmEntryFill(body) {
+  const correlation = executionCorrelation(body, state.position);
+  if (correlation) return { status: 409, body: { ok: false, error: correlation } };
   if (!CFG.MANUAL_ALLOW_CONFIRM_ENTRY_FILL) return { status: 403, body: { ok: false, error: "MANUAL_CONFIRM_ENTRY_FILL_DISABLED" } };
   const p = state.position;
   if (!p) return { status: 409, body: { ok: false, error: "NO_MANAGED_POSITION" } };
@@ -2144,9 +2177,27 @@ async function requestFullExit(reason, price, origin) {
   if (state.manual.handoffActive) return { ok: false, error: "MANUAL_HANDOFF_ACTIVE" };
   if (String(p.lifecycle || "").startsWith("EXIT_")) return { ok: false, error: "EXIT_ALREADY_REQUESTED" };
 
+  // Reserve synchronously before forward3Commas yields to persistence or HTTP.
+  // Its pre-send snapshot durably records this EXIT_ lifecycle. All competing
+  // tick, bar and manual exits use the same lifecycle guard above.
+  p.lifecycle = "EXIT_FORWARD_PENDING";
+  state.manual.recoveryRequired = true;
+  state.manual.recoveryReason = "EXIT_FORWARD_PENDING";
+  p.exitRequestedAt = nowIso();
+  p.exitReason = reason;
+  p.exitRequestPrice = price;
+
   const exitPnlAudit = pnlAudit(p, price);
   log("WARN", "FVVO_EXIT_DECISION", { reason, origin, price, phase: p.phase, entryPrice: p.entryPriceReference, latestPnlPct: round(p.latestPnlPct, 4), peakPnlPct: round(p.peakPnlPct, 4), stopPrice: p.stopPrice, profitTargetPrice: p.profitTargetPrice || null, exitPercent: 100, pnlAudit: exitPnlAudit });
-  const result = await forward3Commas("exit_long", price, reason, { dedupeKey: "exit_long_full_100", bypassDedupe: true });
+  let result;
+  try {
+    result = await forward3Commas("exit_long", price, reason, { dedupeKey: "exit_long_full_100", bypassDedupe: true });
+  } catch (error) {
+    // Persistence can throw before forwarding; never silently unlock and retry
+    // an exit whose delivery state has not been reconciled.
+    result = { ok: false, error: "EXIT_FORWARD_EXCEPTION" };
+    log("ERROR", "FVVO_EXIT_FORWARD_EXCEPTION", { reason, origin, error: error.message });
+  }
   if (!result.ok) {
     p.lifecycle = "EXIT_UNKNOWN_AFTER_FORWARD_ERROR";
     p.exitRequestedAt = nowIso();
@@ -2162,15 +2213,34 @@ async function requestFullExit(reason, price, origin) {
   p.exitReason = reason;
   p.exitRequestPrice = price;
   p.exitForwardRequestId = result.requestId;
-  state.manual.recoveryRequired = !CFG.AUTO_EXIT_RECONCILIATION_ENABLED;
-  state.manual.recoveryReason = CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? "" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE";
+  state.manual.recoveryRequired = true;
+  state.manual.recoveryReason = "EXIT_EXECUTION_UNVERIFIED";
   state.externalDealLock = { active: true, source: "brain_full_exit", setAt: nowIso(), reason: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? "EXIT_ACCEPTED_AUTO_RELEASE_PENDING" : "EXIT_ACCEPTED_UNVERIFIED_CLOSE" };
   if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED) armAutoExitRelease(p, result.requestId, reason);
   if (String(reason || "").includes("DYNAMIC_PROFIT_FLOOR_HIT")) recordProfitFloorBaselineExit(p, price, reason);
   await persistState("full_exit_accepted");
   if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED) scheduleAutoExitRelease();
-  log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, autoReleasePending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED, autoReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC : null, recoveryRequired: !CFG.AUTO_EXIT_RECONCILIATION_ENABLED, exitPercent: 100, pnlAudit: exitPnlAudit });
+  log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, autoReleasePending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED, autoReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC : null, recoveryRequired: true, exitPercent: 100, pnlAudit: exitPnlAudit });
   return { ...result, exitUnverified: true, autoReleasePending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED };
+}
+
+function hardProfitFloor(position, price) {
+  if (!CFG.HARD_PROFIT_FLOOR_ENABLED) return { armed: false, breached: false };
+  const protection = entryModeProtection(position);
+  const basis = finite(position.actualEntryFillPrice, position.entryPriceReference);
+  const peakPrice = Math.max(finite(position.dynamicProfit?.peakPrice, 0), position.entryPriceReference * (1 + finite(position.peakPnlPct, 0) / 100), price);
+  const peakPct = percentPnl(basis, peakPrice);
+  const grossLockPct = Math.max(protection.grossLockPct, CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT + CFG.HARD_PROFIT_MIN_NET_PCT + CFG.HARD_PROFIT_SLIPPAGE_BUFFER_PCT);
+  const floor = position.hardProfitFloor || { armed: false, protectedPrice: 0 };
+  if (floor.armed || peakPct >= Math.max(protection.armMfePct, grossLockPct)) {
+    floor.armed = true;
+    floor.armedAt = floor.armedAt || nowIso();
+    floor.protectedPrice = Math.max(finite(floor.protectedPrice, 0), basis * (1 + grossLockPct / 100));
+    floor.grossLockPct = grossLockPct;
+    floor.basis = position.actualEntryFillPrice ? "VERIFIED_FILL" : "SIGNAL_REFERENCE";
+  }
+  position.hardProfitFloor = floor;
+  return { ...floor, breached: floor.armed && price <= floor.protectedPrice, peakPct };
 }
 
 function oneStopBreakConfirmed(position, feature, markPrice) {
@@ -3567,7 +3637,7 @@ function htfLongRunEvidence(position, feature, pnlPct) {
   const provisional15Active = m15AgeSec <= CFG.HTF_LONG_RUN_MAX_DATA_AGE_SEC && m15.consecutiveBearish < CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS;
   const mature15Supports = m15Valid && (alreadyActive ? m15.consecutiveBearish < CFG.HTF_LONG_RUN_15M_BEAR_CONFIRM_BARS : m15.bullish);
   let structureSource = null, structureSupports = false;
-  if (alreadyActive && priorSource === "EARLY_5M_BRIDGE" && peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && mature15Supports) { structureSource = "MATURE_15M"; structureSupports = true; }
+  if (alreadyActive && ["EARLY_5M_BRIDGE", "PROVISIONAL_5M", "PROVISIONAL_15M"].includes(priorSource) && peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && mature15Supports) { structureSource = "MATURE_15M"; structureSupports = true; }
   else if (alreadyActive && priorSource === "EARLY_5M_BRIDGE" && peak >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && provisional15Initial) { structureSource = "PROVISIONAL_15M"; structureSupports = true; }
   else if (alreadyActive && priorSource === "MATURE_15M") { structureSource = priorSource; structureSupports = mature15Supports; }
   else if (alreadyActive && priorSource === "PROVISIONAL_15M" && htfBootstrapMode() !== "disabled") { structureSource = priorSource; structureSupports = provisional15Active; }
@@ -3584,8 +3654,9 @@ function htfLongRunEvidence(position, feature, pnlPct) {
   // Once the guardian is active, bullish completed-bar structure—not a transient
   // tick-level floor touch—owns the normal exit. Stops and emergency exits retain
   // priority in manageExit; a confirmed structural/severe break releases this hold.
-  const qualifies = peak >= requiredMfePct && structureSupports && !h1Blocks && heldSec < CFG.SWING_HARD_MAX_HOLD_SEC;
-  return { qualifies, peakPnlPct: peak, pnlPct, requiredMfePct, allowedPullbackPct, hardLockPnlPct: effectiveHardLockPnlPct, profitFloorIntact, heldSec, severeFastBreakRaw, structureSource, structureSupports, m5AgeSec, m15AgeSec, h1AgeSec, m5Initial, earlyFresh, earlyInitial, earlyActive, provisional15Initial, mature15Supports, alreadyActive, m5, m15, h1, h1Blocks };
+  const hardFloorIntact = !hardProfitFloor(position, finite(feature.price, position.latestPrice)).breached;
+  const qualifies = hardFloorIntact && peak >= requiredMfePct && structureSupports && !h1Blocks && heldSec < CFG.SWING_HARD_MAX_HOLD_SEC;
+  return { qualifies, hardFloorIntact, peakPnlPct: peak, pnlPct, requiredMfePct, allowedPullbackPct, hardLockPnlPct: effectiveHardLockPnlPct, profitFloorIntact, heldSec, severeFastBreakRaw, structureSource, structureSupports, m5AgeSec, m15AgeSec, h1AgeSec, m5Initial, earlyFresh, earlyInitial, earlyActive, provisional15Initial, mature15Supports, alreadyActive, m5, m15, h1, h1Blocks };
 }
 
 function htfConfirmedSevereBreak(tracker, evidence) {
@@ -3630,6 +3701,7 @@ function htfLongRunGuardianExit(position, feature, price, pnlPct, baselineReason
 }
 
 function bullishMomentumHoldExit(position, feature, price, pnlPct, baselineReason) {
+  if (hardProfitFloor(position, price).breached) return false;
   if (htfLongRunGuardianExit(position, feature, price, pnlPct, baselineReason)) return true;
   const htf = htfLongRunEvidence(position, feature, pnlPct);
   if (htfLongRunMode() !== "disabled" && htf.peakPnlPct >= CFG.HTF_LONG_RUN_MIN_MFE_PCT && (htf.m15.ready || htf.m5.bars >= CFG.HTF_BOOTSTRAP_5M_BULLISH_BARS)) return false;
@@ -3701,6 +3773,15 @@ async function manageExit(feature) {
     return;
   }
 
+  // First observed hard-floor breach exits immediately; no guardian, rescue,
+  // trailing-floor confirmation or completed-bar wait can defer this minimum.
+  const hardFloor = hardProfitFloor(p, price);
+  if (hardFloor.breached) {
+    log("WARN", "FVVO_HARD_PROFIT_FLOOR_BREACHED", { price, floor: hardFloor, pnlAudit: pnlAudit(p, price) });
+    await requestFullExit("FVVO_HARD_PROFIT_FLOOR_HIT", price, feature.kind);
+    return;
+  }
+
   const modeStructural = modeStructuralExitFailureConfirmed(p, feature, price, pnl);
   if (modeStructural.confirmed) {
     await persistState(`mode_structural_exit_${feature.kind}`);
@@ -3733,7 +3814,7 @@ async function manageExit(feature) {
     return;
   }
 
-  // Profit floor is a hard protection after the +0.45% (default) arm threshold.
+  // Flexible trailing floor: guardians may defer this, but never the hard minimum above.
   const floor = dynamicFloorBreakConfirmed(p, price, pnl);
   if (!floor.confirmed && floor.reason === "DYNAMIC_PROFIT_FLOOR_CONFIRM" && Number(floor.observations || 0) > 0) {
     if (Number(floor.observations || 0) === 1) armProfitFloorMicroShadow(p, feature, price, pnl, floor);
@@ -6791,20 +6872,137 @@ async function manualExit(body) {
   return result.ok ? { status: 200, body: { ok: true, accepted: true, requestId: result.requestId, c3Timestamp: result.c3Timestamp, triggerPrice: result.triggerPrice, exitUnverified: result.exitUnverified, autoReleasePending: Boolean(result.autoReleasePending), status: statusPayload() } } : { status: 502, body: { ok: false, error: result.error, requestId: result.requestId, status: statusPayload() } };
 }
 
-async function confirmExitClosed(body) {
-  if (!CFG.MANUAL_ALLOW_CONFIRM_EXIT) return { status: 403, body: { ok: false, error: "MANUAL_CONFIRM_EXIT_DISABLED" } };
-  if (!state.position || !String(state.position.lifecycle || "").startsWith("EXIT_")) return { status: 409, body: { ok: false, error: "NO_EXIT_RECONCILIATION_PENDING" } };
-  if (CFG.MANUAL_CLEAR_REQUIRES_CONFIRM_FLAT && body.confirm_flat !== true) return { status: 400, body: { ok: false, error: "CONFIRM_FLAT_TRUE_REQUIRED" } };
-  const prior = state.position;
+// v1y: read-only execution reconciliation. Webhook acceptance is never a fill.
+let executionReconcileBusy = false;
+let executionReconcileLastMs = 0;
+function executionCorrelation(body, p, exit = false) {
+  if (!p || finite(body.position_opened_at_ms, -1) !== p.openedAtMs) return "POSITION_CORRELATION_MISMATCH";
+  const expected = exit ? p.exitForwardRequestId : p.entryForwardRequestId;
+  const supplied = exit ? body.exit_request_id : body.entry_request_id;
+  if (!expected || supplied !== expected) return "REQUEST_CORRELATION_MISMATCH";
+  return "";
+}
+
+async function readBinanceOrder(orderId) {
+  if (!CFG.BINANCE_READ_API_KEY || !CFG.BINANCE_READ_API_SECRET) throw new Error("BINANCE_READ_CREDENTIALS_REQUIRED");
+  if (!/^\d+$/.test(String(orderId))) throw new Error("INVALID_ORDER_ID");
+  const symbol = CFG.SYMBOL.split(":").pop();
+  const query = new URLSearchParams({ symbol, orderId: String(orderId), recvWindow: "5000", timestamp: String(Date.now()) }).toString();
+  const signature = crypto.createHmac("sha256", CFG.BINANCE_READ_API_SECRET).update(query).digest("hex");
+  const response = await fetch(`https://api.binance.com/api/v3/order?${query}&signature=${signature}`, {
+    method: "GET", headers: { "X-MBX-APIKEY": CFG.BINANCE_READ_API_KEY }, signal: AbortSignal.timeout(10000), redirect: "error",
+  });
+  if (!response.ok) throw new Error(`BINANCE_READ_HTTP_${response.status}`);
+  const order = await response.json();
+  // Refuse rounded int64 IDs; do not guess a correlation after JSON precision loss.
+  if (typeof order.orderId === "number" && !Number.isSafeInteger(order.orderId)) throw new Error("UNSAFE_ORDER_ID_PRECISION");
+  if (String(order.orderId) !== String(orderId) || order.symbol !== symbol) throw new Error("ORDER_IDENTITY_MISMATCH");
+  return order;
+}
+
+function validateExecutionOrder(order, p, side) {
+  const expectedTime = side === "BUY" ? p.openedAtMs : Date.parse(p.exitRequestedAt || "");
+  if (order.side !== side || !Number.isFinite(expectedTime) || !Number.isFinite(Number(order.time)) || Number(order.time) < expectedTime - 5000 || Number(order.time) > expectedTime + 120000) throw new Error("ORDER_SIDE_OR_TIME_MISMATCH");
+  const qty = finite(order.executedQty, null), quote = finite(order.cummulativeQuoteQty, null);
+  if (!(qty > 0) || !(quote > 0) || order.status !== "FILLED") throw new Error("ORDER_NOT_FULLY_FILLED");
+  return { orderId: String(order.orderId), qty, averagePrice: quote / qty, time: Number(order.time), status: order.status };
+}
+
+async function bindExecutionOrders(body) {
+  const p = state.position;
+  const error = executionCorrelation(body, p);
+  if (error) return { status: 409, body: { ok: false, error } };
+  if (executionReconcileBusy) return { status: 409, body: { ok: false, error: "RECONCILIATION_BUSY" } };
+  const entryId = String(body.entry_order_id || ""), exitId = body.exit_order_id ? String(body.exit_order_id) : null;
+  if (!/^\d+$/.test(entryId) || (exitId && (!/^\d+$/.test(exitId) || exitId === entryId))) return { status: 400, body: { ok: false, error: "EXACT_DISTINCT_ORDER_IDS_REQUIRED" } };
+  if (exitId) {
+    const exitError = executionCorrelation(body, p, true);
+    if (exitError) return { status: 409, body: { ok: false, error: exitError } };
+  }
+  const old = p.executionBinding;
+  if (old && (old.entryOrderId !== entryId || (old.exitOrderId && old.exitOrderId !== exitId))) return { status: 409, body: { ok: false, error: "ORDER_BINDING_IMMUTABLE" } };
+  // Binding is an authenticated operator assertion of ownership. The API then
+  // verifies order identity, side, timing, full-fill status and quantity.
+  p.executionBinding = { entryOrderId: entryId, exitOrderId: exitId, boundAt: nowIso(), entryRequestId: p.entryForwardRequestId, exitRequestId: exitId ? p.exitForwardRequestId : null };
+  await persistState("execution_order_ids_bound");
+  return { status: 200, body: { ok: true, binding: p.executionBinding, verified: false } };
+}
+
+async function finishVerifiedExit(prior, evidence) {
+  if (state.position !== prior) return false;
+  if (!String(prior.lifecycle || "").startsWith("EXIT_") || prior.lifecycle === "EXIT_FORWARD_PENDING") return false;
   clearAutoExitReleaseTimer();
+  state.manual.recoveryRequired = true;
+  state.manual.recoveryReason = "RECONCILIATION_COMMIT_PENDING";
+  prior.exitExecutionEvidence = evidence;
+  const lastExit = { positionOpenedAtMs: prior.openedAtMs, entryRequestId: prior.entryForwardRequestId, exitRequestId: prior.exitForwardRequestId, evidence, confirmedAt: nowIso() };
+  state.executionLastExit = lastExit;
   state.position = null;
   state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
-  state.autoExitRelease = { ...(state.autoExitRelease || {}), active: false, status: "MANUALLY_CONFIRMED", releasedAt: nowIso() };
-  const campaign = armReentryCampaignAfterConfirmedExit(prior);
-  state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "confirm_exit_closed", lastActionAt: nowIso() };
-  await persistState("confirm_exit_closed");
-  log("INFO", "FVVO_EXIT_RECONCILIATION_CONFIRMED", { priorExitReason: prior.exitReason, entryPrice: prior.entryPriceReference, stopPrice: prior.stopPrice, targetPrice: prior.profitTargetPrice || null, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null });
-  return { status: 200, body: { ok: true, exitReconciled: true, confirmedFlat: true, reentry: reentryStatusPayload() } };
+  state.autoExitRelease = { ...(state.autoExitRelease || {}), active: false, status: evidence.source === "BINANCE_ORDER_API" ? "EXCHANGE_VERIFIED_CLOSED" : "OPERATOR_ATTESTED_CLOSED", releasedAt: nowIso() };
+  const deep = reactivateDormantDeepFallback(prior, "execution_reconciliation");
+  const campaign = deep ? null : armReentryCampaignAfterConfirmedExit(prior);
+  try {
+    await persistState("verified_exit_commit");
+    state.manual.recoveryRequired = false;
+    state.manual.recoveryReason = "";
+    await persistState("verified_exit_release");
+  } catch (error) {
+    state.manual.recoveryRequired = true;
+    state.manual.recoveryReason = "RECONCILIATION_PERSISTENCE_FAILED";
+    throw error;
+  }
+  log("INFO", "FVVO_EXECUTION_EXIT_RECONCILED", { ...lastExit, reentryCampaignArmed: Boolean(campaign?.active), automaticFlatAssumption: false });
+  return true;
+}
+
+async function reconcileExecution(force = false) {
+  if (executionReconcileBusy) return { ok: false, error: "RECONCILIATION_BUSY" };
+  const p = state.position;
+  if (!p) return { ok: true, noPosition: true };
+  if (CFG.EXECUTION_RECONCILIATION_MODE !== "binance_order") return { ok: false, error: "OPERATOR_CONFIRMATION_REQUIRED" };
+  if (!p.executionBinding) return { ok: false, error: "EXACT_ORDER_BINDING_REQUIRED" };
+  if (!force && nowMs() - executionReconcileLastMs < CFG.EXECUTION_RECONCILIATION_POLL_SEC * 1000) return { ok: false, waiting: true };
+  executionReconcileBusy = true; executionReconcileLastMs = nowMs();
+  try {
+    const binding = p.executionBinding;
+    const buy = validateExecutionOrder(await readBinanceOrder(binding.entryOrderId), p, "BUY");
+    if (state.position !== p) return { ok: false, error: "POSITION_CHANGED_DURING_RECONCILIATION" };
+    p.actualEntryFillPrice = buy.averagePrice;
+    p.actualEntryFillSource = "BINANCE_ORDER_API";
+    p.actualEntryFillConfirmedAt = nowIso(); p.exchangeFillVerified = true;
+    p.executionEntry = buy;
+    await persistState("execution_entry_verified");
+    if (!binding.exitOrderId || !String(p.lifecycle || "").startsWith("EXIT_") || p.lifecycle === "EXIT_FORWARD_PENDING") return { ok: true, entryVerified: true, exitVerified: false };
+    if (binding.exitRequestId !== p.exitForwardRequestId) throw new Error("EXIT_REQUEST_CHANGED");
+    const sell = validateExecutionOrder(await readBinanceOrder(binding.exitOrderId), p, "SELL");
+    if (state.position !== p) return { ok: false, error: "POSITION_CHANGED_DURING_RECONCILIATION" };
+    // Deliberately conservative: fees charged in base asset or split exits need
+    // operator reconciliation. An unrelated account balance is never flat proof.
+    if (sell.qty + Math.max(1e-12, buy.qty * 1e-10) < buy.qty) throw new Error("EXIT_QUANTITY_INCOMPLETE");
+    const closed = await finishVerifiedExit(p, { source: "BINANCE_ORDER_API", entry: buy, exit: sell, observedAt: nowIso() });
+    return { ok: closed, entryVerified: true, exitVerified: closed };
+  } catch (error) {
+    // No raw HTTP URLs, credentials or exchange response bodies in logs.
+    const label = /^([A-Z][A-Z0-9_]+)$/.test(error.message) ? error.message : "EXECUTION_READ_FAILED";
+    if (state.position === p && String(p.lifecycle || "").startsWith("EXIT_")) { state.manual.recoveryRequired = true; state.manual.recoveryReason = label; }
+    log("WARN", "FVVO_EXECUTION_RECONCILIATION_BLOCKED", { error: label, positionOpenedAtMs: p.openedAtMs });
+    return { ok: false, error: label };
+  } finally { executionReconcileBusy = false; }
+}
+
+async function confirmExitClosed(body) {
+  if (!CFG.MANUAL_ALLOW_CONFIRM_EXIT) return { status: 403, body: { ok: false, error: "MANUAL_CONFIRM_EXIT_DISABLED" } };
+  const prior = state.position;
+  const error = executionCorrelation(body, prior, true);
+  if (error) return { status: 409, body: { ok: false, error } };
+  if (body.confirm_flat !== true || !String(body.evidence_ref || "").trim()) return { status: 400, body: { ok: false, error: "CONFIRM_FLAT_AND_EVIDENCE_REF_REQUIRED" } };
+  if (executionReconcileBusy) return { status: 409, body: { ok: false, error: "RECONCILIATION_BUSY" } };
+  executionReconcileBusy = true;
+  try {
+    const closed = await finishVerifiedExit(prior, { source: "OPERATOR_ATTESTATION", reference: String(body.evidence_ref).slice(0, 200), observedAt: nowIso() });
+    return { status: closed ? 200 : 409, body: { ok: closed, exitReconciled: closed, exchangeApiVerified: false, source: "OPERATOR_ATTESTATION" } };
+  } finally { executionReconcileBusy = false; }
 }
 
 async function forceClearVerifiedFlat(body) {
@@ -6831,6 +7029,8 @@ async function handleManual(body) {
   if (cleanSymbol(body.symbol || CFG.SYMBOL) !== cleanSymbol(CFG.SYMBOL)) return { status: 400, body: { ok: false, error: "SYMBOL_NOT_ALLOWED" } };
   const action = String(body.action || "").trim().toLowerCase();
   log("INFO", "FVVO_MANUAL_COMMAND", { action, symbol: CFG.SYMBOL });
+  if (action === "bind_execution_orders") return bindExecutionOrders(body);
+  if (action === "reconcile_execution") { const result = await reconcileExecution(true); return { status: result.ok ? 200 : 409, body: result }; }
   if (action === "status") return CFG.MANUAL_ALLOW_STATUS ? { status: 200, body: statusPayload() } : { status: 403, body: { ok: false, error: "MANUAL_STATUS_DISABLED" } };
   if (action === "enter_long") return beginManualEnter(body);
   if (action === "confirm_manual_entry") return confirmManualEntry(body);
@@ -6868,6 +7068,7 @@ app.get("/health", (_req, res) => res.status(200).json({ ok: true, brain: CFG.BR
 
 async function processFeatureEvent(feature) {
   if (!Number.isFinite(feature.price) || feature.price <= 0) return { ok: false, error: "VALID_PRICE_REQUIRED" };
+  if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT && feature.barCloseTimeMs && (!feature.barConfirmed || feature.barCloseTimeMs > nowMs())) return { ok: true, ignored: true, reason: "BAR_NOT_COMPLETED" };
   const timeGuard = featureTimeGuard(feature);
   if (!timeGuard.ok) {
     log("WARN", "FVVO_STALE_FEATURE_IGNORED", { event: feature.kind, price: feature.price, barTimeMs: feature.barTimeMs, reason: timeGuard.reason, priorBarTimeMs: timeGuard.priorBarTime, positionLifecycle: state.position?.lifecycle || null, action: "NO_STATE_OR_TRADE_CHANGE" });
@@ -6882,6 +7083,8 @@ async function processFeatureEvent(feature) {
   evaluateYellowTpShadow(feature);
   await evaluateProfitFloorShadowObservers(feature);
   await manageExit(feature);
+  // Exchange polling must not delay a stop/floor decision.
+  void reconcileExecution().catch(() => {});
   await evaluateBreakoutPostExpiryShadow(feature);
   await evaluatePriceTriggerEntry(feature);
   await evaluateReentryShadow(feature);
@@ -6914,6 +7117,8 @@ app.post(CFG.MANUAL_WEBHOOK_PATH, async (req, res) => {
 });
 
 async function start() {
+  const executionTimer = setInterval(() => { void reconcileExecution().catch(() => {}); }, CFG.EXECUTION_RECONCILIATION_POLL_SEC * 1000);
+  executionTimer.unref();
   await ensurePersistence();
   await loadState();
   const problems = configProblems();
@@ -6961,7 +7166,7 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, modeStructuralExitFailureConfirmed, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, validateCampaignArm, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, breakoutShallowHoldRecoveryEvidence, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, defaultHtfFrame, normalizeHtfFrame, defaultHtfBootstrap5m, normalizeHtfBootstrap5m, updateHigherTimeframes, updateHtfBootstrap5m, htfLongRunEvidence, htfConfirmedSevereBreak, htfLongRunGuardianExit, htfBootstrapMode, htfEarlyBridgeMode };
+module.exports = { app, CFG, reconcileExecution, bindExecutionOrders, confirmExitClosed, validateExecutionOrder, stateBlocksNewEntry, hardProfitFloor, requestFullExit, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, modeStructuralExitFailureConfirmed, dynamicFloorBreakConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, validateCampaignArm, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, hybridPullbackBullContinuationMode, hybridPullbackBullContinuationRecovery, evaluateHybridPullbackBullContinuation, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, breakoutShallowHoldRecoveryEvidence, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, defaultHtfFrame, normalizeHtfFrame, defaultHtfBootstrap5m, normalizeHtfBootstrap5m, updateHigherTimeframes, updateHtfBootstrap5m, htfLongRunEvidence, htfConfirmedSevereBreak, htfLongRunGuardianExit, htfBootstrapMode, htfEarlyBridgeMode };
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
 Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource, c3EntryOrderIncluded });
@@ -7000,7 +7205,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1w_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_MultiAsset_v1y_PROFIT_PRIORITY_RECONCILIATION_LIVE_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7055,7 +7260,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      `BrainFVVO_Swing_MultiAsset_v1w_${alias}_POST_EXPIRY_SHADOW_HOTFIX_LIVE_PAPER`
+      `BrainFVVO_Swing_MultiAsset_v1y_${alias}_PROFIT_PRIORITY_RECONCILIATION_LIVE_PAPER`
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
