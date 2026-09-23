@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1g_ENTRY_GATE_CONFIRM_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1h_HYBRID_ENTRY_QUALITY_SHADOW_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:BNBUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -115,6 +115,21 @@ const CFG = {
   ENTRY_GATE_CONFIRM_REQUIRED: envBool("ENTRY_GATE_CONFIRM_REQUIRED", false),
   ENTRY_GATE_CONFIRM_TTL_SEC: Math.max(30, Math.floor(envNum("ENTRY_GATE_CONFIRM_TTL_SEC", 300))),
   ENTRY_GATE_HISTORY_MAX_BARS: Math.max(144, Math.floor(envNum("ENTRY_GATE_HISTORY_MAX_BARS", 900))),
+  // v1h BNB: audit a hybrid entry-quality gate without changing or delaying live entries.
+  // The latest completed 5m bar supplies context; recent 15s/tick observations preserve fast timing.
+  ENTRY_QUALITY_GATE_MODE: envStr("ENTRY_QUALITY_GATE_MODE", "shadow").toLowerCase(),
+  ENTRY_QUALITY_GATE_APPLY_PREFERRED: envBool("ENTRY_QUALITY_GATE_APPLY_PREFERRED", true),
+  ENTRY_QUALITY_GATE_APPLY_DEEP: envBool("ENTRY_QUALITY_GATE_APPLY_DEEP", true),
+  ENTRY_QUALITY_GATE_5M_MAX_AGE_SEC: envNum("ENTRY_QUALITY_GATE_5M_MAX_AGE_SEC", 420),
+  ENTRY_QUALITY_GATE_5M_MIN_FVVO: envNum("ENTRY_QUALITY_GATE_5M_MIN_FVVO", -1.0),
+  ENTRY_QUALITY_GATE_REQUIRE_5M_RAY_NOT_BEAR: envBool("ENTRY_QUALITY_GATE_REQUIRE_5M_RAY_NOT_BEAR", true),
+  ENTRY_QUALITY_GATE_FAST_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("ENTRY_QUALITY_GATE_FAST_CONFIRM_OBSERVATIONS", 2))),
+  ENTRY_QUALITY_GATE_FAST_CONFIRM_MIN_SPAN_SEC: envNum("ENTRY_QUALITY_GATE_FAST_CONFIRM_MIN_SPAN_SEC", 12),
+  ENTRY_QUALITY_GATE_FAST_RELEASE_ENABLED: envBool("ENTRY_QUALITY_GATE_FAST_RELEASE_ENABLED", true),
+  ENTRY_QUALITY_GATE_FAST_RELEASE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("ENTRY_QUALITY_GATE_FAST_RELEASE_CONFIRM_OBSERVATIONS", 3))),
+  ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SPAN_SEC: envNum("ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SPAN_SEC", 25),
+  ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_FVVO: envNum("ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_FVVO", 0),
+  ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SLOPE: envNum("ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SLOPE", 0.50),
 
   SHADOW_ONLY: envBool("SHADOW_ONLY", false),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
@@ -854,7 +869,7 @@ function log(level, event, fields = {}) {
 
 function defaultState() {
   return {
-    schemaVersion: 19,
+    schemaVersion: 20,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -867,7 +882,7 @@ function defaultState() {
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
     priceEntry: { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null },
-    audit: { runnerRescuePostExit: null, profitFloorMicroShadow: null, profitFloorPostExitReclaimShadow: null, breakoutPostExpiryShadows: [], lastBarTimeByKind: {}, entryGate5mBars: [] },
+    audit: { runnerRescuePostExit: null, profitFloorMicroShadow: null, profitFloorPostExitReclaimShadow: null, breakoutPostExpiryShadows: [], lastBarTimeByKind: {}, entryGate5mBars: [], entryQualityRecentTicks: [] },
   };
 }
 
@@ -876,7 +891,7 @@ function normalizeState(raw) {
   if (!raw || typeof raw !== "object") return fallback;
   const next = { ...fallback, ...raw };
   // v1h schema migration marker: preserve compatible fields but always persist the current schema.
-  next.schemaVersion = 19;
+  next.schemaVersion = 20;
   next.forward = { ...fallback.forward, ...(raw.forward || {}) };
   next.manual = { ...fallback.manual, ...(raw.manual || {}) };
   if (next.manual.entryConfirmation && typeof next.manual.entryConfirmation !== "object") next.manual.entryConfirmation = null;
@@ -896,6 +911,7 @@ function normalizeState(raw) {
   next.audit.profitFloorPostExitReclaimShadow = normalizeProfitFloorPostExitReclaimShadowState(next.audit.profitFloorPostExitReclaimShadow);
   next.audit.breakoutPostExpiryShadows = Array.isArray(next.audit.breakoutPostExpiryShadows) ? next.audit.breakoutPostExpiryShadows.filter((x) => x && typeof x === "object").slice(-4) : [];
   next.audit.entryGate5mBars = Array.isArray(next.audit.entryGate5mBars) ? next.audit.entryGate5mBars.slice(-CFG.ENTRY_GATE_HISTORY_MAX_BARS) : [];
+  next.audit.entryQualityRecentTicks = Array.isArray(next.audit.entryQualityRecentTicks) ? next.audit.entryQualityRecentTicks.slice(-8) : [];
   if (next.priceEntry.pending && typeof next.priceEntry.pending !== "object") next.priceEntry.pending = null;
   if (next.priceEntry.pending2 && typeof next.priceEntry.pending2 !== "object") next.priceEntry.pending2 = null;
   if (next.priceEntry.pending3 && typeof next.priceEntry.pending3 !== "object") next.priceEntry.pending3 = null;
@@ -1310,11 +1326,72 @@ function featureTimeGuard(feature) {
 
 function updateFeature(feature) {
   if (!Number.isFinite(feature.price) || feature.price <= 0) return false;
-  if (feature.kind === CFG.FVVO_FEATURE_TICK_EVENT) state.lastFeature = feature;
+  if (feature.kind === CFG.FVVO_FEATURE_TICK_EVENT) {
+    state.lastFeature = feature;
+    recordEntryQualityTick(feature);
+  }
   else if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT) { state.lastFeature5m = feature; entryGate.recordFiveMinuteBar(state.audit, feature, CFG.ENTRY_GATE_HISTORY_MAX_BARS); }
   else if (feature.kind === CFG.FVVO_FAST_TICK_EVENT) state.lastFastTick = feature;
   else return false;
   return true;
+}
+
+function rayIsBear(value) { return String(value || "").toUpperCase().includes("BEAR"); }
+
+function entryQualityGateMode() {
+  return ["disabled", "shadow", "live"].includes(CFG.ENTRY_QUALITY_GATE_MODE) ? CFG.ENTRY_QUALITY_GATE_MODE : "shadow";
+}
+
+function recordEntryQualityTick(feature) {
+  state.audit = state.audit && typeof state.audit === "object" ? state.audit : {};
+  const rows = Array.isArray(state.audit.entryQualityRecentTicks) ? state.audit.entryQualityRecentTicks : [];
+  rows.push({
+    atMs: finite(feature.receivedAtMs, nowMs()), price: finite(feature.price, null), ema8: finite(feature.ema8, null),
+    fvvo: finite(feature.fvvo, null), slope: finite(feature.slope, null), rayRegime: String(feature.rayRegime || "RAY_NEUTRAL"),
+  });
+  state.audit.entryQualityRecentTicks = rows.slice(-8);
+}
+
+function consecutiveEntryQualityEvidence({ release = false } = {}) {
+  const required = release ? CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_CONFIRM_OBSERVATIONS : CFG.ENTRY_QUALITY_GATE_FAST_CONFIRM_OBSERVATIONS;
+  const minSpanSec = release ? CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SPAN_SEC : CFG.ENTRY_QUALITY_GATE_FAST_CONFIRM_MIN_SPAN_SEC;
+  const rows = Array.isArray(state.audit?.entryQualityRecentTicks) ? state.audit.entryQualityRecentTicks : [];
+  const qualifies = (row) => {
+    const priceOk = finite(row.price, null) !== null && finite(row.ema8, null) !== null && row.price >= row.ema8;
+    const slopeOk = finite(row.slope, null) !== null && row.slope > (release ? CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SLOPE : 0);
+    const fvvoOk = !release || (finite(row.fvvo, null) !== null && row.fvvo >= CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_FVVO);
+    return priceOk && slopeOk && fvvoOk && !rayIsBear(row.rayRegime);
+  };
+  let tail = [];
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (!qualifies(rows[i])) break;
+    tail.unshift(rows[i]);
+    if (tail.length >= required) break;
+  }
+  const spanSec = tail.length >= 2 ? (tail[tail.length - 1].atMs - tail[0].atMs) / 1000 : 0;
+  return { ok: tail.length >= required && (required === 1 || spanSec >= minSpanSec), observations: tail.length, required, spanSec: round(spanSec, 3), minSpanSec };
+}
+
+function entryQualityGateAssessment(role, feature = state.lastFeature) {
+  const five = state.lastFeature5m || {};
+  const ageSec = finite(five.receivedAtMs, null) === null ? null : Math.max(0, (nowMs() - five.receivedAtMs) / 1000);
+  const fiveFresh = ageSec !== null && ageSec <= CFG.ENTRY_QUALITY_GATE_5M_MAX_AGE_SEC;
+  const fiveBelowBoth = finite(five.price, null) !== null && finite(five.ema8, null) !== null && finite(five.ema18, null) !== null && five.price < five.ema8 && five.price < five.ema18;
+  const fiveNegativeSlope = finite(five.slope, null) !== null && five.slope < 0;
+  const fiveFvvoWeak = finite(five.fvvo, null) === null || five.fvvo <= CFG.ENTRY_QUALITY_GATE_5M_MIN_FVVO;
+  const fiveRayBear = rayIsBear(five.rayRegime);
+  const strongBear = fiveFresh && fiveBelowBoth && fiveNegativeSlope && (fiveFvvoWeak || fiveRayBear);
+  const healthy5m = fiveFresh && !fiveFvvoWeak && (!CFG.ENTRY_QUALITY_GATE_REQUIRE_5M_RAY_NOT_BEAR || !fiveRayBear) && !(fiveBelowBoth && fiveNegativeSlope);
+  const fast = consecutiveEntryQualityEvidence({ release: false });
+  const release = CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_ENABLED ? consecutiveEntryQualityEvidence({ release: true }) : { ok: false, observations: 0, required: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_CONFIRM_OBSERVATIONS, spanSec: 0, minSpanSec: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SPAN_SEC };
+  const wouldAllow = healthy5m ? fast.ok : (strongBear ? release.ok : fast.ok);
+  return {
+    role, mode: entryQualityGateMode(), wouldAllow, wouldDelay: !wouldAllow,
+    route: healthy5m ? "HEALTHY_5M_FAST_CONFIRM" : (strongBear ? "STRONG_BEAR_FAST_RELEASE" : "MIXED_5M_FAST_CONFIRM"),
+    fiveMinute: { available: Boolean(state.lastFeature5m), fresh: fiveFresh, ageSec: ageSec === null ? null : round(ageSec, 3), price: finite(five.price, null), ema8: finite(five.ema8, null), ema18: finite(five.ema18, null), fvvo: finite(five.fvvo, null), slope: finite(five.slope, null), rayRegime: five.rayRegime || null, belowBoth: fiveBelowBoth, healthy: healthy5m, strongBear },
+    fastConfirmation: fast, fastRelease: release,
+    execution: { price: finite(feature?.price, null), ema8: finite(feature?.ema8, null), fvvo: finite(feature?.fvvo, null), slope: finite(feature?.slope, null), rayRegime: feature?.rayRegime || null },
+  };
 }
 
 function buildIntelligentTpState(levels) {
@@ -5381,6 +5458,11 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
     const negativeFive = freshFive && finite(five.fvvo, null) !== null && five.fvvo <= -1;
     const wouldDelay = (belowBoth && weakSlope) || negativeFive;
     log("INFO", "FVVO_ENTRY_ALIGNMENT_SHADOW_AUDIT", { entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole, triggerId: consumed.id, executionReferencePrice: price, tickEma8: ema8, tickEma18: ema18, tickSlope: finite(tick.slope, null), fiveMinuteFvvo: finite(five.fvvo, null), fiveMinuteFresh: freshFive, belowTickEma8AndEma18: belowBoth, negativeFiveMinuteFvvo: negativeFive, wouldDelayUnderCandidate: wouldDelay, candidateRequirement: negativeFive ? "STRONGER_TICK_CONFIRMATION" : (belowBoth && weakSlope ? "EMA8_RECLAIM_OR_TWO_POSITIVE_SLOPE_OBSERVATIONS" : "ENTER_WITHOUT_DELAY"), action: "AUDIT_ONLY_NO_ENTRY_CHANGE" });
+    const applies = consumed.entryRole === "preferred" ? CFG.ENTRY_QUALITY_GATE_APPLY_PREFERRED : CFG.ENTRY_QUALITY_GATE_APPLY_DEEP;
+    if (applies && entryQualityGateMode() !== "disabled") {
+      const quality = entryQualityGateAssessment(consumed.entryRole, feature);
+      log("INFO", "FVVO_ENTRY_QUALITY_GATE_SHADOW_AUDIT", { entryCampaign: consumed.entryCampaign || null, entryRole: consumed.entryRole, triggerId: consumed.id, ...quality, automaticOrderDelayed: false, automaticOrderBlocked: false, action: "AUDIT_ONLY_NO_ENTRY_CHANGE" });
+    }
   }
   const dormantDeep = captureDormantDeepFallback(consumed);
   const siblingCancelled = cancelOtherPriceEntries(consumed.id, "SIBLING_PRICE_TRIGGER_FIRED", { stateBlock: "ENTRY_TRIGGERED_BY_OTHER_SETUP" });
@@ -6651,6 +6733,7 @@ async function start() {
   log("INFO", "FVVO_HYBRID_PULLBACK_STARTUP", { mode: CFG.HYBRID_PULLBACK_FAST_PATH_MODE, preferredVotes: `${CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT}`, preferredFinalConsecutive: CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE, preferredMinSpanSec: CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC, deepVotes: `${CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED}/${CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT}`, deepFinalConsecutive: CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE, deepMinSpanSec: CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC, fallback5mEnabled: CFG.HYBRID_PULLBACK_FALLBACK_5M_ENABLED, chasePolicy: "wait_no_chase", configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   log("INFO", "FVVO_ENTRY_GATE_CONFIRMATION_STARTUP", { confirmationRequired: CFG.ENTRY_GATE_CONFIRM_REQUIRED, confirmationTtlSec: CFG.ENTRY_GATE_CONFIRM_TTL_SEC, historyMaxBars: CFG.ENTRY_GATE_HISTORY_MAX_BARS, timeframes: ["15m", "1H", "4H"], informationOnly: true, noConfirmationMeansNoArm: true });
+  log("INFO", "FVVO_ENTRY_QUALITY_GATE_STARTUP", { mode: entryQualityGateMode(), liveEntryBehaviorChanged: false, requireNew5mClose: false, useLatestCompleted5m: true, applyPreferred: CFG.ENTRY_QUALITY_GATE_APPLY_PREFERRED, applyDeep: CFG.ENTRY_QUALITY_GATE_APPLY_DEEP, fiveMinuteMaxAgeSec: CFG.ENTRY_QUALITY_GATE_5M_MAX_AGE_SEC, fiveMinuteMinFvvo: CFG.ENTRY_QUALITY_GATE_5M_MIN_FVVO, requireFiveMinuteRayNotBear: CFG.ENTRY_QUALITY_GATE_REQUIRE_5M_RAY_NOT_BEAR, fastConfirmObservations: CFG.ENTRY_QUALITY_GATE_FAST_CONFIRM_OBSERVATIONS, fastConfirmMinSpanSec: CFG.ENTRY_QUALITY_GATE_FAST_CONFIRM_MIN_SPAN_SEC, strongBearFastReleaseEnabled: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_ENABLED, fastReleaseObservations: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_CONFIRM_OBSERVATIONS, fastReleaseMinSpanSec: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SPAN_SEC, fastReleaseMinFvvo: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_FVVO, fastReleaseMinSlope: CFG.ENTRY_QUALITY_GATE_FAST_RELEASE_MIN_SLOPE, configurationProblems: problems });
   log("INFO", "C3_EXECUTION_ADAPTER_STARTUP", { schema: CFG.C3_EXECUTION_SCHEMA, endpoint: CFG.C3_SIGNAL_URL, enterCodeConfigured: Boolean(CFG.C3_ENTER_LONG_CODE), exitCodeConfigured: Boolean(CFG.C3_EXIT_LONG_CODE), enterCodeAudit: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? redactC3V2Code(CFG.C3_ENTER_LONG_CODE) : null, exitCodeAudit: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? redactC3V2Code(CFG.C3_EXIT_LONG_CODE) : null, amountPerTrade: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? CFG.C3_AMOUNT_PER_TRADE : null, amountPerTradeType: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? CFG.C3_AMOUNT_PER_TRADE_TYPE : null, orderType: CFG.C3_EXECUTION_SCHEMA === "v2_custom_code" ? CFG.C3_ORDER_TYPE : null, configurationProblems: problems.filter((item) => String(item).startsWith("C3_")) });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
@@ -6659,7 +6742,7 @@ if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_START
 
 module.exports = { app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, modeStructuralExitFailureConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, validateCampaignArm, cancelOtherPriceEntries, activePriceEntryItems };
 
-Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow, validC3V2Code, redactC3V2Code, c3V2SizingProblems });
+Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow, validC3V2Code, redactC3V2Code, c3V2SizingProblems, entryQualityGateMode, recordEntryQualityTick, consecutiveEntryQualityEvidence, entryQualityGateAssessment });
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {

@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-swing-bnb-v1g-entry-gate-confirm-live",
+  "name": "brainfvvo-swing-bnb-v1h-hybrid-entry-quality-shadow-live",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone BNB v1g with role-aware advisory entry gate and mandatory user confirmation",
+  "description": "Standalone BNB v1h with mandatory setup confirmation and hybrid 5m/15s entry-quality shadow audit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check entryGate.js && node validate_entry_gate_confirmation.js && node validate_bnb_v1e_full_config.js && node validate_bnb_v1e_env.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
-    "replay": "node replay_bnb_v1a_corpus.js"
+    "check": "node --check server.js && node --check entryGate.js && node validate_entry_quality_gate_v1h.js && node validate_entry_gate_confirmation.js && node validate_bnb_v1e_full_config.js && node validate_bnb_v1e_env.js && node validate_bnb_v1b_deep_reclaim.js && node validate_bnb_v1a.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js",
+    "replay": "node replay_bnb_v1a_corpus.js && node replay_bnb_v1h_entry_quality.js"
   },
   "engines": {
     "node": ">=20"
