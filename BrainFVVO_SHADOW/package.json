@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-sol-v3b-ray30-pullback-longhold-demo",
-  "version": "3.2.0",
+  "name": "brainfvvo-sol-v3c-ray30-pullback-longhold-demo",
+  "version": "3.3.0",
   "private": true,
   "type": "commonjs",
   "main": "server.js",

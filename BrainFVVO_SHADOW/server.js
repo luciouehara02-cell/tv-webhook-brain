@@ -1,7 +1,7 @@
 "use strict";
 
 /*
-  BrainFVVO_SOL_v3b_RAY30_PULLBACK_LONGHOLD_DEMO
+  BrainFVVO_SOL_v3c_RAY30_PULLBACK_LONGHOLD_DEMO
   ------------------------------------------------
   SOLUSDT DEMO brain.
 
@@ -97,7 +97,7 @@ function redact(value) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_SOL_v3b_RAY30_PULLBACK_LONGHOLD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_SOL_v3c_RAY30_PULLBACK_LONGHOLD_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: normalizeSymbol(envStr("SYMBOL", "BINANCE:SOLUSDT")),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
@@ -105,7 +105,7 @@ const CFG = {
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", ""),
   MANUAL_WEBHOOK_SECRET: envStr("MANUAL_WEBHOOK_SECRET", ""),
 
-  STATE_FILE: envStr("STATE_FILE", "/data/brainfvvo-sol-ray30-longhold-v3b-state.json"),
+  STATE_FILE: envStr("STATE_FILE", "/data/brainfvvo-sol-ray30-longhold-v3c-state.json"),
   EXECUTION_MODE: envStr("EXECUTION_MODE", "demo").toLowerCase(),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
   DEMO_FORWARD_ALLOWED: envBool("DEMO_FORWARD_ALLOWED", true),
@@ -190,7 +190,7 @@ function log(level, event, fields = {}) {
 }
 
 const emptyState = () => ({
-  version: "v3b",
+  version: "v3c",
   symbol: CFG.SYMBOL,
   startedAt: iso(),
   ray30: null,
@@ -366,6 +366,27 @@ function buildC3Payload(action) {
   }
   throw new Error("UNSUPPORTED_C3_ACTION");
 }
+
+function parseMaybeJson(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return { raw, json: null, isHtml: false };
+  const isHtml = /^\s*<!doctype html|^\s*<html[\s>]/i.test(raw);
+  try { return { raw, json: JSON.parse(raw), isHtml }; }
+  catch (_) { return { raw, json: null, isHtml }; }
+}
+function validateC3ForwardResponse(response, text) {
+  const parsed = parseMaybeJson(text);
+  if (parsed.isHtml) {
+    return { ok: false, reason: "C3_HTML_RESPONSE_NOT_ACCEPTED", parsed };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: `HTTP_${response.status}`, parsed };
+  }
+  // 3Commas webhook responses can be empty/plain text depending on endpoint/version.
+  // Treat non-HTML 2xx as accepted, but keep the response labelled unverified.
+  return { ok: true, reason: parsed.json ? "C3_JSON_2XX" : "C3_NON_HTML_2XX", parsed };
+}
+
 async function forward3Commas(action, price, reason, meta = {}) {
   const requestId = meta.requestId || uuid(action);
   const gate = canForward(action);
@@ -392,12 +413,23 @@ async function forward3Commas(action, price, reason, meta = {}) {
     });
     const text = await response.text().catch(() => "");
     clearTimeout(t);
-    if (!response.ok) {
-      log("ERROR", "C3_FORWARD_REJECTED", { action, reason, status: response.status, requestId, responseText: text.slice(0, 500) });
-      return { ok: false, status: response.status, responseText: text, requestId };
+    const validation = validateC3ForwardResponse(response, text);
+    if (!validation.ok) {
+      log("ERROR", "C3_FORWARD_NOT_ACCEPTED", {
+        action, reason, status: response.status, requestId,
+        validationReason: validation.reason,
+        contentType: response.headers.get("content-type") || "",
+        responseText: text.slice(0, 500),
+        hint: validation.reason === "C3_HTML_RESPONSE_NOT_ACCEPTED" ? "Check C3_SIGNAL_URL. It returned an HTML/help page, so the 3Commas bot probably did not receive the signal." : "3Commas returned non-2xx."
+      });
+      return { ok: false, status: response.status, responseText: text, requestId, reason: validation.reason };
     }
-    log("INFO", "C3_FORWARD_ACCEPTED_UNVERIFIED", { action, reason, status: response.status, requestId, responseText: text.slice(0, 300) });
-    return { ok: true, status: response.status, responseText: text, requestId };
+    log("INFO", "C3_FORWARD_ACCEPTED_UNVERIFIED", {
+      action, reason, status: response.status, requestId,
+      validationReason: validation.reason,
+      responseText: text.slice(0, 300)
+    });
+    return { ok: true, status: response.status, responseText: text, requestId, validationReason: validation.reason };
   } catch (error) {
     clearTimeout(t);
     log("ERROR", "C3_FORWARD_FAILED", { action, reason, requestId, error: error.message });
@@ -904,7 +936,7 @@ function forceClear(body) {
 }
 async function handleManual(body) {
   const action = String(body.action || "").trim().toLowerCase();
-  log("INFO", "RAY30_MANUAL_COMMAND", { action });
+  log("INFO", "RAY30_MANUAL_COMMAND", { action, allowed: allowedManualActions(), symbol: body.symbol || CFG.SYMBOL });
   if (!CFG.MANUAL_CONTROL_ENABLED) return { status: 403, body: { ok: false, error: "MANUAL_CONTROL_DISABLED" } };
   if (!requireSecret(body, true)) return { status: 403, body: { ok: false, error: "MANUAL_SECRET_INVALID" } };
   if (!symbolOk(body)) return { status: 400, body: { ok: false, error: "SYMBOL_MISMATCH", expected: CFG.SYMBOL } };
