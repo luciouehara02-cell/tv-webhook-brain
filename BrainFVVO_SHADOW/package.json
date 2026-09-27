@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-sol-v3d-ray30-pullback-longhold-demo",
-  "version": "3.3.0",
-  "description": "BrainFVVO SOL v3d RAY30 pullback long-hold demo service with emoji-coded logs, manual/campaign entry, simple stop, and 3Commas Signal Bot forwarding.",
+  "name": "brainfvvo-sol-v3e-ray30-pullback-longhold-demo",
+  "version": "3.5.0",
+  "description": "BrainFVVO SOL v3e RAY30 Pullback LongHold DEMO service for Railway",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
