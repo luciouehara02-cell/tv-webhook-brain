@@ -1,7 +1,7 @@
 "use strict";
 
 /*
-  BrainFVVO_SOL_v3a_RAY30_PULLBACK_LONGHOLD_DEMO
+  BrainFVVO_SOL_v3b_RAY30_PULLBACK_LONGHOLD_DEMO
   ------------------------------------------------
   SOLUSDT DEMO brain.
 
@@ -97,7 +97,7 @@ function redact(value) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_SOL_v3a_RAY30_PULLBACK_LONGHOLD_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_SOL_v3b_RAY30_PULLBACK_LONGHOLD_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: normalizeSymbol(envStr("SYMBOL", "BINANCE:SOLUSDT")),
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
@@ -105,7 +105,7 @@ const CFG = {
   WEBHOOK_SECRET: envStr("WEBHOOK_SECRET", ""),
   MANUAL_WEBHOOK_SECRET: envStr("MANUAL_WEBHOOK_SECRET", ""),
 
-  STATE_FILE: envStr("STATE_FILE", "/data/brainfvvo-sol-ray30-longhold-v3a-state.json"),
+  STATE_FILE: envStr("STATE_FILE", "/data/brainfvvo-sol-ray30-longhold-v3b-state.json"),
   EXECUTION_MODE: envStr("EXECUTION_MODE", "demo").toLowerCase(),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
   DEMO_FORWARD_ALLOWED: envBool("DEMO_FORWARD_ALLOWED", true),
@@ -178,6 +178,9 @@ const CFG = {
   MANUAL_REQUIRE_FRESH_FEATURE_TICK: envBool("MANUAL_REQUIRE_FRESH_FEATURE_TICK", true),
   CAMPAIGN_MAX_ACTIVE: envNum("CAMPAIGN_MAX_ACTIVE", 12),
   CAMPAIGN_DEFAULT_EXPIRE_SEC: envNum("CAMPAIGN_DEFAULT_EXPIRE_SEC", 14400),
+  CAMPAIGN_BREAKOUT_RECLAIM_BUFFER_PCT: envNum("CAMPAIGN_BREAKOUT_RECLAIM_BUFFER_PCT", 0.00),
+  CAMPAIGN_POST_EXPIRY_SHADOW_SEC: envNum("CAMPAIGN_POST_EXPIRY_SHADOW_SEC", 7200),
+  MANUAL_ALLOW_AUTO_LATEST_PRICE: envBool("MANUAL_ALLOW_AUTO_LATEST_PRICE", true),
 };
 
 function log(level, event, fields = {}) {
@@ -187,7 +190,7 @@ function log(level, event, fields = {}) {
 }
 
 const emptyState = () => ({
-  version: "v3a",
+  version: "v3b",
   symbol: CFG.SYMBOL,
   startedAt: iso(),
   ray30: null,
@@ -235,6 +238,30 @@ function persistState(reason = "update") {
     log("ERROR", "STATE_PERSIST_FAILED", { reason, error: error.message });
     return false;
   }
+}
+
+function allowedManualActions() {
+  return [
+    "status",
+    "enter_long",
+    "adopt_long",
+    "exit_long",
+    "cancel",
+    "arm_price_entry",
+    "arm_campaign_entry",
+    "cancel_price_entry",
+    "cancel_campaign",
+    "handoff_manual",
+    "clear_handoff",
+    "force_clear_verified_flat",
+  ];
+}
+function latestFeaturePricePayload() {
+  const t = state.ticks && state.ticks.length ? state.ticks[state.ticks.length - 1] : null;
+  return {
+    latestFeaturePrice: Number.isFinite(t?.price) ? t.price : null,
+    latestFeatureAgeSec: Number.isFinite(t?.atMs) ? round((nowMs() - t.atMs) / 1000, 3) : null,
+  };
 }
 
 function requireSecret(body, manual = false) {
@@ -638,33 +665,54 @@ function activeCampaigns() {
   state.campaigns = (state.campaigns || []).filter(c => c && c.active !== false && (!c.expiresAtMs || c.expiresAtMs > current));
   return state.campaigns;
 }
+function boolFromBody(value, def = false) {
+  if (value === undefined || value === null || value === "") return def;
+  if (typeof value === "boolean") return value;
+  return /^(1|true|yes|y|on)$/i.test(String(value).trim());
+}
 function campaignFromBody(body) {
   const campaignId = String(body.entry_campaign || body.entryCampaign || body.campaignId || body.campaign_id || uuid("camp")).trim();
-  const role = cleanWord(body.entry_role || body.entryRole || body.role || "manual_campaign").toLowerCase();
+  const role = cleanWord(body.entry_role || body.entryRole || body.role || "standalone").toLowerCase();
   const triggerMode = cleanWord(body.trigger_mode || body.triggerMode || "ray30_15s_recovery_breakout").toLowerCase();
   const expiresSec = finite(body.expire_after_sec ?? body.expireAfterSec, CFG.CAMPAIGN_DEFAULT_EXPIRE_SEC);
   const current = nowMs();
-  return {
+  const isBreakoutRetest = triggerMode === "breakout_retest_reclaim_zone";
+  const c = {
     id: uuid("trigger"), campaignId, role, triggerMode,
     symbol: normalizeSymbol(body.symbol || CFG.SYMBOL),
     reason: String(body.reason || "manual_campaign_entry").slice(0, 200),
+    triggerPrice: finite(body.trigger_price ?? body.triggerPrice ?? body.activation_price ?? body.activationPrice, null),
     activationPrice: finite(body.activation_price ?? body.activationPrice ?? body.trigger_price ?? body.triggerPrice, null),
     activationRangeLow: finite(body.activation_range_low ?? body.activationRangeLow ?? body.range_low ?? body.rangeLow, null),
     activationRangeHigh: finite(body.activation_range_high ?? body.activationRangeHigh ?? body.range_high ?? body.rangeHigh, null),
+    breakoutConfirmPrice: finite(body.breakout_confirm_price ?? body.breakoutConfirmPrice ?? body.confirm_price ?? body.confirmPrice, null),
+    retestRangeLow: finite(body.retest_range_low ?? body.retestRangeLow, null),
+    retestRangeHigh: finite(body.retest_range_high ?? body.retestRangeHigh, null),
     maxEntryPrice: finite(body.max_entry_price ?? body.maxEntryPrice, null),
     minEntryPrice: finite(body.min_entry_price ?? body.minEntryPrice, null),
     stopPrice: finite(body.stop_price ?? body.stopPrice, null),
-    requireRay30Gate: body.require_ray30_gate === undefined ? true : Boolean(body.require_ray30_gate),
-    require5mPullback: body.require_5m_pullback === undefined ? false : Boolean(body.require_5m_pullback),
-    require15sRecovery: body.require_15s_recovery === undefined ? true : Boolean(body.require_15s_recovery),
+    profitTargetPrice: finite(body.profit_target_price ?? body.profitTargetPrice, 0),
+    tp1Price: finite(body.tp1_price ?? body.tp1Price, null),
+    tp2Price: finite(body.tp2_price ?? body.tp2Price, null),
+    tp3Price: finite(body.tp3_price ?? body.tp3Price, null),
+    requireRay30Gate: boolFromBody(body.require_ray30_gate, true),
+    require5mPullback: boolFromBody(body.require_5m_pullback, false),
+    require15sRecovery: boolFromBody(body.require_15s_recovery, true),
+    phase: isBreakoutRetest ? "WAIT_BREAKOUT_CONFIRM" : "WAIT_TRIGGER",
+    breakoutConfirmedAt: null,
+    retestTouchedAt: null,
+    lastObservedPrice: null,
     createdAt: iso(current), createdAtMs: current,
     expiresAt: iso(current + expiresSec * 1000), expiresAtMs: current + expiresSec * 1000,
     active: true, observedTicks: 0,
   };
+  if (isBreakoutRetest && !Number.isFinite(c.breakoutConfirmPrice) && Number.isFinite(c.triggerPrice)) c.breakoutConfirmPrice = c.triggerPrice;
+  return c;
 }
 function campaignPriceWindowOk(c, price) {
   if (Number.isFinite(c.minEntryPrice) && price < c.minEntryPrice) return { ok: false, reason: "PRICE_BELOW_MIN_ENTRY" };
   if (Number.isFinite(c.maxEntryPrice) && price > c.maxEntryPrice) return { ok: false, reason: "PRICE_ABOVE_MAX_ENTRY" };
+  if (c.triggerMode === "breakout_retest_reclaim_zone") return { ok: true, mode: c.triggerMode, phase: c.phase };
   if (Number.isFinite(c.activationRangeLow) || Number.isFinite(c.activationRangeHigh)) {
     const lo = Number.isFinite(c.activationRangeLow) ? c.activationRangeLow : -Infinity;
     const hi = Number.isFinite(c.activationRangeHigh) ? c.activationRangeHigh : Infinity;
@@ -673,28 +721,73 @@ function campaignPriceWindowOk(c, price) {
   if (Number.isFinite(c.activationPrice) && price < c.activationPrice) return { ok: false, reason: "PRICE_BELOW_ACTIVATION_PRICE", activationPrice: c.activationPrice };
   return { ok: true };
 }
+function breakoutRetestCampaignStep(c, tick) {
+  const price = tick.price;
+  c.lastObservedPrice = price;
+  if (Number.isFinite(c.stopPrice) && price <= c.stopPrice) {
+    c.active = false;
+    c.cancelReason = "BREAKOUT_RETEST_STOP_BREACHED_BEFORE_ENTRY";
+    log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: c.id, entryCampaign: c.campaignId, entryRole: c.role, triggerMode: c.triggerMode, triggerPrice: c.breakoutConfirmPrice, executionPrice: price, reason: c.cancelReason });
+    log("WARN", "FVVO_CAMPAIGN_ENTRY_SETUP_CANCELLED", { entryCampaign: c.campaignId, entryRole: c.role, triggerId: c.id, reason: c.cancelReason });
+    return { ok: false, cancelled: true, reason: c.cancelReason };
+  }
+  if (c.phase === "WAIT_BREAKOUT_CONFIRM") {
+    if (!Number.isFinite(c.breakoutConfirmPrice)) return { ok: false, reason: "BREAKOUT_CONFIRM_PRICE_REQUIRED" };
+    if (price >= c.breakoutConfirmPrice) {
+      c.phase = "WAIT_RETEST_ZONE";
+      c.breakoutConfirmedAt = iso(tick.atMs);
+      log("INFO", "FVVO_BREAKOUT_RETEST_CONFIRM_SEEN", { triggerId: c.id, entryCampaign: c.campaignId, entryRole: c.role, breakoutConfirmPrice: c.breakoutConfirmPrice, price });
+    }
+    return { ok: false, reason: "WAIT_BREAKOUT_CONFIRM", phase: c.phase };
+  }
+  if (c.phase === "WAIT_RETEST_ZONE") {
+    const lo = Number.isFinite(c.retestRangeLow) ? c.retestRangeLow : -Infinity;
+    const hi = Number.isFinite(c.retestRangeHigh) ? c.retestRangeHigh : Infinity;
+    if (price >= lo && price <= hi) {
+      c.phase = "WAIT_RECLAIM";
+      c.retestTouchedAt = iso(tick.atMs);
+      log("INFO", "FVVO_BREAKOUT_RETEST_ZONE_TOUCHED", { triggerId: c.id, entryCampaign: c.campaignId, entryRole: c.role, price, retestRangeLow: c.retestRangeLow, retestRangeHigh: c.retestRangeHigh });
+    }
+    return { ok: false, reason: "WAIT_RETEST_ZONE", phase: c.phase };
+  }
+  if (c.phase === "WAIT_RECLAIM") {
+    const reclaimLevel = Number.isFinite(c.retestRangeHigh) ? c.retestRangeHigh * (1 + CFG.CAMPAIGN_BREAKOUT_RECLAIM_BUFFER_PCT / 100) : c.breakoutConfirmPrice;
+    if (Number.isFinite(reclaimLevel) && price >= reclaimLevel) return { ok: true, reason: "BREAKOUT_RETEST_RECLAIM_CONFIRMED", reclaimLevel, phase: c.phase };
+    return { ok: false, reason: "WAIT_RECLAIM", reclaimLevel, phase: c.phase };
+  }
+  return { ok: false, reason: "UNKNOWN_BREAKOUT_PHASE", phase: c.phase };
+}
 async function evaluateCampaigns(tick, rayGate, f5, fiveOk, tickOk) {
   const campaigns = activeCampaigns();
   if (!campaigns.length || positionOpen()) return { opened: false };
   for (const c of campaigns) {
     if (c.symbol !== CFG.SYMBOL) continue;
     c.observedTicks = Number(c.observedTicks || 0) + 1;
-    const priceWindow = campaignPriceWindowOk(c, tick.price);
-    if (!priceWindow.ok) { c.lastReject = { at: iso(), ...priceWindow, price: tick.price }; continue; }
+    let modeStep = { ok: true };
+    if (c.triggerMode === "breakout_retest_reclaim_zone") {
+      modeStep = breakoutRetestCampaignStep(c, tick);
+      if (!modeStep.ok) { c.lastReject = { at: iso(), price: tick.price, ...modeStep }; continue; }
+    } else {
+      const priceWindow = campaignPriceWindowOk(c, tick.price);
+      if (!priceWindow.ok) { c.lastReject = { at: iso(), ...priceWindow, price: tick.price }; continue; }
+    }
     if (c.requireRay30Gate && !rayGate.ok) { c.lastReject = { at: iso(), reason: "RAY30_GATE_BLOCK", rayGate }; continue; }
     if (c.require5mPullback && !fiveOk.ok) { c.lastReject = { at: iso(), reason: "5M_PULLBACK_NOT_CONFIRMED", fiveOk }; continue; }
     if (c.require15sRecovery && !tickOk.ok) { c.lastReject = { at: iso(), reason: "15S_RECOVERY_NOT_CONFIRMED", tickOk }; continue; }
     c.active = false;
     const siblingCancelled = campaigns.filter(s => s !== c && s.campaignId === c.campaignId && s.active !== false);
-    for (const s of siblingCancelled) { s.active = false; s.cancelReason = "CAMPAIGN_SIBLING_WINNER_SELECTED"; }
+    for (const s of siblingCancelled) { s.active = false; s.cancelReason = "SIBLING_PRICE_TRIGGER_FIRED"; }
     persistState("campaign_winner_selected");
-    log("WARN", "RAY30_CAMPAIGN_WINNER_SELECTED", { campaignId: c.campaignId, role: c.role, triggerId: c.id, siblingCancelledCount: siblingCancelled.length, price: tick.price });
-    const result = await openPosition(`CAMPAIGN_${cleanWord(c.triggerMode, "RAY30_15S_RECOVERY_BREAKOUT")}`, tick.price, "RAY30_MANUAL_CAMPAIGN_ENTRY", { source: "campaign", campaignId: c.campaignId, entryRole: c.role, triggerId: c.id, rayGate, fiveOk, tickOk });
+    log("INFO", "FVVO_CAMPAIGN_ENTRY_RESERVED", { entryCampaign: c.campaignId, candidateRole: c.role, candidateMode: c.triggerMode, triggerId: c.id, executionPrice: tick.price, siblingCount: siblingCancelled.length });
+    if (siblingCancelled.length) log("WARN", "FVVO_CAMPAIGN_SIBLINGS_CANCELLED", { entryCampaign: c.campaignId, triggerId: c.id, cancelledSiblingCount: siblingCancelled.length });
+    log("INFO", "FVVO_PRICE_TRIGGER_FIRED", { triggerId: c.id, entryCampaign: c.campaignId, entryRole: c.role, triggerMode: c.triggerMode, triggerPrice: c.triggerPrice || c.breakoutConfirmPrice || c.activationPrice, activationPrice: c.activationPrice || null, activationRangeLow: c.activationRangeLow || null, activationRangeHigh: c.activationRangeHigh || null, breakoutConfirmPrice: c.breakoutConfirmPrice || null, retestRangeLow: c.retestRangeLow || null, retestRangeHigh: c.retestRangeHigh || null, previousPrice: c.lastObservedPrice, executionReferencePrice: tick.price, stopPrice: c.stopPrice, profitTargetPrice: c.profitTargetPrice || null, marketOrderWillBeSent: true });
+    const result = await openPosition(`PRICE_TRIGGER_${cleanWord(c.triggerMode, "RAY30_15S_RECOVERY_BREAKOUT")}`, tick.price, c.triggerMode === "breakout_retest_reclaim_zone" ? "PRICE_TRIGGER_BREAKOUT_RETEST_RECLAIM_ZONE" : "PRICE_TRIGGER_CAMPAIGN_ENTRY", { source: "campaign", campaignId: c.campaignId, entryRole: c.role, triggerId: c.id, rayGate, fiveOk, tickOk, campaign: c, modeStep });
     return { opened: Boolean(result.ok), result };
   }
   persistState("campaigns_evaluated");
   return { opened: false };
 }
+
 
 function statusPayload() {
   return {
@@ -715,20 +808,34 @@ function statusPayload() {
     latestTick: state.ticks.length ? { at: state.ticks[state.ticks.length - 1].at, price: state.ticks[state.ticks.length - 1].price, rsi: state.ticks[state.ticks.length - 1].rsi, fvvo: state.ticks[state.ticks.length - 1].fvvo, slope: state.ticks[state.ticks.length - 1].slope } : null,
     position: state.position,
     activeCampaigns: activeCampaigns(),
+    priceTrigger: {
+      activePendingCount: activeCampaigns().length,
+      pendingList: activeCampaigns(),
+      supportedTriggerModes: ["breakout_retest_reclaim_zone", "trailing_dip_reclaim_zone", "confirmed_pullback_reclaim_zone", "ray30_15s_recovery_breakout"],
+    },
+    manual: {
+      allowedActions: allowedManualActions(),
+      ...latestFeaturePricePayload(),
+      positionOpen: positionOpen(),
+      externalDealLockActive: positionOpen(),
+      brainWillManageExit: positionOpen(),
+    },
+    allowed: allowedManualActions(),
     daily: state.daily,
     stateFile: CFG.STATE_FILE,
     audit: state.audit,
   };
 }
 async function manualEnter(body) {
-  if (positionOpen()) return { status: 409, body: { ok: false, error: "POSITION_ALREADY_OPEN" } };
+  if (positionOpen()) return { status: 409, body: { ok: false, action: "enter_long", symbol: CFG.SYMBOL, reason: "POSITION_ALREADY_OPEN", status: statusPayload() } };
   const tick = freshTick();
-  if (CFG.MANUAL_REQUIRE_FRESH_FEATURE_TICK && !tick.ok) return { status: 400, body: { ok: false, error: tick.reason } };
-  const price = finite(body.price ?? body.entry_price ?? body.entryPrice, tick.tick?.price);
-  if (!Number.isFinite(price) || price <= 0) return { status: 400, body: { ok: false, error: "VALID_PRICE_REQUIRED" } };
+  if (CFG.MANUAL_REQUIRE_FRESH_FEATURE_TICK && !tick.ok) return { status: 400, body: { ok: false, action: "enter_long", symbol: CFG.SYMBOL, reason: tick.reason, manual: latestFeaturePricePayload(), allowed: allowedManualActions() } };
+  const explicitPrice = finite(body.entry_price ?? body.entryPrice ?? body.price, null);
+  const price = Number.isFinite(explicitPrice) ? explicitPrice : (CFG.MANUAL_ALLOW_AUTO_LATEST_PRICE ? finite(tick.tick?.price, null) : null);
+  if (!Number.isFinite(price) || price <= 0) return { status: 400, body: { ok: false, action: "enter_long", symbol: CFG.SYMBOL, reason: "MANUAL_PRICE_REQUIRED", manual: latestFeaturePricePayload(), allowed: allowedManualActions() } };
   const profile = cleanWord(body.profile || body.entryProfile || CFG.MANUAL_ENTRY_DEFAULT_PROFILE);
-  const result = await openPosition(profile, price, "MANUAL_ENTER_LONG", { source: "manual", manualReason: body.reason || null });
-  return { status: result.ok ? 200 : 400, body: result };
+  const result = await openPosition(profile, price, "MANUAL_ENTER_LONG", { source: "manual", manualReason: body.reason || null, stopPrice: finite(body.stop_price ?? body.stopPrice, null), profitTargetPrice: finite(body.profit_target_price ?? body.profitTargetPrice, 0) });
+  return { status: result.ok ? 200 : 400, body: { ...result, action: "enter_long", symbol: CFG.SYMBOL, entryPrice: price, profile, manual: latestFeaturePricePayload() } };
 }
 async function manualExit(body) {
   if (!positionOpen()) return { status: 409, body: { ok: false, error: "NO_OPEN_POSITION" } };
@@ -745,19 +852,22 @@ function manualCancel(body) {
   }
   if (["pending", "all", "entries"].includes(target)) state.pending.manual = null;
   persistState("manual_cancel");
+  log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: "ALL", entryCampaign: null, entryRole: "all", reason: "MANUAL_CANCEL", cancelled });
   log("WARN", "RAY30_MANUAL_CANCEL", { target, cancelled });
   return { status: 200, body: { ok: true, target, cancelled } };
 }
 function armCampaignEntry(body) {
-  if (!symbolOk(body)) return { status: 400, body: { ok: false, error: "SYMBOL_MISMATCH" } };
+  if (!symbolOk(body)) return { status: 400, body: { ok: false, error: "SYMBOL_MISMATCH", expected: CFG.SYMBOL } };
   const campaigns = activeCampaigns();
   if (campaigns.length >= CFG.CAMPAIGN_MAX_ACTIVE) return { status: 409, body: { ok: false, error: "MAX_ACTIVE_CAMPAIGNS_REACHED", max: CFG.CAMPAIGN_MAX_ACTIVE } };
   const c = campaignFromBody(body);
   if (!c.campaignId) return { status: 400, body: { ok: false, error: "CAMPAIGN_ID_REQUIRED" } };
   state.campaigns.push(c);
-  persistState("campaign_armed");
-  log("WARN", "RAY30_CAMPAIGN_ENTRY_ARMED", { campaignId: c.campaignId, role: c.role, triggerMode: c.triggerMode, triggerId: c.id, range: [c.activationRangeLow, c.activationRangeHigh], activationPrice: c.activationPrice, expiresAt: c.expiresAt });
-  return { status: 200, body: { ok: true, campaign: c, activeCampaigns: activeCampaigns().length } };
+  persistState("price_trigger_armed");
+  const pendingSlot = activeCampaigns().length;
+  log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: c.id, pendingSlot, activePendingCount: activeCampaigns().length, entryCampaign: c.campaignId, entryRole: c.role, triggerMode: c.triggerMode, triggerPrice: c.triggerPrice || c.breakoutConfirmPrice || c.activationPrice || null, activationPrice: c.activationPrice || null, activationRangeLow: c.activationRangeLow || null, activationRangeHigh: c.activationRangeHigh || null, breakoutConfirmPrice: c.breakoutConfirmPrice || null, retestRangeLow: c.retestRangeLow || null, retestRangeHigh: c.retestRangeHigh || null, stopPrice: c.stopPrice || null, profitTargetPrice: c.profitTargetPrice || null, expiresAt: c.expiresAt, initialCrossAction: c.triggerMode === "breakout_retest_reclaim_zone" ? "START_TRACKING" : "SEND_MARKET_ORDER", confirmedAction: "SEND_DEMO_MARKET_ORDER", marketOrderWillBeSentOnCross: c.triggerMode !== "breakout_retest_reclaim_zone", breakoutRetestReclaimZoneMode: c.triggerMode === "breakout_retest_reclaim_zone" ? "TRACK_CONFIRM_RETEST_RECLAIM" : null });
+  if (c.campaignId) log("INFO", "FVVO_CAMPAIGN_ENTRY_SETUP_ARMED", { entryCampaign: c.campaignId, entryRole: c.role, triggerId: c.id, pendingSlot, activeCampaignSetups: activeCampaigns().filter(item => item.campaignId === c.campaignId).length, triggerMode: c.triggerMode, expiresAt: c.expiresAt });
+  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: c.triggerMode === "breakout_retest_reclaim_zone" ? "market_on_reclaim" : "market", trigger: c, campaign: c, activeCampaigns: activeCampaigns().length, allowed: allowedManualActions() } };
 }
 function cancelCampaign(body) {
   const id = String(body.entry_campaign || body.entryCampaign || body.campaignId || body.campaign_id || "").trim();
@@ -766,6 +876,8 @@ function cancelCampaign(body) {
     if (!id || c.campaignId === id || c.id === id) { c.active = false; c.cancelReason = "MANUAL_CANCEL_CAMPAIGN"; cancelled += 1; }
   }
   persistState("campaign_cancelled");
+  log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: id || "ALL", entryCampaign: id || null, entryRole: "campaign", reason: "MANUAL_CANCEL_CAMPAIGN", cancelled });
+  log("WARN", "FVVO_CAMPAIGN_ENTRY_SETUP_CANCELLED", { entryCampaign: id || "ALL", entryRole: "campaign", triggerId: id || "ALL", reason: "MANUAL_CANCEL_CAMPAIGN", cancelled });
   log("WARN", "RAY30_CAMPAIGN_CANCELLED", { campaignId: id || "ALL", cancelled });
   return { status: 200, body: { ok: true, campaignId: id || "ALL", cancelled } };
 }
@@ -799,12 +911,12 @@ async function handleManual(body) {
   if (action === "status") return { status: 200, body: statusPayload() };
   if (action === "enter_long" || action === "manual_entry") return manualEnter(body);
   if (action === "exit_long" || action === "manual_exit") return manualExit(body);
-  if (action === "cancel" || action === "cancel_all_entries") return manualCancel(body);
+  if (action === "cancel" || action === "cancel_all_entries" || action === "handoff_manual") return manualCancel(body);
   if (action === "arm_campaign_entry" || action === "campaign_entry" || action === "arm_price_entry") return armCampaignEntry(body);
   if (action === "cancel_campaign" || action === "cancel_price_entry") return cancelCampaign(body);
   if (action === "adopt_long") return adoptLong(body);
-  if (action === "force_clear_verified_flat" || action === "clear_position") return forceClear(body);
-  return { status: 400, body: { ok: false, error: "UNKNOWN_MANUAL_ACTION", supported: ["status", "enter_long", "exit_long", "cancel", "arm_campaign_entry", "cancel_campaign", "adopt_long", "force_clear_verified_flat"] } };
+  if (action === "force_clear_verified_flat" || action === "clear_position" || action === "clear_handoff") return forceClear(body);
+  return { status: 400, body: { ok: false, reason: "UNKNOWN_MANUAL_ACTION", allowed: allowedManualActions() } };
 }
 
 async function handleFeature(body) {
@@ -834,7 +946,7 @@ async function handleFeature(body) {
     state.feature5m = f;
     await manageThesisExitOn5m(f);
     persistState("feature5m_update");
-    log("INFO", "FEATURE_5M_FVVO", { price: f.price, rsi: f.rsi, fvvo: f.fvvo, slope: f.slope, rayTrend: f.rayTrend });
+    log("INFO", "FVVO_FEATURE_5M_RECEIVED", { event: "FEATURE_5M_FVVO", price: f.price, ema8: f.ema8, ema18: f.ema18, rsi: f.rsi, adx: f.adx, fvvo: f.fvvo, slope: f.slope, crossUp: f.crossUp, crossDown: f.crossDown, rayRegime: f.rayTrend, publisherKind: "SOL_5M_FEATURE", chartTimeframe: "5", barTimeMs: f.atMs, priceTriggerState: activeCampaigns().length ? `${activeCampaigns().length}_ARMED` : null, brainExitManagementActive: positionOpen() });
     return { status: 200, body: { ok: true, feature5m: { at: f.at, price: f.price } } };
   }
   // Default feature tick / 15s event.
@@ -846,7 +958,7 @@ async function handleFeature(body) {
   const exitResult = await manageOpenPositionOnTick(t);
   if (!positionOpen()) await evaluateAutoEntries(t);
   persistState("feature_tick_update");
-  log("INFO", "FEATURE_TICK_FVVO", { price: t.price, rsi: t.rsi, fvvo: t.fvvo, slope: t.slope, tickRay: t.rayTrend, exitAction: exitResult?.action || null });
+  log("INFO", "FVVO_FEATURE_TICK_RECEIVED", { event: "FEATURE_TICK_FVVO", price: t.price, ema8: t.ema8, ema18: t.ema18, rsi: t.rsi, adx: t.adx, fvvo: t.fvvo, slope: t.slope, crossUp: t.crossUp, crossDown: t.crossDown, rayRegime: t.rayTrend, publisherKind: null, chartTimeframe: "15S", barTimeMs: t.atMs, priceTriggerState: activeCampaigns().length ? `${activeCampaigns().length}_ARMED` : null, brainExitManagementActive: positionOpen(), exitAction: exitResult?.action || null });
   return { status: 200, body: { ok: true, tick: { at: t.at, price: t.price }, positionOpen: positionOpen() } };
 }
 
