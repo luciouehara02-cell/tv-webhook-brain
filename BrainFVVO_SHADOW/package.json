@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-sol-v3e-ray30-pullback-longhold-demo",
-  "version": "3.5.0",
-  "description": "BrainFVVO SOL v3e RAY30 Pullback LongHold DEMO service for Railway",
+  "name": "brainfvvo-sol-v3g-ray30-rayalgo-stateful-longhold-demo",
+  "version": "3.7.0",
+  "description": "BrainFVVO SOL v3g RAY30 RayAlgo stateful LongHold DEMO service for Railway",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

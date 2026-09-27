@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3f_RAY30_PULLBACK_LONGHOLD_DEMO
+ * BrainFVVO_SOL_v3g_RAY30_RAYALGO_STATEFUL_LONGHOLD_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 
-const BRAIN = 'BrainFVVO_SOL_v3f_RAY30_PULLBACK_LONGHOLD_DEMO';
+const BRAIN = 'BrainFVVO_SOL_v3g_RAY30_RAYALGO_STATEFUL_LONGHOLD_DEMO';
 
 const env = process.env;
 
@@ -49,8 +49,8 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3f-state.json',
-  ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'EASY_TEST',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3g-state.json',
+  ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
   featureTickMaxAgeSec: intEnv('FEATURE_TICK_MAX_AGE_SEC', 60),
@@ -71,9 +71,9 @@ const cfg = {
   runnerEnabled: boolEnv('RAY30_RUNNER_ENABLED', true),
   runnerActivateMfePct: numEnv('RAY30_RUNNER_ACTIVATE_MFE_PCT', 5.00),
   runnerMinLockPct: numEnv('RAY30_RUNNER_MIN_LOCK_PCT', 4.00),
-  runnerGivebackPct: numEnv('RAY30_RUNNER_GIVEBACK_PCT', 1.50),
+  runnerGivebackPct: numEnv('RAY30_RUNNER_GIVEBACK_PCT', 0.80),
 
-  // v3f progressive floor compressor. Fixed floors remain the safety base.
+  // v3f/v3g progressive floor compressor. Fixed floors remain the safety base.
   progressiveFloorsEnabled: boolEnv('RAY30_PROGRESSIVE_FLOORS_ENABLED', true),
   progressiveStartMfePct: numEnv('RAY30_PROGRESSIVE_START_MFE_PCT', 2.00),
   progressiveNeverLoosen: boolEnv('RAY30_PROGRESSIVE_NEVER_LOOSEN', true),
@@ -89,10 +89,10 @@ const cfg = {
   progressiveBand6MinPullbackPct: numEnv('RAY30_PROGRESSIVE_BAND_6_MIN_PULLBACK_PCT', 0.05),
 
   // RAY30 automatic-entry scanner. Defaults are safe: scan/log only, no order.
-  ray30AutoEntryEnabled: boolEnv('RAY30_AUTO_ENTRY_ENABLED', false),
-  ray30AutoEntrySendOrder: boolEnv('RAY30_AUTO_ENTRY_SEND_ORDER', false),
+  ray30AutoEntryEnabled: boolEnv('RAY30_AUTO_ENTRY_ENABLED', true),
+  ray30AutoEntrySendOrder: boolEnv('RAY30_AUTO_ENTRY_SEND_ORDER', true),
   ray30EntryScanLogEnabled: boolEnv('RAY30_ENTRY_SCAN_LOG_ENABLED', true),
-  ray30EntryScanOnTick: boolEnv('RAY30_ENTRY_SCAN_ON_TICK', false),
+  ray30EntryScanOnTick: boolEnv('RAY30_ENTRY_SCAN_ON_TICK', true),
   ray30MinRsi5m: numEnv('RAY30_MIN_RSI_5M', 50),
   ray30MaxRsi5m: numEnv('RAY30_MAX_RSI_5M', 68),
   ray30MinAdx5m: numEnv('RAY30_MIN_ADX_5M', 15),
@@ -105,11 +105,23 @@ const cfg = {
   ray30MinFvvo15s: numEnv('RAY30_MIN_FVVO_15S', 0),
   ray30MaxRayAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
 
+  // v3g: separate stateful RayAlgo alerts are primary. The 30m feature/proxy publisher is fallback/context only.
+  rayalgoExternalAlertsEnabled: boolEnv('RAYALGO_EXTERNAL_ALERTS_ENABLED', true),
+  rayalgoStateMemoryEnabled: boolEnv('RAYALGO_STATE_MEMORY_ENABLED', true),
+  rayalgoStateMaxAgeSec: intEnv('RAYALGO_STATE_MAX_AGE_SEC', 21600),
+  ray30UseRayalgoExternalPriority: boolEnv('RAY30_USE_RAYALGO_EXTERNAL_PRIORITY', true),
+  ray30FeatureProxyFallbackEnabled: boolEnv('RAY30_FEATURE_PROXY_FALLBACK_ENABLED', true),
+
+  // v3g replay logging controls. Default is compact/reason-change instead of printing every scan.
+  ray30ScanLogMode: String(env.RAY30_SCAN_LOG_MODE || 'REASON_CHANGE').toUpperCase(),
+  ray30NoEntryLogMode: String(env.RAY30_NO_ENTRY_LOG_MODE || 'OFF').toUpperCase(),
+  logReplayCompactEnabled: boolEnv('LOG_REPLAY_COMPACT_ENABLED', true),
+
   // Cosmetic / log controls. Processing still continues when a log stream is disabled.
   logEmojiEnabled: boolEnv('LOG_EMOJI_ENABLED', true),
-  logFeatureTickEnabled: boolEnv('LOG_FEATURE_TICK_ENABLED', true),
+  logFeatureTickEnabled: boolEnv('LOG_FEATURE_TICK_ENABLED', false),
   log15sTickEnabled: boolEnv('LOG_15S_TICK_ENABLED', true),
-  log15sTickEveryN: Math.max(1, intEnv('LOG_15S_TICK_EVERY_N', 1)),
+  log15sTickEveryN: Math.max(1, intEnv('LOG_15S_TICK_EVERY_N', 20)),
   logFeature5mEnabled: boolEnv('LOG_FEATURE_5M_ENABLED', true),
   logC3PayloadAudit: boolEnv('LOG_C3_PAYLOAD_AUDIT', true)
 };
@@ -129,7 +141,7 @@ const SUPPORTED_MANUAL_ACTIONS = [
   'force_clear_verified_flat'
 ];
 
-const logCounters = { featureTick15s: 0 };
+const logCounters = { featureTick15s: 0, lastRay30ScanKey: null, lastRay30NoEntryKey: null };
 
 let state = loadState();
 ensureStateShape();
@@ -160,6 +172,13 @@ log('STARTUP', {
     rsi15s: `${cfg.ray30MinRsi15s}-${cfg.ray30MaxRsi15s}`,
     noChaseRsi15s: cfg.ray30NoChaseRsi15s
   },
+  rayalgoConfig: {
+    externalAlertsEnabled: cfg.rayalgoExternalAlertsEnabled,
+    stateMemoryEnabled: cfg.rayalgoStateMemoryEnabled,
+    stateMaxAgeSec: cfg.rayalgoStateMaxAgeSec,
+    useExternalPriority: cfg.ray30UseRayalgoExternalPriority,
+    featureProxyFallbackEnabled: cfg.ray30FeatureProxyFallbackEnabled
+  },
   floorConfig: floorConfigSummary(),
   logConfig: {
     logEmojiEnabled: cfg.logEmojiEnabled,
@@ -167,7 +186,10 @@ log('STARTUP', {
     log15sTickEnabled: cfg.log15sTickEnabled,
     log15sTickEveryN: cfg.log15sTickEveryN,
     logFeature5mEnabled: cfg.logFeature5mEnabled,
-    logC3PayloadAudit: cfg.logC3PayloadAudit
+    logC3PayloadAudit: cfg.logC3PayloadAudit,
+    ray30ScanLogMode: cfg.ray30ScanLogMode,
+    ray30NoEntryLogMode: cfg.ray30NoEntryLogMode,
+    logReplayCompactEnabled: cfg.logReplayCompactEnabled
   }
 });
 
@@ -441,7 +463,9 @@ async function handleWebhook(body, req) {
   if (event.includes('RAY') || body.ray_signal || body.signal || looksLikeRayAlgoEvent(event)) {
     const signal = normalizeRaySignal(body.ray_signal || body.signal || event || body.alert || body.condition);
     const regime = normalizeRaySignalToRegime(signal, body.rayRegime ?? body.ray_regime);
-    state.latest.ray30 = {
+    const src = normalizeRaySource(body.src || body.source || body.publisherKind || body.publisher_kind || '');
+    const externalRayAlgo = isRayAlgoExternal(body, event, signal, src);
+    const rayState = {
       signal,
       regime,
       price: isFiniteNum(price) ? price : null,
@@ -449,22 +473,43 @@ async function handleWebhook(body, req) {
       at: nowIso(),
       atMs: Date.now(),
       sourceTime: nowMs,
+      sourceKind: externalRayAlgo ? 'rayalgo_external' : 'ray30_feature',
+      src: src || (externalRayAlgo ? 'rayalgo' : 'ray30_feature'),
+      external: externalRayAlgo,
       raw: compactRaw(body)
     };
+
+    if (externalRayAlgo && cfg.rayalgoExternalAlertsEnabled) {
+      state.latest.rayalgoExternal = rayState;
+      log('FVVO_RAYALGO_EXTERNAL_STATE_UPDATED', {
+        symbol: cfg.symbol,
+        signal,
+        regime,
+        sourceKind: rayState.sourceKind,
+        timeframe: rayState.timeframe,
+        price: rayState.price,
+        ttlSec: cfg.rayalgoStateMaxAgeSec
+      });
+    } else {
+      state.latest.ray30Feature = rayState;
+    }
+
+    state.latest.ray30 = activeRayForGate().state || rayState;
     if (isFiniteNum(price)) rememberRecentPrice(price);
     log('FVVO_RAY30_SIGNAL_RECEIVED', {
       symbol: cfg.symbol,
       signal,
       regime,
       event: event || 'RAY30_SIGNAL',
-      timeframe: state.latest.ray30.timeframe,
+      timeframe: rayState.timeframe,
       price: isFiniteNum(price) ? price : undefined,
-      rayExternalMode: body.rayExternalMode ?? body.ray_external_mode ?? null,
-      src: body.src || null
+      sourceKind: rayState.sourceKind,
+      selectedForGate: (state.latest.ray30 && state.latest.ray30.sourceKind) || rayState.sourceKind,
+      src: rayState.src
     });
     const evalOut = isFiniteNum(price) ? await evaluateAll(price, 'ray30_signal') : [];
     saveState();
-    return { ok: true, brain: BRAIN, accepted: true, event: 'RAY30', signal, regime, eval: evalOut, state: publicState() };
+    return { ok: true, brain: BRAIN, accepted: true, event: 'RAY30', signal, regime, raySourceKind: rayState.sourceKind, selectedForGate: state.latest.ray30 && state.latest.ray30.sourceKind, eval: evalOut, state: publicState() };
   }
 
   if (isFiniteNum(price)) {
@@ -699,9 +744,8 @@ async function evaluateRay30AutoEntry(price, source) {
   if (!isFiniteNum(price)) return null;
 
   const scan = buildRay30EntryScan(price, source);
-  const isTickSource = /tick/i.test(String(source || ''));
-  const shouldLogScan = cfg.ray30EntryScanLogEnabled && (cfg.ray30EntryScanOnTick || !isTickSource || scan.decision !== 'NO_ENTRY');
-  if (shouldLogScan) log('RAY30_ENTRY_SCAN', scan);
+  const shouldLogScan = cfg.ray30EntryScanLogEnabled && shouldLogRay30Scan(scan, source);
+  if (shouldLogScan) logRay30EntryScan(scan);
 
   // Momentum observed but 15s is overheated: arm pullback instead of chasing.
   if (scan.overheated && scan.rayGate.ok && scan.fiveOk.trendOk && !state.position.inPosition) {
@@ -792,15 +836,8 @@ async function evaluateRay30AutoEntry(price, source) {
     return { type: 'ray30_auto_entry', decision: out.ok ? 'ENTERED' : 'ENTER_FAILED', out, scan };
   }
 
-  if (shouldLogScan && scan.decision === 'NO_ENTRY') {
-    log('RAY30_ENTRY_NO_ENTRY', {
-      reason: scan.reason,
-      source,
-      rayGate: scan.rayGate,
-      fiveOk: scan.fiveOk,
-      tickOk: scan.tickOk,
-      pullback: scan.pullback
-    });
+  if (scan.decision === 'NO_ENTRY' && shouldLogRay30NoEntry(scan, source)) {
+    log('RAY30_ENTRY_NO_ENTRY', compactRay30Scan(scan));
   }
   return { type: 'ray30_auto_entry_scan', decision: scan.decision, reason: scan.reason, scan };
 }
@@ -869,16 +906,41 @@ function firstFailReason(rayGate, fiveOk, tickOk, inPosition, overheated) {
 }
 
 function ray30Gate() {
-  const r = state.latest && state.latest.ray30;
-  const ageSec = r && r.atMs ? (Date.now() - r.atMs) / 1000 : null;
-  const fresh = Boolean(r && ageSec !== null && ageSec <= cfg.ray30MaxRayAgeSec);
+  const selected = activeRayForGate();
+  const r = selected.state;
+  const ageSec = selected.ageSec;
+  const fresh = Boolean(r && selected.fresh);
   const signal = r ? (r.signal || 'UNKNOWN') : 'MISSING';
   const regime = r ? normalizeRaySignalToRegime(signal, r.regime || (r.raw && (r.raw.rayRegime || r.raw.ray_regime))) : 'RAY_NEUTRAL';
+  const sourceKind = r ? (r.sourceKind || 'unknown') : 'missing';
+  const reasonPrefix = `${sourceKind}:${selected.reason || 'selected'}`;
   if (String(cfg.ray30LongGateMode).toUpperCase() === 'EASY_TEST') {
-    return { ok: true, mode: cfg.ray30LongGateMode, fresh, ageSec: roundOrNull(ageSec), signal, regime, reason: fresh ? 'EASY_ALLOWED_WITH_RAY' : 'EASY_ALLOWED_RAY_STALE_OR_MISSING' };
+    return { ok: true, mode: cfg.ray30LongGateMode, fresh, ageSec: roundOrNull(ageSec), signal, regime, sourceKind, selectedReason: selected.reason, reason: fresh ? `EASY_ALLOWED_WITH_RAY_${reasonPrefix}` : 'EASY_ALLOWED_RAY_STALE_OR_MISSING' };
   }
   const ok = fresh && regime === 'RAY_BULL';
-  return { ok, mode: cfg.ray30LongGateMode, fresh, ageSec: roundOrNull(ageSec), signal, regime, reason: ok ? 'RAY30_BULL_FRESH' : (!fresh ? 'RAY30_STALE_OR_MISSING' : `RAY30_NOT_BULL_${regime}`) };
+  return { ok, mode: cfg.ray30LongGateMode, fresh, ageSec: roundOrNull(ageSec), signal, regime, sourceKind, selectedReason: selected.reason, reason: ok ? `RAY30_BULL_FRESH_${reasonPrefix}` : (!fresh ? 'RAY30_STALE_OR_MISSING' : `RAY30_NOT_BULL_${regime}_${sourceKind}`) };
+}
+
+function activeRayForGate() {
+  const now = Date.now();
+  const ext = state.latest && state.latest.rayalgoExternal;
+  const feat = state.latest && (state.latest.ray30Feature || state.latest.ray30);
+  const extAgeSec = ext && ext.atMs ? (now - ext.atMs) / 1000 : null;
+  const featAgeSec = feat && feat.atMs ? (now - feat.atMs) / 1000 : null;
+  const extFresh = Boolean(ext && extAgeSec !== null && extAgeSec <= cfg.rayalgoStateMaxAgeSec);
+  const featFresh = Boolean(feat && featAgeSec !== null && featAgeSec <= cfg.ray30MaxRayAgeSec);
+
+  if (cfg.ray30UseRayalgoExternalPriority && cfg.rayalgoStateMemoryEnabled && extFresh) {
+    return { state: ext, ageSec: extAgeSec, fresh: true, reason: 'rayalgo_external_priority' };
+  }
+  if (cfg.ray30FeatureProxyFallbackEnabled && featFresh) {
+    return { state: feat, ageSec: featAgeSec, fresh: true, reason: 'ray30_feature_fallback' };
+  }
+  if (cfg.rayalgoStateMemoryEnabled && ext) {
+    return { state: ext, ageSec: extAgeSec, fresh: false, reason: 'rayalgo_external_stale' };
+  }
+  if (feat) return { state: feat, ageSec: featAgeSec, fresh: false, reason: 'ray30_feature_stale' };
+  return { state: null, ageSec: null, fresh: false, reason: 'missing' };
 }
 
 function feature5mGate() {
@@ -1191,13 +1253,24 @@ function publicStatus() {
       noChaseRsi15s: cfg.ray30NoChaseRsi15s,
       pullbackReclaimMaxRsi15s: cfg.ray30PullbackReclaimMaxRsi15s
     },
+    rayalgoConfig: {
+      externalAlertsEnabled: cfg.rayalgoExternalAlertsEnabled,
+      stateMemoryEnabled: cfg.rayalgoStateMemoryEnabled,
+      stateMaxAgeSec: cfg.rayalgoStateMaxAgeSec,
+      useExternalPriority: cfg.ray30UseRayalgoExternalPriority,
+      featureProxyFallbackEnabled: cfg.ray30FeatureProxyFallbackEnabled,
+      activeRay: summarizeActiveRayForStatus()
+    },
     logConfig: {
       logEmojiEnabled: cfg.logEmojiEnabled,
       logFeatureTickEnabled: cfg.logFeatureTickEnabled,
       log15sTickEnabled: cfg.log15sTickEnabled,
       log15sTickEveryN: cfg.log15sTickEveryN,
       logFeature5mEnabled: cfg.logFeature5mEnabled,
-      logC3PayloadAudit: cfg.logC3PayloadAudit
+      logC3PayloadAudit: cfg.logC3PayloadAudit,
+    ray30ScanLogMode: cfg.ray30ScanLogMode,
+    ray30NoEntryLogMode: cfg.ray30NoEntryLogMode,
+    logReplayCompactEnabled: cfg.logReplayCompactEnabled
     },
     state: publicState()
   };
@@ -1314,7 +1387,9 @@ function emptyPosition() {
 }
 
 function ensureStateShape() {
-  state.latest = state.latest || { tick: null, feature5m: null, ray30: null, recentPrices: [] };
+  state.latest = state.latest || { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, recentPrices: [] };
+  if (typeof state.latest.ray30Feature === 'undefined') state.latest.ray30Feature = null;
+  if (typeof state.latest.rayalgoExternal === 'undefined') state.latest.rayalgoExternal = null;
   state.latest.recentPrices = state.latest.recentPrices || [];
   state.position = state.position || emptyPosition();
   state.priceTrigger = state.priceTrigger || null;
@@ -1331,7 +1406,7 @@ function loadState() {
   } catch (err) {
     log('FVVO_STATE_LOAD_FAILED', { stateFile: cfg.stateFile, error: err.message });
   }
-  return { latest: { tick: null, feature5m: null, ray30: null, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, handoff: { active: false, at: null, reason: null } };
+  return { latest: { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, handoff: { active: false, at: null, reason: null } };
 }
 
 function saveState() {
@@ -1380,6 +1455,134 @@ function stripHttpStatus(obj) {
   return rest;
 }
 
+
+function normalizeRaySource(v) {
+  const s = String(v || '').trim().toLowerCase();
+  if (!s) return '';
+  if (s.includes('rayalgo') || s === 'ray') return 'rayalgo';
+  if (s.includes('ray30') || s.includes('feature')) return 'ray30_feature';
+  return s.replace(/[^a-z0-9_:-]/g, '_');
+}
+
+function isRayAlgoExternal(body, event, signal, src) {
+  if (!cfg.rayalgoExternalAlertsEnabled) return false;
+  const normalizedSrc = normalizeRaySource(src || body.src || body.source || '');
+  if (normalizedSrc === 'rayalgo') return true;
+  if (body.rayExternalMode === true || body.ray_external_mode === true) return true;
+  const e = String(event || '').toUpperCase();
+  const sig = String(signal || '').toUpperCase();
+  // TradingView RayAlgo condition alerts usually send BULLISH/BEARISH event names and do not send src=ray30_feature.
+  if (looksLikeRayAlgoEvent(e) && !/RAY30_SIGNAL|RAY30_FEATURE|FEATURE/.test(e)) return true;
+  if (/BULLISH_TREND|BEARISH_TREND|TREND_CHANGE|TREND_CONTINUATION/.test(sig) && normalizedSrc !== 'ray30_feature') return true;
+  return false;
+}
+
+function compactRay30Scan(scan) {
+  return {
+    source: scan.source,
+    price: scan.price,
+    decision: scan.decision,
+    reason: scan.reason,
+    inPosition: scan.inPosition,
+    ray: scan.rayGate ? {
+      ok: scan.rayGate.ok,
+      signal: scan.rayGate.signal,
+      regime: scan.rayGate.regime,
+      sourceKind: scan.rayGate.sourceKind,
+      fresh: scan.rayGate.fresh,
+      ageSec: scan.rayGate.ageSec,
+      reason: scan.rayGate.reason
+    } : null,
+    five: scan.fiveOk ? {
+      ok: scan.fiveOk.ok,
+      trendOk: scan.fiveOk.trendOk,
+      reason: scan.fiveOk.reason,
+      ageSec: scan.fiveOk.ageSec,
+      price: scan.fiveOk.price,
+      rsi: roundOrNull(scan.fiveOk.rsi),
+      adx: roundOrNull(scan.fiveOk.adx),
+      fvvo: roundOrNull(scan.fiveOk.fvvo),
+      slope: roundOrNull(scan.fiveOk.slope)
+    } : null,
+    tick: scan.tickOk ? {
+      ok: scan.tickOk.ok,
+      reason: scan.tickOk.reason,
+      ageSec: scan.tickOk.ageSec,
+      price: scan.tickOk.price,
+      rsi: roundOrNull(scan.tickOk.rsi),
+      adx: roundOrNull(scan.tickOk.adx),
+      fvvo: roundOrNull(scan.tickOk.fvvo),
+      slope: roundOrNull(scan.tickOk.slope)
+    } : null,
+    pullback: scan.pullback
+  };
+}
+
+function ray30ScanLogKey(scan) {
+  return [
+    scan.decision,
+    scan.reason,
+    scan.inPosition ? 'IN' : 'FLAT',
+    scan.rayGate && scan.rayGate.signal,
+    scan.rayGate && scan.rayGate.regime,
+    scan.rayGate && scan.rayGate.sourceKind,
+    scan.fiveOk && scan.fiveOk.reason,
+    scan.tickOk && scan.tickOk.reason,
+    scan.pullback && scan.pullback.armed ? 'PB_ARMED' : 'PB_OFF'
+  ].join('|');
+}
+
+function shouldLogRay30Scan(scan, source) {
+  if (!cfg.ray30EntryScanLogEnabled) return false;
+  const mode = String(cfg.ray30ScanLogMode || 'REASON_CHANGE').toUpperCase();
+  if (mode === 'OFF' || mode === 'NONE') return false;
+  if (mode === 'FULL') {
+    const isTickSource = /tick/i.test(String(source || ''));
+    return cfg.ray30EntryScanOnTick || !isTickSource || scan.decision !== 'NO_ENTRY';
+  }
+  if (scan.decision !== 'NO_ENTRY') return true;
+  const isTickSource = /tick/i.test(String(source || ''));
+  if (!isTickSource) return true;
+  const key = ray30ScanLogKey(scan);
+  if (mode === 'REASON_CHANGE' || mode === 'COMPACT') {
+    if (key === logCounters.lastRay30ScanKey) return false;
+    logCounters.lastRay30ScanKey = key;
+    return true;
+  }
+  return false;
+}
+
+function logRay30EntryScan(scan) {
+  const mode = String(cfg.ray30ScanLogMode || 'REASON_CHANGE').toUpperCase();
+  if (mode === 'FULL') log('RAY30_ENTRY_SCAN', scan);
+  else log('RAY30_ENTRY_SCAN_COMPACT', compactRay30Scan(scan));
+}
+
+function shouldLogRay30NoEntry(scan, source) {
+  const mode = String(cfg.ray30NoEntryLogMode || 'OFF').toUpperCase();
+  if (mode === 'OFF' || mode === 'NONE') return false;
+  if (mode === 'FULL') return true;
+  const key = ray30ScanLogKey(scan);
+  if (key === logCounters.lastRay30NoEntryKey) return false;
+  logCounters.lastRay30NoEntryKey = key;
+  return true;
+}
+
+function summarizeActiveRayForStatus() {
+  const selected = activeRayForGate();
+  const r = selected.state;
+  return r ? {
+    signal: r.signal,
+    regime: r.regime,
+    sourceKind: r.sourceKind,
+    src: r.src,
+    fresh: selected.fresh,
+    ageSec: roundOrNull(selected.ageSec),
+    reason: selected.reason,
+    at: r.at || null
+  } : { signal: 'MISSING', regime: 'RAY_NEUTRAL', sourceKind: 'missing', fresh: false, ageSec: null, reason: selected.reason };
+}
+
 function log(label, data = {}) {
   if (shouldSuppressLog(label, data)) return;
   const icon = cfg.logEmojiEnabled ? `${logIcon(label)} ` : '';
@@ -1407,6 +1610,7 @@ function logIcon(label) {
   if (label === 'FVVO_FEATURE_5M_RECEIVED') return '📊';
   if (label === 'FVVO_MANUAL_COMMAND') return '📩';
   if (/RAY30_ENTRY_SCAN/.test(label)) return '🧠';
+  if (/RAYALGO_EXTERNAL/.test(label)) return '🟣';
   if (/NO_OPEN|EXPIRED|MISSING|NO_ENTRY|WARN|LOAD_FAILED|SAVE_FAILED/.test(label)) return '🟡';
   if (/RAY30_NO_CHASE|RAY30_PULLBACK_ARMED/.test(label)) return '🟠';
   if (/NOT_ACCEPTED|FAIL|ERROR|BLOCKED|CANCEL|STOP_LOSS|DROP|BEAR_EXIT|FLOOR_EXIT/.test(label)) return '🔴';
