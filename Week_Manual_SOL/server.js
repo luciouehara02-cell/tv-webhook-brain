@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3g_RAY30_RAYALGO_STATEFUL_LONGHOLD_DEMO
+ * BrainFVVO_SOL_v3j_RAYALGO_SETUP_INSTANT_PULLBACK_BREAKOUT_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 
-const BRAIN = 'BrainFVVO_SOL_v3g_RAY30_RAYALGO_STATEFUL_LONGHOLD_DEMO';
+const BRAIN = 'BrainFVVO_SOL_v3j_RAYALGO_SETUP_INSTANT_PULLBACK_BREAKOUT_DEMO';
 
 const env = process.env;
 
@@ -49,7 +49,7 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3g-state.json',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3j-state.json',
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
@@ -68,6 +68,14 @@ const cfg = {
   floor3LockPct: numEnv('RAY30_FLOOR_3_LOCK_PCT', 2.00),
   floor4MfePct: numEnv('RAY30_FLOOR_4_MFE_PCT', 4.00),
   floor4LockPct: numEnv('RAY30_FLOOR_4_LOCK_PCT', 3.00),
+
+  // v3h small protective floors: protect some profit before +2% progressive compression starts.
+  protectiveFloorsEnabled: boolEnv('RAY30_PROTECTIVE_FLOORS_ENABLED', true),
+  protectiveFloor1MfePct: numEnv('RAY30_PROTECTIVE_FLOOR_1_MFE_PCT', 1.50),
+  protectiveFloor1LockPct: numEnv('RAY30_PROTECTIVE_FLOOR_1_LOCK_PCT', 0.30),
+  protectiveFloor2MfePct: numEnv('RAY30_PROTECTIVE_FLOOR_2_MFE_PCT', 1.80),
+  protectiveFloor2LockPct: numEnv('RAY30_PROTECTIVE_FLOOR_2_LOCK_PCT', 0.50),
+
   runnerEnabled: boolEnv('RAY30_RUNNER_ENABLED', true),
   runnerActivateMfePct: numEnv('RAY30_RUNNER_ACTIVATE_MFE_PCT', 5.00),
   runnerMinLockPct: numEnv('RAY30_RUNNER_MIN_LOCK_PCT', 4.00),
@@ -111,6 +119,48 @@ const cfg = {
   rayalgoStateMaxAgeSec: intEnv('RAYALGO_STATE_MAX_AGE_SEC', 21600),
   ray30UseRayalgoExternalPriority: boolEnv('RAY30_USE_RAYALGO_EXTERNAL_PRIORITY', true),
   ray30FeatureProxyFallbackEnabled: boolEnv('RAY30_FEATURE_PROXY_FALLBACK_ENABLED', true),
+
+  // v3j: RayAlgo opens a setup window. Entry waits for instant-qualified, pullback-recovery, or breakout-continuation.
+  ray30SetupEntryEnabled: boolEnv('RAY30_SETUP_ENTRY_ENABLED', true),
+  ray30SetupTtlSec: intEnv('RAY30_SETUP_TTL_SEC', 21600),
+  ray30SetupNoImmediateEntrySec: intEnv('RAY30_SETUP_NO_IMMEDIATE_ENTRY_SEC', 60),
+
+  // v3j: instant-qualified leg. RayAlgo does not blindly enter; it enters only if 5m and the next 15s tick are already high quality.
+  ray30InstantQualifiedEntryEnabled: boolEnv('RAY30_INSTANT_QUALIFIED_ENTRY_ENABLED', true),
+  ray30InstantMaxAfterRaySec: intEnv('RAY30_INSTANT_MAX_AFTER_RAY_SEC', 120),
+  ray30InstantRequireNext15sTick: boolEnv('RAY30_INSTANT_REQUIRE_NEXT_15S_TICK', true),
+  ray30Instant5mMinRsi: numEnv('RAY30_INSTANT_5M_MIN_RSI', 52),
+  ray30Instant5mMaxRsi: numEnv('RAY30_INSTANT_5M_MAX_RSI', 68),
+  ray30Instant5mMinFvvo: numEnv('RAY30_INSTANT_5M_MIN_FVVO', 0.00),
+  ray30Instant5mMinSlope: numEnv('RAY30_INSTANT_5M_MIN_SLOPE', 0.00),
+  ray30Instant15sMinRsi: numEnv('RAY30_INSTANT_15S_MIN_RSI', 52),
+  ray30Instant15sMaxRsi: numEnv('RAY30_INSTANT_15S_MAX_RSI', 72),
+  ray30Instant15sMinFvvo: numEnv('RAY30_INSTANT_15S_MIN_FVVO', 0.20),
+  ray30Instant15sMinSlope: numEnv('RAY30_INSTANT_15S_MIN_SLOPE', 0.00),
+  ray30InstantMaxExtEma8Pct: numEnv('RAY30_INSTANT_MAX_EXT_EMA8_PCT', 0.35),
+  ray30InstantMaxExtEma18Pct: numEnv('RAY30_INSTANT_MAX_EXT_EMA18_PCT', 0.60),
+
+  ray30PullbackEntryEnabled: boolEnv('RAY30_PULLBACK_ENTRY_ENABLED', true),
+  ray30PullbackMinDipPct: numEnv('RAY30_PULLBACK_MIN_DIP_PCT', 0.25),
+  ray30PullbackMaxDipPct: numEnv('RAY30_PULLBACK_MAX_DIP_PCT', 1.80),
+  ray30Pullback5mMinRsi: numEnv('RAY30_PULLBACK_5M_MIN_RSI', 45),
+  ray30Pullback5mMinFvvo: numEnv('RAY30_PULLBACK_5M_MIN_FVVO', -0.60),
+  ray30Pullback5mMinSlope: numEnv('RAY30_PULLBACK_5M_MIN_SLOPE', -0.20),
+  ray30Pullback15sMinRsi: numEnv('RAY30_PULLBACK_15S_MIN_RSI', 48),
+  ray30Pullback15sMaxRsi: numEnv('RAY30_PULLBACK_15S_MAX_RSI', 68),
+  ray30Pullback15sMinFvvo: numEnv('RAY30_PULLBACK_15S_MIN_FVVO', 0.00),
+
+  ray30BreakoutEntryEnabled: boolEnv('RAY30_BREAKOUT_ENTRY_ENABLED', true),
+  ray30BreakoutMinWaitSec: intEnv('RAY30_BREAKOUT_MIN_WAIT_SEC', 180),
+  ray30BreakoutMinMoveFromRayPct: numEnv('RAY30_BREAKOUT_MIN_MOVE_FROM_RAY_PCT', 0.45),
+  ray30Breakout5mMinRsi: numEnv('RAY30_BREAKOUT_5M_MIN_RSI', 55),
+  ray30Breakout5mMaxRsi: numEnv('RAY30_BREAKOUT_5M_MAX_RSI', 72),
+  ray30Breakout5mMinFvvo: numEnv('RAY30_BREAKOUT_5M_MIN_FVVO', -0.20),
+  ray30Breakout5mMinSlope: numEnv('RAY30_BREAKOUT_5M_MIN_SLOPE', 0.00),
+  ray30Breakout15sMinRsi: numEnv('RAY30_BREAKOUT_15S_MIN_RSI', 55),
+  ray30Breakout15sMaxRsi: numEnv('RAY30_BREAKOUT_15S_MAX_RSI', 76),
+  ray30Breakout15sMinFvvo: numEnv('RAY30_BREAKOUT_15S_MIN_FVVO', 0.50),
+  ray30Breakout15sMinSlope: numEnv('RAY30_BREAKOUT_15S_MIN_SLOPE', 0.00),
 
   // v3g replay logging controls. Default is compact/reason-change instead of printing every scan.
   ray30ScanLogMode: String(env.RAY30_SCAN_LOG_MODE || 'REASON_CHANGE').toUpperCase(),
@@ -177,7 +227,11 @@ log('STARTUP', {
     stateMemoryEnabled: cfg.rayalgoStateMemoryEnabled,
     stateMaxAgeSec: cfg.rayalgoStateMaxAgeSec,
     useExternalPriority: cfg.ray30UseRayalgoExternalPriority,
-    featureProxyFallbackEnabled: cfg.ray30FeatureProxyFallbackEnabled
+    featureProxyFallbackEnabled: cfg.ray30FeatureProxyFallbackEnabled,
+    setupEntryEnabled: cfg.ray30SetupEntryEnabled,
+    instantQualifiedEntryEnabled: cfg.ray30InstantQualifiedEntryEnabled,
+    pullbackEntryEnabled: cfg.ray30PullbackEntryEnabled,
+    breakoutEntryEnabled: cfg.ray30BreakoutEntryEnabled
   },
   floorConfig: floorConfigSummary(),
   logConfig: {
@@ -481,6 +535,7 @@ async function handleWebhook(body, req) {
 
     if (externalRayAlgo && cfg.rayalgoExternalAlertsEnabled) {
       state.latest.rayalgoExternal = rayState;
+      if (cfg.ray30SetupEntryEnabled) updateRay30EntrySetupFromRayAlgo(rayState);
       log('FVVO_RAYALGO_EXTERNAL_STATE_UPDATED', {
         symbol: cfg.symbol,
         signal,
@@ -780,7 +835,7 @@ async function evaluateRay30AutoEntry(price, source) {
     return { type: 'ray30_auto_entry_scan', decision: 'WAIT_PULLBACK', reason: '15S_RSI_OVERHEATED_WAIT_PULLBACK', scan };
   }
 
-  if (scan.pullbackReclaimReady && !state.position.inPosition) {
+  if (scan.pullbackReclaimReady && !scan.pullbackRecoveryReady && !state.position.inPosition) {
     const payload = {
       price,
       source,
@@ -807,6 +862,93 @@ async function evaluateRay30AutoEntry(price, source) {
       setup: { raw: { profile: 'RAY30_AUTO_ENTRY' }, stopPrice: null, tp1: null }
     });
     return { type: 'ray30_pullback_reclaim_entry', decision: out.ok ? 'ENTERED' : 'ENTER_FAILED', out, scan };
+  }
+
+  if (scan.instantQualifiedReady && !state.position.inPosition) {
+    const payload = {
+      price,
+      source,
+      setup: scan.setup,
+      raySignal: scan.rayGate.signal,
+      fiveRsi: scan.fiveOk.rsi,
+      fiveFvvo: scan.fiveOk.fvvo,
+      tickRsi: scan.tickOk.rsi,
+      tickFvvo: scan.tickOk.fvvo,
+      autoEntryEnabled: cfg.ray30AutoEntryEnabled,
+      sendOrder: cfg.ray30AutoEntrySendOrder
+    };
+    if (!cfg.ray30AutoEntryEnabled || !cfg.ray30AutoEntrySendOrder) {
+      log('RAY30_INSTANT_QUALIFIED_ENTRY_SHADOW', payload);
+      return { type: 'ray30_instant_qualified_shadow', decision: 'SHADOW_ENTRY_READY', scan };
+    }
+    log('RAY30_INSTANT_QUALIFIED_ENTRY_READY', payload);
+    if (state.ray30Setup) state.ray30Setup.completedAt = nowIso();
+    const out = await enterLong({
+      price,
+      source: 'ray30_instant_qualified_auto',
+      campaignId: null,
+      entryRole: 'ray30_instant_qualified',
+      setup: { raw: { profile: 'RAY30_INSTANT_QUALIFIED_AUTO' }, stopPrice: null, tp1: null }
+    });
+    return { type: 'ray30_instant_qualified_entry', decision: out.ok ? 'ENTERED' : 'ENTER_FAILED', out, scan };
+  }
+
+  if (scan.pullbackRecoveryReady && !state.position.inPosition) {
+    const payload = {
+      price,
+      source,
+      setup: scan.setup,
+      raySignal: scan.rayGate.signal,
+      fiveRsi: scan.fiveOk.rsi,
+      fiveFvvo: scan.fiveOk.fvvo,
+      tickRsi: scan.tickOk.rsi,
+      tickFvvo: scan.tickOk.fvvo,
+      autoEntryEnabled: cfg.ray30AutoEntryEnabled,
+      sendOrder: cfg.ray30AutoEntrySendOrder
+    };
+    if (!cfg.ray30AutoEntryEnabled || !cfg.ray30AutoEntrySendOrder) {
+      log('RAY30_PULLBACK_RECOVERY_ENTRY_SHADOW', payload);
+      return { type: 'ray30_pullback_recovery_shadow', decision: 'SHADOW_ENTRY_READY', scan };
+    }
+    log('RAY30_PULLBACK_RECOVERY_ENTRY_READY', payload);
+    if (state.ray30Setup) state.ray30Setup.completedAt = nowIso();
+    const out = await enterLong({
+      price,
+      source: 'ray30_pullback_recovery_auto',
+      campaignId: null,
+      entryRole: 'ray30_pullback_recovery',
+      setup: { raw: { profile: 'RAY30_PULLBACK_RECOVERY_AUTO' }, stopPrice: null, tp1: null }
+    });
+    return { type: 'ray30_pullback_recovery_entry', decision: out.ok ? 'ENTERED' : 'ENTER_FAILED', out, scan };
+  }
+
+  if (scan.breakoutContinuationReady && !state.position.inPosition) {
+    const payload = {
+      price,
+      source,
+      setup: scan.setup,
+      raySignal: scan.rayGate.signal,
+      fiveRsi: scan.fiveOk.rsi,
+      fiveFvvo: scan.fiveOk.fvvo,
+      tickRsi: scan.tickOk.rsi,
+      tickFvvo: scan.tickOk.fvvo,
+      autoEntryEnabled: cfg.ray30AutoEntryEnabled,
+      sendOrder: cfg.ray30AutoEntrySendOrder
+    };
+    if (!cfg.ray30AutoEntryEnabled || !cfg.ray30AutoEntrySendOrder) {
+      log('RAY30_BREAKOUT_CONTINUATION_ENTRY_SHADOW', payload);
+      return { type: 'ray30_breakout_continuation_shadow', decision: 'SHADOW_ENTRY_READY', scan };
+    }
+    log('RAY30_BREAKOUT_CONTINUATION_ENTRY_READY', payload);
+    if (state.ray30Setup) state.ray30Setup.completedAt = nowIso();
+    const out = await enterLong({
+      price,
+      source: 'ray30_breakout_continuation_auto',
+      campaignId: null,
+      entryRole: 'ray30_breakout_continuation',
+      setup: { raw: { profile: 'RAY30_BREAKOUT_CONTINUATION_AUTO' }, stopPrice: null, tp1: null }
+    });
+    return { type: 'ray30_breakout_continuation_entry', decision: out.ok ? 'ENTERED' : 'ENTER_FAILED', out, scan };
   }
 
   if (scan.enterReady && !state.position.inPosition) {
@@ -849,8 +991,9 @@ function buildRay30EntryScan(price, source) {
   const inPosition = Boolean(state.position && state.position.inPosition);
   const overheated = isFiniteNum(tickOk.rsi) && tickOk.rsi >= cfg.ray30NoChaseRsi15s;
   const pullback = state.ray30Pullback || { armed: false };
+  const setup = updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk);
 
-  const pullbackReclaimReady = Boolean(
+  const legacyPullbackReclaimReady = Boolean(
     pullback.armed &&
     rayGate.ok &&
     fiveOk.trendOk &&
@@ -860,7 +1003,15 @@ function buildRay30EntryScan(price, source) {
     (!isFiniteNum(tickOk.ema18) || price >= tickOk.ema18)
   );
 
+  const instantQualifiedReady = Boolean(setup.instantQualifiedReady);
+  const pullbackRecoveryReady = Boolean(setup.pullbackRecoveryReady);
+  const breakoutContinuationReady = Boolean(setup.breakoutContinuationReady);
+  const pullbackReclaimReady = Boolean(legacyPullbackReclaimReady || pullbackRecoveryReady);
+
+  // v3j: RayAlgo is a setup gate. Direct legacy entry is disabled; setup legs decide entries.
+  const directEntryAllowed = !cfg.ray30SetupEntryEnabled;
   const enterReady = Boolean(
+    directEntryAllowed &&
     !inPosition &&
     rayGate.ok &&
     fiveOk.ok &&
@@ -870,9 +1021,21 @@ function buildRay30EntryScan(price, source) {
 
   let decision = enterReady ? 'ENTER_READY' : 'NO_ENTRY';
   let reason = enterReady ? 'ALL_GATES_OK' : firstFailReason(rayGate, fiveOk, tickOk, inPosition, overheated);
-  if (pullbackReclaimReady) {
+  if (instantQualifiedReady) {
+    decision = 'INSTANT_QUALIFIED_READY';
+    reason = 'RAYALGO_BULL_INSTANT_QUALIFIED_READY';
+  } else if (pullbackRecoveryReady) {
+    decision = 'PULLBACK_RECOVERY_READY';
+    reason = 'RAYALGO_BULL_PULLBACK_RECOVERY_READY';
+  } else if (breakoutContinuationReady) {
+    decision = 'BREAKOUT_CONTINUATION_READY';
+    reason = 'RAYALGO_BULL_BREAKOUT_CONTINUATION_READY';
+  } else if (legacyPullbackReclaimReady) {
     decision = 'PULLBACK_RECLAIM_READY';
     reason = 'PULLBACK_RECLAIM_AFTER_OVERHEATED_MOMENTUM';
+  } else if (cfg.ray30SetupEntryEnabled && !inPosition && rayGate.ok) {
+    decision = 'WAIT_SETUP';
+    reason = setup.reason || 'WAITING_PULLBACK_OR_BREAKOUT_SETUP';
   } else if (overheated && rayGate.ok && fiveOk.trendOk) {
     decision = 'WAIT_PULLBACK';
     reason = '15S_RSI_OVERHEATED_WAIT_PULLBACK';
@@ -884,7 +1047,11 @@ function buildRay30EntryScan(price, source) {
     decision,
     reason,
     enterReady,
+    instantQualifiedReady,
     pullbackReclaimReady,
+    legacyPullbackReclaimReady,
+    pullbackRecoveryReady,
+    breakoutContinuationReady,
     overheated,
     inPosition,
     autoEntryEnabled: cfg.ray30AutoEntryEnabled,
@@ -892,8 +1059,189 @@ function buildRay30EntryScan(price, source) {
     rayGate,
     fiveOk,
     tickOk,
+    setup,
     pullback: summarizePullback(pullback)
   };
+}
+
+
+function updateRay30EntrySetupFromRayAlgo(rayState) {
+  if (!rayState || !cfg.ray30SetupEntryEnabled) return;
+  const regime = normalizeRaySignalToRegime(rayState.signal, rayState.regime);
+  if (regime === 'RAY_BULL') {
+    const price = isFiniteNum(rayState.price) ? rayState.price : latestPrice();
+    const now = Date.now();
+    state.ray30Setup = {
+      active: true,
+      mode: 'WAIT_INSTANT_PULLBACK_OR_BREAKOUT',
+      signal: rayState.signal,
+      regime,
+      sourceKind: rayState.sourceKind || 'rayalgo_external',
+      rayAt: nowIso(),
+      rayAtMs: now,
+      rayPrice: isFiniteNum(price) ? price : null,
+      highPrice: isFiniteNum(price) ? price : null,
+      lowPrice: isFiniteNum(price) ? price : null,
+      pullbackSeen: false,
+      pullbackLowPrice: null,
+      breakoutSeen: false,
+      completedAt: null,
+      expiresAtMs: now + cfg.ray30SetupTtlSec * 1000
+    };
+    log('RAYALGO_BULL_SETUP_ARMED', {
+      signal: rayState.signal,
+      regime,
+      price: state.ray30Setup.rayPrice,
+      ttlSec: cfg.ray30SetupTtlSec,
+      instantMaxAfterRaySec: cfg.ray30InstantMaxAfterRaySec,
+      pullbackMinDipPct: cfg.ray30PullbackMinDipPct,
+      breakoutMinMoveFromRayPct: cfg.ray30BreakoutMinMoveFromRayPct
+    });
+  } else if (regime === 'RAY_BEAR') {
+    state.ray30Setup = { active: false, cancelledAt: nowIso(), cancelReason: rayState.signal || 'RAY_BEAR' };
+    state.ray30Pullback = { armed: false };
+    log('RAYALGO_BULL_SETUP_CANCELLED', { signal: rayState.signal, regime, reason: 'RAYALGO_BEAR_SIGNAL' });
+  }
+}
+
+function updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk) {
+  if (!cfg.ray30SetupEntryEnabled) return { active: false, reason: 'SETUP_ENTRY_DISABLED' };
+  const now = Date.now();
+
+  if ((!state.ray30Setup || !state.ray30Setup.active) && rayGate.ok && rayGate.sourceKind === 'rayalgo_external') {
+    const ext = state.latest && state.latest.rayalgoExternal;
+    if (ext) updateRay30EntrySetupFromRayAlgo(ext);
+  }
+
+  const s = state.ray30Setup;
+  if (!s || !s.active) return { active: false, reason: 'WAITING_RAYALGO_BULL_SETUP' };
+  if (s.completedAt) return { active: false, reason: 'SETUP_ALREADY_COMPLETED' };
+  if (s.expiresAtMs && now > s.expiresAtMs) {
+    s.active = false;
+    s.cancelledAt = nowIso();
+    s.cancelReason = 'SETUP_EXPIRED';
+    return summarizeRay30Setup(s, 'SETUP_EXPIRED');
+  }
+  if (!rayGate.ok) return summarizeRay30Setup(s, rayGate.reason || 'RAY_GATE_NOT_OK');
+
+  if (isFiniteNum(price)) {
+    if (!isFiniteNum(s.rayPrice)) s.rayPrice = price;
+    if (!isFiniteNum(s.highPrice) || price > s.highPrice) s.highPrice = price;
+    if (!isFiniteNum(s.lowPrice) || price < s.lowPrice) s.lowPrice = price;
+  }
+
+  const rayAgeSec = s.rayAtMs ? (now - s.rayAtMs) / 1000 : null;
+  const dipFromHighPct = (isFiniteNum(price) && isFiniteNum(s.highPrice) && s.highPrice > 0) ? ((s.highPrice - price) / s.highPrice) * 100 : 0;
+  const moveFromRayPct = (isFiniteNum(price) && isFiniteNum(s.rayPrice) && s.rayPrice > 0) ? pct(price, s.rayPrice) : 0;
+
+  const instantSourceOk = !cfg.ray30InstantRequireNext15sTick || source === 'feature_tick';
+  const instantAgeOk = isFiniteNum(rayAgeSec) && rayAgeSec <= cfg.ray30InstantMaxAfterRaySec;
+  const fiveInstantOk = Boolean(
+    fiveOk.fresh &&
+    isFiniteNum(fiveOk.rsi) && fiveOk.rsi >= cfg.ray30Instant5mMinRsi && fiveOk.rsi <= cfg.ray30Instant5mMaxRsi &&
+    isFiniteNum(fiveOk.adx) && fiveOk.adx >= cfg.ray30MinAdx5m &&
+    isFiniteNum(fiveOk.fvvo) && fiveOk.fvvo >= cfg.ray30Instant5mMinFvvo &&
+    isFiniteNum(fiveOk.slope) && fiveOk.slope >= cfg.ray30Instant5mMinSlope &&
+    (!isFiniteNum(fiveOk.ema18) || !isFiniteNum(fiveOk.price) || fiveOk.price >= fiveOk.ema18) &&
+    emaExtensionOk(fiveOk.price, fiveOk.ema8, cfg.ray30InstantMaxExtEma8Pct) &&
+    emaExtensionOk(fiveOk.price, fiveOk.ema18, cfg.ray30InstantMaxExtEma18Pct)
+  );
+  const tickInstantOk = Boolean(
+    tickOk.fresh &&
+    isFiniteNum(tickOk.rsi) && tickOk.rsi >= cfg.ray30Instant15sMinRsi && tickOk.rsi <= cfg.ray30Instant15sMaxRsi &&
+    isFiniteNum(tickOk.fvvo) && tickOk.fvvo >= cfg.ray30Instant15sMinFvvo &&
+    isFiniteNum(tickOk.slope) && tickOk.slope >= cfg.ray30Instant15sMinSlope &&
+    (!isFiniteNum(tickOk.ema18) || price >= tickOk.ema18) &&
+    emaExtensionOk(price, tickOk.ema8, cfg.ray30InstantMaxExtEma8Pct) &&
+    emaExtensionOk(price, tickOk.ema18, cfg.ray30InstantMaxExtEma18Pct)
+  );
+  const instantQualifiedReady = Boolean(
+    cfg.ray30InstantQualifiedEntryEnabled &&
+    instantSourceOk &&
+    instantAgeOk &&
+    !s.pullbackSeen &&
+    fiveInstantOk &&
+    tickInstantOk
+  );
+
+  if (!s.pullbackSeen && dipFromHighPct >= cfg.ray30PullbackMinDipPct) {
+    s.pullbackSeen = true;
+    s.pullbackSeenAt = nowIso();
+    s.pullbackLowPrice = price;
+    log('RAY30_PULLBACK_SEEN_AFTER_RAYALGO_BULL', { price, highPrice: s.highPrice, dipFromHighPct: round(dipFromHighPct), rayPrice: s.rayPrice, moveFromRayPct: round(moveFromRayPct) });
+  }
+  if (s.pullbackSeen && isFiniteNum(price) && (!isFiniteNum(s.pullbackLowPrice) || price < s.pullbackLowPrice)) s.pullbackLowPrice = price;
+
+  const fivePullbackOk = Boolean(
+    fiveOk.fresh &&
+    isFiniteNum(fiveOk.rsi) && fiveOk.rsi >= cfg.ray30Pullback5mMinRsi && fiveOk.rsi <= cfg.ray30MaxRsi5m &&
+    isFiniteNum(fiveOk.adx) && fiveOk.adx >= cfg.ray30MinAdx5m &&
+    isFiniteNum(fiveOk.fvvo) && fiveOk.fvvo >= cfg.ray30Pullback5mMinFvvo &&
+    isFiniteNum(fiveOk.slope) && fiveOk.slope >= cfg.ray30Pullback5mMinSlope
+  );
+  const tickPullbackOk = Boolean(
+    tickOk.fresh &&
+    isFiniteNum(tickOk.rsi) && tickOk.rsi >= cfg.ray30Pullback15sMinRsi && tickOk.rsi <= cfg.ray30Pullback15sMaxRsi &&
+    isFiniteNum(tickOk.fvvo) && tickOk.fvvo >= cfg.ray30Pullback15sMinFvvo &&
+    (!isFiniteNum(tickOk.ema18) || price >= tickOk.ema18)
+  );
+  const pullbackRecoveryReady = Boolean(
+    cfg.ray30PullbackEntryEnabled &&
+    s.pullbackSeen &&
+    dipFromHighPct <= cfg.ray30PullbackMaxDipPct &&
+    fivePullbackOk &&
+    tickPullbackOk
+  );
+
+  const fiveBreakoutOk = Boolean(
+    fiveOk.fresh &&
+    isFiniteNum(fiveOk.rsi) && fiveOk.rsi >= cfg.ray30Breakout5mMinRsi && fiveOk.rsi <= cfg.ray30Breakout5mMaxRsi &&
+    isFiniteNum(fiveOk.adx) && fiveOk.adx >= cfg.ray30MinAdx5m &&
+    isFiniteNum(fiveOk.fvvo) && fiveOk.fvvo >= cfg.ray30Breakout5mMinFvvo &&
+    isFiniteNum(fiveOk.slope) && fiveOk.slope >= cfg.ray30Breakout5mMinSlope &&
+    (!isFiniteNum(fiveOk.ema18) || !isFiniteNum(fiveOk.price) || fiveOk.price >= fiveOk.ema18)
+  );
+  const tickBreakoutOk = Boolean(
+    tickOk.fresh &&
+    isFiniteNum(tickOk.rsi) && tickOk.rsi >= cfg.ray30Breakout15sMinRsi && tickOk.rsi <= cfg.ray30Breakout15sMaxRsi &&
+    isFiniteNum(tickOk.fvvo) && tickOk.fvvo >= cfg.ray30Breakout15sMinFvvo &&
+    isFiniteNum(tickOk.slope) && tickOk.slope >= cfg.ray30Breakout15sMinSlope &&
+    (!isFiniteNum(tickOk.ema18) || price >= tickOk.ema18)
+  );
+  const breakoutContinuationReady = Boolean(
+    cfg.ray30BreakoutEntryEnabled &&
+    !s.pullbackSeen &&
+    isFiniteNum(rayAgeSec) && rayAgeSec >= cfg.ray30BreakoutMinWaitSec &&
+    moveFromRayPct >= cfg.ray30BreakoutMinMoveFromRayPct &&
+    fiveBreakoutOk &&
+    tickBreakoutOk
+  );
+
+  let reason = 'WAITING_INSTANT_PULLBACK_OR_BREAKOUT_SETUP';
+  if (instantQualifiedReady) reason = 'INSTANT_QUALIFIED_READY';
+  else if (pullbackRecoveryReady) reason = 'PULLBACK_RECOVERY_READY';
+  else if (breakoutContinuationReady) reason = 'BREAKOUT_CONTINUATION_READY';
+  else if (s.pullbackSeen) reason = !fivePullbackOk ? 'WAIT_PULLBACK_5M_RECOVERY' : (!tickPullbackOk ? 'WAIT_PULLBACK_15S_RECLAIM' : 'WAIT_PULLBACK_RECOVERY');
+  else if (moveFromRayPct >= cfg.ray30BreakoutMinMoveFromRayPct) reason = !fiveBreakoutOk ? 'WAIT_BREAKOUT_5M_CONFIRM' : (!tickBreakoutOk ? 'WAIT_BREAKOUT_15S_CONFIRM' : 'WAIT_BREAKOUT_CONFIRM');
+  else if (isFiniteNum(rayAgeSec) && rayAgeSec < cfg.ray30SetupNoImmediateEntrySec) reason = 'NO_IMMEDIATE_ENTRY_AFTER_RAYALGO_BULL';
+
+  return summarizeRay30Setup(s, reason, { rayAgeSec, dipFromHighPct, moveFromRayPct, instantSourceOk, instantAgeOk, fiveInstantOk, tickInstantOk, instantQualifiedReady, fivePullbackOk, tickPullbackOk, fiveBreakoutOk, tickBreakoutOk, pullbackRecoveryReady, breakoutContinuationReady });
+}
+
+function summarizeRay30Setup(s, reason, extra) {
+  if (!s) return { active: false, reason: reason || 'NO_SETUP' };
+  return Object.assign({
+    active: Boolean(s.active),
+    mode: s.mode || null,
+    signal: s.signal || null,
+    rayAt: s.rayAt || null,
+    rayPrice: roundOrNull(s.rayPrice),
+    highPrice: roundOrNull(s.highPrice),
+    lowPrice: roundOrNull(s.lowPrice),
+    pullbackSeen: Boolean(s.pullbackSeen),
+    pullbackLowPrice: roundOrNull(s.pullbackLowPrice),
+    reason: reason || null
+  }, extra || {});
 }
 
 function firstFailReason(rayGate, fiveOk, tickOk, inPosition, overheated) {
@@ -943,6 +1291,12 @@ function activeRayForGate() {
   return { state: null, ageSec: null, fresh: false, reason: 'missing' };
 }
 
+function emaExtensionOk(price, ema, maxExtPct) {
+  if (!isFiniteNum(price) || !isFiniteNum(ema) || ema <= 0) return true;
+  if (price < ema) return false;
+  return pct(price, ema) <= maxExtPct;
+}
+
 function feature5mGate() {
   const f = state.latest && state.latest.feature5m;
   const raw = f && f.raw ? f.raw : {};
@@ -952,6 +1306,7 @@ function feature5mGate() {
   const adx = numVal(raw.adx, null);
   const fvvo = numVal(raw.fvvo ?? raw.fvvoValue, null);
   const slope = numVal(raw.slope ?? raw.fvvoSlope, null);
+  const ema8 = numVal(raw.ema8 ?? raw.ema_8, null);
   const ema18 = numVal(raw.ema18 ?? raw.ema_18, null);
   const price = f && isFiniteNum(f.price) ? f.price : null;
   const trendOk = Boolean(fresh && isFiniteNum(rsi) && isFiniteNum(adx) && isFiniteNum(fvvo) && rsi >= cfg.ray30MinRsi5m && adx >= cfg.ray30MinAdx5m && fvvo >= cfg.ray30MinFvvo5m && (!isFiniteNum(ema18) || price >= ema18));
@@ -963,7 +1318,7 @@ function feature5mGate() {
   else if (!isFiniteNum(fvvo) || fvvo < cfg.ray30MinFvvo5m) reason = '5M_FVVO_LOW';
   else if (!isFiniteNum(slope) || slope < cfg.ray30MinSlope5m) reason = '5M_SLOPE_NOT_IMPROVING';
   else if (isFiniteNum(ema18) && isFiniteNum(price) && price < ema18) reason = '5M_PRICE_BELOW_EMA18';
-  return { ok: reason === 'OK', trendOk, reason, fresh, ageSec: roundOrNull(ageSec), price, rsi, adx, fvvo, slope, ema18 };
+  return { ok: reason === 'OK', trendOk, reason, fresh, ageSec: roundOrNull(ageSec), price, rsi, adx, fvvo, slope, ema8, ema18 };
 }
 
 function tickGate(currentPrice) {
@@ -975,6 +1330,7 @@ function tickGate(currentPrice) {
   const adx = numVal(raw.adx, null);
   const fvvo = numVal(raw.fvvo ?? raw.fvvoValue, null);
   const slope = numVal(raw.slope ?? raw.fvvoSlope, null);
+  const ema8 = numVal(raw.ema8 ?? raw.ema_8, null);
   const ema18 = numVal(raw.ema18 ?? raw.ema_18, null);
   const price = isFiniteNum(currentPrice) ? currentPrice : (t && t.price);
   let reason = 'OK';
@@ -983,7 +1339,7 @@ function tickGate(currentPrice) {
   else if (rsi > cfg.ray30MaxRsi15s) reason = '15S_RSI_TOO_HOT_DIRECT_ENTRY';
   else if (!isFiniteNum(fvvo) || fvvo < cfg.ray30MinFvvo15s) reason = '15S_FVVO_LOW';
   else if (isFiniteNum(ema18) && isFiniteNum(price) && price < ema18) reason = '15S_PRICE_BELOW_EMA18';
-  return { ok: reason === 'OK', reason, fresh, ageSec: roundOrNull(ageSec), price, rsi, adx, fvvo, slope, ema18 };
+  return { ok: reason === 'OK', reason, fresh, ageSec: roundOrNull(ageSec), price, rsi, adx, fvvo, slope, ema8, ema18 };
 }
 
 function summarizePullback(p) {
@@ -1012,7 +1368,7 @@ async function evaluatePositionExit(price, source) {
     p.activeFloorLockPct = floorLock;
     p.activeFloorSource = floorInfo.source;
     p.activeFloorDetails = floorInfo;
-    log(floorInfo.source === 'progressive' ? 'FVVO_PROGRESSIVE_FLOOR_LOCK_UPGRADED' : 'FVVO_PERMANENT_FLOOR_LOCK_UPGRADED', {
+    log(floorUpgradeLabel(floorInfo.source), {
       entryPrice: p.entryPrice,
       price,
       mfePct: round(p.mfePct),
@@ -1049,8 +1405,9 @@ async function evaluatePositionExit(price, source) {
 
   if (isFiniteNum(p.activeFloorLockPct) && profitPct <= p.activeFloorLockPct && p.mfePct >= cfg.floor1MfePct) {
     const roundedLock = round(p.activeFloorLockPct);
-    const reason = `RAY30_${p.activeFloorSource === 'progressive' ? 'PROGRESSIVE' : 'PERMANENT'}_FLOOR_LOCK_${roundedLock}PCT`;
-    log(p.activeFloorSource === 'progressive' ? 'FVVO_PROGRESSIVE_FLOOR_EXIT' : 'FVVO_PERMANENT_FLOOR_EXIT', {
+    const sourceName = floorReasonSource(p.activeFloorSource);
+    const reason = `RAY30_${sourceName}_FLOOR_LOCK_${roundedLock}PCT`;
+    log(floorExitLabel(p.activeFloorSource), {
       price,
       source,
       profitPct: round(profitPct),
@@ -1406,7 +1763,7 @@ function loadState() {
   } catch (err) {
     log('FVVO_STATE_LOAD_FAILED', { stateFile: cfg.stateFile, error: err.message });
   }
-  return { latest: { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, handoff: { active: false, at: null, reason: null } };
+  return { latest: { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, ray30Setup: { active: false }, handoff: { active: false, at: null, reason: null } };
 }
 
 function saveState() {
@@ -1514,7 +1871,19 @@ function compactRay30Scan(scan) {
       fvvo: roundOrNull(scan.tickOk.fvvo),
       slope: roundOrNull(scan.tickOk.slope)
     } : null,
-    pullback: scan.pullback
+    pullback: scan.pullback,
+    setup: scan.setup ? {
+      active: scan.setup.active,
+      reason: scan.setup.reason,
+      rayPrice: scan.setup.rayPrice,
+      highPrice: scan.setup.highPrice,
+      lowPrice: scan.setup.lowPrice,
+      pullbackSeen: scan.setup.pullbackSeen,
+      dipFromHighPct: roundOrNull(scan.setup.dipFromHighPct),
+      moveFromRayPct: roundOrNull(scan.setup.moveFromRayPct),
+      pullbackRecoveryReady: scan.setup.pullbackRecoveryReady,
+      breakoutContinuationReady: scan.setup.breakoutContinuationReady
+    } : null
   };
 }
 
@@ -1528,7 +1897,9 @@ function ray30ScanLogKey(scan) {
     scan.rayGate && scan.rayGate.sourceKind,
     scan.fiveOk && scan.fiveOk.reason,
     scan.tickOk && scan.tickOk.reason,
-    scan.pullback && scan.pullback.armed ? 'PB_ARMED' : 'PB_OFF'
+    scan.pullback && scan.pullback.armed ? 'PB_ARMED' : 'PB_OFF',
+    scan.setup && scan.setup.reason,
+    scan.setup && scan.setup.pullbackSeen ? 'SETUP_PB' : 'SETUP_NOPB'
   ].join('|');
 }
 
@@ -1614,7 +1985,7 @@ function logIcon(label) {
   if (/NO_OPEN|EXPIRED|MISSING|NO_ENTRY|WARN|LOAD_FAILED|SAVE_FAILED/.test(label)) return '🟡';
   if (/RAY30_NO_CHASE|RAY30_PULLBACK_ARMED/.test(label)) return '🟠';
   if (/NOT_ACCEPTED|FAIL|ERROR|BLOCKED|CANCEL|STOP_LOSS|DROP|BEAR_EXIT|FLOOR_EXIT/.test(label)) return '🔴';
-  if (/PROGRESSIVE_FLOOR/.test(label)) return '🟢';
+  if (/PROGRESSIVE_FLOOR|PROTECTIVE_FLOOR/.test(label)) return '🟢';
   if (/C3_FORWARD_SEND|C3_FORWARD_PAYLOAD_AUDIT|C3_FORWARD_ACCEPTED|MANUAL_EXIT_LONG_ACCEPTED/.test(label)) return '🟢';
   if (/ACCEPTED|TRACKED|OPEN|ENTRY_READY|ARMED|ADOPTED/.test(label)) return '🟢';
   if (/RAY30|FVVO_RAY30|RAY|CAMPAIGN/.test(label)) return '🟣';
@@ -1755,6 +2126,24 @@ function recentDropPct(currentPrice) {
   return ((high - currentPrice) / high) * 100;
 }
 
+function floorUpgradeLabel(source) {
+  if (source === 'progressive') return 'FVVO_PROGRESSIVE_FLOOR_LOCK_UPGRADED';
+  if (source === 'protective') return 'FVVO_PROTECTIVE_FLOOR_LOCK_UPGRADED';
+  return 'FVVO_PERMANENT_FLOOR_LOCK_UPGRADED';
+}
+
+function floorExitLabel(source) {
+  if (source === 'progressive') return 'FVVO_PROGRESSIVE_FLOOR_EXIT';
+  if (source === 'protective') return 'FVVO_PROTECTIVE_FLOOR_EXIT';
+  return 'FVVO_PERMANENT_FLOOR_EXIT';
+}
+
+function floorReasonSource(source) {
+  if (source === 'progressive') return 'PROGRESSIVE';
+  if (source === 'protective') return 'PROTECTIVE';
+  return 'PERMANENT';
+}
+
 function activeFloorLock(mfePct) {
   return activeFloorResult(mfePct, null).lock;
 }
@@ -1769,11 +2158,22 @@ function fixedFloorLock(mfePct) {
   return lock;
 }
 
+function protectiveFloorLock(mfePct) {
+  if (!cfg.permanentFloorsEnabled || !cfg.protectiveFloorsEnabled) return null;
+  if (!isFiniteNum(mfePct)) return null;
+  let lock = null;
+  if (mfePct >= cfg.protectiveFloor1MfePct) lock = cfg.protectiveFloor1LockPct;
+  if (mfePct >= cfg.protectiveFloor2MfePct) lock = cfg.protectiveFloor2LockPct;
+  return lock;
+}
+
 function activeFloorResult(mfePct, currentLockPct) {
   const fixedLock = fixedFloorLock(mfePct);
+  const protectiveLock = protectiveFloorLock(mfePct);
   const progressive = progressiveFloorLock(mfePct);
   const candidates = [];
   if (isFiniteNum(fixedLock)) candidates.push({ source: 'fixed', lock: fixedLock });
+  if (isFiniteNum(protectiveLock)) candidates.push({ source: 'protective', lock: protectiveLock });
   if (progressive && isFiniteNum(progressive.lock)) candidates.push({ ...progressive, source: 'progressive' });
   if (!candidates.length) return { lock: null, fixedLock, dynamicLock: null, source: null, band: null };
 
@@ -1784,6 +2184,7 @@ function activeFloorResult(mfePct, currentLockPct) {
   return {
     lock,
     fixedLock,
+    protectiveLock,
     dynamicLock: progressive ? progressive.lock : null,
     allowedPullbackPct: progressive ? progressive.allowedPullbackPct : null,
     band: progressive ? progressive.band : null,
@@ -1830,6 +2231,13 @@ function floorConfigSummary() {
       { mfePct: cfg.floor3MfePct, lockPct: cfg.floor3LockPct },
       { mfePct: cfg.floor4MfePct, lockPct: cfg.floor4LockPct }
     ],
+    protective: {
+      enabled: cfg.protectiveFloorsEnabled,
+      floors: [
+        { mfePct: cfg.protectiveFloor1MfePct, lockPct: cfg.protectiveFloor1LockPct },
+        { mfePct: cfg.protectiveFloor2MfePct, lockPct: cfg.protectiveFloor2LockPct }
+      ]
+    },
     progressive: {
       enabled: cfg.progressiveFloorsEnabled,
       startMfePct: cfg.progressiveStartMfePct,
