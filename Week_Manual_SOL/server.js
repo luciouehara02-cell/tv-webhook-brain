@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3j_RAYALGO_SETUP_INSTANT_PULLBACK_BREAKOUT_DEMO
+ * BrainFVVO_SOL_v3k_FVVO_CONFIDENCE_MONITOR_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 
-const BRAIN = 'BrainFVVO_SOL_v3j_RAYALGO_SETUP_INSTANT_PULLBACK_BREAKOUT_DEMO';
+const BRAIN = 'BrainFVVO_SOL_v3k_FVVO_CONFIDENCE_MONITOR_DEMO';
 
 const env = process.env;
 
@@ -49,7 +49,7 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3j-state.json',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3k-state.json',
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
@@ -119,6 +119,11 @@ const cfg = {
   rayalgoStateMaxAgeSec: intEnv('RAYALGO_STATE_MAX_AGE_SEC', 21600),
   ray30UseRayalgoExternalPriority: boolEnv('RAY30_USE_RAYALGO_EXTERNAL_PRIORITY', true),
   ray30FeatureProxyFallbackEnabled: boolEnv('RAY30_FEATURE_PROXY_FALLBACK_ENABLED', true),
+
+  // v3k: FVVO Oscillator confidence alerts are MONITOR/LOG ONLY for validation.
+  // They are stored and printed but NOT used for entry/exit decisions in v3k.
+  fvvoConfidenceMonitorEnabled: boolEnv('FVVO_CONFIDENCE_MONITOR_ENABLED', true),
+  fvvoConfidenceMaxAgeSec: intEnv('FVVO_CONFIDENCE_MAX_AGE_SEC', 1800),
 
   // v3j: RayAlgo opens a setup window. Entry waits for instant-qualified, pullback-recovery, or breakout-continuation.
   ray30SetupEntryEnabled: boolEnv('RAY30_SETUP_ENTRY_ENABLED', true),
@@ -231,7 +236,10 @@ log('STARTUP', {
     setupEntryEnabled: cfg.ray30SetupEntryEnabled,
     instantQualifiedEntryEnabled: cfg.ray30InstantQualifiedEntryEnabled,
     pullbackEntryEnabled: cfg.ray30PullbackEntryEnabled,
-    breakoutEntryEnabled: cfg.ray30BreakoutEntryEnabled
+    breakoutEntryEnabled: cfg.ray30BreakoutEntryEnabled,
+    fvvoConfidenceMonitorEnabled: cfg.fvvoConfidenceMonitorEnabled,
+    fvvoConfidenceMaxAgeSec: cfg.fvvoConfidenceMaxAgeSec,
+    fvvoConfidenceUsage: 'MONITOR_ONLY_NOT_USED_FOR_ENTRY'
   },
   floorConfig: floorConfigSummary(),
   logConfig: {
@@ -512,6 +520,50 @@ async function handleWebhook(body, req) {
       saveState();
       return { ok: true, brain: BRAIN, accepted: true, event: 'FEATURE_5M_FVVO', price, eval: evalOut, state: publicState() };
     }
+  }
+
+  if (event === 'FVVO_SIGNAL' || event === 'FVVO_OSCILLATOR_SIGNAL' || body.fvvo_signal || body.confidenceSignal || body.rayTradeSignal) {
+    const fvvoSignal = normalizeFvvoConfidenceSignal(body.fvvo_signal || body.confidenceSignal || body.rayTradeSignal || body.signal || event);
+    const confidenceSide = fvvoConfidenceSide(fvvoSignal);
+    const signalState = {
+      signal: fvvoSignal,
+      side: confidenceSide,
+      price: isFiniteNum(price) ? price : null,
+      timeframe: String(body.timeframe || body.tf || body.chartTimeframe || '30'),
+      at: nowIso(),
+      atMs: Date.now(),
+      sourceTime: nowMs,
+      sourceKind: 'fvvo_oscillator',
+      src: normalizeRaySource(body.src || body.source || '') || 'fvvo_oscillator',
+      usage: 'MONITOR_ONLY_NOT_USED_FOR_ENTRY',
+      raw: compactRaw(body)
+    };
+
+    state.latest.fvvoConfidence = state.latest.fvvoConfidence || {};
+    state.latest.fvvoConfidence.last = signalState;
+    if (confidenceSide === 'BUY') state.latest.fvvoConfidence.lastBuy = signalState;
+    else if (confidenceSide === 'SELL') state.latest.fvvoConfidence.lastSell = signalState;
+    else if (confidenceSide === 'BULLISH_MOMENTUM') state.latest.fvvoConfidence.lastBullishMomentum = signalState;
+    else if (confidenceSide === 'BEARISH_MOMENTUM') state.latest.fvvoConfidence.lastBearishMomentum = signalState;
+    else state.latest.fvvoConfidence.lastOther = signalState;
+
+    if (isFiniteNum(price)) rememberRecentPrice(price);
+
+    log('FVVO_CONFIDENCE_SIGNAL_RECEIVED_MONITOR_ONLY', {
+      symbol: cfg.symbol,
+      signal: signalState.signal,
+      side: signalState.side,
+      event: event || 'FVVO_SIGNAL',
+      timeframe: signalState.timeframe,
+      price: signalState.price,
+      sourceKind: signalState.sourceKind,
+      src: signalState.src,
+      usage: signalState.usage,
+      note: 'stored_for_validation_only_not_used_for_auto_entry_or_exit'
+    });
+
+    saveState();
+    return { ok: true, brain: BRAIN, accepted: true, event: 'FVVO_SIGNAL', signal: signalState.signal, side: signalState.side, usage: signalState.usage, state: publicState() };
   }
 
   if (event.includes('RAY') || body.ray_signal || body.signal || looksLikeRayAlgoEvent(event)) {
@@ -1640,6 +1692,7 @@ function publicState() {
     priceTrigger: state.priceTrigger ? summarizeSetup(state.priceTrigger) : null,
     campaigns: summarizeCampaigns(state.campaigns),
     ray30Pullback: summarizePullback(state.ray30Pullback),
+    fvvoConfidence: summarizeFvvoConfidence(state.latest && state.latest.fvvoConfidence),
     handoff: state.handoff || { active: false }
   };
 }
@@ -1763,7 +1816,7 @@ function loadState() {
   } catch (err) {
     log('FVVO_STATE_LOAD_FAILED', { stateFile: cfg.stateFile, error: err.message });
   }
-  return { latest: { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, ray30Setup: { active: false }, handoff: { active: false, at: null, reason: null } };
+  return { latest: { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, fvvoConfidence: {}, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, ray30Setup: { active: false }, handoff: { active: false, at: null, reason: null } };
 }
 
 function saveState() {
@@ -1812,6 +1865,61 @@ function stripHttpStatus(obj) {
   return rest;
 }
 
+
+function normalizeFvvoConfidenceSignal(v) {
+  const raw = String(v || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!raw) return 'UNKNOWN';
+  if (raw.includes('SNIPER') && raw.includes('BUY')) return 'SNIPER_BUY';
+  if (raw.includes('SNIPER') && raw.includes('SELL')) return 'SNIPER_SELL';
+  if (raw.includes('BURST') && raw.includes('BULL')) return 'BURST_BULLISH';
+  if (raw.includes('BURST') && raw.includes('BEAR')) return 'BURST_BEARISH';
+  if (raw.includes('BULLISH') && raw.includes('DIVERGENCE')) return 'BULLISH_DIVERGENCE';
+  if (raw.includes('BEARISH') && raw.includes('DIVERGENCE')) return 'BEARISH_DIVERGENCE';
+  if (raw === 'BUY') return 'SNIPER_BUY';
+  if (raw === 'SELL') return 'SNIPER_SELL';
+  return raw;
+}
+
+function fvvoConfidenceSide(signal) {
+  const s = String(signal || '').toUpperCase();
+  if (s.includes('SNIPER_BUY')) return 'BUY';
+  if (s.includes('SNIPER_SELL')) return 'SELL';
+  if (s.includes('BURST_BULLISH')) return 'BULLISH_MOMENTUM';
+  if (s.includes('BURST_BEARISH')) return 'BEARISH_MOMENTUM';
+  if (s.includes('BULLISH_DIVERGENCE')) return 'BULLISH_DIVERGENCE';
+  if (s.includes('BEARISH_DIVERGENCE')) return 'BEARISH_DIVERGENCE';
+  if (s.includes('BUY')) return 'BUY';
+  if (s.includes('SELL')) return 'SELL';
+  return 'OTHER';
+}
+
+function summarizeFvvoConfidence(conf) {
+  conf = conf || {};
+  function brief(x) {
+    if (!x) return null;
+    const ageSec = x.atMs ? (Date.now() - x.atMs) / 1000 : null;
+    return {
+      signal: x.signal,
+      side: x.side,
+      price: x.price,
+      timeframe: x.timeframe,
+      at: x.at,
+      ageSec: roundOrNull(ageSec),
+      fresh: isFiniteNum(ageSec) ? ageSec <= cfg.fvvoConfidenceMaxAgeSec : false,
+      usage: x.usage || 'MONITOR_ONLY_NOT_USED_FOR_ENTRY'
+    };
+  }
+  return {
+    usage: 'MONITOR_ONLY_NOT_USED_FOR_ENTRY',
+    maxAgeSec: cfg.fvvoConfidenceMaxAgeSec,
+    last: brief(conf.last),
+    lastBuy: brief(conf.lastBuy),
+    lastSell: brief(conf.lastSell),
+    lastBullishMomentum: brief(conf.lastBullishMomentum),
+    lastBearishMomentum: brief(conf.lastBearishMomentum),
+    lastOther: brief(conf.lastOther)
+  };
+}
 
 function normalizeRaySource(v) {
   const s = String(v || '').trim().toLowerCase();
@@ -1982,6 +2090,7 @@ function logIcon(label) {
   if (label === 'FVVO_MANUAL_COMMAND') return '📩';
   if (/RAY30_ENTRY_SCAN/.test(label)) return '🧠';
   if (/RAYALGO_EXTERNAL/.test(label)) return '🟣';
+  if (/CONFIDENCE/.test(label)) return '🟡';
   if (/NO_OPEN|EXPIRED|MISSING|NO_ENTRY|WARN|LOAD_FAILED|SAVE_FAILED/.test(label)) return '🟡';
   if (/RAY30_NO_CHASE|RAY30_PULLBACK_ARMED/.test(label)) return '🟠';
   if (/NOT_ACCEPTED|FAIL|ERROR|BLOCKED|CANCEL|STOP_LOSS|DROP|BEAR_EXIT|FLOOR_EXIT/.test(label)) return '🔴';
