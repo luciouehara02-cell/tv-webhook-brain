@@ -1,13 +1,13 @@
 {
-  "name": "brainfvvo-xrp-longhold-v1c-manual-multi-entry-live",
-  "version": "1.3.0",
+  "name": "brainfvvo-xrp-longhold-v1d-manual-multi-entry-live",
+  "version": "1.4.0",
   "private": true,
   "description": "XRP long-hold brain with direct, breakout, preferred and deep manual entry paths",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v1c.js",
-    "replay": "node replay_v1c.js"
+    "check": "node --check server.js && node replay_v1d.js replay_fixture.jsonl && node replay_bridge_v1d.js",
+    "replay": "node replay_v1d.js replay_fixture.jsonl"
   },
   "engines": {
     "node": ">=20"

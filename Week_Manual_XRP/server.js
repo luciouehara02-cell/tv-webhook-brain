@@ -504,6 +504,15 @@ const CFG = {
   LONG_HOLD_FLASH_CRASH_JITTER_SEC: envNum("LONG_HOLD_FLASH_CRASH_JITTER_SEC", 2),
   LONG_HOLD_FLASH_CRASH_MIN_SPAN_SEC: envNum("LONG_HOLD_FLASH_CRASH_MIN_SPAN_SEC", 10),
   LONG_HOLD_FLASH_CRASH_DROP_PCT: envNum("LONG_HOLD_FLASH_CRASH_DROP_PCT", 1.0),
+  LONG_HOLD_PRE_ARM_BRIDGE_ENABLED: envBool("LONG_HOLD_PRE_ARM_BRIDGE_ENABLED", true),
+  LONG_HOLD_PRE_ARM_BRIDGE_MODE: envStr("LONG_HOLD_PRE_ARM_BRIDGE_MODE", "shadow").toLowerCase(),
+  LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT: envNum("LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT", 0.70),
+  LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT: envNum("LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT", 0.90),
+  LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT: envNum("LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT", 0.55),
+  LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT: envNum("LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT", 0.15),
+  LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS", 2))),
+  LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC", 8)),
+  LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT", 0.10)),
   MODE_PROFIT_PROTECTION_ENABLED: envBool("MODE_PROFIT_PROTECTION_ENABLED", true),
   MODE_PROFIT_DIP_ARM_MFE_PCT: envNum("MODE_PROFIT_DIP_ARM_MFE_PCT", 0.45),
   MODE_PROFIT_DIP_GROSS_LOCK_PCT: envNum("MODE_PROFIT_DIP_GROSS_LOCK_PCT", 0.30),
@@ -1147,6 +1156,8 @@ function configProblems() {
   if (CFG.LONG_HOLD_RATCHET_ENABLED && !String(CFG.LONG_HOLD_MILESTONE_FLOORS || "").split(",").every((item) => { const [mfe, floor] = item.split(":").map(Number); return Number.isFinite(mfe) && mfe > 0 && Number.isFinite(floor) && floor >= 0 && floor < mfe; })) problems.push("INVALID_LONG_HOLD_MILESTONE_FLOORS");
   if (CFG.LONG_HOLD_INITIAL_SL_PCT <= 0 || CFG.LONG_HOLD_INITIAL_SL_PCT > 10 || CFG.LONG_HOLD_INITIAL_SL_CONFIRM_OBSERVATIONS < 1 || CFG.LONG_HOLD_INITIAL_SL_CONFIRM_MIN_SPAN_SEC < 0) problems.push("INVALID_LONG_HOLD_INITIAL_SL_CONFIG");
   if (CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC <= 0 || CFG.LONG_HOLD_FLASH_CRASH_JITTER_SEC < 0 || CFG.LONG_HOLD_FLASH_CRASH_MIN_SPAN_SEC <= 0 || CFG.LONG_HOLD_FLASH_CRASH_MIN_SPAN_SEC > CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC + CFG.LONG_HOLD_FLASH_CRASH_JITTER_SEC || CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT <= 0) problems.push("INVALID_LONG_HOLD_FLASH_CRASH_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.LONG_HOLD_PRE_ARM_BRIDGE_MODE)) problems.push("INVALID_LONG_HOLD_PRE_ARM_BRIDGE_MODE");
+  if (CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT < CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT < 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_LONG_HOLD_PRE_ARM_BRIDGE_CONFIG");
   if (CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS < 3 || CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS < 1 || CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS > CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS || CFG.PROFIT_FLOOR_MICRO_SHADOW_MAX_SEC <= 0 || CFG.PROFIT_FLOOR_MICRO_SHADOW_HARD_BREAK_BUFFER_PCT < 0 || CFG.PROFIT_FLOOR_MICRO_SHADOW_RECOVERY_OBSERVATIONS < 1) problems.push("INVALID_PROFIT_FLOOR_MICRO_SHADOW_CONFIG");
   if (CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_WINDOW_SEC <= 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_CONFIRM_OBSERVATIONS < 1 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT < 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MAX_RECOVERY_PCT < CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_PERFORMANCE_SEC <= 0) problems.push("INVALID_PROFIT_FLOOR_POST_EXIT_RECLAIM_SHADOW_CONFIG");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
@@ -1396,6 +1407,7 @@ function buildPosition(entryPrice, levels, options = {}) {
       protectedPrice: null,
       lastLoggedProtectedPnlPct: 0,
       floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+      preArmBridge: { armed: false, armedAtMs: 0, protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0, floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null } },
       thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null },
       lastThesisReason: null,
     },
@@ -1669,7 +1681,7 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "XRP_LongHold_v1c",
+    buildVersion: "XRP_LongHold_v1d",
     executionReconciliation: { automaticFlatAssumption: false, source: "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
     brain: CFG.BRAIN_NAME,
@@ -1712,6 +1724,7 @@ function statusPayload() {
       fiveMinuteThesisExitEnabled: CFG.DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED,
       exitPercent: 100,
     },
+    preArmBridgeContract: { enabled: CFG.LONG_HOLD_PRE_ARM_BRIDGE_ENABLED, mode: preArmBridgeMode(), armMfePct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT, peakCapPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT, givebackPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT, minLockPnlPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT, confirmObservations: CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS, confirmSec: CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC, hardBreakBufferPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT, state: state.position?.dynamicProfit?.preArmBridge || null },
     profitFloorShadowMonitoring: profitFloorShadowStatusPayload(),
     lossSideThesisFailContract: {
       mode: lossSideThesisFailMode(),
@@ -2132,6 +2145,7 @@ function dynamicProfitState(position) {
       peakPnlPct: 0, peakPrice: position.entryPriceReference,
       protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0,
       floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null },
+      preArmBridge: { armed: false, armedAtMs: 0, protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0, floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null } },
       thesis: { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null },
       runner: {
         holdActive: false, holdActivatedAtMs: 0, holdActivatedAtPnlPct: 0,
@@ -2148,6 +2162,8 @@ function dynamicProfitState(position) {
   }
   const d = position.dynamicProfit;
   d.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.floor || {}) };
+  d.preArmBridge = { armed: false, armedAtMs: 0, protectedPnlPct: 0, protectedPrice: null, lastLoggedProtectedPnlPct: 0, floor: { breachAtMs: 0, observations: 0, lastBreachPrice: null }, ...(d.preArmBridge || {}) };
+  d.preArmBridge.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null, ...(d.preArmBridge.floor || {}) };
   d.thesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, ...(d.thesis || {}) };
   d.runner = {
     holdActive: false, holdActivatedAtMs: 0, holdActivatedAtPnlPct: 0,
@@ -2363,6 +2379,41 @@ function tickThesisEvidence(position, feature, price, pnlPct) {
   const slope = finite(feature.slope, null);
   const conditions = pnlPct >= CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT && ema8 !== null && price < ema8 && slope !== null && slope <= CFG.DYNAMIC_PROFIT_THESIS_SLOPE_MAX && fvvo !== null && (fvvo <= 0 || feature.crossDown === true);
   return { eligible: true, conditions, ema8, fvvo, slope, reason: conditions ? "PRICE_BELOW_EMA8_AND_NEGATIVE_FVVO_SLOPE" : "TICK_THESIS_HEALTHY_OR_UNCONFIRMED" };
+}
+
+function preArmBridgeMode() {
+  if (!CFG.LONG_HOLD_PRE_ARM_BRIDGE_ENABLED) return "disabled";
+  return ["disabled", "shadow", "live"].includes(CFG.LONG_HOLD_PRE_ARM_BRIDGE_MODE) ? CFG.LONG_HOLD_PRE_ARM_BRIDGE_MODE : "disabled";
+}
+
+function updatePreArmBridge(position, price) {
+  const bridge = dynamicProfitState(position).preArmBridge;
+  const peak = Math.max(finite(position.peakPnlPct, 0), finite(position.maxFavorableExcursionPct, 0));
+  let armedNow = false;
+  if (preArmBridgeMode() !== "disabled" && !bridge.armed && peak + 1e-9 >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT) {
+    bridge.armed = true; bridge.armedAtMs = nowMs(); armedNow = true;
+  }
+  if (!bridge.armed) return { armedNow, floorRaised: false, bridge };
+  const prior = finite(bridge.protectedPnlPct, 0);
+  const floor = Math.max(CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT, Math.min(peak, CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT) - CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT);
+  bridge.protectedPnlPct = round(Math.max(prior, floor), 6);
+  bridge.protectedPrice = round(position.entryPriceReference * (1 + bridge.protectedPnlPct / 100), 8);
+  return { armedNow, floorRaised: bridge.protectedPnlPct > prior + 1e-9, bridge, price };
+}
+
+function preArmBridgeBreakConfirmed(position, feature, price, pnlPct) {
+  const bridge = dynamicProfitState(position).preArmBridge;
+  if (preArmBridgeMode() === "disabled" || !bridge.armed || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { confirmed: false, reason: "PRE_ARM_BRIDGE_NOT_ELIGIBLE" };
+  if (pnlPct > bridge.protectedPnlPct + 1e-9 && price > finite(bridge.protectedPrice, Infinity)) {
+    bridge.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null };
+    return { confirmed: false, reason: "ABOVE_PRE_ARM_BRIDGE_FLOOR" };
+  }
+  if (pnlPct <= bridge.protectedPnlPct - CFG.LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT + 1e-9) return { confirmed: true, reason: "PRE_ARM_BRIDGE_HARD_BREAK", protectedPnlPct: bridge.protectedPnlPct, protectedPrice: bridge.protectedPrice };
+  const current = finite(feature.receivedAtMs, nowMs());
+  if (!bridge.floor.breachAtMs) bridge.floor = { breachAtMs: current, observations: 1, lastBreachPrice: price };
+  else { bridge.floor.observations += 1; bridge.floor.lastBreachPrice = price; }
+  const elapsedSec = (current - bridge.floor.breachAtMs) / 1000;
+  return { confirmed: bridge.floor.observations >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS && elapsedSec >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC, reason: "PRE_ARM_BRIDGE_CONFIRM", observations: bridge.floor.observations, elapsedSec, protectedPnlPct: bridge.protectedPnlPct, protectedPrice: bridge.protectedPrice };
 }
 
 function updateDynamicProfit(position, price, pnlPct) {
@@ -3418,6 +3469,10 @@ async function manageExit(feature) {
     return;
   }
 
+  const bridgeUpdate = updatePreArmBridge(p, price);
+  if (bridgeUpdate.armedNow) log("INFO", "FVVO_PRE_ARM_BRIDGE_ARMED", { mode: preArmBridgeMode(), peakPnlPct: round(p.peakPnlPct, 6), protectedPnlPct: bridgeUpdate.bridge.protectedPnlPct, protectedPrice: bridgeUpdate.bridge.protectedPrice, price });
+  if (bridgeUpdate.floorRaised) log("INFO", "FVVO_PRE_ARM_BRIDGE_FLOOR_RAISED", { mode: preArmBridgeMode(), peakPnlPct: round(p.peakPnlPct, 6), protectedPnlPct: bridgeUpdate.bridge.protectedPnlPct, protectedPrice: bridgeUpdate.bridge.protectedPrice, price });
+
   const dynamicUpdate = updateDynamicProfit(p, price, pnl);
   const d = dynamicUpdate.dynamic;
   if (dynamicUpdate.armedNow) {
@@ -3487,7 +3542,18 @@ async function manageExit(feature) {
     }
   }
 
-  // Profit floor is a hard protection after the +0.45% (default) arm threshold.
+  const bridgeBreak = preArmBridgeBreakConfirmed(p, feature, price, pnl);
+  if (bridgeBreak.confirmed && preArmBridgeMode() === "live") {
+    await persistState(`pre_arm_bridge_${feature.kind}`);
+    await requestFullExit(`FVVO_PRE_ARM_BRIDGE_${bridgeBreak.reason}`, price, feature.kind);
+    return;
+  }
+  if (bridgeBreak.confirmed && preArmBridgeMode() === "shadow") {
+    log("WARN", "FVVO_PRE_ARM_BRIDGE_SHADOW_EXIT_CANDIDATE", { price, latestPnlPct: round(pnl, 6), peakPnlPct: round(p.peakPnlPct, 6), protectedPnlPct: bridgeBreak.protectedPnlPct, protectedPrice: bridgeBreak.protectedPrice, reason: bridgeBreak.reason, action: "NO_EXIT_CHANGE_SHADOW_ONLY" });
+    dynamicProfitState(p).preArmBridge.floor = { breachAtMs: 0, observations: 0, lastBreachPrice: null };
+  }
+
+  // Profit floor is a hard protection after the configured arm threshold.
   const floor = dynamicFloorBreakConfirmed(p, price, pnl);
   if (!floor.confirmed && floor.reason === "DYNAMIC_PROFIT_FLOOR_CONFIRM" && Number(floor.observations || 0) > 0) {
     if (Number(floor.observations || 0) === 1) armProfitFloorMicroShadow(p, feature, price, pnl, floor);
@@ -6898,6 +6964,7 @@ module.exports = { requestFullExit, executionReceipt, executionPreview, statusPa
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
 Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource, c3EntryOrderIncluded, c3V2SizingProblems });
+Object.assign(module.exports, { preArmBridgeMode, updatePreArmBridge, preArmBridgeBreakConfirmed });
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
