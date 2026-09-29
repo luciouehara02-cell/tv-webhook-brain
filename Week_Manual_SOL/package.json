@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-sol-v3k-fvvo-confidence-monitor-demo",
-  "version": "3.11.0",
-  "description": "BrainFVVO SOL v3j RayAlgo setup instant/pullback/breakout LongHold DEMO service for Railway",
+  "name": "brainfvvo-sol-v3l-rayalgo-external-setup-only-demo",
+  "version": "3.12.0",
+  "description": "BrainFVVO SOL v3l: external RayAlgo setup-only entry gate with FVVO bearish blockers",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

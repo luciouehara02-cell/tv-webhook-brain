@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3k_FVVO_CONFIDENCE_MONITOR_DEMO
+ * BrainFVVO_SOL_v3l_RAYALGO_EXTERNAL_SETUP_ONLY_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -25,9 +25,9 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 
-const BRAIN = 'BrainFVVO_SOL_v3k_FVVO_CONFIDENCE_MONITOR_DEMO';
-
 const env = process.env;
+
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3l_RAYALGO_EXTERNAL_SETUP_ONLY_DEMO';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -49,7 +49,7 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3k-state.json',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3l-state.json',
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
@@ -118,12 +118,21 @@ const cfg = {
   rayalgoStateMemoryEnabled: boolEnv('RAYALGO_STATE_MEMORY_ENABLED', true),
   rayalgoStateMaxAgeSec: intEnv('RAYALGO_STATE_MAX_AGE_SEC', 21600),
   ray30UseRayalgoExternalPriority: boolEnv('RAY30_USE_RAYALGO_EXTERNAL_PRIORITY', true),
-  ray30FeatureProxyFallbackEnabled: boolEnv('RAY30_FEATURE_PROXY_FALLBACK_ENABLED', true),
+  ray30FeatureProxyFallbackEnabled: boolEnv('RAY30_FEATURE_PROXY_FALLBACK_ENABLED', false),
+  ray30FeatureProxyMonitorOnly: boolEnv('RAY30_FEATURE_PROXY_MONITOR_ONLY', true),
+  rayalgoRequireExternalSetupForEntry: boolEnv('RAYALGO_REQUIRE_EXTERNAL_SETUP_FOR_ENTRY', true),
+  rayalgoSetupTimeframe: String(env.RAYALGO_SETUP_TIMEFRAME || '15'),
+  rayalgoAllowedEntryTimeframes: String(env.RAYALGO_ALLOWED_ENTRY_TIMEFRAMES || env.RAYALGO_SETUP_TIMEFRAME || '15'),
 
-  // v3k: FVVO Oscillator confidence alerts are MONITOR/LOG ONLY for validation.
-  // They are stored and printed but NOT used for entry/exit decisions in v3k.
+  // v3k/v3l: FVVO Oscillator confidence alerts are stored and printed.
+  // v3l uses only bearish confidence signals as entry blockers; bullish confidence stays monitor-only.
   fvvoConfidenceMonitorEnabled: boolEnv('FVVO_CONFIDENCE_MONITOR_ENABLED', true),
   fvvoConfidenceMaxAgeSec: intEnv('FVVO_CONFIDENCE_MAX_AGE_SEC', 1800),
+  fvvoBearishBlockLongEnabled: boolEnv('FVVO_BEARISH_BLOCK_LONG_ENABLED', true),
+  fvvoSniperSellBlockSec: intEnv('FVVO_SNIPER_SELL_BLOCK_SEC', 1800),
+  fvvoBurstBearishBlockSec: intEnv('FVVO_BURST_BEARISH_BLOCK_SEC', 1800),
+  fvvoSniperBuyUseForEntry: boolEnv('FVVO_SNIPER_BUY_USE_FOR_ENTRY', false),
+  fvvoBurstBullishUseForEntry: boolEnv('FVVO_BURST_BULLISH_USE_FOR_ENTRY', false),
 
   // v3j: RayAlgo opens a setup window. Entry waits for instant-qualified, pullback-recovery, or breakout-continuation.
   ray30SetupEntryEnabled: boolEnv('RAY30_SETUP_ENTRY_ENABLED', true),
@@ -233,13 +242,17 @@ log('STARTUP', {
     stateMaxAgeSec: cfg.rayalgoStateMaxAgeSec,
     useExternalPriority: cfg.ray30UseRayalgoExternalPriority,
     featureProxyFallbackEnabled: cfg.ray30FeatureProxyFallbackEnabled,
+    featureProxyMonitorOnly: cfg.ray30FeatureProxyMonitorOnly,
+    requireExternalSetupForEntry: cfg.rayalgoRequireExternalSetupForEntry,
+    setupTimeframe: cfg.rayalgoSetupTimeframe,
+    allowedEntryTimeframes: cfg.rayalgoAllowedEntryTimeframes,
     setupEntryEnabled: cfg.ray30SetupEntryEnabled,
     instantQualifiedEntryEnabled: cfg.ray30InstantQualifiedEntryEnabled,
     pullbackEntryEnabled: cfg.ray30PullbackEntryEnabled,
     breakoutEntryEnabled: cfg.ray30BreakoutEntryEnabled,
     fvvoConfidenceMonitorEnabled: cfg.fvvoConfidenceMonitorEnabled,
     fvvoConfidenceMaxAgeSec: cfg.fvvoConfidenceMaxAgeSec,
-    fvvoConfidenceUsage: 'MONITOR_ONLY_NOT_USED_FOR_ENTRY'
+    fvvoConfidenceUsage: 'BEARISH_BLOCKERS_ONLY_BUY_MONITOR_ONLY'
   },
   floorConfig: floorConfigSummary(),
   logConfig: {
@@ -587,7 +600,18 @@ async function handleWebhook(body, req) {
 
     if (externalRayAlgo && cfg.rayalgoExternalAlertsEnabled) {
       state.latest.rayalgoExternal = rayState;
-      if (cfg.ray30SetupEntryEnabled) updateRay30EntrySetupFromRayAlgo(rayState);
+      const setupTfAllowed = rayalgoTimeframeAllowed(rayState.timeframe);
+      if (cfg.ray30SetupEntryEnabled && setupTfAllowed) {
+        updateRay30EntrySetupFromRayAlgo(rayState);
+      } else if (!setupTfAllowed) {
+        log('RAYALGO_EXTERNAL_SETUP_IGNORED_TIMEFRAME', {
+          signal,
+          regime,
+          timeframe: rayState.timeframe,
+          allowedEntryTimeframes: cfg.rayalgoAllowedEntryTimeframes,
+          note: 'external RayAlgo state stored for monitoring, but setup not armed for this timeframe'
+        });
+      }
       log('FVVO_RAYALGO_EXTERNAL_STATE_UPDATED', {
         symbol: cfg.symbol,
         signal,
@@ -595,7 +619,8 @@ async function handleWebhook(body, req) {
         sourceKind: rayState.sourceKind,
         timeframe: rayState.timeframe,
         price: rayState.price,
-        ttlSec: cfg.rayalgoStateMaxAgeSec
+        ttlSec: cfg.rayalgoStateMaxAgeSec,
+        setupTfAllowed
       });
     } else {
       state.latest.ray30Feature = rayState;
@@ -855,7 +880,7 @@ async function evaluateRay30AutoEntry(price, source) {
   if (shouldLogScan) logRay30EntryScan(scan);
 
   // Momentum observed but 15s is overheated: arm pullback instead of chasing.
-  if (scan.overheated && scan.rayGate.ok && scan.fiveOk.trendOk && !state.position.inPosition) {
+  if (scan.overheated && scan.rayGate.ok && scan.fiveOk.trendOk && scan.externalSetupOk && !(scan.confidenceBlock && scan.confidenceBlock.blocked) && !state.position.inPosition) {
     if (!state.ray30Pullback || !state.ray30Pullback.armed) {
       state.ray30Pullback = {
         armed: true,
@@ -887,7 +912,7 @@ async function evaluateRay30AutoEntry(price, source) {
     return { type: 'ray30_auto_entry_scan', decision: 'WAIT_PULLBACK', reason: '15S_RSI_OVERHEATED_WAIT_PULLBACK', scan };
   }
 
-  if (scan.pullbackReclaimReady && !scan.pullbackRecoveryReady && !state.position.inPosition) {
+  if (scan.pullbackReclaimReady && !scan.pullbackRecoveryReady && (!cfg.rayalgoRequireExternalSetupForEntry || !cfg.ray30SetupEntryEnabled) && !state.position.inPosition) {
     const payload = {
       price,
       source,
@@ -1044,8 +1069,11 @@ function buildRay30EntryScan(price, source) {
   const overheated = isFiniteNum(tickOk.rsi) && tickOk.rsi >= cfg.ray30NoChaseRsi15s;
   const pullback = state.ray30Pullback || { armed: false };
   const setup = updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk);
+  const externalSetupOk = setupAllowsEntry(setup);
+  const confidenceBlock = fvvoLongBlockStatus();
+  const confidenceBlocked = Boolean(confidenceBlock.blocked);
 
-  const legacyPullbackReclaimReady = Boolean(
+  const legacyPullbackReclaimReadyRaw = Boolean(
     pullback.armed &&
     rayGate.ok &&
     fiveOk.trendOk &&
@@ -1055,25 +1083,36 @@ function buildRay30EntryScan(price, source) {
     (!isFiniteNum(tickOk.ema18) || price >= tickOk.ema18)
   );
 
-  const instantQualifiedReady = Boolean(setup.instantQualifiedReady);
-  const pullbackRecoveryReady = Boolean(setup.pullbackRecoveryReady);
-  const breakoutContinuationReady = Boolean(setup.breakoutContinuationReady);
+  // v3l hard fix: legacy no-chase pullback reclaim cannot place orders when external setup is required.
+  const legacyPullbackReclaimReady = Boolean(
+    legacyPullbackReclaimReadyRaw &&
+    (!cfg.rayalgoRequireExternalSetupForEntry || !cfg.ray30SetupEntryEnabled) &&
+    !confidenceBlocked
+  );
+
+  const instantQualifiedReady = Boolean(setup.instantQualifiedReady && externalSetupOk && !confidenceBlocked);
+  const pullbackRecoveryReady = Boolean(setup.pullbackRecoveryReady && externalSetupOk && !confidenceBlocked);
+  const breakoutContinuationReady = Boolean(setup.breakoutContinuationReady && externalSetupOk && !confidenceBlocked);
   const pullbackReclaimReady = Boolean(legacyPullbackReclaimReady || pullbackRecoveryReady);
 
-  // v3j: RayAlgo is a setup gate. Direct legacy entry is disabled; setup legs decide entries.
-  const directEntryAllowed = !cfg.ray30SetupEntryEnabled;
+  // v3j/v3l: RayAlgo is a setup gate. Direct legacy entry is disabled; setup legs decide entries.
+  const directEntryAllowed = !cfg.ray30SetupEntryEnabled && !cfg.rayalgoRequireExternalSetupForEntry;
   const enterReady = Boolean(
     directEntryAllowed &&
     !inPosition &&
     rayGate.ok &&
     fiveOk.ok &&
     tickOk.ok &&
-    !overheated
+    !overheated &&
+    !confidenceBlocked
   );
 
   let decision = enterReady ? 'ENTER_READY' : 'NO_ENTRY';
   let reason = enterReady ? 'ALL_GATES_OK' : firstFailReason(rayGate, fiveOk, tickOk, inPosition, overheated);
-  if (instantQualifiedReady) {
+  if (!inPosition && confidenceBlocked && (rayGate.ok || setup.active)) {
+    decision = 'ENTRY_BLOCKED';
+    reason = confidenceBlock.reason;
+  } else if (instantQualifiedReady) {
     decision = 'INSTANT_QUALIFIED_READY';
     reason = 'RAYALGO_BULL_INSTANT_QUALIFIED_READY';
   } else if (pullbackRecoveryReady) {
@@ -1086,9 +1125,9 @@ function buildRay30EntryScan(price, source) {
     decision = 'PULLBACK_RECLAIM_READY';
     reason = 'PULLBACK_RECLAIM_AFTER_OVERHEATED_MOMENTUM';
   } else if (cfg.ray30SetupEntryEnabled && !inPosition && rayGate.ok) {
-    decision = 'WAIT_SETUP';
-    reason = setup.reason || 'WAITING_PULLBACK_OR_BREAKOUT_SETUP';
-  } else if (overheated && rayGate.ok && fiveOk.trendOk) {
+    decision = externalSetupOk ? 'WAIT_SETUP' : 'WAIT_EXTERNAL_SETUP';
+    reason = externalSetupOk ? (setup.reason || 'WAITING_PULLBACK_OR_BREAKOUT_SETUP') : 'WAITING_ALLOWED_EXTERNAL_RAYALGO_SETUP';
+  } else if (overheated && rayGate.ok && fiveOk.trendOk && externalSetupOk) {
     decision = 'WAIT_PULLBACK';
     reason = '15S_RSI_OVERHEATED_WAIT_PULLBACK';
   }
@@ -1102,8 +1141,11 @@ function buildRay30EntryScan(price, source) {
     instantQualifiedReady,
     pullbackReclaimReady,
     legacyPullbackReclaimReady,
+    legacyPullbackReclaimReadyRaw,
     pullbackRecoveryReady,
     breakoutContinuationReady,
+    externalSetupOk,
+    confidenceBlock,
     overheated,
     inPosition,
     autoEntryEnabled: cfg.ray30AutoEntryEnabled,
@@ -1121,6 +1163,10 @@ function updateRay30EntrySetupFromRayAlgo(rayState) {
   if (!rayState || !cfg.ray30SetupEntryEnabled) return;
   const regime = normalizeRaySignalToRegime(rayState.signal, rayState.regime);
   if (regime === 'RAY_BULL') {
+    if (!rayalgoTimeframeAllowed(rayState.timeframe)) {
+      log('RAYALGO_BULL_SETUP_NOT_ARMED_TIMEFRAME', { signal: rayState.signal, timeframe: rayState.timeframe, allowedEntryTimeframes: cfg.rayalgoAllowedEntryTimeframes });
+      return;
+    }
     const price = isFiniteNum(rayState.price) ? rayState.price : latestPrice();
     const now = Date.now();
     state.ray30Setup = {
@@ -1129,6 +1175,7 @@ function updateRay30EntrySetupFromRayAlgo(rayState) {
       signal: rayState.signal,
       regime,
       sourceKind: rayState.sourceKind || 'rayalgo_external',
+      timeframe: String(rayState.timeframe || cfg.rayalgoSetupTimeframe || '15'),
       rayAt: nowIso(),
       rayAtMs: now,
       rayPrice: isFiniteNum(price) ? price : null,
@@ -1144,6 +1191,7 @@ function updateRay30EntrySetupFromRayAlgo(rayState) {
       signal: rayState.signal,
       regime,
       price: state.ray30Setup.rayPrice,
+      timeframe: state.ray30Setup.timeframe,
       ttlSec: cfg.ray30SetupTtlSec,
       instantMaxAfterRaySec: cfg.ray30InstantMaxAfterRaySec,
       pullbackMinDipPct: cfg.ray30PullbackMinDipPct,
@@ -1212,6 +1260,7 @@ function updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk) {
     instantSourceOk &&
     instantAgeOk &&
     !s.pullbackSeen &&
+    dipFromHighPct < cfg.ray30PullbackMinDipPct &&
     fiveInstantOk &&
     tickInstantOk
   );
@@ -1286,6 +1335,8 @@ function summarizeRay30Setup(s, reason, extra) {
     active: Boolean(s.active),
     mode: s.mode || null,
     signal: s.signal || null,
+    sourceKind: s.sourceKind || null,
+    timeframe: s.timeframe || null,
     rayAt: s.rayAt || null,
     rayPrice: roundOrNull(s.rayPrice),
     highPrice: roundOrNull(s.highPrice),
@@ -1668,6 +1719,10 @@ function publicStatus() {
       stateMaxAgeSec: cfg.rayalgoStateMaxAgeSec,
       useExternalPriority: cfg.ray30UseRayalgoExternalPriority,
       featureProxyFallbackEnabled: cfg.ray30FeatureProxyFallbackEnabled,
+      featureProxyMonitorOnly: cfg.ray30FeatureProxyMonitorOnly,
+      requireExternalSetupForEntry: cfg.rayalgoRequireExternalSetupForEntry,
+      setupTimeframe: cfg.rayalgoSetupTimeframe,
+      allowedEntryTimeframes: cfg.rayalgoAllowedEntryTimeframes,
       activeRay: summarizeActiveRayForStatus()
     },
     logConfig: {
@@ -1692,6 +1747,7 @@ function publicState() {
     priceTrigger: state.priceTrigger ? summarizeSetup(state.priceTrigger) : null,
     campaigns: summarizeCampaigns(state.campaigns),
     ray30Pullback: summarizePullback(state.ray30Pullback),
+    ray30Setup: summarizeRay30Setup(state.ray30Setup, state.ray30Setup && state.ray30Setup.reason),
     fvvoConfidence: summarizeFvvoConfidence(state.latest && state.latest.fvvoConfidence),
     handoff: state.handoff || { active: false }
   };
@@ -1921,6 +1977,58 @@ function summarizeFvvoConfidence(conf) {
   };
 }
 
+
+function parseTimeframeSet(v) {
+  return String(v || '')
+    .split(',')
+    .map(x => String(x || '').trim().toUpperCase())
+    .filter(Boolean)
+    .map(x => x.replace(/MINUTES?$/, '').replace(/M$/, ''));
+}
+
+function normalizeTf(v) {
+  return String(v || '').trim().toUpperCase().replace(/MINUTES?$/, '').replace(/M$/, '');
+}
+
+function rayalgoTimeframeAllowed(tf) {
+  const allowed = parseTimeframeSet(cfg.rayalgoAllowedEntryTimeframes || cfg.rayalgoSetupTimeframe || '15');
+  if (!allowed.length || allowed.includes('ANY') || allowed.includes('*')) return true;
+  return allowed.includes(normalizeTf(tf));
+}
+
+function setupAllowsEntry(setup) {
+  if (!cfg.rayalgoRequireExternalSetupForEntry) return true;
+  return Boolean(
+    setup &&
+    setup.active &&
+    setup.sourceKind === 'rayalgo_external' &&
+    rayalgoTimeframeAllowed(setup.timeframe)
+  );
+}
+
+function fvvoLongBlockStatus() {
+  const now = Date.now();
+  const conf = (state.latest && state.latest.fvvoConfidence) || {};
+  const blockers = [];
+  function addBlocker(key, label, maxAgeSec) {
+    const x = conf[key];
+    if (!x || !x.atMs) return;
+    const ageSec = (now - x.atMs) / 1000;
+    if (ageSec <= maxAgeSec) {
+      blockers.push({ signal: x.signal || label, side: x.side || label, ageSec: roundOrNull(ageSec), price: x.price, timeframe: x.timeframe, maxAgeSec });
+    }
+  }
+  if (cfg.fvvoBearishBlockLongEnabled) {
+    addBlocker('lastSell', 'SNIPER_SELL', cfg.fvvoSniperSellBlockSec);
+    addBlocker('lastBearishMomentum', 'BURST_BEARISH', cfg.fvvoBurstBearishBlockSec);
+  }
+  return {
+    blocked: blockers.length > 0,
+    blockers,
+    reason: blockers.length ? `ENTRY_BLOCKED_RECENT_${String(blockers[0].signal || 'BEARISH_CONFIDENCE').toUpperCase()}` : 'NO_FVVO_BEARISH_BLOCK'
+  };
+}
+
 function normalizeRaySource(v) {
   const s = String(v || '').trim().toLowerCase();
   if (!s) return '';
@@ -1982,6 +2090,8 @@ function compactRay30Scan(scan) {
     pullback: scan.pullback,
     setup: scan.setup ? {
       active: scan.setup.active,
+      sourceKind: scan.setup.sourceKind,
+      timeframe: scan.setup.timeframe,
       reason: scan.setup.reason,
       rayPrice: scan.setup.rayPrice,
       highPrice: scan.setup.highPrice,
@@ -1991,7 +2101,9 @@ function compactRay30Scan(scan) {
       moveFromRayPct: roundOrNull(scan.setup.moveFromRayPct),
       pullbackRecoveryReady: scan.setup.pullbackRecoveryReady,
       breakoutContinuationReady: scan.setup.breakoutContinuationReady
-    } : null
+    } : null,
+    confidenceBlock: scan.confidenceBlock || null,
+    externalSetupOk: scan.externalSetupOk
   };
 }
 
