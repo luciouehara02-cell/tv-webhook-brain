@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_XRP_LongHold_v1e_FVVO_IGNITION_DEMO
+// BrainFVVO_XRP_LongHold_v1f_DEMO_AUTO_RECONCILE_AUDIT
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_XRP_LongHold_v1e_FVVO_IGNITION_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_XRP_LongHold_v1f_DEMO_AUTO_RECONCILE_AUDIT"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -129,8 +129,8 @@ const CFG = {
   C3_SIGNAL_URL: envStr("C3_SIGNAL_URL", "https://3c.wtalerts.com/bot/custom"),
   C3_ENTER_LONG_CODE: envStr("C3_ENTER_LONG_CODE", ""),
   C3_EXIT_LONG_CODE: envStr("C3_EXIT_LONG_CODE", ""),
-  C3_AMOUNT_PER_TRADE: envNum("C3_AMOUNT_PER_TRADE", 0.10),
-  C3_AMOUNT_PER_TRADE_TYPE: envStr("C3_AMOUNT_PER_TRADE_TYPE", "percents").toLowerCase(),
+  C3_AMOUNT_PER_TRADE: envNum("C3_AMOUNT_PER_TRADE", 30),
+  C3_AMOUNT_PER_TRADE_TYPE: envStr("C3_AMOUNT_PER_TRADE_TYPE", "quote").toLowerCase(),
   C3_ORDER_TYPE: envStr("C3_ORDER_TYPE", "market").toLowerCase(),
   // v1h: entry size and type are intentionally owned by the Signal Bot settings.
   // No entry `order` object is emitted by the brain. Legacy C3_ENTRY_ORDER_* values are ignored.
@@ -151,9 +151,13 @@ const CFG = {
   // period and then release the brain state as ASSUMED flat. This is intentionally identical for demo/live mode.
   AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", false),
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
+  // v1f: DEMO-only lifecycle completion after an accepted market signal. LIVE
+  // remains evidence/manual-confirmation only regardless of this setting.
+  DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED: envBool("DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED", true),
+  DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED: envBool("DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED", true),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-xrp-longhold-v1e-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-xrp-longhold-v1f-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -165,6 +169,9 @@ const CFG = {
   FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC: envNum("FVVO_STALE_FEATURE_TICK_MAX_AGE_SEC", 60),
   FEATURE_MONOTONIC_GUARD_ENABLED: envBool("FEATURE_MONOTONIC_GUARD_ENABLED", true),
   FEATURE_DUPLICATE_BAR_GUARD_ENABLED: envBool("FEATURE_DUPLICATE_BAR_GUARD_ENABLED", true),
+  LOG_FEATURE_TICK_ENABLED: envBool("LOG_FEATURE_TICK_ENABLED", false),
+  LOG_FEATURE_5M_ENABLED: envBool("LOG_FEATURE_5M_ENABLED", true),
+  LOG_BLOCKED_IGNITION_5M_ENABLED: envBool("LOG_BLOCKED_IGNITION_5M_ENABLED", true),
 
   MANUAL_ENTRY_DEFAULT_PROFILE: envStr("MANUAL_ENTRY_DEFAULT_PROFILE", "SWING_BALANCED_STRUCTURE_EXIT"),
   MANUAL_ALLOW_ENTER: envBool("MANUAL_ALLOW_ENTER", true),
@@ -522,17 +529,19 @@ const CFG = {
   XRP_IGNITION_MAX_5M_RSI: envNum("XRP_IGNITION_MAX_5M_RSI", 68),
   XRP_IGNITION_MIN_5M_ADX: envNum("XRP_IGNITION_MIN_5M_ADX", 15),
   XRP_IGNITION_MIN_5M_FVVO: envNum("XRP_IGNITION_MIN_5M_FVVO", 0),
-  XRP_IGNITION_MIN_5M_SLOPE: envNum("XRP_IGNITION_MIN_5M_SLOPE", 0.15),
+  XRP_IGNITION_MIN_5M_SLOPE: envNum("XRP_IGNITION_MIN_5M_SLOPE", 0.50),
   XRP_IGNITION_BREAKOUT_BUFFER_PCT: envNum("XRP_IGNITION_BREAKOUT_BUFFER_PCT", 0.04),
   XRP_IGNITION_MAX_CHASE_PCT: envNum("XRP_IGNITION_MAX_CHASE_PCT", 0.35),
   XRP_IGNITION_MIN_TICK_RSI: envNum("XRP_IGNITION_MIN_TICK_RSI", 55),
   XRP_IGNITION_MAX_TICK_RSI: envNum("XRP_IGNITION_MAX_TICK_RSI", 74),
   XRP_IGNITION_MIN_TICK_ADX: envNum("XRP_IGNITION_MIN_TICK_ADX", 18),
   XRP_IGNITION_MIN_TICK_FVVO: envNum("XRP_IGNITION_MIN_TICK_FVVO", 0.50),
-  XRP_IGNITION_MIN_TICK_SLOPE: envNum("XRP_IGNITION_MIN_TICK_SLOPE", 0.40),
+  XRP_IGNITION_MIN_TICK_SLOPE: envNum("XRP_IGNITION_MIN_TICK_SLOPE", 0.80),
   XRP_IGNITION_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("XRP_IGNITION_CONFIRM_OBSERVATIONS", 2))),
   XRP_IGNITION_CONFIRM_MIN_SPAN_SEC: Math.max(0, envNum("XRP_IGNITION_CONFIRM_MIN_SPAN_SEC", 10)),
   XRP_IGNITION_STOP_PCT: envNum("XRP_IGNITION_STOP_PCT", 0.80),
+  XRP_IGNITION_HIGH_RSI_SHADOW_ENABLED: envBool("XRP_IGNITION_HIGH_RSI_SHADOW_ENABLED", true),
+  XRP_IGNITION_HIGH_RSI_THRESHOLD: envNum("XRP_IGNITION_HIGH_RSI_THRESHOLD", 70),
   MODE_PROFIT_PROTECTION_ENABLED: envBool("MODE_PROFIT_PROTECTION_ENABLED", true),
   MODE_PROFIT_DIP_ARM_MFE_PCT: envNum("MODE_PROFIT_DIP_ARM_MFE_PCT", 0.45),
   MODE_PROFIT_DIP_GROSS_LOCK_PCT: envNum("MODE_PROFIT_DIP_GROSS_LOCK_PCT", 0.30),
@@ -1556,8 +1565,8 @@ function autoExitReleaseStatusPayload() {
   const a = state.autoExitRelease || {};
   return {
     enabled: autoExitReconciliationActive(),
-    automaticFlatAssumption: false,
-    mode: "EVIDENCE_REMINDER_ONLY",
+    automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED,
+    mode: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL_AUTO_RELEASE" : "EVIDENCE_REMINDER_ONLY",
     delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC,
     active: Boolean(a.active),
     status: a.status || "IDLE",
@@ -1596,7 +1605,7 @@ function armAutoExitRelease(position, requestId, reason) {
     reason: reason || "",
     releasedAt: "",
   };
-  log("INFO", "FVVO_EXIT_RECONCILIATION_REMINDER_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, executionMode: CFG.EXECUTION_MODE, demoOnly: demoMode(), reentryAutoEnabled: reentryAutoEnabled(), preReleasePullbackMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED });
+  log("INFO", demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "FVVO_EXIT_AUTO_RELEASE_ARMED" : "FVVO_EXIT_RECONCILIATION_REMINDER_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, executionMode: CFG.EXECUTION_MODE, demoOnly: demoMode(), automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, reentryAutoEnabled: reentryAutoEnabled(), preReleasePullbackMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED });
   return state.autoExitRelease;
 }
 
@@ -1670,6 +1679,19 @@ async function finalizeAutoExitRelease(source = "timer") {
     log("WARN", "FVVO_EXIT_AUTO_RELEASE_CANCELLED", { source, reason: "NO_MATCHING_EXIT_POSITION", requestId: pending.requestId || null });
     return false;
   }
+  if (demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED) {
+    const priorExitReason = prior.exitReason || null;
+    const priorRequestId = prior.exitForwardRequestId || pending.requestId || null;
+    const campaign = armReentryCampaignAfterConfirmedExit(prior);
+    clearAutoExitReleaseTimer();
+    state.position = null;
+    state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
+    state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "demo_auto_reconcile_exit", lastActionAt: nowIso() };
+    state.autoExitRelease = { ...pending, active: false, status: "DEMO_ASSUMED_FLAT_AFTER_ACCEPTED_EXIT", releasedAt: nowIso() };
+    await persistState("demo_exit_auto_reconciled");
+    log("INFO", "FVVO_DEMO_EXIT_AUTO_RECONCILED", { source, requestId: priorRequestId, priorExitReason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, automaticFlatAssumption: true, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null });
+    return true;
+  }
   state.manual.recoveryRequired = true;
   state.manual.recoveryReason = "EXIT_AWAITING_EXECUTION_EVIDENCE";
   state.externalDealLock.active = true;
@@ -1705,8 +1727,8 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "XRP_LongHold_v1e_DEMO",
-    executionReconciliation: { automaticFlatAssumption: false, source: "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
+    buildVersion: "XRP_LongHold_v1f_DEMO",
+    executionReconciliation: { automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, source: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL" : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
     brain: CFG.BRAIN_NAME,
     symbol: CFG.SYMBOL,
@@ -1946,7 +1968,9 @@ async function executeManualEntry(entry, levels, options = {}) {
     await persistState("manual_enter_forward_uncertain");
     return { status: 502, body: { ok: false, error: result.error, requestId: result.requestId, externalDealLockActive: true, recoveryRequired: true } };
   }
-  state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  state.position.lifecycle = demoMode() && CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED
+    ? "ENTRY_ACCEPTED_ASSUMED_FILLED_DEMO"
+    : "ENTRY_ACCEPTED_UNVERIFIED_FILL";
   state.position.entryAcceptedAt = nowIso();
   state.position.entryAcceptedAtMs = nowMs();
   state.position.entryForwardRequestId = result.requestId;
@@ -2074,8 +2098,9 @@ async function requestFullExit(reason, price, origin) {
   if (String(reason || "").includes("DYNAMIC_PROFIT_FLOOR_HIT")) recordProfitFloorBaselineExit(p, price, reason);
   await persistState("full_exit_accepted");
   if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED) scheduleAutoExitRelease();
-  log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, autoReleasePending: false, reconciliationReminderPending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED, reconciliationReminderDelaySec: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC : null, recoveryRequired: true, exitPercent: 100, pnlAudit: exitPnlAudit });
-  return { ...result, exitUnverified: true, autoReleasePending: false, reconciliationReminderPending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED };
+  const demoAutoReleasePending = autoExitReconciliationActive() && demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED;
+  log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, autoReleasePending: demoAutoReleasePending, reconciliationReminderPending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED && !demoAutoReleasePending, reconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC : null, recoveryRequired: true, exitPercent: 100, pnlAudit: exitPnlAudit });
+  return { ...result, exitUnverified: true, autoReleasePending: demoAutoReleasePending, reconciliationReminderPending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED && !demoAutoReleasePending };
 }
 
 function oneStopBreakConfirmed(position, feature, markPrice) {
@@ -4191,7 +4216,9 @@ async function forwardPostExitRecoveredBaseCandidate(campaign, recovered, candid
     });
     return { entered: true, uncertain: true };
   }
-  state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  state.position.lifecycle = demoMode() && CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED
+    ? "ENTRY_ACCEPTED_ASSUMED_FILLED_DEMO"
+    : "ENTRY_ACCEPTED_UNVERIFIED_FILL";
   state.position.entryAcceptedAt = nowIso();
   state.position.entryAcceptedAtMs = nowMs();
   state.position.entryForwardRequestId = result.requestId;
@@ -6945,21 +6972,30 @@ async function executeXrpIgnitionEntry(feature, setup, evidence) {
     await persistState("xrp_ignition_forward_uncertain");
     return result;
   }
-  state.position.lifecycle = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
+  state.position.lifecycle = demoMode() && CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED
+    ? "ENTRY_ACCEPTED_ASSUMED_FILLED_DEMO"
+    : "ENTRY_ACCEPTED_UNVERIFIED_FILL";
   state.position.entryAcceptedAt = nowIso();
   state.position.entryAcceptedAtMs = nowMs();
   state.position.entryForwardRequestId = result.requestId;
-  state.externalDealLock.reason = "ENTRY_ACCEPTED_UNVERIFIED_FILL";
-  state.xrpIgnition.last = { status: "ENTRY_ACCEPTED_UNVERIFIED_FILL", entryPrice: entry, at: nowIso(), setupId: setup.id, requestId: result.requestId };
+  state.externalDealLock.reason = state.position.lifecycle;
+  state.xrpIgnition.last = { status: state.position.lifecycle, entryPrice: entry, at: nowIso(), setupId: setup.id, requestId: result.requestId };
   await persistState("xrp_ignition_entry_accepted");
-  log("INFO", "FVVO_XRP_IGNITION_AUTO_ENTRY_TRACKED", { entryPriceReference: entry, stopPrice, stopDistancePct: levels.stopPct, setupId: setup.id, requestId: result.requestId, evidence, fillVerified: false });
+  log("INFO", "FVVO_XRP_IGNITION_AUTO_ENTRY_TRACKED", { entryPriceReference: entry, stopPrice, stopDistancePct: levels.stopPct, setupId: setup.id, requestId: result.requestId, evidence, fillVerified: false, demoFillAssumed: demoMode() && CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED, lifecycle: state.position.lifecycle });
   return result;
 }
 
 async function evaluateXrpIgnitionAutoEntry(feature) {
   if (!CFG.XRP_IGNITION_AUTO_ENTRY_ENABLED || !CFG.XRP_IGNITION_AUTO_ORDER_ENABLED) return;
   if (CFG.XRP_IGNITION_REQUIRE_DEMO && !demoMode()) return;
-  if (stateBlocksNewEntry()) return;
+  const entryBlock = stateBlocksNewEntry();
+  if (entryBlock) {
+    if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT && CFG.LOG_BLOCKED_IGNITION_5M_ENABLED) {
+      const evidence = xrpIgnitionFiveMinuteEvidence(feature);
+      if (evidence.ok) log("INFO", "FVVO_XRP_IGNITION_BLOCKED_RECONCILIATION", { entryBlock, theoreticalBasePrice: evidence.price, theoreticalTriggerPrice: round(evidence.price * (1 + CFG.XRP_IGNITION_BREAKOUT_BUFFER_PCT / 100), 8), evidence });
+    }
+    return;
+  }
   if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT) {
     const evidence = xrpIgnitionFiveMinuteEvidence(feature);
     if (!evidence.ok) {
@@ -6996,6 +7032,9 @@ async function evaluateXrpIgnitionAutoEntry(feature) {
   if (!setup.firstConfirmAtMs) setup.firstConfirmAtMs = nowMs();
   setup.observations += 1;
   const elapsedSec = (nowMs() - setup.firstConfirmAtMs) / 1000;
+  if (CFG.XRP_IGNITION_HIGH_RSI_SHADOW_ENABLED && evidence.rsi > CFG.XRP_IGNITION_HIGH_RSI_THRESHOLD) {
+    log("INFO", "FVVO_XRP_IGNITION_HIGH_RSI_PULLBACK_SHADOW", { setupId: setup.id, directEntryWouldQualify: true, rsi: evidence.rsi, threshold: CFG.XRP_IGNITION_HIGH_RSI_THRESHOLD, suggestedAction: "WAIT_RSI_COOL_AND_EMA8_RECLAIM", price: evidence.price, ema8: evidence.ema8, ema18: evidence.ema18, adx: evidence.adx, fvvo: evidence.fvvo, slope: evidence.slope, ray: evidence.ray });
+  }
   log("INFO", "FVVO_XRP_IGNITION_CONFIRMING", { setupId: setup.id, observations: setup.observations, requiredObservations: CFG.XRP_IGNITION_CONFIRM_OBSERVATIONS, elapsedSec, requiredSpanSec: CFG.XRP_IGNITION_CONFIRM_MIN_SPAN_SEC, evidence });
   if (setup.observations >= CFG.XRP_IGNITION_CONFIRM_OBSERVATIONS && elapsedSec >= CFG.XRP_IGNITION_CONFIRM_MIN_SPAN_SEC) await executeXrpIgnitionEntry(feature, setup, evidence);
 }
@@ -7009,7 +7048,8 @@ async function processFeatureEvent(feature) {
   }
   if (!updateFeature(feature)) return { ok: false, error: "VALID_PRICE_REQUIRED" };
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
-  log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, yellowPulse: feature.yellowPulse, yellowReason: feature.yellowReason || null, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: activePriceEntryItems().length ? `${activePriceEntryItems().length}_ARMED` : null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
+  const logRawFeature = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? CFG.LOG_FEATURE_5M_ENABLED : CFG.LOG_FEATURE_TICK_ENABLED;
+  if (logRawFeature) log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, yellowPulse: feature.yellowPulse, yellowReason: feature.yellowReason || null, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: activePriceEntryItems().length ? `${activePriceEntryItems().length}_ARMED` : null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
   await capturePreReleaseReentryPullback(feature);
   await finalizeAutoExitRelease("feature");
   await evaluateRunnerRescuePostExitAudit(feature);
@@ -7088,7 +7128,7 @@ async function start() {
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_NEAR_RETEST_RECOVERY_STARTUP", { mode: breakoutNearRetestRecoveryMode(), tolerancePct: CFG.BREAKOUT_NEAR_RETEST_TOLERANCE_PCT, minPullbackFromHighPct: CFG.BREAKOUT_NEAR_RETEST_MIN_PULLBACK_FROM_HIGH_PCT, reclaimPct: CFG.BREAKOUT_NEAR_RETEST_RECLAIM_PCT, minEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MIN_ENTRY_ABOVE_CONFIRM_PCT, minRecoveryOfPullbackPct: CFG.BREAKOUT_NEAR_RETEST_MIN_RECOVERY_OF_PULLBACK_PCT, maxEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MAX_ENTRY_ABOVE_CONFIRM_PCT, minAdx: CFG.BREAKOUT_NEAR_RETEST_MIN_ADX, minFvvo: CFG.BREAKOUT_NEAR_RETEST_MIN_FVVO, minStrongSlope: CFG.BREAKOUT_NEAR_RETEST_MIN_STRONG_SLOPE, maxRsi: CFG.BREAKOUT_NEAR_RETEST_MAX_RSI, maxExtensionFromEma8Pct: CFG.BREAKOUT_NEAR_RETEST_MAX_EXTENSION_FROM_EMA8_PCT, confirmation: "cross_up_or_two_improving_observations", configurationProblems: problems });
   log("INFO", "FVVO_ENTRY_GATE_CONFIRMATION_STARTUP", { confirmationRequired: CFG.ENTRY_GATE_CONFIRM_REQUIRED, confirmationTtlSec: CFG.ENTRY_GATE_CONFIRM_TTL_SEC, historyMaxBars: CFG.ENTRY_GATE_HISTORY_MAX_BARS, timeframes: ["15m", "1H", "4H"], informationOnly: true, noConfirmationMeansNoArm: true });
-  log("INFO", "FVVO_XRP_LONG_HOLD_V1E_DEMO_STARTUP", { automaticIgnitionEntry: CFG.XRP_IGNITION_AUTO_ENTRY_ENABLED && CFG.XRP_IGNITION_AUTO_ORDER_ENABLED, manualEntryModes: { immediate: CFG.MANUAL_ALLOW_ENTER, breakout: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE === "live", preferred: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.TRAILING_DIP_RECLAIM_ZONE_MODE === "live", deep: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "live" }, automaticReentry: reentryAutoEnabled(), flashCrashEnabled: CFG.LONG_HOLD_FLASH_CRASH_ENABLED, flashCrashWindowSec: CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC, flashCrashDropPct: CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT, initialSlEnabled: CFG.LONG_HOLD_INITIAL_SL_ENABLED, initialSlPct: CFG.LONG_HOLD_INITIAL_SL_PCT, milestoneFloors: CFG.LONG_HOLD_MILESTONE_FLOORS, runnerArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, configurationProblems: problems });
+  log("INFO", "FVVO_XRP_LONG_HOLD_V1F_DEMO_STARTUP", { automaticIgnitionEntry: CFG.XRP_IGNITION_AUTO_ENTRY_ENABLED && CFG.XRP_IGNITION_AUTO_ORDER_ENABLED, demoAcceptedEntryAssumeFilled: CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED, demoAcceptedExitAutoRelease: CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, autoExitReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, rawTickLogging: CFG.LOG_FEATURE_TICK_ENABLED, fiveMinuteLogging: CFG.LOG_FEATURE_5M_ENABLED, highRsiPullbackShadow: CFG.XRP_IGNITION_HIGH_RSI_SHADOW_ENABLED, manualEntryModes: { immediate: CFG.MANUAL_ALLOW_ENTER, breakout: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE === "live", preferred: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.TRAILING_DIP_RECLAIM_ZONE_MODE === "live", deep: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "live" }, automaticReentry: reentryAutoEnabled(), flashCrashEnabled: CFG.LONG_HOLD_FLASH_CRASH_ENABLED, flashCrashWindowSec: CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC, flashCrashDropPct: CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT, initialSlEnabled: CFG.LONG_HOLD_INITIAL_SL_ENABLED, initialSlPct: CFG.LONG_HOLD_INITIAL_SL_PCT, milestoneFloors: CFG.LONG_HOLD_MILESTONE_FLOORS, runnerArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 

@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-xrp-longhold-v1e-fvvo-ignition-demo",
-  "version": "1.5.0",
+  "name": "brainfvvo-xrp-longhold-v1f-demo-auto-reconcile-audit",
+  "version": "1.6.0",
   "private": true,
   "description": "XRP long-hold brain with direct, breakout, preferred and deep manual entry paths",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v1e.js replay_fixture.jsonl && node replay_bridge_v1e.js && node replay_ignition_v1e.js",
+    "check": "node --check server.js && node replay_v1e.js replay_fixture.jsonl && node replay_bridge_v1e.js && node replay_ignition_v1e.js && node replay_reconciliation_v1f.js",
     "replay": "node replay_v1e.js replay_fixture.jsonl"
   },
   "engines": {
