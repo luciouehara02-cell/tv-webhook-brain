@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3m_RAYALGO_EXTERNAL_SETUP_OPTIMIZED_DEMO
+ * BrainFVVO_SOL_v3n_RAYALGO_FAILSAFE_EXIT_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3m_RAYALGO_EXTERNAL_SETUP_OPTIMIZED_DEMO';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3n_RAYALGO_FAILSAFE_EXIT_DEMO';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -49,12 +49,12 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3m-state.json',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3n-state.json',
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
   featureTickMaxAgeSec: intEnv('FEATURE_TICK_MAX_AGE_SEC', 60),
-  stopLossPct: numEnv('RAY30_STOP_LOSS_PCT', 0.80),
+  stopLossPct: numEnv('RAY30_STOP_LOSS_PCT', 0.60),
   emergencyDropEnabled: boolEnv('RAY30_EMERGENCY_DROP_ENABLED', true),
   emergencyDropMode: env.RAY30_EMERGENCY_DROP_MODE || 'FROM_60S_HIGH',
   emergencyDropWindowSec: intEnv('RAY30_EMERGENCY_DROP_WINDOW_SEC', 60),
@@ -139,10 +139,21 @@ const cfg = {
   fvvoConfidenceMonitorEnabled: boolEnv('FVVO_CONFIDENCE_MONITOR_ENABLED', true),
   fvvoConfidenceMaxAgeSec: intEnv('FVVO_CONFIDENCE_MAX_AGE_SEC', 1800),
   fvvoBearishBlockLongEnabled: boolEnv('FVVO_BEARISH_BLOCK_LONG_ENABLED', true),
-  fvvoSniperSellBlockSec: intEnv('FVVO_SNIPER_SELL_BLOCK_SEC', 1800),
-  fvvoBurstBearishBlockSec: intEnv('FVVO_BURST_BEARISH_BLOCK_SEC', 1800),
+  fvvoSniperSellBlockSec: intEnv('FVVO_SNIPER_SELL_BLOCK_SEC', 2700),
+  fvvoBurstBearishBlockSec: intEnv('FVVO_BURST_BEARISH_BLOCK_SEC', 2700),
   fvvoSniperBuyUseForEntry: boolEnv('FVVO_SNIPER_BUY_USE_FOR_ENTRY', false),
   fvvoBurstBullishUseForEntry: boolEnv('FVVO_BURST_BULLISH_USE_FOR_ENTRY', false),
+
+  // v3n: protect open trades when bearish FVVO confirmation appears soon after entry.
+  fvvoBearishExitGuardEnabled: boolEnv('FVVO_BEARISH_EXIT_GUARD_ENABLED', true),
+  fvvoExitOnSniperSellWithinEntrySec: intEnv('FVVO_EXIT_ON_SNIPER_SELL_WITHIN_ENTRY_SEC', 900),
+  fvvoExitOnBurstBearishWithinEntrySec: intEnv('FVVO_EXIT_ON_BURST_BEARISH_WITHIN_ENTRY_SEC', 900),
+  fvvoBearishExitOnlyIfProfitBelowPct: numEnv('FVVO_BEARISH_EXIT_ONLY_IF_PROFIT_BELOW_PCT', 0.30),
+
+  // v3n: early failed-entry loss control for 15m test mode.
+  ray30EarlyFailExitEnabled: boolEnv('RAY30_EARLY_FAIL_EXIT_ENABLED', true),
+  ray30EarlyFailMaxAgeSec: intEnv('RAY30_EARLY_FAIL_MAX_AGE_SEC', 1800),
+  ray30EarlyFailExitPct: numEnv('RAY30_EARLY_FAIL_EXIT_PCT', -0.35),
 
   // v3j: RayAlgo opens a setup window. Entry waits for instant-qualified, pullback-recovery, or breakout-continuation.
   ray30SetupEntryEnabled: boolEnv('RAY30_SETUP_ENTRY_ENABLED', true),
@@ -168,8 +179,8 @@ const cfg = {
   ray30PullbackMinDipPct: numEnv('RAY30_PULLBACK_MIN_DIP_PCT', 0.25),
   ray30PullbackMaxDipPct: numEnv('RAY30_PULLBACK_MAX_DIP_PCT', 1.80),
   ray30Pullback5mMinRsi: numEnv('RAY30_PULLBACK_5M_MIN_RSI', 50),
-  ray30Pullback5mMinFvvo: numEnv('RAY30_PULLBACK_5M_MIN_FVVO', -0.60),
-  ray30Pullback5mMinSlope: numEnv('RAY30_PULLBACK_5M_MIN_SLOPE', -0.20),
+  ray30Pullback5mMinFvvo: numEnv('RAY30_PULLBACK_5M_MIN_FVVO', 0.00),
+  ray30Pullback5mMinSlope: numEnv('RAY30_PULLBACK_5M_MIN_SLOPE', 0.20),
   ray30Pullback15sMinRsi: numEnv('RAY30_PULLBACK_15S_MIN_RSI', 48),
   ray30Pullback15sMaxRsi: numEnv('RAY30_PULLBACK_15S_MAX_RSI', 68),
   ray30Pullback15sMinFvvo: numEnv('RAY30_PULLBACK_15S_MIN_FVVO', 0.00),
@@ -261,6 +272,8 @@ log('STARTUP', {
     pullbackEntryEnabled: cfg.ray30PullbackEntryEnabled,
     breakoutEntryEnabled: cfg.ray30BreakoutEntryEnabled,
     pullback5mMinRsi: cfg.ray30Pullback5mMinRsi,
+    pullback5mMinFvvo: cfg.ray30Pullback5mMinFvvo,
+    pullback5mMinSlope: cfg.ray30Pullback5mMinSlope,
     pullbackRequire5mAboveEma18: cfg.ray30PullbackRequire5mAboveEma18,
     pullbackRequire5mEma8AboveEma18: cfg.ray30PullbackRequire5mEma8AboveEma18,
     clearSetupOnExit: cfg.ray30ClearSetupOnExit,
@@ -268,7 +281,17 @@ log('STARTUP', {
     postExitRequireNewRayalgoAlert: cfg.ray30PostExitRequireNewRayalgoAlert,
     fvvoConfidenceMonitorEnabled: cfg.fvvoConfidenceMonitorEnabled,
     fvvoConfidenceMaxAgeSec: cfg.fvvoConfidenceMaxAgeSec,
-    fvvoConfidenceUsage: 'BEARISH_BLOCKERS_ONLY_BUY_MONITOR_ONLY'
+    fvvoConfidenceUsage: 'BEARISH_BLOCKERS_ENTRY_AND_OPEN_TRADE_GUARD'
+  },
+  failSafeConfig: {
+    stopLossPct: cfg.stopLossPct,
+    earlyFailExitEnabled: cfg.ray30EarlyFailExitEnabled,
+    earlyFailMaxAgeSec: cfg.ray30EarlyFailMaxAgeSec,
+    earlyFailExitPct: cfg.ray30EarlyFailExitPct,
+    bearishExitGuardEnabled: cfg.fvvoBearishExitGuardEnabled,
+    sniperSellWithinEntrySec: cfg.fvvoExitOnSniperSellWithinEntrySec,
+    burstBearishWithinEntrySec: cfg.fvvoExitOnBurstBearishWithinEntrySec,
+    bearishExitOnlyIfProfitBelowPct: cfg.fvvoBearishExitOnlyIfProfitBelowPct
   },
   floorConfig: floorConfigSummary(),
   logConfig: {
@@ -588,11 +611,12 @@ async function handleWebhook(body, req) {
       sourceKind: signalState.sourceKind,
       src: signalState.src,
       usage: signalState.usage,
-      note: 'stored_for_validation_only_not_used_for_auto_entry_or_exit'
+      note: 'stored_for_entry_block_and_open_trade_guard'
     });
 
+    const exitOut = isFiniteNum(price) ? await evaluatePositionExit(price, 'fvvo_signal') : null;
     saveState();
-    return { ok: true, brain: BRAIN, accepted: true, event: 'FVVO_SIGNAL', signal: signalState.signal, side: signalState.side, usage: signalState.usage, state: publicState() };
+    return { ok: true, brain: BRAIN, accepted: true, event: 'FVVO_SIGNAL', signal: signalState.signal, side: signalState.side, usage: signalState.usage, exitEval: exitOut, state: publicState() };
   }
 
   if (event.includes('RAY') || body.ray_signal || body.signal || looksLikeRayAlgoEvent(event)) {
@@ -841,6 +865,7 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
     phase: 'ONE_STOP_ACTIVE',
     entryPrice: price,
     entryTime: nowIso(),
+    entryTimeMs: Date.now(),
     source,
     campaignId: campaignId || null,
     entryRole: entryRole || null,
@@ -1572,6 +1597,51 @@ function summarizePullback(p) {
   };
 }
 
+function positionEntryAgeSec(p) {
+  if (!p) return null;
+  if (isFiniteNum(p.entryTimeMs)) return (Date.now() - p.entryTimeMs) / 1000;
+  const parsed = Date.parse(p.entryTime || '');
+  return Number.isFinite(parsed) ? (Date.now() - parsed) / 1000 : null;
+}
+
+function fvvoBearishExitGuardStatus(p, profitPct) {
+  if (!cfg.fvvoBearishExitGuardEnabled || !p || !p.inPosition) {
+    return { exit: false, reason: 'FVVO_BEARISH_EXIT_GUARD_DISABLED' };
+  }
+  if (isFiniteNum(profitPct) && profitPct >= cfg.fvvoBearishExitOnlyIfProfitBelowPct) {
+    return { exit: false, reason: 'TRADE_PROFIT_ABOVE_BEARISH_EXIT_GUARD', profitPct: round(profitPct), threshold: cfg.fvvoBearishExitOnlyIfProfitBelowPct };
+  }
+  const conf = (state.latest && state.latest.fvvoConfidence) || {};
+  const entryMs = isFiniteNum(p.entryTimeMs) ? p.entryTimeMs : Date.parse(p.entryTime || '');
+  if (!Number.isFinite(entryMs)) return { exit: false, reason: 'ENTRY_TIME_MISSING' };
+  const now = Date.now();
+  const candidates = [
+    { key: 'lastSell', label: 'SNIPER_SELL', maxEntrySec: cfg.fvvoExitOnSniperSellWithinEntrySec },
+    { key: 'lastBearishMomentum', label: 'BURST_BEARISH', maxEntrySec: cfg.fvvoExitOnBurstBearishWithinEntrySec }
+  ];
+  for (const c of candidates) {
+    const x = conf[c.key];
+    if (!x || !x.atMs) continue;
+    const signalAfterEntrySec = (x.atMs - entryMs) / 1000;
+    const signalAgeSec = (now - x.atMs) / 1000;
+    if (signalAfterEntrySec >= 0 && signalAfterEntrySec <= c.maxEntrySec && signalAgeSec <= Math.max(60, c.maxEntrySec)) {
+      return {
+        exit: true,
+        reason: `FVVO_BEARISH_EXIT_${String(x.signal || c.label).toUpperCase()}`,
+        signal: x.signal || c.label,
+        side: x.side || c.label,
+        signalPrice: x.price,
+        timeframe: x.timeframe,
+        signalAfterEntrySec: roundOrNull(signalAfterEntrySec),
+        signalAgeSec: roundOrNull(signalAgeSec),
+        profitPct: roundOrNull(profitPct),
+        profitThreshold: cfg.fvvoBearishExitOnlyIfProfitBelowPct
+      };
+    }
+  }
+  return { exit: false, reason: 'NO_RECENT_POST_ENTRY_BEARISH_FVVO_SIGNAL' };
+}
+
 async function evaluatePositionExit(price, source) {
   if (!state.position || !state.position.inPosition) return null;
   const p = state.position;
@@ -1610,6 +1680,23 @@ async function evaluatePositionExit(price, source) {
   if (cfg.emergencyDropEnabled && isFiniteNum(drop) && drop >= cfg.emergencyDropPct) {
     const reason = `RAY30_EMERGENCY_DROP_${round(drop)}PCT_FROM_60S_HIGH`;
     log('FVVO_EMERGENCY_DROP_EXIT', { price, source, dropPct: round(drop), threshold: cfg.emergencyDropPct });
+    const out = await exitLong({ price, reason });
+    return { type: 'exit', reason, out };
+  }
+
+  const bearishGuard = fvvoBearishExitGuardStatus(p, profitPct);
+  if (bearishGuard && bearishGuard.exit) {
+    const reason = bearishGuard.reason;
+    log('FVVO_BEARISH_CONFIDENCE_EXIT', { price, source, profitPct: round(profitPct), ...bearishGuard });
+    const out = await exitLong({ price, reason });
+    return { type: 'exit', reason, out, guard: bearishGuard };
+  }
+
+  const entryAgeSec = positionEntryAgeSec(p);
+  const earlyFailThreshold = -Math.abs(cfg.ray30EarlyFailExitPct);
+  if (cfg.ray30EarlyFailExitEnabled && isFiniteNum(entryAgeSec) && entryAgeSec <= cfg.ray30EarlyFailMaxAgeSec && profitPct <= earlyFailThreshold) {
+    const reason = `RAY30_EARLY_FAIL_EXIT_${Math.abs(cfg.ray30EarlyFailExitPct)}PCT`;
+    log('FVVO_EARLY_FAIL_EXIT', { price, source, profitPct: round(profitPct), entryAgeSec: round(entryAgeSec), threshold: earlyFailThreshold, maxAgeSec: cfg.ray30EarlyFailMaxAgeSec });
     const out = await exitLong({ price, reason });
     return { type: 'exit', reason, out };
   }
@@ -1961,6 +2048,7 @@ function emptyPosition() {
     inPosition: false,
     entryPrice: null,
     entryTime: null,
+    entryTimeMs: null,
     source: null,
     campaignId: null,
     entryRole: null,
