@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_ETH_LongHold_v1a_DEMO_AUTO_RECONCILE_AUDIT
+// BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1a_DEMO_AUTO_RECONCILE_AUDIT"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:ETHUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -157,7 +157,7 @@ const CFG = {
   DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED: envBool("DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED", true),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1a-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1b-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -520,7 +520,7 @@ const CFG = {
   LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS", 2))),
   LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC", 8)),
   LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT", 0.10)),
-  // ETH v1a DEMO entry: closed 5m trend ignition followed by fast momentum confirmation.
+  // ETH v1b DEMO entry: closed 5m trend ignition, balanced quality score, then fast confirmation.
   ETH_IGNITION_AUTO_ENTRY_ENABLED: envBool("ETH_IGNITION_AUTO_ENTRY_ENABLED", true),
   ETH_IGNITION_AUTO_ORDER_ENABLED: envBool("ETH_IGNITION_AUTO_ORDER_ENABLED", true),
   ETH_IGNITION_REQUIRE_DEMO: envBool("ETH_IGNITION_REQUIRE_DEMO", true),
@@ -530,6 +530,12 @@ const CFG = {
   ETH_IGNITION_MIN_5M_ADX: envNum("ETH_IGNITION_MIN_5M_ADX", 15),
   ETH_IGNITION_MIN_5M_FVVO: envNum("ETH_IGNITION_MIN_5M_FVVO", 0),
   ETH_IGNITION_MIN_5M_SLOPE: envNum("ETH_IGNITION_MIN_5M_SLOPE", 0.50),
+  ETH_IGNITION_QUALITY_GATE_ENABLED: envBool("ETH_IGNITION_QUALITY_GATE_ENABLED", true),
+  ETH_IGNITION_QUALITY_REQUIRED_SCORE: Math.max(1, Math.min(4, Math.floor(envNum("ETH_IGNITION_QUALITY_REQUIRED_SCORE", 3)))),
+  ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT: Math.max(0, envNum("ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT", 0.05)),
+  ETH_IGNITION_QUALITY_MIN_RSI: envNum("ETH_IGNITION_QUALITY_MIN_RSI", 55),
+  ETH_IGNITION_QUALITY_MIN_FVVO: envNum("ETH_IGNITION_QUALITY_MIN_FVVO", 0.50),
+  ETH_IGNITION_QUALITY_REQUIRE_RAY_BULL_POINT: envBool("ETH_IGNITION_QUALITY_REQUIRE_RAY_BULL_POINT", true),
   ETH_IGNITION_BREAKOUT_BUFFER_PCT: envNum("ETH_IGNITION_BREAKOUT_BUFFER_PCT", 0.04),
   ETH_IGNITION_MAX_CHASE_PCT: envNum("ETH_IGNITION_MAX_CHASE_PCT", 0.35),
   ETH_IGNITION_MIN_TICK_RSI: envNum("ETH_IGNITION_MIN_TICK_RSI", 55),
@@ -1190,7 +1196,7 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.LONG_HOLD_PRE_ARM_BRIDGE_MODE)) problems.push("INVALID_LONG_HOLD_PRE_ARM_BRIDGE_MODE");
   if (CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT < CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT < 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_LONG_HOLD_PRE_ARM_BRIDGE_CONFIG");
   if (CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_REQUIRE_DEMO && !demoMode()) problems.push("ETH_IGNITION_AUTO_ENTRY_REQUIRES_DEMO_MODE");
-  if (CFG.ETH_IGNITION_MIN_5M_RSI >= CFG.ETH_IGNITION_MAX_5M_RSI || CFG.ETH_IGNITION_MIN_TICK_RSI >= CFG.ETH_IGNITION_MAX_TICK_RSI || CFG.ETH_IGNITION_SETUP_MAX_AGE_SEC <= 0 || CFG.ETH_IGNITION_MAX_CHASE_PCT <= CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT || CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS < 1 || CFG.ETH_IGNITION_STOP_PCT <= 0) problems.push("INVALID_ETH_IGNITION_AUTO_ENTRY_CONFIG");
+  if (CFG.ETH_IGNITION_MIN_5M_RSI >= CFG.ETH_IGNITION_MAX_5M_RSI || CFG.ETH_IGNITION_MIN_TICK_RSI >= CFG.ETH_IGNITION_MAX_TICK_RSI || CFG.ETH_IGNITION_SETUP_MAX_AGE_SEC <= 0 || CFG.ETH_IGNITION_MAX_CHASE_PCT <= CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT || CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS < 1 || CFG.ETH_IGNITION_STOP_PCT <= 0 || CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE < 1 || CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE > 4 || CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT < 0) problems.push("INVALID_ETH_IGNITION_AUTO_ENTRY_CONFIG");
   if (CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS < 3 || CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS < 1 || CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS > CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS || CFG.PROFIT_FLOOR_MICRO_SHADOW_MAX_SEC <= 0 || CFG.PROFIT_FLOOR_MICRO_SHADOW_HARD_BREAK_BUFFER_PCT < 0 || CFG.PROFIT_FLOOR_MICRO_SHADOW_RECOVERY_OBSERVATIONS < 1) problems.push("INVALID_PROFIT_FLOOR_MICRO_SHADOW_CONFIG");
   if (CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_WINDOW_SEC <= 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_CONFIRM_OBSERVATIONS < 1 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT < 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MAX_RECOVERY_PCT < CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_PERFORMANCE_SEC <= 0) problems.push("INVALID_PROFIT_FLOOR_POST_EXIT_RECLAIM_SHADOW_CONFIG");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
@@ -1727,7 +1733,7 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "ETH_LongHold_v1a_DEMO",
+    buildVersion: "ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE",
     executionReconciliation: { automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, source: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL" : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
     brain: CFG.BRAIN_NAME,
@@ -6923,6 +6929,17 @@ function ethIgnitionFiveMinuteEvidence(feature) {
   const price = finite(feature.close, feature.price), ema8 = finite(feature.ema8, null), ema18 = finite(feature.ema18, null);
   const rsi = finite(feature.rsi, null), adx = finite(feature.adx, null), fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null);
   const ray = String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase();
+  const emaSpreadPct = price !== null && price > 0 && ema8 !== null && ema18 !== null
+    ? ((ema8 - ema18) / price) * 100
+    : null;
+  const qualityChecks = {
+    emaSpread: emaSpreadPct !== null && emaSpreadPct >= CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT,
+    rsi: rsi !== null && rsi >= CFG.ETH_IGNITION_QUALITY_MIN_RSI,
+    fvvo: fvvo !== null && fvvo >= CFG.ETH_IGNITION_QUALITY_MIN_FVVO,
+    rayBull: CFG.ETH_IGNITION_QUALITY_REQUIRE_RAY_BULL_POINT ? ray.startsWith("RAY_BULL") : !ray.startsWith("RAY_BEAR"),
+  };
+  const qualityScore = Object.values(qualityChecks).filter(Boolean).length;
+  const qualityGateOk = !CFG.ETH_IGNITION_QUALITY_GATE_ENABLED || qualityScore >= CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE;
   const checks = {
     priceAboveEma8: price !== null && ema8 !== null && price >= ema8,
     emaBull: ema8 !== null && ema18 !== null && ema8 >= ema18,
@@ -6931,8 +6948,26 @@ function ethIgnitionFiveMinuteEvidence(feature) {
     fvvoOk: fvvo !== null && fvvo >= CFG.ETH_IGNITION_MIN_5M_FVVO,
     slopeOk: slope !== null && slope >= CFG.ETH_IGNITION_MIN_5M_SLOPE,
     rayOk: !ray.startsWith("RAY_BEAR"),
+    qualityGateOk,
   };
-  return { ok: Object.values(checks).every(Boolean), price, ema8, ema18, rsi, adx, fvvo, slope, ray, checks };
+  return {
+    ok: Object.values(checks).every(Boolean), price, ema8, ema18, rsi, adx, fvvo, slope, ray,
+    emaSpreadPct: emaSpreadPct === null ? null : round(emaSpreadPct, 6),
+    quality: {
+      enabled: CFG.ETH_IGNITION_QUALITY_GATE_ENABLED,
+      score: qualityScore,
+      requiredScore: CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE,
+      passed: qualityGateOk,
+      checks: qualityChecks,
+      thresholds: {
+        minEmaSpreadPct: CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT,
+        minRsi: CFG.ETH_IGNITION_QUALITY_MIN_RSI,
+        minFvvo: CFG.ETH_IGNITION_QUALITY_MIN_FVVO,
+        rayPoint: CFG.ETH_IGNITION_QUALITY_REQUIRE_RAY_BULL_POINT ? "RAY_BULL_REQUIRED" : "RAY_NOT_BEAR_REQUIRED",
+      },
+    },
+    checks,
+  };
 }
 
 function ethIgnitionTickEvidence(feature, setup) {
@@ -6999,6 +7034,7 @@ async function evaluateEthIgnitionAutoEntry(feature) {
   if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT) {
     const evidence = ethIgnitionFiveMinuteEvidence(feature);
     if (!evidence.ok) {
+      if (evidence.checks.qualityGateOk === false) log("INFO", "FVVO_ETH_IGNITION_QUALITY_BLOCKED", { quality: evidence.quality, emaSpreadPct: evidence.emaSpreadPct, price: evidence.price, ema8: evidence.ema8, ema18: evidence.ema18, rsi: evidence.rsi, adx: evidence.adx, fvvo: evidence.fvvo, slope: evidence.slope, ray: evidence.ray });
       if (state.ethIgnition.setup) log("INFO", "FVVO_ETH_IGNITION_SETUP_CANCELLED", { setupId: state.ethIgnition.setup.id, reason: "5M_STRUCTURE_INVALIDATED", evidence });
       state.ethIgnition.setup = null;
       return;
@@ -7128,7 +7164,7 @@ async function start() {
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_NEAR_RETEST_RECOVERY_STARTUP", { mode: breakoutNearRetestRecoveryMode(), tolerancePct: CFG.BREAKOUT_NEAR_RETEST_TOLERANCE_PCT, minPullbackFromHighPct: CFG.BREAKOUT_NEAR_RETEST_MIN_PULLBACK_FROM_HIGH_PCT, reclaimPct: CFG.BREAKOUT_NEAR_RETEST_RECLAIM_PCT, minEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MIN_ENTRY_ABOVE_CONFIRM_PCT, minRecoveryOfPullbackPct: CFG.BREAKOUT_NEAR_RETEST_MIN_RECOVERY_OF_PULLBACK_PCT, maxEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MAX_ENTRY_ABOVE_CONFIRM_PCT, minAdx: CFG.BREAKOUT_NEAR_RETEST_MIN_ADX, minFvvo: CFG.BREAKOUT_NEAR_RETEST_MIN_FVVO, minStrongSlope: CFG.BREAKOUT_NEAR_RETEST_MIN_STRONG_SLOPE, maxRsi: CFG.BREAKOUT_NEAR_RETEST_MAX_RSI, maxExtensionFromEma8Pct: CFG.BREAKOUT_NEAR_RETEST_MAX_EXTENSION_FROM_EMA8_PCT, confirmation: "cross_up_or_two_improving_observations", configurationProblems: problems });
   log("INFO", "FVVO_ENTRY_GATE_CONFIRMATION_STARTUP", { confirmationRequired: CFG.ENTRY_GATE_CONFIRM_REQUIRED, confirmationTtlSec: CFG.ENTRY_GATE_CONFIRM_TTL_SEC, historyMaxBars: CFG.ENTRY_GATE_HISTORY_MAX_BARS, timeframes: ["15m", "1H", "4H"], informationOnly: true, noConfirmationMeansNoArm: true });
-  log("INFO", "FVVO_ETH_LONG_HOLD_V1A_DEMO_STARTUP", { automaticIgnitionEntry: CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_AUTO_ORDER_ENABLED, demoAcceptedEntryAssumeFilled: CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED, demoAcceptedExitAutoRelease: CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, autoExitReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, rawTickLogging: CFG.LOG_FEATURE_TICK_ENABLED, fiveMinuteLogging: CFG.LOG_FEATURE_5M_ENABLED, ignitionThresholds: { min5mRsi: CFG.ETH_IGNITION_MIN_5M_RSI, max5mRsi: CFG.ETH_IGNITION_MAX_5M_RSI, min5mAdx: CFG.ETH_IGNITION_MIN_5M_ADX, min5mFvvo: CFG.ETH_IGNITION_MIN_5M_FVVO, min5mSlope: CFG.ETH_IGNITION_MIN_5M_SLOPE, breakoutBufferPct: CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT, maxChasePct: CFG.ETH_IGNITION_MAX_CHASE_PCT, minTickRsi: CFG.ETH_IGNITION_MIN_TICK_RSI, maxTickRsi: CFG.ETH_IGNITION_MAX_TICK_RSI, minTickAdx: CFG.ETH_IGNITION_MIN_TICK_ADX, minTickFvvo: CFG.ETH_IGNITION_MIN_TICK_FVVO, minTickSlope: CFG.ETH_IGNITION_MIN_TICK_SLOPE, confirmObservations: CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS, confirmMinSpanSec: CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC }, highRsiPullbackShadow: CFG.ETH_IGNITION_HIGH_RSI_SHADOW_ENABLED, manualEntryModes: { immediate: CFG.MANUAL_ALLOW_ENTER, breakout: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE === "live", preferred: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.TRAILING_DIP_RECLAIM_ZONE_MODE === "live", deep: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "live" }, automaticReentry: reentryAutoEnabled(), flashCrashEnabled: CFG.LONG_HOLD_FLASH_CRASH_ENABLED, flashCrashWindowSec: CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC, flashCrashDropPct: CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT, initialSlEnabled: CFG.LONG_HOLD_INITIAL_SL_ENABLED, initialSlPct: CFG.LONG_HOLD_INITIAL_SL_PCT, milestoneFloors: CFG.LONG_HOLD_MILESTONE_FLOORS, runnerArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, configurationProblems: problems });
+  log("INFO", "FVVO_ETH_LONG_HOLD_V1B_DEMO_STARTUP", { automaticIgnitionEntry: CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_AUTO_ORDER_ENABLED, demoAcceptedEntryAssumeFilled: CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED, demoAcceptedExitAutoRelease: CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, autoExitReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, rawTickLogging: CFG.LOG_FEATURE_TICK_ENABLED, fiveMinuteLogging: CFG.LOG_FEATURE_5M_ENABLED, ignitionThresholds: { min5mRsi: CFG.ETH_IGNITION_MIN_5M_RSI, max5mRsi: CFG.ETH_IGNITION_MAX_5M_RSI, min5mAdx: CFG.ETH_IGNITION_MIN_5M_ADX, min5mFvvo: CFG.ETH_IGNITION_MIN_5M_FVVO, min5mSlope: CFG.ETH_IGNITION_MIN_5M_SLOPE, qualityGateEnabled: CFG.ETH_IGNITION_QUALITY_GATE_ENABLED, qualityRequiredScore: CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE, qualityMinEmaSpreadPct: CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT, qualityMinRsi: CFG.ETH_IGNITION_QUALITY_MIN_RSI, qualityMinFvvo: CFG.ETH_IGNITION_QUALITY_MIN_FVVO, breakoutBufferPct: CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT, maxChasePct: CFG.ETH_IGNITION_MAX_CHASE_PCT, minTickRsi: CFG.ETH_IGNITION_MIN_TICK_RSI, maxTickRsi: CFG.ETH_IGNITION_MAX_TICK_RSI, minTickAdx: CFG.ETH_IGNITION_MIN_TICK_ADX, minTickFvvo: CFG.ETH_IGNITION_MIN_TICK_FVVO, minTickSlope: CFG.ETH_IGNITION_MIN_TICK_SLOPE, confirmObservations: CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS, confirmMinSpanSec: CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC }, highRsiPullbackShadow: CFG.ETH_IGNITION_HIGH_RSI_SHADOW_ENABLED, manualEntryModes: { immediate: CFG.MANUAL_ALLOW_ENTER, breakout: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE === "live", preferred: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.TRAILING_DIP_RECLAIM_ZONE_MODE === "live", deep: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "live" }, automaticReentry: reentryAutoEnabled(), flashCrashEnabled: CFG.LONG_HOLD_FLASH_CRASH_ENABLED, flashCrashWindowSec: CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC, flashCrashDropPct: CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT, initialSlEnabled: CFG.LONG_HOLD_INITIAL_SL_ENABLED, initialSlPct: CFG.LONG_HOLD_INITIAL_SL_PCT, milestoneFloors: CFG.LONG_HOLD_MILESTONE_FLOORS, runnerArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
 
@@ -7175,7 +7211,7 @@ Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEv
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1a_DEMO_AUTO_RECONCILE_AUDIT"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7230,11 +7266,11 @@ Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEv
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1a_DEMO_AUTO_RECONCILE_AUDIT")
+      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
-      envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1a-demo-state.json")
+      envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1b-demo-state.json")
     );
     // Paper-execution-compatible defaults. Per-symbol prefixed variables can override.
     if (!process.env[`${alias}_EXECUTION_MODE`]) childEnv.EXECUTION_MODE = envStr("EXECUTION_MODE", "demo");

@@ -1,13 +1,14 @@
 {
-  "name": "brainfvvo-eth-longhold-v1a-demo-auto-reconcile-audit",
-  "version": "1.0.0",
+  "name": "brainfvvo-eth-longhold-v1b-demo-optimized-quality-gate",
+  "version": "1.1.0",
   "private": true,
   "description": "ETH long-hold brain with direct, breakout, preferred and deep manual entry paths",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js && node replay_v1a.js replay_fixture.jsonl && node replay_bridge_v1a.js && node replay_ignition_v1a.js && node replay_reconciliation_v1a.js",
-    "replay": "node replay_v1a.js replay_fixture.jsonl"
+    "replay": "node replay_v1a.js replay_fixture.jsonl",
+    "replay:historic": "node replay_historic_v1b.js"
   },
   "engines": {
     "node": ">=20"
