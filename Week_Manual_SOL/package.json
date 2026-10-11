@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-sol-v3n-rayalgo-failsafe-exit-demo",
-  "version": "3.14.0",
-  "description": "BrainFVVO SOL v3n: RayAlgo external setup gate with stricter pullback quality and failsafe exits",
+  "name": "brainfvvo-sol-v3o-anti-chase-micro-floor-demo",
+  "version": "3.15.0",
+  "description": "BrainFVVO SOL v3o: v3n failsafe exits plus anti-chase pullback entry and micro profit floors",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

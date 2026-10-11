@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3n_RAYALGO_FAILSAFE_EXIT_DEMO
+ * BrainFVVO_SOL_v3o_HOTFIX_RAYBEAR_EXIT_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3n_RAYALGO_FAILSAFE_EXIT_DEMO';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3o_HOTFIX_RAYBEAR_EXIT_DEMO';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -49,7 +49,7 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3n-state.json',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3o-state.json',
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
@@ -75,6 +75,13 @@ const cfg = {
   protectiveFloor1LockPct: numEnv('RAY30_PROTECTIVE_FLOOR_1_LOCK_PCT', 0.30),
   protectiveFloor2MfePct: numEnv('RAY30_PROTECTIVE_FLOOR_2_MFE_PCT', 1.80),
   protectiveFloor2LockPct: numEnv('RAY30_PROTECTIVE_FLOOR_2_LOCK_PCT', 0.50),
+
+  // v3o micro floors: protect small wins before the +1% permanent floor.
+  microFloorsEnabled: boolEnv('RAY30_MICRO_FLOORS_ENABLED', true),
+  microFloor1MfePct: numEnv('RAY30_MICRO_FLOOR_1_MFE_PCT', 0.55),
+  microFloor1LockPct: numEnv('RAY30_MICRO_FLOOR_1_LOCK_PCT', 0.10),
+  microFloor2MfePct: numEnv('RAY30_MICRO_FLOOR_2_MFE_PCT', 0.80),
+  microFloor2LockPct: numEnv('RAY30_MICRO_FLOOR_2_LOCK_PCT', 0.25),
 
   runnerEnabled: boolEnv('RAY30_RUNNER_ENABLED', true),
   runnerActivateMfePct: numEnv('RAY30_RUNNER_ACTIVATE_MFE_PCT', 5.00),
@@ -150,6 +157,12 @@ const cfg = {
   fvvoExitOnBurstBearishWithinEntrySec: intEnv('FVVO_EXIT_ON_BURST_BEARISH_WITHIN_ENTRY_SEC', 900),
   fvvoBearishExitOnlyIfProfitBelowPct: numEnv('FVVO_BEARISH_EXIT_ONLY_IF_PROFIT_BELOW_PCT', 0.30),
 
+  // v3o hotfix: external RayAlgo bearish alert can exit an open long when 5m confirms weakness.
+  rayalgoBearExitEnabled: boolEnv('RAYALGO_BEAR_EXIT_ENABLED', true),
+  rayalgoBearExitMaxAgeSec: intEnv('RAYALGO_BEAR_EXIT_MAX_AGE_SEC', 1800),
+  rayalgoBearExitRequire5mConfirm: boolEnv('RAYALGO_BEAR_EXIT_REQUIRE_5M_CONFIRM', true),
+  rayalgoBearExit5mMaxAgeSec: intEnv('RAYALGO_BEAR_EXIT_5M_MAX_AGE_SEC', 420),
+
   // v3n: early failed-entry loss control for 15m test mode.
   ray30EarlyFailExitEnabled: boolEnv('RAY30_EARLY_FAIL_EXIT_ENABLED', true),
   ray30EarlyFailMaxAgeSec: intEnv('RAY30_EARLY_FAIL_MAX_AGE_SEC', 1800),
@@ -178,6 +191,10 @@ const cfg = {
   ray30PullbackEntryEnabled: boolEnv('RAY30_PULLBACK_ENTRY_ENABLED', true),
   ray30PullbackMinDipPct: numEnv('RAY30_PULLBACK_MIN_DIP_PCT', 0.25),
   ray30PullbackMaxDipPct: numEnv('RAY30_PULLBACK_MAX_DIP_PCT', 1.80),
+  // v3o anti-chase: if price is already extended from RayAlgo, require a real dip from local high.
+  ray30PullbackAntiChaseEnabled: boolEnv('RAY30_PULLBACK_ANTI_CHASE_ENABLED', true),
+  ray30PullbackEntryMaxMoveFromRayPct: numEnv('RAY30_PULLBACK_ENTRY_MAX_MOVE_FROM_RAY_PCT', 0.80),
+  ray30PullbackEntryMinDipFromHighPct: numEnv('RAY30_PULLBACK_ENTRY_MIN_DIP_FROM_HIGH_PCT', 0.12),
   ray30Pullback5mMinRsi: numEnv('RAY30_PULLBACK_5M_MIN_RSI', 50),
   ray30Pullback5mMinFvvo: numEnv('RAY30_PULLBACK_5M_MIN_FVVO', 0.00),
   ray30Pullback5mMinSlope: numEnv('RAY30_PULLBACK_5M_MIN_SLOPE', 0.20),
@@ -274,6 +291,9 @@ log('STARTUP', {
     pullback5mMinRsi: cfg.ray30Pullback5mMinRsi,
     pullback5mMinFvvo: cfg.ray30Pullback5mMinFvvo,
     pullback5mMinSlope: cfg.ray30Pullback5mMinSlope,
+    pullbackAntiChaseEnabled: cfg.ray30PullbackAntiChaseEnabled,
+    pullbackEntryMaxMoveFromRayPct: cfg.ray30PullbackEntryMaxMoveFromRayPct,
+    pullbackEntryMinDipFromHighPct: cfg.ray30PullbackEntryMinDipFromHighPct,
     pullbackRequire5mAboveEma18: cfg.ray30PullbackRequire5mAboveEma18,
     pullbackRequire5mEma8AboveEma18: cfg.ray30PullbackRequire5mEma8AboveEma18,
     clearSetupOnExit: cfg.ray30ClearSetupOnExit,
@@ -291,7 +311,11 @@ log('STARTUP', {
     bearishExitGuardEnabled: cfg.fvvoBearishExitGuardEnabled,
     sniperSellWithinEntrySec: cfg.fvvoExitOnSniperSellWithinEntrySec,
     burstBearishWithinEntrySec: cfg.fvvoExitOnBurstBearishWithinEntrySec,
-    bearishExitOnlyIfProfitBelowPct: cfg.fvvoBearishExitOnlyIfProfitBelowPct
+    bearishExitOnlyIfProfitBelowPct: cfg.fvvoBearishExitOnlyIfProfitBelowPct,
+    rayalgoBearExitEnabled: cfg.rayalgoBearExitEnabled,
+    rayalgoBearExitMaxAgeSec: cfg.rayalgoBearExitMaxAgeSec,
+    rayalgoBearExitRequire5mConfirm: cfg.rayalgoBearExitRequire5mConfirm,
+    rayalgoBearExit5mMaxAgeSec: cfg.rayalgoBearExit5mMaxAgeSec
   },
   floorConfig: floorConfigSummary(),
   logConfig: {
@@ -1426,10 +1450,17 @@ function updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk) {
     isFiniteNum(tickOk.fvvo) && tickOk.fvvo >= cfg.ray30Pullback15sMinFvvo &&
     (!isFiniteNum(tickOk.ema18) || price >= tickOk.ema18)
   );
+  const pullbackAntiChaseOk = Boolean(
+    !cfg.ray30PullbackAntiChaseEnabled ||
+    !isFiniteNum(moveFromRayPct) ||
+    moveFromRayPct <= cfg.ray30PullbackEntryMaxMoveFromRayPct ||
+    (isFiniteNum(dipFromHighPct) && dipFromHighPct >= cfg.ray30PullbackEntryMinDipFromHighPct)
+  );
   const pullbackRecoveryReady = Boolean(
     cfg.ray30PullbackEntryEnabled &&
     s.pullbackSeen &&
     dipFromHighPct <= cfg.ray30PullbackMaxDipPct &&
+    pullbackAntiChaseOk &&
     fivePullbackOk &&
     tickPullbackOk
   );
@@ -1462,11 +1493,11 @@ function updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk) {
   if (instantQualifiedReady) reason = 'INSTANT_QUALIFIED_READY';
   else if (pullbackRecoveryReady) reason = 'PULLBACK_RECOVERY_READY';
   else if (breakoutContinuationReady) reason = 'BREAKOUT_CONTINUATION_READY';
-  else if (s.pullbackSeen) reason = !fivePullbackOk ? 'WAIT_PULLBACK_5M_RECOVERY' : (!tickPullbackOk ? 'WAIT_PULLBACK_15S_RECLAIM' : 'WAIT_PULLBACK_RECOVERY');
+  else if (s.pullbackSeen) reason = !pullbackAntiChaseOk ? 'WAIT_PULLBACK_ANTI_CHASE_DIP' : (!fivePullbackOk ? 'WAIT_PULLBACK_5M_RECOVERY' : (!tickPullbackOk ? 'WAIT_PULLBACK_15S_RECLAIM' : 'WAIT_PULLBACK_RECOVERY'));
   else if (moveFromRayPct >= cfg.ray30BreakoutMinMoveFromRayPct) reason = !fiveBreakoutOk ? 'WAIT_BREAKOUT_5M_CONFIRM' : (!tickBreakoutOk ? 'WAIT_BREAKOUT_15S_CONFIRM' : 'WAIT_BREAKOUT_CONFIRM');
   else if (isFiniteNum(rayAgeSec) && rayAgeSec < cfg.ray30SetupNoImmediateEntrySec) reason = 'NO_IMMEDIATE_ENTRY_AFTER_RAYALGO_BULL';
 
-  return summarizeRay30Setup(s, reason, { rayAgeSec, dipFromHighPct, moveFromRayPct, instantSourceOk, instantAgeOk, fiveInstantOk, tickInstantOk, instantQualifiedReady, fivePullbackOk, tickPullbackOk, fiveBreakoutOk, tickBreakoutOk, pullbackRecoveryReady, breakoutContinuationReady });
+  return summarizeRay30Setup(s, reason, { rayAgeSec, dipFromHighPct, moveFromRayPct, pullbackAntiChaseOk, instantSourceOk, instantAgeOk, fiveInstantOk, tickInstantOk, instantQualifiedReady, fivePullbackOk, tickPullbackOk, fiveBreakoutOk, tickBreakoutOk, pullbackRecoveryReady, breakoutContinuationReady });
 }
 
 function summarizeRay30Setup(s, reason, extra) {
@@ -1604,6 +1635,78 @@ function positionEntryAgeSec(p) {
   return Number.isFinite(parsed) ? (Date.now() - parsed) / 1000 : null;
 }
 
+
+function latestExternalRayBearStatus() {
+  const ray = state.latest && state.latest.rayalgoExternal;
+  if (!ray || ray.sourceKind !== 'rayalgo_external') return { ok: false, reason: 'NO_EXTERNAL_RAYALGO_STATE' };
+  const regime = normalizeRaySignalToRegime(ray.signal, ray.regime);
+  if (regime !== 'RAY_BEAR') return { ok: false, reason: 'EXTERNAL_RAYALGO_NOT_BEAR', signal: ray.signal, regime };
+  if (!rayalgoTimeframeAllowed(ray.timeframe)) return { ok: false, reason: 'RAYALGO_BEAR_TIMEFRAME_NOT_ALLOWED', timeframe: ray.timeframe };
+  const ageSec = isFiniteNum(ray.atMs) ? (Date.now() - ray.atMs) / 1000 : null;
+  if (!isFiniteNum(ageSec) || ageSec > cfg.rayalgoBearExitMaxAgeSec) {
+    return { ok: false, reason: 'RAYALGO_BEAR_STALE', signal: ray.signal, regime, ageSec: roundOrNull(ageSec), maxAgeSec: cfg.rayalgoBearExitMaxAgeSec };
+  }
+  return { ok: true, ray, signal: ray.signal, regime, ageSec: roundOrNull(ageSec), timeframe: ray.timeframe, price: ray.price };
+}
+
+function rayalgoBearExit5mConfirmation(price) {
+  const f = state.latest && state.latest.feature5m;
+  if (!f || !f.raw || !f.atMs) return { ok: false, reason: 'MISSING_5M_CONFIRMATION' };
+  const ageSec = (Date.now() - f.atMs) / 1000;
+  if (!isFiniteNum(ageSec) || ageSec > cfg.rayalgoBearExit5mMaxAgeSec) {
+    return { ok: false, reason: 'STALE_5M_CONFIRMATION', ageSec: roundOrNull(ageSec), maxAgeSec: cfg.rayalgoBearExit5mMaxAgeSec };
+  }
+  const raw = f.raw || {};
+  const fPrice = isFiniteNum(price) ? price : f.price;
+  const rsi = numVal(raw.rsi, null);
+  const fvvo = numVal(raw.fvvo ?? raw.fvvoValue, null);
+  const slope = numVal(raw.slope ?? raw.fvvoSlope, null);
+  const ema8 = numVal(raw.ema8 ?? raw.ema_8, null);
+  const ema18 = numVal(raw.ema18 ?? raw.ema_18, null);
+  const rayRegime = normalizeRaySignalToRegime(raw.rayRegime || raw.ray_regime || raw.regime || raw.signal, raw.rayRegime || raw.ray_regime);
+  const weakness = [];
+  if (isFiniteNum(rsi) && rsi < 50) weakness.push('5M_RSI_BELOW_50');
+  if (isFiniteNum(fvvo) && fvvo < 0) weakness.push('5M_FVVO_NEGATIVE');
+  if (isFiniteNum(slope) && slope < 0) weakness.push('5M_SLOPE_NEGATIVE');
+  if (isFiniteNum(fPrice) && isFiniteNum(ema18) && fPrice < ema18) weakness.push('5M_PRICE_BELOW_EMA18');
+  if (isFiniteNum(ema8) && isFiniteNum(ema18) && ema8 < ema18) weakness.push('5M_EMA8_BELOW_EMA18');
+  if (rayRegime === 'RAY_BEAR') weakness.push('5M_RAY_BEAR');
+  return {
+    ok: weakness.length > 0,
+    reason: weakness.length > 0 ? '5M_BEAR_CONFIRMATION_OK' : '5M_NO_BEAR_CONFIRMATION',
+    weakness,
+    ageSec: roundOrNull(ageSec),
+    price: fPrice,
+    rsi: roundOrNull(rsi),
+    fvvo: roundOrNull(fvvo),
+    slope: roundOrNull(slope),
+    ema8: roundOrNull(ema8),
+    ema18: roundOrNull(ema18),
+    rayRegime
+  };
+}
+
+function rayalgoBearExitStatus(p, price, profitPct) {
+  if (!cfg.rayalgoBearExitEnabled || !p || !p.inPosition) {
+    return { exit: false, reason: 'RAYALGO_BEAR_EXIT_DISABLED_OR_FLAT' };
+  }
+  const bear = latestExternalRayBearStatus();
+  if (!bear.ok) return { exit: false, ...bear };
+  const confirm = cfg.rayalgoBearExitRequire5mConfirm ? rayalgoBearExit5mConfirmation(price) : { ok: true, reason: '5M_CONFIRMATION_NOT_REQUIRED', weakness: [] };
+  if (!confirm.ok) return { exit: false, reason: 'RAYALGO_BEAR_WAIT_5M_CONFIRMATION', ray: bear, confirm };
+  return {
+    exit: true,
+    reason: `RAYALGO_BEAR_EXIT_${String(bear.signal || 'RAY_BEAR').toUpperCase()}`,
+    signal: bear.signal,
+    regime: bear.regime,
+    timeframe: bear.timeframe,
+    rayAgeSec: bear.ageSec,
+    rayPrice: bear.price,
+    profitPct: roundOrNull(profitPct),
+    confirm
+  };
+}
+
 function fvvoBearishExitGuardStatus(p, profitPct) {
   if (!cfg.fvvoBearishExitGuardEnabled || !p || !p.inPosition) {
     return { exit: false, reason: 'FVVO_BEARISH_EXIT_GUARD_DISABLED' };
@@ -1684,6 +1787,14 @@ async function evaluatePositionExit(price, source) {
     return { type: 'exit', reason, out };
   }
 
+  const rayBearGuard = rayalgoBearExitStatus(p, price, profitPct);
+  if (rayBearGuard && rayBearGuard.exit) {
+    const reason = rayBearGuard.reason;
+    log('RAYALGO_BEAR_THESIS_EXIT', { price, source, profitPct: round(profitPct), ...rayBearGuard });
+    const out = await exitLong({ price, reason });
+    return { type: 'exit', reason, out, guard: rayBearGuard };
+  }
+
   const bearishGuard = fvvoBearishExitGuardStatus(p, profitPct);
   if (bearishGuard && bearishGuard.exit) {
     const reason = bearishGuard.reason;
@@ -1708,7 +1819,8 @@ async function evaluatePositionExit(price, source) {
     return { type: 'exit', reason, out };
   }
 
-  if (isFiniteNum(p.activeFloorLockPct) && profitPct <= p.activeFloorLockPct && p.mfePct >= cfg.floor1MfePct) {
+  const floorExitMinMfe = floorExitMinMfePct(p.activeFloorSource);
+  if (isFiniteNum(p.activeFloorLockPct) && profitPct <= p.activeFloorLockPct && p.mfePct >= floorExitMinMfe) {
     const roundedLock = round(p.activeFloorLockPct);
     const sourceName = floorReasonSource(p.activeFloorSource);
     const reason = `RAY30_${sourceName}_FLOOR_LOCK_${roundedLock}PCT`;
@@ -2559,21 +2671,31 @@ function recentDropPct(currentPrice) {
 }
 
 function floorUpgradeLabel(source) {
+  if (source === 'micro') return 'FVVO_MICRO_FLOOR_LOCK_UPGRADED';
   if (source === 'progressive') return 'FVVO_PROGRESSIVE_FLOOR_LOCK_UPGRADED';
   if (source === 'protective') return 'FVVO_PROTECTIVE_FLOOR_LOCK_UPGRADED';
   return 'FVVO_PERMANENT_FLOOR_LOCK_UPGRADED';
 }
 
 function floorExitLabel(source) {
+  if (source === 'micro') return 'FVVO_MICRO_FLOOR_EXIT';
   if (source === 'progressive') return 'FVVO_PROGRESSIVE_FLOOR_EXIT';
   if (source === 'protective') return 'FVVO_PROTECTIVE_FLOOR_EXIT';
   return 'FVVO_PERMANENT_FLOOR_EXIT';
 }
 
 function floorReasonSource(source) {
+  if (source === 'micro') return 'MICRO';
   if (source === 'progressive') return 'PROGRESSIVE';
   if (source === 'protective') return 'PROTECTIVE';
   return 'PERMANENT';
+}
+
+function floorExitMinMfePct(source) {
+  if (source === 'micro') return cfg.microFloor1MfePct;
+  if (source === 'protective') return cfg.protectiveFloor1MfePct;
+  if (source === 'progressive') return cfg.progressiveStartMfePct;
+  return cfg.floor1MfePct;
 }
 
 function activeFloorLock(mfePct) {
@@ -2590,6 +2712,15 @@ function fixedFloorLock(mfePct) {
   return lock;
 }
 
+function microFloorLock(mfePct) {
+  if (!cfg.permanentFloorsEnabled || !cfg.microFloorsEnabled) return null;
+  if (!isFiniteNum(mfePct)) return null;
+  let lock = null;
+  if (mfePct >= cfg.microFloor1MfePct) lock = cfg.microFloor1LockPct;
+  if (mfePct >= cfg.microFloor2MfePct) lock = cfg.microFloor2LockPct;
+  return lock;
+}
+
 function protectiveFloorLock(mfePct) {
   if (!cfg.permanentFloorsEnabled || !cfg.protectiveFloorsEnabled) return null;
   if (!isFiniteNum(mfePct)) return null;
@@ -2601,13 +2732,15 @@ function protectiveFloorLock(mfePct) {
 
 function activeFloorResult(mfePct, currentLockPct) {
   const fixedLock = fixedFloorLock(mfePct);
+  const microLock = microFloorLock(mfePct);
   const protectiveLock = protectiveFloorLock(mfePct);
   const progressive = progressiveFloorLock(mfePct);
   const candidates = [];
   if (isFiniteNum(fixedLock)) candidates.push({ source: 'fixed', lock: fixedLock });
+  if (isFiniteNum(microLock)) candidates.push({ source: 'micro', lock: microLock });
   if (isFiniteNum(protectiveLock)) candidates.push({ source: 'protective', lock: protectiveLock });
   if (progressive && isFiniteNum(progressive.lock)) candidates.push({ ...progressive, source: 'progressive' });
-  if (!candidates.length) return { lock: null, fixedLock, dynamicLock: null, source: null, band: null };
+  if (!candidates.length) return { lock: null, fixedLock, microLock, dynamicLock: null, source: null, band: null };
 
   const best = candidates.reduce((a, b) => (b.lock > a.lock ? b : a));
   let lock = best.lock;
@@ -2616,6 +2749,7 @@ function activeFloorResult(mfePct, currentLockPct) {
   return {
     lock,
     fixedLock,
+    microLock,
     protectiveLock,
     dynamicLock: progressive ? progressive.lock : null,
     allowedPullbackPct: progressive ? progressive.allowedPullbackPct : null,
@@ -2663,6 +2797,13 @@ function floorConfigSummary() {
       { mfePct: cfg.floor3MfePct, lockPct: cfg.floor3LockPct },
       { mfePct: cfg.floor4MfePct, lockPct: cfg.floor4LockPct }
     ],
+    micro: {
+      enabled: cfg.microFloorsEnabled,
+      floors: [
+        { mfePct: cfg.microFloor1MfePct, lockPct: cfg.microFloor1LockPct },
+        { mfePct: cfg.microFloor2MfePct, lockPct: cfg.microFloor2LockPct }
+      ]
+    },
     protective: {
       enabled: cfg.protectiveFloorsEnabled,
       floors: [
