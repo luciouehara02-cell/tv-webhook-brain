@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE
+// BrainFVVO_ETH_LongHold_v1c_DEMO_SETUP_REFRESH_LOG_HOTFIX
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1c_DEMO_SETUP_REFRESH_LOG_HOTFIX"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:ETHUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -157,7 +157,7 @@ const CFG = {
   DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED: envBool("DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED", true),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1b-demo-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1c-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -520,7 +520,7 @@ const CFG = {
   LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS", 2))),
   LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC", 8)),
   LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT", 0.10)),
-  // ETH v1b DEMO entry: closed 5m trend ignition, balanced quality score, then fast confirmation.
+  // ETH v1c DEMO entry: v1b thresholds plus stable setup refresh and compact block logging.
   ETH_IGNITION_AUTO_ENTRY_ENABLED: envBool("ETH_IGNITION_AUTO_ENTRY_ENABLED", true),
   ETH_IGNITION_AUTO_ORDER_ENABLED: envBool("ETH_IGNITION_AUTO_ORDER_ENABLED", true),
   ETH_IGNITION_REQUIRE_DEMO: envBool("ETH_IGNITION_REQUIRE_DEMO", true),
@@ -536,6 +536,11 @@ const CFG = {
   ETH_IGNITION_QUALITY_MIN_RSI: envNum("ETH_IGNITION_QUALITY_MIN_RSI", 55),
   ETH_IGNITION_QUALITY_MIN_FVVO: envNum("ETH_IGNITION_QUALITY_MIN_FVVO", 0.50),
   ETH_IGNITION_QUALITY_REQUIRE_RAY_BULL_POINT: envBool("ETH_IGNITION_QUALITY_REQUIRE_RAY_BULL_POINT", true),
+  ETH_IGNITION_QUALITY_BLOCK_LOG_MODE: envStr("ETH_IGNITION_QUALITY_BLOCK_LOG_MODE", "reason_change").toLowerCase(),
+  ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC: Math.max(300, envNum("ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC", 3600)),
+  ETH_IGNITION_SETUP_REFRESH_ENABLED: envBool("ETH_IGNITION_SETUP_REFRESH_ENABLED", true),
+  ETH_IGNITION_SETUP_REFRESH_EXTEND_EXPIRY: envBool("ETH_IGNITION_SETUP_REFRESH_EXTEND_EXPIRY", true),
+  ETH_IGNITION_SETUP_REFRESH_LOG_DURING_CONFIRMATION: envBool("ETH_IGNITION_SETUP_REFRESH_LOG_DURING_CONFIRMATION", true),
   ETH_IGNITION_BREAKOUT_BUFFER_PCT: envNum("ETH_IGNITION_BREAKOUT_BUFFER_PCT", 0.04),
   ETH_IGNITION_MAX_CHASE_PCT: envNum("ETH_IGNITION_MAX_CHASE_PCT", 0.35),
   ETH_IGNITION_MIN_TICK_RSI: envNum("ETH_IGNITION_MIN_TICK_RSI", 55),
@@ -921,13 +926,14 @@ function logMarker(level, event, fields = {}) {
 }
 
 function log(level, event, fields = {}) {
+  if (event === "FVVO_ETH_LONG_HOLD_V1B_DEMO_STARTUP" && CFG.BRAIN_NAME.includes("LongHold_v1c")) event = "FVVO_ETH_LONG_HOLD_V1C_DEMO_STARTUP";
   const marker = CFG.FVVO_LOG_UNICODE_MARKERS_ENABLED ? logMarker(level, event, fields) : "";
   console.log(`${nowIso()}${marker ? ` ${marker}` : ""} ${event} | ${JSON.stringify({ brain: CFG.BRAIN_NAME, ...fields })}`);
 }
 
 function defaultState() {
   return {
-    schemaVersion: 19,
+    schemaVersion: 20,
     updatedAt: nowIso(),
     lastFeature: null,
     lastFeature5m: null,
@@ -937,7 +943,7 @@ function defaultState() {
     manual: { handoffActive: false, recoveryRequired: false, recoveryReason: "", lastAction: "", lastActionAt: "", entryConfirmation: null, entryGatePreview: null },
     forward: { lastByKey: {}, lastRequestId: "" },
     reentry: { campaign: null, recentTickPrices: [] },
-    ethIgnition: { setup: null, last: null },
+    ethIgnition: { setup: null, last: null, qualityBlockAudit: { total: 0, lastSignature: "", lastLoggedAtMs: 0, lastAt: "" } },
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
     priceEntry: { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null },
@@ -949,14 +955,15 @@ function normalizeState(raw) {
   const fallback = defaultState();
   if (!raw || typeof raw !== "object") return fallback;
   const next = { ...fallback, ...raw };
-  // v1h schema migration marker: preserve compatible fields but always persist the current schema.
-  next.schemaVersion = 19;
+  // v1c schema migration marker: preserve compatible fields but always persist the current schema.
+  next.schemaVersion = 20;
   next.forward = { ...fallback.forward, ...(raw.forward || {}) };
   next.manual = { ...fallback.manual, ...(raw.manual || {}) };
   if (next.manual.entryConfirmation && typeof next.manual.entryConfirmation !== "object") next.manual.entryConfirmation = null;
   next.externalDealLock = { ...fallback.externalDealLock, ...(raw.externalDealLock || {}) };
   next.reentry = { ...fallback.reentry, ...(raw.reentry || {}) };
   next.ethIgnition = { ...fallback.ethIgnition, ...(raw.ethIgnition || {}) };
+  next.ethIgnition.qualityBlockAudit = { ...fallback.ethIgnition.qualityBlockAudit, ...(next.ethIgnition.qualityBlockAudit || {}) };
   next.reentry.recentTickPrices = Array.isArray(next.reentry.recentTickPrices) ? next.reentry.recentTickPrices.slice(-12) : [];
   next.autoExitRelease = { ...fallback.autoExitRelease, ...(raw.autoExitRelease || {}) };
   next.autoExitRelease.active = Boolean(next.autoExitRelease.active);
@@ -1197,6 +1204,7 @@ function configProblems() {
   if (CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT < CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT < 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_LONG_HOLD_PRE_ARM_BRIDGE_CONFIG");
   if (CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_REQUIRE_DEMO && !demoMode()) problems.push("ETH_IGNITION_AUTO_ENTRY_REQUIRES_DEMO_MODE");
   if (CFG.ETH_IGNITION_MIN_5M_RSI >= CFG.ETH_IGNITION_MAX_5M_RSI || CFG.ETH_IGNITION_MIN_TICK_RSI >= CFG.ETH_IGNITION_MAX_TICK_RSI || CFG.ETH_IGNITION_SETUP_MAX_AGE_SEC <= 0 || CFG.ETH_IGNITION_MAX_CHASE_PCT <= CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT || CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS < 1 || CFG.ETH_IGNITION_STOP_PCT <= 0 || CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE < 1 || CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE > 4 || CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT < 0) problems.push("INVALID_ETH_IGNITION_AUTO_ENTRY_CONFIG");
+  if (!["off", "reason_change", "all"].includes(CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_MODE) || CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC < 300) problems.push("INVALID_ETH_IGNITION_COMPACT_LOG_CONFIG");
   if (CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS < 3 || CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS < 1 || CFG.PROFIT_FLOOR_MICRO_SHADOW_REQUIRED_BELOW_TICKS > CFG.PROFIT_FLOOR_MICRO_SHADOW_WINDOW_TICKS || CFG.PROFIT_FLOOR_MICRO_SHADOW_MAX_SEC <= 0 || CFG.PROFIT_FLOOR_MICRO_SHADOW_HARD_BREAK_BUFFER_PCT < 0 || CFG.PROFIT_FLOOR_MICRO_SHADOW_RECOVERY_OBSERVATIONS < 1) problems.push("INVALID_PROFIT_FLOOR_MICRO_SHADOW_CONFIG");
   if (CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_WINDOW_SEC <= 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_CONFIRM_OBSERVATIONS < 1 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT < 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MAX_RECOVERY_PCT < CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_PERFORMANCE_SEC <= 0) problems.push("INVALID_PROFIT_FLOOR_POST_EXIT_RECLAIM_SHADOW_CONFIG");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
@@ -1733,7 +1741,7 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE",
+    buildVersion: "ETH_LongHold_v1c_DEMO_SETUP_REFRESH_LOG_HOTFIX",
     executionReconciliation: { automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, source: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL" : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
     brain: CFG.BRAIN_NAME,
@@ -6950,8 +6958,10 @@ function ethIgnitionFiveMinuteEvidence(feature) {
     rayOk: !ray.startsWith("RAY_BEAR"),
     qualityGateOk,
   };
+  const mandatoryChecks = Object.fromEntries(Object.entries(checks).filter(([key]) => key !== "qualityGateOk"));
+  const mandatoryOk = Object.values(mandatoryChecks).every(Boolean);
   return {
-    ok: Object.values(checks).every(Boolean), price, ema8, ema18, rsi, adx, fvvo, slope, ray,
+    ok: mandatoryOk && qualityGateOk, mandatoryOk, mandatoryChecks, price, ema8, ema18, rsi, adx, fvvo, slope, ray,
     emaSpreadPct: emaSpreadPct === null ? null : round(emaSpreadPct, 6),
     quality: {
       enabled: CFG.ETH_IGNITION_QUALITY_GATE_ENABLED,
@@ -6968,6 +6978,26 @@ function ethIgnitionFiveMinuteEvidence(feature) {
     },
     checks,
   };
+}
+
+function ethIgnitionQualityBlockSignature(evidence) {
+  return Object.entries(evidence?.quality?.checks || {}).filter(([, passed]) => !passed).map(([key]) => key).sort().join(",") || "none";
+}
+
+function shouldLogEthIgnitionQualityBlock(evidence) {
+  if (!evidence?.mandatoryOk || evidence?.checks?.qualityGateOk !== false) return false;
+  const audit = state.ethIgnition.qualityBlockAudit || (state.ethIgnition.qualityBlockAudit = { total: 0, lastSignature: "", lastLoggedAtMs: 0, lastAt: "" });
+  audit.total = Math.max(0, Math.floor(finite(audit.total, 0))) + 1;
+  audit.lastAt = nowIso();
+  const signature = ethIgnitionQualityBlockSignature(evidence);
+  const elapsedSec = (nowMs() - finite(audit.lastLoggedAtMs, 0)) / 1000;
+  const mode = CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_MODE;
+  const shouldLog = mode === "all" || (mode !== "off" && (signature !== audit.lastSignature || elapsedSec >= CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC));
+  if (shouldLog) {
+    audit.lastSignature = signature;
+    audit.lastLoggedAtMs = nowMs();
+  }
+  return shouldLog;
 }
 
 function ethIgnitionTickEvidence(feature, setup) {
@@ -7034,18 +7064,31 @@ async function evaluateEthIgnitionAutoEntry(feature) {
   if (feature.kind === CFG.FVVO_FEATURE_5M_EVENT) {
     const evidence = ethIgnitionFiveMinuteEvidence(feature);
     if (!evidence.ok) {
-      if (evidence.checks.qualityGateOk === false) log("INFO", "FVVO_ETH_IGNITION_QUALITY_BLOCKED", { quality: evidence.quality, emaSpreadPct: evidence.emaSpreadPct, price: evidence.price, ema8: evidence.ema8, ema18: evidence.ema18, rsi: evidence.rsi, adx: evidence.adx, fvvo: evidence.fvvo, slope: evidence.slope, ray: evidence.ray });
+      if (shouldLogEthIgnitionQualityBlock(evidence)) log("INFO", "FVVO_ETH_IGNITION_QUALITY_BLOCKED", { reason: "MANDATORY_GATE_PASSED_QUALITY_SCORE_FAILED", quality: evidence.quality, qualityBlockTotal: state.ethIgnition.qualityBlockAudit.total, emaSpreadPct: evidence.emaSpreadPct, price: evidence.price, ema8: evidence.ema8, ema18: evidence.ema18, rsi: evidence.rsi, adx: evidence.adx, fvvo: evidence.fvvo, slope: evidence.slope, ray: evidence.ray });
       if (state.ethIgnition.setup) log("INFO", "FVVO_ETH_IGNITION_SETUP_CANCELLED", { setupId: state.ethIgnition.setup.id, reason: "5M_STRUCTURE_INVALIDATED", evidence });
       state.ethIgnition.setup = null;
       return;
     }
     const basePrice = evidence.price;
+    const existing = state.ethIgnition.setup;
+    if (CFG.ETH_IGNITION_SETUP_REFRESH_ENABLED && existing) {
+      existing.lastRefreshAtMs = nowMs();
+      existing.lastRefreshAt = nowIso();
+      existing.refreshCount = Math.max(0, Math.floor(finite(existing.refreshCount, 0))) + 1;
+      existing.latestFiveMinuteEvidence = evidence;
+      if (CFG.ETH_IGNITION_SETUP_REFRESH_EXTEND_EXPIRY) existing.expiresAtMs = nowMs() + CFG.ETH_IGNITION_SETUP_MAX_AGE_SEC * 1000;
+      await persistState("eth_ignition_setup_refreshed");
+      if (CFG.ETH_IGNITION_SETUP_REFRESH_LOG_DURING_CONFIRMATION && Math.max(0, Math.floor(finite(existing.observations, 0))) > 0) {
+        log("INFO", "FVVO_ETH_IGNITION_SETUP_REFRESHED", { setupId: existing.id, refreshCount: existing.refreshCount, preservedBasePrice: existing.basePrice, preservedTriggerPrice: existing.triggerPrice, observationsPreserved: existing.observations, firstConfirmAtMsPreserved: existing.firstConfirmAtMs, expiresAt: new Date(existing.expiresAtMs).toISOString(), latestFiveMinuteEvidence: evidence });
+      }
+      return;
+    }
     state.ethIgnition.setup = {
       id: crypto.randomUUID(), armedAtMs: nowMs(), armedAt: nowIso(),
       expiresAtMs: nowMs() + CFG.ETH_IGNITION_SETUP_MAX_AGE_SEC * 1000,
       basePrice: round(basePrice, 8),
       triggerPrice: round(basePrice * (1 + CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT / 100), 8),
-      observations: 0, firstConfirmAtMs: 0, evidence,
+      observations: 0, firstConfirmAtMs: 0, refreshCount: 0, lastRefreshAtMs: 0, lastRefreshAt: "", evidence, latestFiveMinuteEvidence: evidence,
     };
     await persistState("eth_ignition_setup_armed");
     log("INFO", "FVVO_ETH_IGNITION_SETUP_ARMED", { setupId: state.ethIgnition.setup.id, basePrice: state.ethIgnition.setup.basePrice, triggerPrice: state.ethIgnition.setup.triggerPrice, expiresAt: new Date(state.ethIgnition.setup.expiresAtMs).toISOString(), evidence });
@@ -7211,7 +7254,7 @@ Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEv
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1c_DEMO_SETUP_REFRESH_LOG_HOTFIX"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7266,11 +7309,11 @@ Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEv
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1b_DEMO_OPTIMIZED_QUALITY_GATE")
+      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1c_DEMO_SETUP_REFRESH_LOG_HOTFIX")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
-      envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1b-demo-state.json")
+      envStr("STATE_FILE_NAME", "brainfvvo-eth-longhold-v1c-demo-state.json")
     );
     // Paper-execution-compatible defaults. Per-symbol prefixed variables can override.
     if (!process.env[`${alias}_EXECUTION_MODE`]) childEnv.EXECUTION_MODE = envStr("EXECUTION_MODE", "demo");
