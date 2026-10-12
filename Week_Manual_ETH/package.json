@@ -1,14 +1,15 @@
 {
-  "name": "brainfvvo-eth-longhold-v1c-demo-setup-refresh-log-hotfix",
-  "version": "1.2.0",
+  "name": "brainfvvo-eth-longhold-v1d-demo-fresh-ignition-guards",
+  "version": "1.3.0",
   "private": true,
   "description": "ETH long-hold brain with direct, breakout, preferred and deep manual entry paths",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v1a.js replay_fixture.jsonl && node replay_bridge_v1a.js && node replay_ignition_v1a.js && node replay_reconciliation_v1a.js",
+    "check": "node --check server.js && node replay_v1a.js replay_fixture.jsonl ../v1c_base/server.js && node replay_bridge_v1a.js && node replay_ignition_v1a.js && node replay_reconciliation_v1a.js && node replay_oct12_v1d_guards.js",
     "replay": "node replay_v1a.js replay_fixture.jsonl",
-    "replay:historic": "node replay_historic_v1c.js"
+    "replay:historic": "node replay_historic_v1c.js",
+    "replay:oct12": "node replay_oct12_v1d_guards.js"
   },
   "engines": {
     "node": ">=20"
