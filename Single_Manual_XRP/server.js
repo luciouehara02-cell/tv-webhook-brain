@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v2b_ENTRY_GATE_CONFIRM_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v2c_ENTRY_RECOVERY_AB_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -5427,6 +5427,9 @@ async function cancelPriceEntry(body) {
 }
 
 
+const recoveryFilter = require('./entryRecoveryFilter').createRecoveryFilter(process.env.ENTRY_RECOVERY_FILTER_MODE || 'B');
+log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "XRP_v2c_RECOVERY_AB", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
+
 async function enterFromPriceTrigger(pending, feature, modeReason) {
   const pe = ensurePriceEntryState();
   const current = nowMs();
@@ -5438,6 +5441,10 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
     if (cancelled.entryCampaign) log("WARN", "FVVO_CAMPAIGN_ENTRY_SETUP_CANCELLED", { entryCampaign: cancelled.entryCampaign, entryRole: cancelled.entryRole, triggerId: cancelled.id, reason: checked.error });
     return;
   }
+
+  const recovery = recoveryFilter.check(pending, feature, current, modeReason);
+  if (recovery.reason !== 'BYPASS') log("INFO", "FVVO_ENTRY_RECOVERY_FILTER", { triggerId: pending.id, entryRole: pending.entryRole, price: feature.price, ...recovery });
+  if (!recovery.ok) return;
 
   // Select and persist one winner before any HTTP forward. All other armed alternatives are
   // resolved locally first, preserving the one-symbol/one-deal contract even on same-tick races.
@@ -5953,6 +5960,14 @@ async function evaluateHybridPullbackReclaimZone(pending, previousPrice, feature
     if (t.fallback5mObservations >= CFG.HYBRID_PULLBACK_FALLBACK_5M_CONFIRM_OBSERVATIONS && fallbackExecutionInsideCap) {
       await completeHybridPullbackCandidate(pending, feature, "5M_FALLBACK", fallback); return;
     }
+  }
+
+  // A qualified 5m fallback must remain eligible for tick confirmation after its bar.
+  // Recheck its current evidence and original cap; do not manufacture another 5m vote.
+  if (recoveryFilter.mode !== "OFF" && fallback.qualifies &&
+      t.fallback5mObservations >= CFG.HYBRID_PULLBACK_FALLBACK_5M_CONFIRM_OBSERVATIONS &&
+      feature.price <= confirmPrice * (1 + CFG.HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT / 100) + 1e-9) {
+    await completeHybridPullbackCandidate(pending, feature, "5M_FALLBACK", fallback); return;
   }
 
   const reboundPct = percentPnl(low, feature.price);
@@ -6495,6 +6510,8 @@ async function evaluatePriceTriggerEntry(feature) {
     });
     if (!pendings.length) return;
     const current = nowMs();
+    recoveryFilter.begin();
+    try {
     for (const pending of pendings) {
       if (!pending || state.position) break;
       const expiresAtMs = finite(pending.expiresAtMs, 0);
@@ -6550,6 +6567,7 @@ async function evaluatePriceTriggerEntry(feature) {
       await enterFromPriceTrigger(pending, feature, "PRICE_CROSS_CONFIRMED");
       break;
     }
+    } finally { recoveryFilter.end(activePriceEntryItems(), feature); }
   };
   const task = priceEntryEvaluationQueue.then(run, run);
   priceEntryEvaluationQueue = task.catch(() => {});
@@ -6773,7 +6791,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v2b_ENTRY_GATE_CONFIRM_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v2c_ENTRY_RECOVERY_AB_LIVE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6828,7 +6846,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v2b_ENTRY_GATE_CONFIRM_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v2c_ENTRY_RECOVERY_AB_LIVE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,

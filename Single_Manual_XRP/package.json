@@ -1,13 +1,12 @@
 {
-  "name": "brainfvvo-swing-xrp-v2b-entry-gate-confirm-live",
+  "name": "brainfvvo-swing-xrp-v2c-entry-recovery-ab",
   "version": "1.0.0",
   "private": true,
-  "description": "Standalone XRP v2b with role-aware advisory entry gate and mandatory user confirmation",
+  "description": "XRP selectable A/B tick entry recovery filter",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check entryGate.js && node validate_entry_gate_confirmation.js && node validate_xrp_v1y_full_config.js && node validate_xrp_v1w_deep_reclaim.js && node validate_xrp_v1v_coordinated_bear_guard.js && node validate_xrp_v1u_trailing_campaign.js && node validate_xrp_v1t_mode_protection.js && node validate_xrp_v1p.js && node validate_xrp_v1q_breakout_continuation.js && node validate_xrp_v1r_fast_reclaim.js && node validate_xrp_v1s_failed_breakout.js && node validate_reentry_reliability_v1z.js && node validate_xrp_v2a_near_retest.js",
-    "replay": "node replay_xrp_v2a_near_retest.js ../upload/Single_Manual_XRP_Sep15A.log"
+    "check": "node --check server.js && node --check entryGate.js && node --check entryRecoveryFilter.js"
   },
   "engines": {
     "node": ">=20"
