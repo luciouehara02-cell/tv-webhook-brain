@@ -5,7 +5,7 @@ function createRecoveryFilter(mode) {
   if(!['OFF','A','B'].includes(mode)) throw Error('ENTRY_RECOVERY_FILTER_MODE must be off, A or B');
   const states=new Map(); let token=0;
   const applies=p=>['trailing_dip_reclaim','trailing_dip_reclaim_zone','confirmed_pullback_reclaim_zone','hybrid_pullback_reclaim_zone','breakout_retest_reclaim_zone'].includes(p.triggerMode);
-  return { mode, begin(){token++;}, end(pendings,feature){
+  return { mode, reset(id){states.delete(id);}, begin(){token++;}, end(pendings,feature){
     if(feature.kind!=='FEATURE_TICK_FVVO')return;
     const active=new Set(pendings.map(p=>p.id));
     for(const [id,s] of states)if(!active.has(id)||s.token!==token)states.delete(id);
