@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-sol-v3o-anti-chase-micro-floor-demo",
-  "version": "3.15.0",
-  "description": "BrainFVVO SOL v3o: v3n failsafe exits plus anti-chase pullback entry and micro profit floors",
+  "name": "brainfvvo-sol-v3p-early-turn-longhold-demo",
+  "version": "3.16.0",
+  "description": "BrainFVVO SOL v3p DEMO: confirmed 5m/15s early-turn probation, 30m RayAlgo promotion, original longhold profit floors",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

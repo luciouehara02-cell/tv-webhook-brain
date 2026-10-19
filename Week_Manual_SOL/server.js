@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3o_HOTFIX_RAYBEAR_EXIT_DEMO
+ * BrainFVVO_SOL_v3p_EARLY_TURN_LONGHOLD_DEMO
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3o_HOTFIX_RAYBEAR_EXIT_DEMO';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3p_EARLY_TURN_LONGHOLD_DEMO';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -49,7 +49,7 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || '',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
-  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3o-state.json',
+  stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3p-state.json',
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
@@ -77,7 +77,7 @@ const cfg = {
   protectiveFloor2LockPct: numEnv('RAY30_PROTECTIVE_FLOOR_2_LOCK_PCT', 0.50),
 
   // v3o micro floors: protect small wins before the +1% permanent floor.
-  microFloorsEnabled: boolEnv('RAY30_MICRO_FLOORS_ENABLED', true),
+  microFloorsEnabled: boolEnv('RAY30_MICRO_FLOORS_ENABLED', false),
   microFloor1MfePct: numEnv('RAY30_MICRO_FLOOR_1_MFE_PCT', 0.55),
   microFloor1LockPct: numEnv('RAY30_MICRO_FLOOR_1_LOCK_PCT', 0.10),
   microFloor2MfePct: numEnv('RAY30_MICRO_FLOOR_2_MFE_PCT', 0.80),
@@ -102,6 +102,34 @@ const cfg = {
   progressiveBand5MinPullbackPct: numEnv('RAY30_PROGRESSIVE_BAND_5_MIN_PULLBACK_PCT', 0.05),
   progressiveBand6MaxPullbackPct: numEnv('RAY30_PROGRESSIVE_BAND_6_MAX_PULLBACK_PCT', 0.40),
   progressiveBand6MinPullbackPct: numEnv('RAY30_PROGRESSIVE_BAND_6_MIN_PULLBACK_PCT', 0.05),
+
+  // v3p: controlled, DEMO-only pre-RayAlgo reversal entry. No new TradingView alerts needed.
+  earlyTurnEnabled: boolEnv('EARLY_TURN_ENABLED', true),
+  earlyTurnSendOrder: boolEnv('EARLY_TURN_SEND_ORDER', true),
+  earlyTurnMinRsi5m: numEnv('EARLY_TURN_MIN_RSI_5M', 50),
+  earlyTurnMaxRsi5m: numEnv('EARLY_TURN_MAX_RSI_5M', 65),
+  earlyTurnMinFvvo5m: numEnv('EARLY_TURN_MIN_FVVO_5M', 0.5),
+  earlyTurnMinSlope5m: numEnv('EARLY_TURN_MIN_SLOPE_5M', 0.20),
+  earlyTurnMinRiseFromLowPct: numEnv('EARLY_TURN_MIN_RISE_FROM_LOW_PCT', 0.15),
+  earlyTurnMaxRiseFromLowPct: numEnv('EARLY_TURN_MAX_RISE_FROM_LOW_PCT', 1.20),
+  earlyTurnMaxAboveEma18Pct: numEnv('EARLY_TURN_MAX_ABOVE_EMA18_PCT', 0.45),
+  earlyTurnEma8Below18AllowancePct: numEnv('EARLY_TURN_EMA8_BELOW18_ALLOWANCE_PCT', 0.12),
+  earlyTurnMinRsi15s: numEnv('EARLY_TURN_MIN_RSI_15S', 50),
+  earlyTurnMaxRsi15s: numEnv('EARLY_TURN_MAX_RSI_15S', 76),
+  earlyTurnMinTickSlope: numEnv('EARLY_TURN_MIN_TICK_SLOPE', -0.50),
+  earlyTurnConfirmPositiveSlope: boolEnv('EARLY_TURN_CONFIRM_POSITIVE_SLOPE', true),
+  earlyTurnRetryCooldownSec: intEnv('EARLY_TURN_RETRY_COOLDOWN_SEC', 1800),
+  earlyTurnMinFvvo15s: numEnv('EARLY_TURN_MIN_FVVO_15S', 0.20),
+  earlyTurnConfirmTicks: Math.max(2, intEnv('EARLY_TURN_CONFIRM_TICKS', 2)),
+  earlyTurnConfirmMinSec: Math.max(0, intEnv('EARLY_TURN_CONFIRM_MIN_SEC', 10)),
+  earlyTurnResetRsi5m: numEnv('EARLY_TURN_RESET_RSI_5M', 42),
+  earlyTurnResetFvvo5m: numEnv('EARLY_TURN_RESET_FVVO_5M', -0.80),
+  earlyTurnBearMinAgeSec: Math.max(0, intEnv('EARLY_TURN_BEAR_MIN_AGE_SEC', 900)),
+  earlyTurnProbationExitRsi5m: numEnv('EARLY_TURN_PROBATION_EXIT_RSI_5M', 43),
+  earlyTurnProbationExitFvvo5m: numEnv('EARLY_TURN_PROBATION_EXIT_FVVO_5M', -0.50),
+  earlyTurnProbationExitConfirmBars: Math.max(2, intEnv('EARLY_TURN_PROBATION_EXIT_CONFIRM_BARS', 2)),
+  // Never treat a re-armed old RayAlgo alert as a newly received alert after a profit exit.
+  ray30DisallowHistoricalBullRearmAfterExit: boolEnv('RAY30_DISALLOW_HISTORICAL_BULL_REARM_AFTER_EXIT', true),
 
   // RAY30 automatic-entry scanner. Defaults are safe: scan/log only, no order.
   ray30AutoEntryEnabled: boolEnv('RAY30_AUTO_ENTRY_ENABLED', true),
@@ -247,6 +275,8 @@ const logCounters = { featureTick15s: 0, lastRay30ScanKey: null, lastRay30NoEntr
 
 let state = loadState();
 ensureStateShape();
+// Runtime-only in-flight order guard; never permits concurrent duplicate 3Commas enter requests.
+let entrySubmissionPending = false;
 
 log('STARTUP', {
   brain: BRAIN,
@@ -318,6 +348,7 @@ log('STARTUP', {
     rayalgoBearExit5mMaxAgeSec: cfg.rayalgoBearExit5mMaxAgeSec
   },
   floorConfig: floorConfigSummary(),
+  earlyTurnConfig: { enabled: cfg.earlyTurnEnabled && cfg.executionMode === 'demo', sendOrder: cfg.earlyTurnSendOrder, confirmationTicks: cfg.earlyTurnConfirmTicks, confirmationMinSec: cfg.earlyTurnConfirmMinSec, bearishMemoryMinAgeSec: cfg.earlyTurnBearMinAgeSec, microFloorsEnabled: cfg.microFloorsEnabled },
   logConfig: {
     logEmojiEnabled: cfg.logEmojiEnabled,
     logFeatureTickEnabled: cfg.logFeatureTickEnabled,
@@ -590,6 +621,7 @@ async function handleWebhook(body, req) {
   if (event === 'FEATURE_5M_FVVO' || event === 'fvvo_feature_5m' || body.kind === 'fvvo_feature_5m') {
     if (isFiniteNum(price)) {
       state.latest.feature5m = { price, at: nowIso(), atMs: Date.now(), sourceTime: nowMs, raw: compactRaw(body) };
+      rememberFeature5mBar(price, body);
       rememberRecentPrice(price);
       log('FVVO_FEATURE_5M_RECEIVED', featureLogPayload(body, event || body.kind || 'FEATURE_5M_FVVO', price, 'feature5m'));
       const evalOut = await evaluateAll(price, 'feature_5m');
@@ -664,6 +696,7 @@ async function handleWebhook(body, req) {
 
     if (externalRayAlgo && cfg.rayalgoExternalAlertsEnabled) {
       state.latest.rayalgoExternal = rayState;
+      promoteEarlyTurnOnExternalBull(rayState);
       const setupTfAllowed = rayalgoTimeframeAllowed(rayState.timeframe);
       if (cfg.ray30SetupEntryEnabled && setupTfAllowed) {
         updateRay30EntrySetupFromRayAlgo(rayState);
@@ -728,6 +761,8 @@ async function evaluateAll(price, source) {
   const campaignOut = await evaluateCampaigns(price, source);
   events.push(...campaignOut);
 
+  const earlyOut = await evaluateEarlyTurnAutoEntry(price, source);
+  if (earlyOut) events.push(earlyOut);
   const autoOut = await evaluateRay30AutoEntry(price, source);
   if (autoOut) events.push(autoOut);
 
@@ -851,6 +886,10 @@ function evaluateSetupHit(setup, price) {
 }
 
 async function enterLong({ price, source, campaignId, entryRole, setup, manual, requestId }) {
+  if (entrySubmissionPending) {
+    log('FVVO_ENTER_LONG_BLOCKED_ENTRY_SUBMISSION_PENDING', { price, source });
+    return { ok: false, error: 'ENTRY_SUBMISSION_PENDING', httpStatus: 409 };
+  }
   if (state.position && state.position.inPosition) {
     log('FVVO_ENTER_LONG_BLOCKED_ALREADY_IN_POSITION', { price, source, campaignId, entryRole, existing: summarizePosition(state.position) });
     return { ok: false, error: 'ALREADY_IN_POSITION', httpStatus: 409, state: publicState() };
@@ -877,7 +916,11 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
     requestId: entryRequestId
   });
 
-  const forward = await forwardTo3Commas('enter_long', price, { source, campaignId, entryRole, requestId: entryRequestId, setup, reason: source });
+  let forward;
+  entrySubmissionPending = true;
+  try {
+    forward = await forwardTo3Commas('enter_long', price, { source, campaignId, entryRole, requestId: entryRequestId, setup, reason: source });
+  } finally { entrySubmissionPending = false; }
   if (!forward.ok && !forward.dryRun) {
     log('FVVO_ENTER_LONG_C3_FORWARD_FAILED_NO_POSITION_TRACKED', { price, source, campaignId, entryRole, forward });
     return { ok: false, error: 'C3_ENTER_LONG_FORWARD_FAILED', c3Forward: forward, httpStatus: 502, state: publicState() };
@@ -886,7 +929,8 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
   state.position = {
     inPosition: true,
     positionLifecycle: forward.dryRun ? 'ENTRY_DRY_RUN' : 'ENTRY_ACCEPTED_UNVERIFIED_FILL',
-    phase: 'ONE_STOP_ACTIVE',
+    phase: source === 'early_turn_probation_auto' ? 'EARLY_TURN_PROBATION' : 'LONGHOLD_CONFIRMED',
+    longholdConfirmedAt: source === 'early_turn_probation_auto' ? null : nowIso(),
     entryPrice: price,
     entryTime: nowIso(),
     entryTimeMs: Date.now(),
@@ -1027,6 +1071,120 @@ function markFreshRayalgoAfterExit(rayState) {
       cooldownStatus: ray30PostExitStatus()
     });
   }
+}
+
+// v3p uses actual closed-bar 5m publisher events, NOT synthetic future candles.
+function rememberFeature5mBar(price, raw) {
+  const history = state.latest.feature5mHistory = state.latest.feature5mHistory || [];
+  const key = Number(raw.barTimeMs || raw.bar_time_ms || raw.barTime || 0) || Date.now();
+  if (history.length && history[history.length - 1].key === key) return;
+  const item = {
+    key, atMs: Date.now(), price,
+    rsi: numVal(raw.rsi, null), fvvo: numVal(raw.fvvo ?? raw.fvvoValue, null),
+    slope: numVal(raw.slope ?? raw.fvvoSlope, null),
+    ema8: numVal(raw.ema8 ?? raw.ema_8, null), ema18: numVal(raw.ema18 ?? raw.ema_18, null)
+  };
+  if (![item.rsi, item.fvvo, item.slope, item.ema8, item.ema18].every(isFiniteNum)) return;
+  history.push(item);
+  if (history.length > 50) history.splice(0, history.length - 50);
+  if (item.rsi < cfg.earlyTurnResetRsi5m || item.fvvo < cfg.earlyTurnResetFvvo5m) {
+    const oldLastEntryAtMs = state.earlyTurn && state.earlyTurn.lastEntryAtMs || null;
+    state.earlyTurn = { confirmedCandidate: null, confirmCount: 0, firstTickAtMs: null, lastTickAtMs: null, used: false, lastEntryAtMs: oldLastEntryAtMs };
+    log('EARLY_TURN_CYCLE_RESET', { price, rsi: item.rsi, fvvo: item.fvvo });
+  }
+}
+
+function promoteEarlyTurnOnExternalBull(ray) {
+  if (!ray || ray.sourceKind !== 'rayalgo_external' || !rayalgoTimeframeAllowed(ray.timeframe)) return;
+  if (normalizeRaySignalToRegime(ray.signal, ray.regime) !== 'RAY_BULL') return;
+  const p = state.position;
+  if (!p || !p.inPosition || p.phase !== 'EARLY_TURN_PROBATION') return;
+  if (!isFiniteNum(p.entryTimeMs) || ray.atMs <= p.entryTimeMs) return;
+  p.phase = 'LONGHOLD_CONFIRMED';
+  p.longholdConfirmedAt = nowIso();
+  log('EARLY_TURN_PROMOTED_TO_LONGHOLD', { entryPrice: p.entryPrice, peakPrice: p.peakPrice, mfePct: round(p.mfePct), at: p.longholdConfirmedAt, raySignal: ray.signal, rayTimeframe: ray.timeframe, note: 'SAME_POSITION_NO_SECOND_ORDER_NO_MFE_RESET' });
+  saveState();
+}
+
+function earlyTurnProbationFailure(p, price, source) {
+  if (!p || p.phase !== 'EARLY_TURN_PROBATION') return { exit: false };
+  if (source !== 'feature_5m') return { exit: false };
+  const recent = state.latest.feature5mHistory || [];
+  const weak = recent.slice(-cfg.earlyTurnProbationExitConfirmBars);
+  if (weak.length < cfg.earlyTurnProbationExitConfirmBars || weak.some(x => !isFiniteNum(x.atMs) || x.atMs < p.entryTimeMs)) return { exit: false };
+  const allWeak = weak.every(x => x.rsi <= cfg.earlyTurnProbationExitRsi5m && x.fvvo <= cfg.earlyTurnProbationExitFvvo5m && x.price < x.ema18);
+  return allWeak ? { exit: true, reason: 'EARLY_TURN_CONFIRMED_5M_THESIS_FAIL', bars: weak.map(x=>({ rsi:x.rsi, fvvo:x.fvvo, price:x.price })) } : { exit: false };
+}
+
+async function evaluateEarlyTurnAutoEntry(price, source) {
+  // Live account is hard-disabled even if the environment accidentally enables the feature.
+  if (!cfg.earlyTurnEnabled || cfg.executionMode !== 'demo') return null;
+  if (!isFiniteNum(price) || (source !== 'feature_tick' && source !== 'feature_5m')) return null;
+  if (state.position && state.position.inPosition) return null;
+  const pe = ray30PostExitStatus();
+  if (pe.cooldownActive || pe.requireNewRayalgo) return null;
+  // Early-turn path ends once external 30m RayAlgo has already confirmed bullish.
+  // Continue via the unchanged v3o RayAlgo-confirmed entry scanner instead.
+  const existingRay = state.latest && state.latest.rayalgoExternal;
+  if (existingRay && rayalgoTimeframeAllowed(existingRay.timeframe) &&
+      normalizeRaySignalToRegime(existingRay.signal, existingRay.regime) === 'RAY_BULL' &&
+      isFiniteNum(existingRay.atMs) && Date.now() - existingRay.atMs <= cfg.rayalgoStateMaxAgeSec * 1000) return null;
+  const turn = state.earlyTurn;
+  if (turn.used) return null; // exactly one early-turn entry per recovery cycle
+  if (isFiniteNum(turn.lastEntryAtMs) && Date.now() - turn.lastEntryAtMs < cfg.earlyTurnRetryCooldownSec * 1000) return null;
+  const bars = state.latest.feature5mHistory || [];
+  if (bars.length < 3) return null;
+  const [older, prev, cur] = bars.slice(-3);
+  if (Date.now() - cur.atMs > cfg.feature5mMaxAgeSec * 1000) return null;
+  const low = Math.min(older.price, prev.price, cur.price);
+  const rise = pct(cur.price, low);
+  // Two positive closed bars, positive RSI recovery, short EMA close to crossover.
+  const fiveReady = cur.rsi >= cfg.earlyTurnMinRsi5m && cur.rsi <= cfg.earlyTurnMaxRsi5m &&
+    cur.fvvo >= cfg.earlyTurnMinFvvo5m && cur.slope >= cfg.earlyTurnMinSlope5m &&
+    prev.fvvo > 0 && cur.rsi > prev.rsi && cur.price > prev.price &&
+    rise >= cfg.earlyTurnMinRiseFromLowPct && rise <= cfg.earlyTurnMaxRiseFromLowPct &&
+    cur.price >= cur.ema18 && pct(cur.price, cur.ema18) <= cfg.earlyTurnMaxAboveEma18Pct &&
+    cur.ema8 >= cur.ema18 * (1 - cfg.earlyTurnEma8Below18AllowancePct / 100);
+  if (!fiveReady) { turn.confirmedCandidate = null; turn.confirmCount = 0; return null; }
+  // Initial bearish memory must be old enough to prevent instant catch-the-knife buys.
+  const ext = state.latest.rayalgoExternal;
+  if (ext && normalizeRaySignalToRegime(ext.signal, ext.regime) === 'RAY_BEAR') {
+    const ageSec = (Date.now() - ext.atMs) / 1000;
+    if (!Number.isFinite(ageSec) || ageSec < cfg.earlyTurnBearMinAgeSec) return null;
+  }
+  const block = fvvoLongBlockStatus();
+  if (block.blocked) return null;
+  if (source !== 'feature_tick') return null;
+  const tick = tickGate(price);
+  const tickReady = tick.fresh && tick.rsi >= cfg.earlyTurnMinRsi15s && tick.rsi <= cfg.earlyTurnMaxRsi15s &&
+    tick.fvvo >= cfg.earlyTurnMinFvvo15s && tick.slope >= cfg.earlyTurnMinTickSlope &&
+    (!isFiniteNum(tick.ema18) || price >= tick.ema18) &&
+    price <= cur.ema18 * (1 + cfg.earlyTurnMaxAboveEma18Pct / 100);
+  if (!tickReady) { turn.confirmCount = 0; turn.confirmedCandidate = null; turn.positiveSlopeSeen = false; return null; }
+  // At least two separated 15s observations; both must occur after the last 5m feature was received.
+  if (turn.confirmedCandidate !== cur.key) {
+    turn.confirmedCandidate = cur.key;
+    turn.confirmCount = 1;
+    turn.positiveSlopeSeen = tick.slope >= 0;
+    turn.firstTickAtMs = Date.now();
+    turn.lastTickAtMs = Date.now();
+    return null;
+  }
+  if (Date.now() > turn.lastTickAtMs) { turn.confirmCount++; turn.lastTickAtMs = Date.now(); }
+  if (tick.slope >= 0) turn.positiveSlopeSeen = true;
+  if (turn.confirmCount < cfg.earlyTurnConfirmTicks || (Date.now() - turn.firstTickAtMs) / 1000 < cfg.earlyTurnConfirmMinSec || (cfg.earlyTurnConfirmPositiveSlope && !turn.positiveSlopeSeen)) return null;
+  const details = { price, source, rsi5m:cur.rsi, fvvo5m:cur.fvvo, riseFromLowPct:round(rise), ema8:cur.ema8, ema18:cur.ema18, tickRsi:tick.rsi, tickFvvo:tick.fvvo, observedTicks:turn.confirmCount, mode:'EARLY_TURN_PROBATION' };
+  // Send orders only in DEMO; SHADOW mode can be used for diagnostics.
+  if (!cfg.earlyTurnSendOrder || !cfg.ray30AutoEntryEnabled || !cfg.ray30AutoEntrySendOrder) {
+    log('EARLY_TURN_SHADOW_READY', details);
+    turn.used = true;
+    saveState();
+    return { type:'early_turn_shadow', decision:'SHADOW_READY' };
+  }
+  log('EARLY_TURN_PROBATION_ENTRY_READY', details);
+  const out = await enterLong({ price, source:'early_turn_probation_auto', campaignId:null, entryRole:'early_turn_probation', setup:{raw:{profile:'EARLY_TURN_PROBATION'}, stopPrice:null, tp1:null} });
+  if (out && out.ok) { turn.used = true; turn.lastEntryAtMs = Date.now(); saveState(); }
+  return { type:'early_turn_entry', decision:out && out.ok ? 'ENTERED' : 'ENTER_FAILED', out };
 }
 
 async function evaluateRay30AutoEntry(price, source) {
@@ -1372,7 +1530,9 @@ function updateRay30EntrySetupForScan(price, source, rayGate, fiveOk, tickOk) {
 
   if ((!state.ray30Setup || !state.ray30Setup.active) && rayGate.ok && rayGate.sourceKind === 'rayalgo_external') {
     const ext = state.latest && state.latest.rayalgoExternal;
-    if (ext) updateRay30EntrySetupFromRayAlgo(ext);
+    const lastExit = state.ray30PostExit && state.ray30PostExit.atMs;
+    const isOldAlert = cfg.ray30DisallowHistoricalBullRearmAfterExit && isFiniteNum(lastExit) && (!ext || !isFiniteNum(ext.atMs) || ext.atMs <= lastExit);
+    if (ext && !isOldAlert) updateRay30EntrySetupFromRayAlgo(ext);
   }
 
   const s = state.ray30Setup;
@@ -1692,6 +1852,10 @@ function rayalgoBearExitStatus(p, price, profitPct) {
   }
   const bear = latestExternalRayBearStatus();
   if (!bear.ok) return { exit: false, ...bear };
+  // Critical: remembered bearish alerts from BEFORE entry are not new thesis failures.
+  if (!isFiniteNum(bear.ray.atMs) || !isFiniteNum(p.entryTimeMs) || bear.ray.atMs <= p.entryTimeMs) {
+    return { exit: false, reason: 'RAYALGO_BEAR_PREDATES_ENTRY', signal: bear.signal };
+  }
   const confirm = cfg.rayalgoBearExitRequire5mConfirm ? rayalgoBearExit5mConfirmation(price) : { ok: true, reason: '5M_CONFIRMATION_NOT_REQUIRED', weakness: [] };
   if (!confirm.ok) return { exit: false, reason: 'RAYALGO_BEAR_WAIT_5M_CONFIRMATION', ray: bear, confirm };
   return {
@@ -1749,6 +1913,12 @@ async function evaluatePositionExit(price, source) {
   if (!state.position || !state.position.inPosition) return null;
   const p = state.position;
   const profitPct = pct(price, p.entryPrice);
+  const probationFail = earlyTurnProbationFailure(p, price, source);
+  if (probationFail && probationFail.exit) {
+    log('EARLY_TURN_PROBATION_THESIS_EXIT', { price, source, profitPct: round(profitPct), ...probationFail });
+    const out = await exitLong({ price, reason: probationFail.reason });
+    return { type: 'exit', reason: probationFail.reason, out };
+  }
 
   if (!isFiniteNum(p.peakPrice) || price > p.peakPrice) p.peakPrice = price;
   p.mfePct = Math.max(numVal(p.mfePct, 0), pct(p.peakPrice, p.entryPrice));
@@ -2127,6 +2297,8 @@ function summarizePosition(p) {
     peakPrice: p.peakPrice || null,
     mfePct: isFiniteNum(p.mfePct) ? round(p.mfePct) : 0,
     activeFloorLockPct: isFiniteNum(p.activeFloorLockPct) ? p.activeFloorLockPct : null,
+    longholdConfirmedAt: p.longholdConfirmedAt || null,
+    earlyTurnEntry: p.source === 'early_turn_probation_auto',
     runnerActive: Boolean(p.runnerActive),
     lastExitReason: p.lastExitReason || null,
     lastC3Entry: p.lastC3Entry ? summarizeForward(p.lastC3Entry) : null,
@@ -2179,6 +2351,8 @@ function ensureStateShape() {
   if (typeof state.latest.ray30Feature === 'undefined') state.latest.ray30Feature = null;
   if (typeof state.latest.rayalgoExternal === 'undefined') state.latest.rayalgoExternal = null;
   state.latest.recentPrices = state.latest.recentPrices || [];
+  state.latest.feature5mHistory = state.latest.feature5mHistory || [];
+  state.earlyTurn = state.earlyTurn || { confirmedCandidate: null, confirmCount: 0, firstTickAtMs: null, lastTickAtMs: null, used: false };
   state.position = state.position || emptyPosition();
   state.priceTrigger = state.priceTrigger || null;
   state.campaigns = state.campaigns || {};
@@ -2194,7 +2368,7 @@ function loadState() {
   } catch (err) {
     log('FVVO_STATE_LOAD_FAILED', { stateFile: cfg.stateFile, error: err.message });
   }
-  return { latest: { tick: null, feature5m: null, ray30: null, ray30Feature: null, rayalgoExternal: null, fvvoConfidence: {}, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, ray30Setup: { active: false }, handoff: { active: false, at: null, reason: null } };
+  return { latest: { tick: null, feature5m: null, feature5mHistory: [], ray30: null, ray30Feature: null, rayalgoExternal: null, fvvoConfidence: {}, recentPrices: [] }, position: emptyPosition(), priceTrigger: null, campaigns: {}, ray30Pullback: { armed: false }, ray30Setup: { active: false }, handoff: { active: false, at: null, reason: null } };
 }
 
 function saveState() {
