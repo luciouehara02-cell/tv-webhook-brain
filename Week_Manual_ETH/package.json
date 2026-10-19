@@ -1,15 +1,16 @@
 {
-  "name": "brainfvvo-eth-longhold-v1d-demo-fresh-ignition-guards",
-  "version": "1.3.0",
+  "name": "brainfvvo-eth-longhold-v1e-demo-tolerant-confirmation",
+  "version": "1.4.0",
   "private": true,
-  "description": "ETH long-hold brain with direct, breakout, preferred and deep manual entry paths",
+  "description": "ETH-only DEMO long-hold brain with tolerant ignition confirmation and protected exits",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v1a.js replay_fixture.jsonl ../v1c_base/server.js && node replay_bridge_v1a.js && node replay_ignition_v1a.js && node replay_reconciliation_v1a.js && node replay_oct12_v1d_guards.js",
+    "check": "node --check server.js && node replay_v1a.js replay_fixture.jsonl baseline_v1d/server.js && node replay_bridge_v1a.js && node replay_ignition_v1a.js && node replay_reconciliation_v1a.js && node replay_oct12_v1d_guards.js && node replay_oct19_v1e_improvements.js",
     "replay": "node replay_v1a.js replay_fixture.jsonl",
     "replay:historic": "node replay_historic_v1c.js",
-    "replay:oct12": "node replay_oct12_v1d_guards.js"
+    "replay:oct12": "node replay_oct12_v1d_guards.js",
+    "replay:oct19": "node replay_oct19_v1e_improvements.js"
   },
   "engines": {
     "node": ">=20"
