@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-sol-v3p-early-turn-longhold-demo",
-  "version": "3.16.0",
-  "description": "BrainFVVO SOL v3p DEMO: confirmed 5m/15s early-turn probation, 30m RayAlgo promotion, original longhold profit floors",
+  "name": "brainfvvo-sol-v3q-early-turn-context-confirm-longhold-demo",
+  "version": "3.17.0",
+  "description": "BrainFVVO SOL v3q DEMO: strict 30m context, 3-of-4 15s early turn, RayAlgo same-bar conflict quarantine, longhold floors",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
