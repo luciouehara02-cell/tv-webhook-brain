@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1f_STANDALONE_BNB_ROUTE";
+const ROUTER_NAME = process.env.ROUTER_NAME || "TickRouter_AltAssets_v1g_ETH_V3Q_ROUTE";
 const PORT = Number(process.env.PORT || 8080);
 const FORWARD_TIMEOUT_MS = Number(process.env.FORWARD_TIMEOUT_MS || 4000);
 const WEBHOOK_SECRET = String(process.env.WEBHOOK_SECRET || "").trim();
@@ -37,6 +37,10 @@ const DESTINATIONS = [
   // Dedicated standalone BNB route. Its symbol defaults to BNB only, even when
   // DEST_4_SYMBOLS is omitted, preventing accidental cross-asset forwarding.
   normalizeDestination(4, "STANDALONE_BNB", "DEST_4_URL", "DEST_4_SECRET", "DEST_4_SYMBOLS", "DEST_4_KINDS", "BINANCE:BNBUSDT"),
+  // Dedicated ETH v3q feature route. When optional symbol/kind ENV vars are absent,
+  // only ETHUSDT 15-second and 5-minute FVVO features are forwarded here.
+  // Destinations 1-4 stay identical to v1f, including all existing assignments.
+  normalizeDestination(5, "ETH_V3Q_LONGHOLD", "DEST_5_URL", "DEST_5_SECRET", "DEST_5_SYMBOLS", "DEST_5_KINDS", "BINANCE:ETHUSDT", "fvvo_feature_tick,fvvo_feature_5m"),
 ];
 
 function extractInboundSecret(payload) {
@@ -106,11 +110,16 @@ function normalizePayload(payload, kind) {
 
 function destinationAcceptsSymbol(dest, symbol) {
   if (!dest.enabled) return false;
+  // Fail closed: ETH v3q's new route can never receive another asset,
+  // even if someone accidentally broadens DEST_5_SYMBOLS in Railway.
+  if (dest.index === 5 && symbol !== "BINANCE:ETHUSDT") return false;
   if (!dest.symbols.size) return true;
   return dest.symbols.has(symbol);
 }
 function destinationAcceptsKind(dest, kind) {
   if (!dest.enabled) return false;
+  // Only 15s and 5m features go through this added route.
+  if (dest.index === 5 && !["fvvo_feature_tick", "fvvo_feature_5m"].includes(String(kind || "").toLowerCase())) return false;
   if (!dest.kinds.size) return true;
   return dest.kinds.has(String(kind || "").toLowerCase());
 }
@@ -134,7 +143,10 @@ async function forwardOne(dest, normalized, kind) {
 }
 
 function publicDestination(dest) {
-  return { index: dest.index, label: dest.label, enabled: dest.enabled, url: dest.url || null, host: dest.host || null, hasSecret: Boolean(dest.secret), symbols: dest.symbols.size ? [...dest.symbols] : ["ALL_ALLOWED_SYMBOLS"], kinds: dest.kinds.size ? [...dest.kinds] : ["ALL_SUPPORTED_KINDS"] };
+  return { index: dest.index, label: dest.label, enabled: dest.enabled, url: dest.url || null, host: dest.host || null, hasSecret: Boolean(dest.secret),
+    symbols: dest.index === 5 ? ["BINANCE:ETHUSDT"] : (dest.symbols.size ? [...dest.symbols] : ["ALL_ALLOWED_SYMBOLS"]),
+    kinds: dest.index === 5 ? ["fvvo_feature_tick", "fvvo_feature_5m"] : (dest.kinds.size ? [...dest.kinds] : ["ALL_SUPPORTED_KINDS"]),
+  };
 }
 function healthSnapshot() {
   return {

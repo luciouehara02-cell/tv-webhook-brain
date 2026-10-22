@@ -1,0 +1,13 @@
+PASS 1: ETH 15s feature goes to legacy and new ETH v3q with distinct secrets
+PASS 2: ETH 5m feature goes to legacy and ETH v3q; preserves indicators
+PASS 3: SOL feature stays on existing legacy route, never new ETH v3q
+PASS 4: Standalone BNB route preserved
+PASS 5: New ETH destination rejects fast tick route
+PASS 6: 30m RayAlgo signals are unsupported and not forwarded
+PASS 7: Incorrect inbound secret is rejected 401
+PASS 8: Default ETH destination scopes reflected in /health and /routes
+PASS 9: Accidental broad DEST_5_SYMBOLS does not route SOL/BNB to ETH
+PASS 10: Accidental broad DEST_5_KINDS does not route FAST_TICK_FVVO to ETH
+PASS 11: Missing destination secret cannot count as forwarded
+PASS 12: Disabling new destination preserves all old routes
+ALL 12/12 ROUTER REPLAY TESTS PASSED
