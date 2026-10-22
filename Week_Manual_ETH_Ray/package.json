@@ -1,0 +1,14 @@
+{
+  "name": "brainfvvo-eth-v3q-early-turn-context-confirm-longhold-demo",
+  "version": "3.17.0",
+  "description": "ETH isolated replica of SOL v3q: 30m context, 5m/15s early turn, RayAlgo conflict guard and longhold floors, 30 USDT quote",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
