@@ -1,6 +1,6 @@
 {
   "name": "brainfvvo-eth-longhold-v1f-demo-reentry-quality",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "ETH-only DEMO long-hold brain with quality-gated quick-recovery re-entry",
   "main": "server.js",

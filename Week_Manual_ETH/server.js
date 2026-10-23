@@ -142,7 +142,7 @@ const CFG = {
   C3_MAX_LAG_SEC: envNum("C3_MAX_LAG_SEC", 300),
   C3_REQUEST_TIMEOUT_MS: envNum("C3_REQUEST_TIMEOUT_MS", 10000),
   C3_FORWARD_DEDUP_MS: envNum("C3_FORWARD_DEDUP_MS", 60000),
-  C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", true),
+  C3_PAYLOAD_AUDIT_ENABLED: envBool("C3_PAYLOAD_AUDIT_ENABLED", envBool("LOG_C3_PAYLOAD_AUDIT", true)),
   // v1c audit-only PnL estimate. It never changes entry, stop, or exit decisions.
   PNL_ESTIMATED_ROUND_TRIP_COST_PCT: envNum("PNL_ESTIMATED_ROUND_TRIP_COST_PCT", 0.20),
   // Retired direct-clear compatibility flag. v1l requires the delayed auto-release contract instead.
@@ -170,7 +170,12 @@ const CFG = {
   FEATURE_MONOTONIC_GUARD_ENABLED: envBool("FEATURE_MONOTONIC_GUARD_ENABLED", true),
   FEATURE_DUPLICATE_BAR_GUARD_ENABLED: envBool("FEATURE_DUPLICATE_BAR_GUARD_ENABLED", true),
   LOG_FEATURE_TICK_ENABLED: envBool("LOG_FEATURE_TICK_ENABLED", false),
+  // SOL-compatible logging controls. LOG_FEATURE_TICK_ENABLED remains a
+  // backward-compatible fallback when LOG_15S_TICK_ENABLED is not supplied.
+  LOG_15S_TICK_ENABLED: envBool("LOG_15S_TICK_ENABLED", envBool("LOG_FEATURE_TICK_ENABLED", false)),
+  LOG_15S_TICK_EVERY_N: Math.max(1, Math.floor(envNum("LOG_15S_TICK_EVERY_N", 1))),
   LOG_FEATURE_5M_ENABLED: envBool("LOG_FEATURE_5M_ENABLED", true),
+  LOG_REPLAY_COMPACT_ENABLED: envBool("LOG_REPLAY_COMPACT_ENABLED", true),
   LOG_BLOCKED_IGNITION_5M_ENABLED: envBool("LOG_BLOCKED_IGNITION_5M_ENABLED", true),
 
   MANUAL_ENTRY_DEFAULT_PROFILE: envStr("MANUAL_ENTRY_DEFAULT_PROFILE", "SWING_BALANCED_STRUCTURE_EXIT"),
@@ -876,12 +881,13 @@ let persistenceSequence = 0;
 let testNowMs = null;
 let reconciliationBusy = false;
 let state = defaultState();
+let feature15sLogSequence = 0;
 let autoExitReleaseTimer = null;
 
 function nowMs() { return Number.isFinite(testNowMs) ? testNowMs : Date.now(); }
 function nowIso() { return new Date(nowMs()).toISOString(); }
 function setTestNowMs(value) { testNowMs = Number.isFinite(Number(value)) ? Number(value) : null; }
-function resetStateForTest() { clearAutoExitReleaseTimer(); state = defaultState(); }
+function resetStateForTest() { clearAutoExitReleaseTimer(); state = defaultState(); feature15sLogSequence = 0; }
 function snapshotStateForTest() { return clone(state); }
 function injectTrackedPositionForTest({ entryPrice, stopPrice, profitTargetPrice = 0, entryOrigin = "MANUAL", reentryNumber = 0 } = {}) {
   const entry = finite(entryPrice, null);
@@ -7263,8 +7269,15 @@ async function processFeatureEvent(feature) {
   }
   if (!updateFeature(feature)) return { ok: false, error: "VALID_PRICE_REQUIRED" };
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
-  const logRawFeature = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? CFG.LOG_FEATURE_5M_ENABLED : CFG.LOG_FEATURE_TICK_ENABLED;
-  if (logRawFeature) log("INFO", eventName, { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, yellowPulse: feature.yellowPulse, yellowReason: feature.yellowReason || null, rayRegime: feature.rayRegime, publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, barTimeMs: feature.barTimeMs, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: activePriceEntryItems().length ? `${activePriceEntryItems().length}_ARMED` : null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) });
+  const is5mFeature = feature.kind === CFG.FVVO_FEATURE_5M_EVENT;
+  if (!is5mFeature) feature15sLogSequence += 1;
+  const sampled15s = !is5mFeature && CFG.LOG_15S_TICK_ENABLED && ((feature15sLogSequence - 1) % CFG.LOG_15S_TICK_EVERY_N === 0);
+  const logRawFeature = is5mFeature ? CFG.LOG_FEATURE_5M_ENABLED : sampled15s;
+  if (logRawFeature) {
+    const replayFields = { event: feature.kind, price: feature.price, ema8: feature.ema8, ema18: feature.ema18, rsi: feature.rsi, adx: feature.adx, fvvo: feature.fvvo, slope: feature.slope, crossUp: feature.crossUp, crossDown: feature.crossDown, redPulse: feature.redPulse, yellowPulse: feature.yellowPulse, yellowReason: feature.yellowReason || null, rayRegime: feature.rayRegime, barTimeMs: feature.barTimeMs };
+    const operationalFields = { publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: activePriceEntryItems().length ? `${activePriceEntryItems().length}_ARMED` : null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) };
+    log("INFO", eventName, CFG.LOG_REPLAY_COMPACT_ENABLED ? replayFields : { ...replayFields, ...operationalFields });
+  }
   await capturePreReleaseReentryPullback(feature);
   await finalizeAutoExitRelease("feature");
   await evaluateRunnerRescuePostExitAudit(feature);
@@ -7344,6 +7357,7 @@ async function start() {
   log("INFO", "FVVO_BREAKOUT_BULL_CONTINUATION_STARTUP", { mode: breakoutBullContinuationMode(), maxTrackSec: CFG.BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC, minPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT, maxPeakExtensionPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_PEAK_EXTENSION_PCT, minAdx: CFG.BREAKOUT_BULL_CONTINUATION_MIN_ADX, maxEntryAboveConfirmPct: CFG.BREAKOUT_BULL_CONTINUATION_MAX_ENTRY_ABOVE_CONFIRM_PCT, configurationProblems: problems });
   log("INFO", "FVVO_BREAKOUT_NEAR_RETEST_RECOVERY_STARTUP", { mode: breakoutNearRetestRecoveryMode(), tolerancePct: CFG.BREAKOUT_NEAR_RETEST_TOLERANCE_PCT, minPullbackFromHighPct: CFG.BREAKOUT_NEAR_RETEST_MIN_PULLBACK_FROM_HIGH_PCT, reclaimPct: CFG.BREAKOUT_NEAR_RETEST_RECLAIM_PCT, minEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MIN_ENTRY_ABOVE_CONFIRM_PCT, minRecoveryOfPullbackPct: CFG.BREAKOUT_NEAR_RETEST_MIN_RECOVERY_OF_PULLBACK_PCT, maxEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MAX_ENTRY_ABOVE_CONFIRM_PCT, minAdx: CFG.BREAKOUT_NEAR_RETEST_MIN_ADX, minFvvo: CFG.BREAKOUT_NEAR_RETEST_MIN_FVVO, minStrongSlope: CFG.BREAKOUT_NEAR_RETEST_MIN_STRONG_SLOPE, maxRsi: CFG.BREAKOUT_NEAR_RETEST_MAX_RSI, maxExtensionFromEma8Pct: CFG.BREAKOUT_NEAR_RETEST_MAX_EXTENSION_FROM_EMA8_PCT, confirmation: "cross_up_or_two_improving_observations", configurationProblems: problems });
   log("INFO", "FVVO_ENTRY_GATE_CONFIRMATION_STARTUP", { confirmationRequired: CFG.ENTRY_GATE_CONFIRM_REQUIRED, confirmationTtlSec: CFG.ENTRY_GATE_CONFIRM_TTL_SEC, historyMaxBars: CFG.ENTRY_GATE_HISTORY_MAX_BARS, timeframes: ["15m", "1H", "4H"], informationOnly: !CFG.ENTRY_GATE_CONFIRM_REQUIRED, noConfirmationMeansNoArm: CFG.ENTRY_GATE_CONFIRM_REQUIRED });
+  log("INFO", "FVVO_LOGGING_STARTUP", { featureTickEnabled: CFG.LOG_FEATURE_TICK_ENABLED, log15sTickEnabled: CFG.LOG_15S_TICK_ENABLED, log15sTickEveryN: CFG.LOG_15S_TICK_EVERY_N, feature5mEnabled: CFG.LOG_FEATURE_5M_ENABLED, replayCompactEnabled: CFG.LOG_REPLAY_COMPACT_ENABLED, c3PayloadAuditEnabled: CFG.C3_PAYLOAD_AUDIT_ENABLED });
   log("INFO", "FVVO_ETH_LONG_HOLD_V1B_DEMO_STARTUP", { automaticIgnitionEntry: CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_AUTO_ORDER_ENABLED, demoAcceptedEntryAssumeFilled: CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED, demoAcceptedExitAutoRelease: CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, autoExitReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, rawTickLogging: CFG.LOG_FEATURE_TICK_ENABLED, fiveMinuteLogging: CFG.LOG_FEATURE_5M_ENABLED, ignitionThresholds: { min5mRsi: CFG.ETH_IGNITION_MIN_5M_RSI, max5mRsi: CFG.ETH_IGNITION_MAX_5M_RSI, min5mAdx: CFG.ETH_IGNITION_MIN_5M_ADX, min5mFvvo: CFG.ETH_IGNITION_MIN_5M_FVVO, min5mSlope: CFG.ETH_IGNITION_MIN_5M_SLOPE, qualityGateEnabled: CFG.ETH_IGNITION_QUALITY_GATE_ENABLED, qualityRequiredScore: CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE, qualityMinEmaSpreadPct: CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT, qualityMinRsi: CFG.ETH_IGNITION_QUALITY_MIN_RSI, qualityMinFvvo: CFG.ETH_IGNITION_QUALITY_MIN_FVVO, breakoutBufferPct: CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT, maxChasePct: CFG.ETH_IGNITION_MAX_CHASE_PCT, minTickRsi: CFG.ETH_IGNITION_MIN_TICK_RSI, maxTickRsi: CFG.ETH_IGNITION_MAX_TICK_RSI, minTickAdx: CFG.ETH_IGNITION_MIN_TICK_ADX, minTickFvvo: CFG.ETH_IGNITION_MIN_TICK_FVVO, minTickSlope: CFG.ETH_IGNITION_MIN_TICK_SLOPE, confirmObservations: CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS, confirmMinSpanSec: CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC }, highRsiPullbackShadow: CFG.ETH_IGNITION_HIGH_RSI_SHADOW_ENABLED, manualEntryModes: { immediate: CFG.MANUAL_ALLOW_ENTER, breakout: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE === "live", preferred: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.TRAILING_DIP_RECLAIM_ZONE_MODE === "live", deep: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "live" }, automaticReentry: reentryAutoEnabled(), flashCrashEnabled: CFG.LONG_HOLD_FLASH_CRASH_ENABLED, flashCrashWindowSec: CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC, flashCrashDropPct: CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT, initialSlEnabled: CFG.LONG_HOLD_INITIAL_SL_ENABLED, initialSlPct: CFG.LONG_HOLD_INITIAL_SL_PCT, milestoneFloors: CFG.LONG_HOLD_MILESTONE_FLOORS, runnerArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
