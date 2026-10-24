@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_ETH_v3q_EARLY_TURN_CONTEXT_CONFIRM_LONGHOLD_DEMO
+ * BrainFVVO_ETH_v3s_REBUILT_V3Q_MANUAL_EXIT_LOCK
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3q_EARLY_TURN_CONTEXT_CONFIRM_LONGHOLD_DEMO';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3s_REBUILT_V3Q_MANUAL_EXIT_LOCK';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -49,7 +49,10 @@ const cfg = {
   c3AmountPerTrade: env.C3_AMOUNT_PER_TRADE || '30',
   c3AmountPerTradeType: env.C3_AMOUNT_PER_TRADE_TYPE || 'quote',
   c3OrderType: env.C3_ORDER_TYPE || 'market',
+  // Preserve the v3q state path so an existing tracked position and exit protection survive an upgrade.
   stateFile: env.STATE_FILE || '/data/brainfvvo-eth-ray30-longhold-v3q-state.json',
+  autoEntryHoldOnStartup: boolEnv('AUTO_ENTRY_HOLD_ON_STARTUP', true),
+  autoEntryPauseAfterManualExit: boolEnv('AUTO_ENTRY_PAUSE_AFTER_MANUAL_EXIT', true),
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
   ray30MaxAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
   feature5mMaxAgeSec: intEnv('FEATURE_5M_MAX_AGE_SEC', 420),
@@ -268,6 +271,8 @@ const cfg = {
 
 const SUPPORTED_MANUAL_ACTIONS = [
   'status',
+  'pause_auto_entry',
+  'resume_auto_entry',
   'enter_long',
   'exit_long',
   'cancel',
@@ -285,6 +290,9 @@ const logCounters = { featureTick15s: 0, lastRay30ScanKey: null, lastRay30NoEntr
 
 let state = loadState();
 ensureStateShape();
+// Restart defaults to HOLD; a deliberate authenticated resume is needed before automatic entries.
+// The pause is persisted, including after a successful manual exit.
+if (cfg.autoEntryHoldOnStartup) pauseAutomaticEntries('STARTUP_SAFETY_HOLD', { preserveExistingReason: true });
 // Runtime-only in-flight order guard; never permits concurrent duplicate 3Commas enter requests.
 let entrySubmissionPending = false;
 
@@ -303,6 +311,7 @@ log('STARTUP', {
   hasExitCode: Boolean(cfg.c3ExitLongCode),
   amountMode: cfg.c3AmountPerTrade ? `${cfg.c3AmountPerTradeType || 'unset'}:${cfg.c3AmountPerTrade}` : 'not_set',
   stateFile: cfg.stateFile,
+  autoEntryControl: publicAutoEntryControl(),
   manualActions: SUPPORTED_MANUAL_ACTIONS,
   entryConfig: {
     ray30AutoEntryEnabled: cfg.ray30AutoEntryEnabled,
@@ -429,6 +438,18 @@ async function handleManual(body, req) {
 
   if (action === 'status') {
     return { ok: true, ...publicStatus() };
+  }
+
+  if (action === 'pause_auto_entry') {
+    pauseAutomaticEntries('MANUAL_COMMAND_PAUSE');
+    return { ok: true, brain: BRAIN, action, autoEntryControl: publicAutoEntryControl(), state: publicState() };
+  }
+
+  if (action === 'resume_auto_entry') {
+    state.autoEntryControl = { paused: false, reason: null, updatedAt: nowIso() };
+    saveState();
+    log('FVVO_AUTO_ENTRY_RESUMED_BY_MANUAL_COMMAND', { activePosition: Boolean(state.position && state.position.inPosition) });
+    return { ok: true, brain: BRAIN, action, autoEntryControl: publicAutoEntryControl(), state: publicState() };
   }
 
   if (action === 'force_clear_verified_flat') {
@@ -790,6 +811,7 @@ async function evaluateAll(price, source) {
 }
 
 async function evaluateStandaloneTrigger(price, source) {
+  if (automaticEntryPaused()) return null;
   const setup = state.priceTrigger;
   if (!setup || setup.status !== 'ARMED') return null;
 
@@ -817,6 +839,7 @@ async function evaluateStandaloneTrigger(price, source) {
 }
 
 async function evaluateCampaigns(price, source) {
+  if (automaticEntryPaused()) return [];
   const outs = [];
   for (const [campaignId, campaign] of Object.entries(state.campaigns || {})) {
     if (!campaign || campaign.status !== 'ARMED') continue;
@@ -903,6 +926,12 @@ function evaluateSetupHit(setup, price) {
 }
 
 async function enterLong({ price, source, campaignId, entryRole, setup, manual, requestId }) {
+  // One authoritative guard: every automatic path ends here, including future scanners.
+  // Manual entries remain possible while automatic entry is paused.
+  if (!manual && automaticEntryPaused()) {
+    log('FVVO_AUTO_ENTRY_BLOCKED_BY_MANUAL_LOCK', { price, source, control: publicAutoEntryControl() });
+    return { ok: false, error: 'AUTO_ENTRY_PAUSED', httpStatus: 409, autoEntryControl: publicAutoEntryControl() };
+  }
   if (entrySubmissionPending) {
     log('FVVO_ENTER_LONG_BLOCKED_ENTRY_SUBMISSION_PENDING', { price, source });
     return { ok: false, error: 'ENTRY_SUBMISSION_PENDING', httpStatus: 409 };
@@ -994,6 +1023,9 @@ async function exitLong({ price, reason, manual }) {
   state.position = emptyPosition();
   state.position.lastExitReason = reason;
   state.position.lastC3Exit = forward;
+  if (manual && cfg.autoEntryPauseAfterManualExit) {
+    pauseAutomaticEntries('MANUAL_EXIT_REQUIRES_EXPLICIT_RESUME');
+  }
   saveState();
   log('FVVO_MANUAL_EXIT_LONG_ACCEPTED', { price: exitPrice, reason, hadOpenPosition, requestId: exitRequestId, c3Forward: summarizeForward(forward) });
   return { ok: true, brain: BRAIN, action: 'exit_long', exited: true, price: exitPrice, reason, c3Forward: forward, previousPosition: summarizePosition(prev), state: publicState() };
@@ -2289,6 +2321,7 @@ function publicStatus() {
     manualPath: cfg.manualPath,
     webhookPath: cfg.webhookPath,
     supportedActions: SUPPORTED_MANUAL_ACTIONS,
+    autoEntryControl: publicAutoEntryControl(),
     forwardConfig: {
       enableHttpForward: cfg.enableHttpForward,
       demoForwardAllowed: cfg.demoForwardAllowed,
@@ -2356,6 +2389,7 @@ function publicStatus() {
 function publicState() {
   return {
     latest: state.latest,
+    autoEntryControl: publicAutoEntryControl(),
     position: summarizePosition(state.position),
     priceTrigger: state.priceTrigger ? summarizeSetup(state.priceTrigger) : null,
     campaigns: summarizeCampaigns(state.campaigns),
@@ -2482,7 +2516,48 @@ function ensureStateShape() {
   state.campaigns = state.campaigns || {};
   state.ray30Pullback = state.ray30Pullback || { armed: false };
   state.handoff = state.handoff || { active: false, at: null, reason: null };
+  if (!state.autoEntryControl || typeof state.autoEntryControl.paused !== 'boolean') {
+    state.autoEntryControl = { paused: false, reason: null, updatedAt: null };
+  }
 }
+
+function automaticEntryPaused() {
+  return Boolean(state.autoEntryControl && state.autoEntryControl.paused);
+}
+
+function publicAutoEntryControl() {
+  return {
+    paused: automaticEntryPaused(),
+    reason: state.autoEntryControl ? state.autoEntryControl.reason : null,
+    updatedAt: state.autoEntryControl ? state.autoEntryControl.updatedAt : null,
+    holdOnStartup: cfg.autoEntryHoldOnStartup,
+    pauseAfterManualExit: cfg.autoEntryPauseAfterManualExit
+  };
+}
+
+function pauseAutomaticEntries(reason, options = {}) {
+  const prior = state.autoEntryControl || { paused: false, reason: null, updatedAt: null };
+  state.autoEntryControl = {
+    paused: true,
+    reason: options.preserveExistingReason && prior.paused ? prior.reason : reason,
+    updatedAt: options.preserveExistingReason && prior.paused ? prior.updatedAt : nowIso()
+  };
+  // Cancel old pending manual trigger/campaign entry setups; never cancel a tracked position
+  // or its autonomous exit management.
+  state.priceTrigger = null;
+  state.campaigns = {};
+  state.ray30Pullback = { armed: false };
+  state.ray30Setup = { active: false, clearReason: 'AUTO_ENTRY_PAUSED', clearedAt: nowIso() };
+  if (state.earlyTurn) {
+    state.earlyTurn.confirmedCandidate = null;
+    state.earlyTurn.confirmCount = 0;
+    state.earlyTurn.firstTickAtMs = null;
+    state.earlyTurn.lastTickAtMs = null;
+  }
+  saveState();
+  log('FVVO_AUTO_ENTRY_PAUSED', { control: publicAutoEntryControl(), activePosition: Boolean(state.position && state.position.inPosition) });
+}
+
 
 function loadState() {
   try {
@@ -2524,7 +2599,8 @@ function readJson(req) {
 }
 
 function validSecret(body, req, expected) {
-  if (!expected) return true;
+  // Never expose a functioning manual/trading webhook without a configured secret.
+  if (!expected) return false;
   const got = body.secret || body.webhook_secret || req.headers['x-webhook-secret'] || req.headers['x-manual-secret'];
   return String(got || '') === String(expected);
 }
