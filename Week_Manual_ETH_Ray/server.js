@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_ETH_v3s_REBUILT_V3Q_MANUAL_EXIT_LOCK
+ * BrainFVVO_ETH_v3t_3M_RAY_V_RECOVERY_PAPER
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -141,6 +141,28 @@ const cfg = {
   earlyTurnProbationExitRsi5m: numEnv('EARLY_TURN_PROBATION_EXIT_RSI_5M', 43),
   earlyTurnProbationExitFvvo5m: numEnv('EARLY_TURN_PROBATION_EXIT_FVVO_5M', -0.50),
   earlyTurnProbationExitConfirmBars: Math.max(2, intEnv('EARLY_TURN_PROBATION_EXIT_CONFIRM_BARS', 2)),
+  // v3t: standalone post-washout V-shape entry, DEMO accounts only. No 30m bullish gate needed.
+  vRecoveryEnabled: boolEnv('V_RECOVERY_ENABLED', true),
+  vRecoverySendOrder: boolEnv('V_RECOVERY_SEND_ORDER', true),
+  vDrop30Pct: numEnv('V_DROP_30M_PCT', 1.20),
+  vDrop60Pct: numEnv('V_DROP_60M_PCT', 1.80),
+  vDrop90Pct: numEnv('V_DROP_90M_PCT', 2.50),
+  vDropAtrMult: numEnv('V_DROP_ATR_MULT', 2.20),
+  vRecoveryMinBouncePct: numEnv('V_RECOVERY_MIN_BOUNCE_PCT', 0.50),
+  vRecoveryMaxBouncePct: numEnv('V_RECOVERY_MAX_BOUNCE_PCT', 2.50),
+  vRecoveryMaxAgeSec: intEnv('V_RECOVERY_MAX_AGE_SEC', 10800),
+  vRayalgoTf: String(env.V_RAYALGO_TIMEFRAME || '3'),
+  vRayMaxAgeSec: intEnv('V_RAY_MAX_AGE_SEC', 420),
+  vConfirmWindow: Math.max(4, intEnv('V_CONFIRM_15S_WINDOW', 4)),
+  vConfirmRequired: Math.max(3, intEnv('V_CONFIRM_15S_REQUIRED', 3)),
+  vConfirmMinSec: intEnv('V_CONFIRM_MIN_SEC', 30),
+  vConfirmTickGapSec: intEnv('V_CONFIRM_TICK_GAP_SEC', 10),
+  vMinRsi15s: numEnv('V_MIN_RSI_15S', 45),
+  vMinFvvo15s: numEnv('V_MIN_FVVO_15S', 0),
+  vMaxMicroChasePct: numEnv('V_MAX_MICRO_CHASE_PCT', 0.55),
+  vAtrMaxAgeSec: intEnv('V_ATR_MAX_AGE_SEC', 900),
+  vAtrRequire: boolEnv('V_REQUIRE_REAL_5M_ATR', true),
+  vRayBearReversalCancel: boolEnv('V_CANCEL_ON_3M_BEAR_CHANGE', true),
   // Never treat a re-armed old RayAlgo alert as a newly received alert after a profit exit.
   ray30DisallowHistoricalBullRearmAfterExit: boolEnv('RAY30_DISALLOW_HISTORICAL_BULL_REARM_AFTER_EXIT', true),
 
@@ -264,7 +286,7 @@ const cfg = {
   logEmojiEnabled: boolEnv('LOG_EMOJI_ENABLED', true),
   logFeatureTickEnabled: boolEnv('LOG_FEATURE_TICK_ENABLED', false),
   log15sTickEnabled: boolEnv('LOG_15S_TICK_ENABLED', true),
-  log15sTickEveryN: Math.max(1, intEnv('LOG_15S_TICK_EVERY_N', 20)),
+  log15sTickEveryN: Math.max(1, intEnv('LOG_15S_TICK_EVERY_N', 4)),
   logFeature5mEnabled: boolEnv('LOG_FEATURE_5M_ENABLED', true),
   logC3PayloadAudit: boolEnv('LOG_C3_PAYLOAD_AUDIT', true)
 };
@@ -367,6 +389,7 @@ log('STARTUP', {
     rayalgoBearExit5mMaxAgeSec: cfg.rayalgoBearExit5mMaxAgeSec
   },
   floorConfig: floorConfigSummary(),
+  vRecoveryConfig: vRecoveryConfigSummary(),
   earlyTurnConfig: { enabled: cfg.earlyTurnEnabled && cfg.executionMode === 'demo', sendOrder: cfg.earlyTurnSendOrder, confirmationTicks: cfg.earlyTurnConfirmTicks, confirmationWindow: cfg.earlyTurnConfirmWindow, confirmationMinSec: cfg.earlyTurnConfirmMinSec, confirmTickMinGapSec: cfg.earlyTurnConfirmTickMinGapSec, require30mFeature: cfg.earlyTurnRequire30mFeature, contextMaxAgeSec: cfg.earlyTurnContextMaxAgeSec, allow30mBearExhaustion: cfg.earlyTurnAllowBearExhaustion30m, prior5mRsiCeiling: cfg.earlyTurnPrevRsiMax5m, bearishMemoryMinAgeSec: cfg.earlyTurnBearMinAgeSec, microFloorsEnabled: cfg.microFloorsEnabled, rayalgoConflictGuard: cfg.rayalgoConflictGuardEnabled, rayalgoConflictSettleSec: cfg.rayalgoConflictSettleSec },
   logConfig: {
     logEmojiEnabled: cfg.logEmojiEnabled,
@@ -642,6 +665,7 @@ async function handleWebhook(body, req) {
     if (isFiniteNum(price)) {
       state.latest.tick = { price, at: nowIso(), atMs: Date.now(), sourceTime: nowMs, raw: compactRaw(body) };
       rememberRecentPrice(price);
+      observeVRecoveryTick(price, body);
       log('FVVO_FEATURE_TICK_RECEIVED', featureLogPayload(body, event || body.kind || 'FEATURE_TICK_FVVO', price, 'tick'));
       const evalOut = await evaluateAll(price, 'feature_tick');
       saveState();
@@ -653,12 +677,24 @@ async function handleWebhook(body, req) {
     if (isFiniteNum(price)) {
       state.latest.feature5m = { price, at: nowIso(), atMs: Date.now(), sourceTime: nowMs, raw: compactRaw(body) };
       rememberFeature5mBar(price, body);
+      const vAtr = extractRealAtrPct(body, price);
+      if (isFiniteNum(vAtr) && vAtr > 0) state.vRecovery.atr5m = { pct:vAtr, atMs:Date.now(), source:'FEATURE_5M_FVVO' };
       rememberRecentPrice(price);
       log('FVVO_FEATURE_5M_RECEIVED', featureLogPayload(body, event || body.kind || 'FEATURE_5M_FVVO', price, 'feature5m'));
       const evalOut = await evaluateAll(price, 'feature_5m');
       saveState();
       return { ok: true, brain: BRAIN, accepted: true, event: 'FEATURE_5M_FVVO', price, eval: evalOut, state: publicState() };
     }
+  }
+
+  // A separate 5m Pine publisher can supply true 5m ATR%. This NEVER feeds the price-entry or Ray state.
+  if (event === 'ATR5M_CONTEXT') {
+    const atrPct = extractRealAtrPct(body, price);
+    if (!isFiniteNum(atrPct) || atrPct <= 0) return { ok:true, accepted:false, reason:'MISSING_VALID_5M_ATR' };
+    state.vRecovery.atr5m = { pct:atrPct, atMs:Date.now(), source:'ATR5M_CONTEXT' };
+    saveState();
+    log('V_RECOVERY_ATR_5M_RECEIVED', { atrPct:round(atrPct), timeframe:'5' });
+    return { ok:true, accepted:true, event:'ATR5M_CONTEXT', atrPct:round(atrPct) };
   }
 
   if (event === 'FVVO_SIGNAL' || event === 'FVVO_OSCILLATOR_SIGNAL' || body.fvvo_signal || body.confidenceSignal || body.rayTradeSignal) {
@@ -725,6 +761,33 @@ async function handleWebhook(body, req) {
       raw: compactRaw(body)
     };
 
+    // Dedicated 3m reversal receiver: NEVER replace the independent 30m RayAlgo context.
+    if (externalRayAlgo && String(rayState.timeframe) === cfg.vRayalgoTf) {
+      const normalized = String(signal).toUpperCase();
+      const bullishChange = /BULLISH.*TREND.*CHANGE|BULLISH_TREND_CHANGE/.test(normalized);
+      const bearishChange = /BEARISH.*TREND.*CHANGE|BEARISH_TREND_CHANGE/.test(normalized);
+      if (bullishChange) {
+        state.vRecovery.rayBull3m = { signal, atMs:Date.now(), price:isFiniteNum(price)?price:null };
+        state.vRecovery.observations = [];
+        log('V_RECOVERY_RAY3_BULL_CHANGE_RECEIVED', { timeframe:rayState.timeframe, signal, price });
+      } else if (bearishChange && cfg.vRayBearReversalCancel) {
+        state.vRecovery.rayBull3m = null;
+        state.vRecovery.observations = [];
+        log('V_RECOVERY_RAY3_BEAR_CHANGE_CANCELLED', { signal });
+      } else {
+        log('V_RECOVERY_RAY3_OTHER_MONITOR_ONLY', { signal, timeframe:rayState.timeframe });
+      }
+      // Exit protection still gets to inspect a fresh executable price; a 3m alert is never itself an entry order.
+      const liveTick = state.latest && state.latest.tick;
+      const evalPrice = liveTick && isFiniteNum(liveTick.price) && Date.now()-liveTick.atMs <= cfg.featureTickMaxAgeSec*1000 ? liveTick.price : price;
+      const exitEval = liveTick && isFiniteNum(liveTick.price) && Date.now()-liveTick.atMs <= cfg.featureTickMaxAgeSec*1000 ? await evaluatePositionExit(evalPrice,'ray3_signal') : null;
+      saveState();
+      return { ok:true,accepted:true,event:'RAYALGO_3M',signal,exitEval };
+    }
+    if (externalRayAlgo && String(rayState.timeframe) !== '30' && !rayalgoTimeframeAllowed(rayState.timeframe)) {
+      log('RAYALGO_UNROUTED_TIMEFRAME_IGNORED', { signal, timeframe:rayState.timeframe });
+      return {ok:true,accepted:false,reason:'UNROUTED_RAYALGO_TIMEFRAME'};
+    }
     if (externalRayAlgo && cfg.rayalgoExternalAlertsEnabled) {
       const acceptResult = stageRayAlgoExternal(rayState);
       const setupTfAllowed = rayalgoTimeframeAllowed(rayState.timeframe);
@@ -799,6 +862,8 @@ async function evaluateAll(price, source) {
   const campaignOut = await evaluateCampaigns(price, source);
   events.push(...campaignOut);
 
+  const vOut = await evaluateVRecoveryAutoEntry(price, source);
+  if (vOut) events.push(vOut);
   const earlyOut = await evaluateEarlyTurnAutoEntry(price, source);
   if (earlyOut) events.push(earlyOut);
   const autoOut = await evaluateRay30AutoEntry(price, source);
@@ -975,11 +1040,12 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
   state.position = {
     inPosition: true,
     positionLifecycle: forward.dryRun ? 'ENTRY_DRY_RUN' : 'ENTRY_ACCEPTED_UNVERIFIED_FILL',
-    phase: source === 'early_turn_probation_auto' ? 'EARLY_TURN_PROBATION' : 'LONGHOLD_CONFIRMED',
-    longholdConfirmedAt: source === 'early_turn_probation_auto' ? null : nowIso(),
+    phase: source === 'v_recovery_probation_auto' ? 'V_RECOVERY_PROBATION' : (source === 'early_turn_probation_auto' ? 'EARLY_TURN_PROBATION' : 'LONGHOLD_CONFIRMED'),
+    longholdConfirmedAt: ['early_turn_probation_auto','v_recovery_probation_auto'].includes(source) ? null : nowIso(),
     entryPrice: price,
     entryTime: nowIso(),
     entryTimeMs: Date.now(),
+    vRecoveryLow: source === 'v_recovery_probation_auto' && state.vRecovery.candidate ? state.vRecovery.candidate.low : null,
     source,
     campaignId: campaignId || null,
     entryRole: entryRole || null,
@@ -1156,8 +1222,8 @@ function stageRayAlgoExternal(ray) {
     g.conflict = { barKey, firstSignal: prior.signal, secondSignal: ray.signal, firstRegime: otherRegime, secondRegime: ray.regime, atMs: Date.now() };
     if (state.latest.rayalgoExternal && rayBarKey(state.latest.rayalgoExternal.atMs) === barKey) state.latest.rayalgoExternal = null;
     const position = state.position;
-    if (position && position.inPosition && position.phase === 'LONGHOLD_CONFIRMED' && position.source === 'early_turn_probation_auto' && position.longholdConfirmedRayBarKey === barKey) {
-      position.phase = 'EARLY_TURN_PROBATION';
+    if (position && position.inPosition && position.phase === 'LONGHOLD_CONFIRMED' && ['early_turn_probation_auto','v_recovery_probation_auto'].includes(position.source) && position.longholdConfirmedRayBarKey === barKey) {
+      position.phase = position.source === 'v_recovery_probation_auto' ? 'V_RECOVERY_PROBATION' : 'EARLY_TURN_PROBATION';
       position.longholdConfirmedAt = null;
       position.longholdConfirmedRayBarKey = null;
       log('EARLY_TURN_LONGHOLD_PROMOTION_REVOKED_ON_RAY_CONFLICT', { barKey, entryPrice: position.entryPrice, mfePct: position.mfePct, note:'NO_EXIT_ORDER_NO_MFE_RESET' });
@@ -1230,7 +1296,7 @@ function promoteEarlyTurnOnExternalBull(ray) {
   if (!ray || ray.sourceKind !== 'rayalgo_external' || !rayalgoTimeframeAllowed(ray.timeframe)) return;
   if (normalizeRaySignalToRegime(ray.signal, ray.regime) !== 'RAY_BULL') return;
   const p = state.position;
-  if (!p || !p.inPosition || p.phase !== 'EARLY_TURN_PROBATION') return;
+  if (!p || !p.inPosition || !['EARLY_TURN_PROBATION','V_RECOVERY_PROBATION'].includes(p.phase)) return;
   if (!isFiniteNum(p.entryTimeMs) || ray.atMs <= p.entryTimeMs) return;
   p.phase = 'LONGHOLD_CONFIRMED';
   p.longholdConfirmedAt = nowIso();
@@ -1240,13 +1306,13 @@ function promoteEarlyTurnOnExternalBull(ray) {
 }
 
 function earlyTurnProbationFailure(p, price, source) {
-  if (!p || p.phase !== 'EARLY_TURN_PROBATION') return { exit: false };
+  if (!p || !['EARLY_TURN_PROBATION','V_RECOVERY_PROBATION'].includes(p.phase)) return { exit: false };
   if (source !== 'feature_5m') return { exit: false };
   const recent = state.latest.feature5mHistory || [];
   const weak = recent.slice(-cfg.earlyTurnProbationExitConfirmBars);
   if (weak.length < cfg.earlyTurnProbationExitConfirmBars || weak.some(x => !isFiniteNum(x.atMs) || x.atMs < p.entryTimeMs)) return { exit: false };
   const allWeak = weak.every(x => x.rsi <= cfg.earlyTurnProbationExitRsi5m && x.fvvo <= cfg.earlyTurnProbationExitFvvo5m && x.price < x.ema18);
-  return allWeak ? { exit: true, reason: 'EARLY_TURN_CONFIRMED_5M_THESIS_FAIL', bars: weak.map(x=>({ rsi:x.rsi, fvvo:x.fvvo, price:x.price })) } : { exit: false };
+  return allWeak ? { exit: true, reason: p.phase === 'V_RECOVERY_PROBATION' ? 'V_RECOVERY_CONFIRMED_5M_THESIS_FAIL' : 'EARLY_TURN_CONFIRMED_5M_THESIS_FAIL', bars: weak.map(x=>({ rsi:x.rsi, fvvo:x.fvvo, price:x.price })) } : { exit: false };
 }
 
 async function evaluateEarlyTurnAutoEntry(price, source) {
@@ -2067,9 +2133,14 @@ async function evaluatePositionExit(price, source) {
   if (!state.position || !state.position.inPosition) return null;
   const p = state.position;
   const profitPct = pct(price, p.entryPrice);
+  if (p.phase === 'V_RECOVERY_PROBATION' && isFiniteNum(p.vRecoveryLow) && price <= p.vRecoveryLow) {
+    log('V_RECOVERY_NEW_LOW_THESIS_EXIT', { price, low:p.vRecoveryLow });
+    const out = await exitLong({ price, reason:'V_RECOVERY_WASHOUT_LOW_BROKEN' });
+    return { type:'exit', reason:'V_RECOVERY_WASHOUT_LOW_BROKEN', out };
+  }
   const probationFail = earlyTurnProbationFailure(p, price, source);
   if (probationFail && probationFail.exit) {
-    log('EARLY_TURN_PROBATION_THESIS_EXIT', { price, source, profitPct: round(profitPct), ...probationFail });
+    log(p.phase === 'V_RECOVERY_PROBATION' ? 'V_RECOVERY_PROBATION_THESIS_EXIT' : 'EARLY_TURN_PROBATION_THESIS_EXIT', { price, source, profitPct: round(profitPct), ...probationFail });
     const out = await exitLong({ price, reason: probationFail.reason });
     return { type: 'exit', reason: probationFail.reason, out };
   }
@@ -2322,6 +2393,7 @@ function publicStatus() {
     webhookPath: cfg.webhookPath,
     supportedActions: SUPPORTED_MANUAL_ACTIONS,
     autoEntryControl: publicAutoEntryControl(),
+    vRecoveryConfig: vRecoveryConfigSummary(),
     forwardConfig: {
       enableHttpForward: cfg.enableHttpForward,
       demoForwardAllowed: cfg.demoForwardAllowed,
@@ -2390,6 +2462,7 @@ function publicState() {
   return {
     latest: state.latest,
     autoEntryControl: publicAutoEntryControl(),
+    vRecovery: summarizeVRecovery(),
     position: summarizePosition(state.position),
     priceTrigger: state.priceTrigger ? summarizeSetup(state.priceTrigger) : null,
     campaigns: summarizeCampaigns(state.campaigns),
@@ -2509,6 +2582,9 @@ function ensureStateShape() {
   if (typeof state.latest.rayalgoExternal === 'undefined') state.latest.rayalgoExternal = null;
   state.latest.recentPrices = state.latest.recentPrices || [];
   state.latest.feature5mHistory = state.latest.feature5mHistory || [];
+  state.vRecovery = state.vRecovery || { priceHistory:[], atr5m:null, candidate:null, rayBull3m:null, observations:[], lastVeto:null, lastEntryAtMs:null };
+  state.vRecovery.priceHistory = Array.isArray(state.vRecovery.priceHistory) ? state.vRecovery.priceHistory.slice(-550) : [];
+  state.vRecovery.observations = Array.isArray(state.vRecovery.observations) ? state.vRecovery.observations.slice(-cfg.vConfirmWindow) : [];
   state.earlyTurn = state.earlyTurn || { confirmedCandidate: null, confirmCount: 0, firstTickAtMs: null, lastTickAtMs: null, used: false };
   state.rayalgoSignalGuard = state.rayalgoSignalGuard || { pending: null, lastAccepted: null, conflict: null };
   state.position = state.position || emptyPosition();
@@ -2548,6 +2624,7 @@ function pauseAutomaticEntries(reason, options = {}) {
   state.campaigns = {};
   state.ray30Pullback = { armed: false };
   state.ray30Setup = { active: false, clearReason: 'AUTO_ENTRY_PAUSED', clearedAt: nowIso() };
+  if (state.vRecovery) { state.vRecovery.rayBull3m = null; state.vRecovery.observations = []; }
   if (state.earlyTurn) {
     state.earlyTurn.confirmedCandidate = null;
     state.earlyTurn.confirmCount = 0;
@@ -3027,6 +3104,139 @@ function roundOrNull(v) { return isFiniteNum(v) ? round(v) : null; }
 
 function latestPrice() {
   return (state.latest.tick && state.latest.tick.price) || (state.latest.feature5m && state.latest.feature5m.price) || null;
+}
+
+function vRecoveryConfigSummary() {
+  return { enabled:cfg.vRecoveryEnabled && cfg.executionMode==='demo', sendOrder:cfg.vRecoverySendOrder,
+    dropWindows:[{minutes:30,pct:cfg.vDrop30Pct},{minutes:60,pct:cfg.vDrop60Pct},{minutes:90,pct:cfg.vDrop90Pct}],
+    atrMult:cfg.vDropAtrMult, requireRealAtr:cfg.vAtrRequire, rayTimeframe:cfg.vRayalgoTf,
+    minBouncePct:cfg.vRecoveryMinBouncePct,maxBouncePct:cfg.vRecoveryMaxBouncePct,
+    confirmWindow:cfg.vConfirmWindow,confirmRequired:cfg.vConfirmRequired, confirmationMinSec:cfg.vConfirmMinSec,
+    maxCandidateAgeSec:cfg.vRecoveryMaxAgeSec };
+}
+function summarizeVRecovery() {
+  const v=state.vRecovery || {};
+  return { candidate:v.candidate || null, atr5m:v.atr5m || null, rayBull3m:v.rayBull3m || null,
+    observations:v.observations ? v.observations.length : 0, priceHistoryLength:v.priceHistory ? v.priceHistory.length : 0,
+    lastVeto:v.lastVeto || null, lastEntryAtMs:v.lastEntryAtMs || null };
+}
+function extractRealAtrPct(raw, close) {
+  const direct = numVal(raw.atrPct ?? raw.atr_pct ?? raw.atrPercent ?? raw.atr_percent, null);
+  if (isFiniteNum(direct) && direct > 0 && direct < 30) return direct;
+  const atr = numVal(raw.atr ?? raw.atr5m, null);
+  if (isFiniteNum(atr) && atr > 0 && isFiniteNum(close) && close > 0) return 100*atr/close;
+  return null;
+}
+function freshVATR() {
+  const a=state.vRecovery && state.vRecovery.atr5m;
+  if (!a || !isFiniteNum(a.pct) || a.pct <= 0 || !isFiniteNum(a.atMs) || Date.now()-a.atMs>cfg.vAtrMaxAgeSec*1000) return null;
+  return a.pct;
+}
+// Correct ordered peak-to-subsequent-low drawdown, not a high relative to a later low.
+function vDropEvidence(points, minutes, fixedDrop, atrPct) {
+  const arr=points.filter(x=>x.atMs>=Date.now()-minutes*60000);
+  if (arr.length<2) return null;
+  let high=arr[0].price, highAtMs=arr[0].atMs, best=null;
+  for(let i=1;i<arr.length;i++) {
+    const p=arr[i];
+    if (p.price>high) { high=p.price; highAtMs=p.atMs; }
+    const drop=100*(high-p.price)/high;
+    if (!best || drop>best.dropPct) best={ high, highAtMs, low:p.price, lowAtMs:p.atMs, dropPct:drop, minutes };
+  }
+  const required=Math.max(fixedDrop, cfg.vDropAtrMult*atrPct);
+  return best && best.dropPct>=required ? {...best, requiredPct:required, atrPct} : null;
+}
+function vVeto(reason, extras={}) {
+  const v=state.vRecovery;
+  if (v.lastVeto!==reason) { log('V_RECOVERY_SCAN_VETO', { reason, ...extras }); v.lastVeto=reason; }
+  return null;
+}
+function observeVRecoveryTick(price, body) {
+  if (!cfg.vRecoveryEnabled || cfg.executionMode!=='demo' || !isFiniteNum(price) || price<=0) return;
+  const v=state.vRecovery, now=Date.now();
+  const timeKey=numVal(body.barTimeMs ?? body.bar_time_ms ?? body.time, now);
+  // No same-candle duplicate samples may increase confirmation confidence.
+  if (v.priceHistory.length && timeKey && v.priceHistory[v.priceHistory.length-1].sourceKey===timeKey) {
+    v.priceHistory[v.priceHistory.length-1].price=price;
+  } else v.priceHistory.push({price, atMs:now, sourceKey:timeKey});
+  v.priceHistory=v.priceHistory.filter(x=>x.atMs>=now-91*60000).slice(-550);
+  if(v.candidate && now-v.candidate.lowAtMs>cfg.vRecoveryMaxAgeSec*1000) {
+    log('V_RECOVERY_CANDIDATE_EXPIRED',{low:v.candidate.low,lowAtMs:v.candidate.lowAtMs});
+    v.candidate=null;v.rayBull3m=null;v.observations=[];
+  }
+  if(v.candidate && price<v.candidate.low) {
+    v.candidate.low=price;v.candidate.lowAtMs=now;v.candidate.dropPct=100*(v.candidate.high-price)/v.candidate.high;v.observations=[];v.rayBull3m=null;
+    log('V_RECOVERY_NEW_WASHOUT_LOW',{low:price});
+  }
+  const atr=freshVATR();
+  // The advertised adaptive formula requires an actual confirmed 5m ATR measurement.
+  if (cfg.vAtrRequire && !atr) return;
+  const atrReference=atr || 0;
+  const windows=[{minutes:30,pct:cfg.vDrop30Pct},{minutes:60,pct:cfg.vDrop60Pct},{minutes:90,pct:cfg.vDrop90Pct}];
+  const hits=windows.map(x=>vDropEvidence(v.priceHistory,x.minutes,x.pct,atrReference)).filter(Boolean);
+  if (!hits.length || state.position.inPosition) return;
+  hits.sort((a,b)=>b.dropPct/b.requiredPct - a.dropPct/a.requiredPct);
+  const best=hits[0];
+  // Arm only with a low observed AFTER its high, never look into future candles.
+  if (!v.candidate || (!v.candidate.used && best.low < v.candidate.low)) {
+    v.candidate={...best,armedAtMs:now, used:false};
+    v.observations=[];v.rayBull3m=null;
+    log('V_RECOVERY_WASHOUT_ARMED', { windowMin:best.minutes,high:best.high,low:best.low,dropPct:round(best.dropPct),requiredPct:round(best.requiredPct),atrPct:round(best.atrPct) });
+  }
+}
+async function evaluateVRecoveryAutoEntry(price, source) {
+  if (!cfg.vRecoveryEnabled || cfg.executionMode!=='demo' || source!=='feature_tick') return null;
+  const v=state.vRecovery, c=v.candidate;
+  if (!c || c.used || !isFiniteNum(price)) return null;
+  if (state.position && state.position.inPosition) return null;
+  if (automaticEntryPaused()) return vVeto('AUTO_ENTRY_PAUSED');
+  if (Date.now()-c.lowAtMs>cfg.vRecoveryMaxAgeSec*1000) return vVeto('CANDIDATE_EXPIRED');
+  const pe=ray30PostExitStatus();
+  if (pe.cooldownActive || pe.requireNewRayalgo) return vVeto('POST_EXIT_GUARD');
+  const atr=freshVATR();
+  if (cfg.vAtrRequire && !atr) return vVeto('MISSING_FRESH_REAL_5M_ATR');
+  // ATR must not decrease the locked-in qualifying threshold for the armed washout.
+  const effectiveReq=Math.max(c.requiredPct,c.minutes===30?cfg.vDrop30Pct:c.minutes===60?cfg.vDrop60Pct:cfg.vDrop90Pct,
+    cfg.vDropAtrMult*(atr||0));
+  if (c.dropPct < effectiveReq) return vVeto('DROP_BELOW_CURRENT_ADAPTIVE_ATR',{dropPct:round(c.dropPct),requiredPct:round(effectiveReq)});
+  const bounce=pct(price,c.low);
+  if (bounce<cfg.vRecoveryMinBouncePct) return vVeto('WAIT_RECOVERY_BOUNCE',{bouncePct:round(bounce)});
+  if (bounce>cfg.vRecoveryMaxBouncePct) return vVeto('RECOVERY_OVEREXTENDED',{bouncePct:round(bounce)});
+  const ray=v.rayBull3m;
+  if (!ray || ray.atMs<c.lowAtMs || Date.now()-ray.atMs>cfg.vRayMaxAgeSec*1000) return vVeto('WAIT_FRESH_3M_BULLISH_TREND_CHANGE');
+  const ext=state.latest && state.latest.rayalgoExternal;
+  if(ext && ext.atMs>ray.atMs && ext.regime==='RAY_BEAR') return vVeto('NEW_30M_BEAR_ALERT_AFTER_3M_BULL');
+  const blocked=fvvoLongBlockStatus();
+  if(blocked.blocked) return vVeto('RECENT_FVVO_BEARISH_BLOCK',{blockers:blocked.blockers});
+  const t=state.latest && state.latest.tick, raw=t && t.raw || {};
+  const fresh=t && Date.now()-t.atMs <= cfg.featureTickMaxAgeSec*1000;
+  const sourceKey=numVal(raw.barTimeMs ?? raw.bar_time_ms ?? raw.time, t && t.sourceTime);
+  const prior=v.observations[v.observations.length-1];
+  if (prior && sourceKey && prior.sourceKey===sourceKey) return vVeto('DUPLICATE_15S_CANDLE');
+  if (prior && Date.now()-prior.atMs<cfg.vConfirmTickGapSec*1000) return vVeto('WAIT_15S_SEPARATION');
+  const rsi=numVal(raw.rsi,null),fvvo=numVal(raw.fvvo ?? raw.fvvoValue,null);
+  const ema8=numVal(raw.ema8,null),ema18=numVal(raw.ema18,null);
+  const valid=Boolean(fresh && isFiniteNum(rsi) && rsi>=cfg.vMinRsi15s && isFiniteNum(fvvo) && fvvo>=cfg.vMinFvvo15s &&
+    (!isFiniteNum(ema8)||price>=ema8) && (!isFiniteNum(ema18)||price>=ema18) && price>c.low);
+  v.observations.push({atMs:Date.now(),sourceKey,price,ok:valid});
+  v.observations=v.observations.slice(-cfg.vConfirmWindow);
+  const obs=v.observations;
+  const positive=obs.filter(x=>x.ok);
+  const span=positive.length>0?(positive[positive.length-1].atMs-positive[0].atMs)/1000:0;
+  if (obs.length<cfg.vConfirmWindow || !valid || positive.length<cfg.vConfirmRequired || span<cfg.vConfirmMinSec)
+    return vVeto('WAIT_15S_CONFIRMATION',{positive:positive.length, observed:obs.length, spanSec:span});
+  // Micro-breakout confirmation must occur after earlier observations, not from a candle that has yet to close.
+  const priorHigh=Math.max(...obs.slice(0,-1).map(x=>x.price));
+  const microChase=100*(price-priorHigh)/priorHigh;
+  if (price<priorHigh || microChase>cfg.vMaxMicroChasePct) return vVeto('WAIT_MICRO_RECLAIM_OR_TOO_FAR',{priorHigh,deltaPct:round(microChase)});
+  if (!cfg.vRecoverySendOrder || !cfg.ray30AutoEntryEnabled || !cfg.ray30AutoEntrySendOrder) {
+    log('V_RECOVERY_SHADOW_READY',{price,low:c.low,bouncePct:round(bounce)});
+    c.used=true;saveState();return {type:'v_recovery_shadow',decision:'SHADOW_READY'};
+  }
+  log('V_RECOVERY_ENTRY_READY',{ price,low:c.low,bouncePct:round(bounce),dropPct:round(c.dropPct),windowMin:c.minutes,raySignal:ray.signal,positiveTicks:positive.length,mode:'V_RECOVERY_PROBATION'});
+  const out=await enterLong({price,source:'v_recovery_probation_auto',campaignId:null,entryRole:'v_recovery',setup:{raw:{profile:'V_RECOVERY_PROBATION'},stopPrice:null,tp1:null}});
+  if(out && out.ok){ c.used=true;v.lastEntryAtMs=Date.now();v.lastVeto=null;saveState(); }
+  return {type:'v_recovery_entry',decision:out&&out.ok?'ENTERED':'ENTER_FAILED',out};
 }
 
 function rememberRecentPrice(price) {

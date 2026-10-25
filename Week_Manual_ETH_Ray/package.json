@@ -1,7 +1,7 @@
 {
-  "name": "brainfvvo-eth-v3s-rebuilt-from-v3q-manual-exit-lock-demo",
-  "version": "3.19.0",
-  "description": "Rebuilt exclusively from ETH v3q: persistent authenticated automatic-entry lock; DEMO ETH longhold, 30 USDT quote",
+  "name": "brainfvvo-eth-v3t-3m-ray-v-recovery-paper",
+  "version": "3.20.0",
+  "description": "ETH v3t from v3s: adaptive 30/60/90min washout, isolated 3m RayAlgo bullish trend change, 15s fast recovery probation paper entry",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
