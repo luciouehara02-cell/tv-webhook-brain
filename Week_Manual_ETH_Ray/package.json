@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-eth-v3t-3m-ray-v-recovery-paper",
-  "version": "3.20.0",
+  "name": "brainfvvo-eth-v3u-atr-drop-diagnostics-paper",
+  "version": "3.21.0",
   "description": "ETH v3t from v3s: adaptive 30/60/90min washout, isolated 3m RayAlgo bullish trend change, 15s fast recovery probation paper entry",
   "main": "server.js",
   "type": "commonjs",

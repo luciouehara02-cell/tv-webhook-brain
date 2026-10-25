@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_ETH_v3t_3M_RAY_V_RECOVERY_PAPER
+ * BrainFVVO_ETH_v3u_ATR_DROP_DIAGNOSTICS_PAPER
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3s_REBUILT_V3Q_MANUAL_EXIT_LOCK';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3u_ATR_DROP_DIAGNOSTICS_PAPER';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -288,6 +288,8 @@ const cfg = {
   log15sTickEnabled: boolEnv('LOG_15S_TICK_ENABLED', true),
   log15sTickEveryN: Math.max(1, intEnv('LOG_15S_TICK_EVERY_N', 4)),
   logFeature5mEnabled: boolEnv('LOG_FEATURE_5M_ENABLED', true),
+  // Log-only V-Recovery 30m/60m/90m drawdown snapshot on each 5m feature.
+  logVRecoveryDropDiagnosticEnabled: boolEnv('LOG_V_RECOVERY_DROP_DIAGNOSTIC_ENABLED', true),
   logC3PayloadAudit: boolEnv('LOG_C3_PAYLOAD_AUDIT', true)
 };
 
@@ -397,6 +399,7 @@ log('STARTUP', {
     log15sTickEnabled: cfg.log15sTickEnabled,
     log15sTickEveryN: cfg.log15sTickEveryN,
     logFeature5mEnabled: cfg.logFeature5mEnabled,
+    logVRecoveryDropDiagnosticEnabled: cfg.logVRecoveryDropDiagnosticEnabled,
     logC3PayloadAudit: cfg.logC3PayloadAudit,
     ray30ScanLogMode: cfg.ray30ScanLogMode,
     ray30NoEntryLogMode: cfg.ray30NoEntryLogMode,
@@ -680,7 +683,15 @@ async function handleWebhook(body, req) {
       const vAtr = extractRealAtrPct(body, price);
       if (isFiniteNum(vAtr) && vAtr > 0) state.vRecovery.atr5m = { pct:vAtr, atMs:Date.now(), source:'FEATURE_5M_FVVO' };
       rememberRecentPrice(price);
-      log('FVVO_FEATURE_5M_RECEIVED', featureLogPayload(body, event || body.kind || 'FEATURE_5M_FVVO', price, 'feature5m'));
+      // Diagnostic-only enrichment. atrPct is the exact validated value stored above.
+      // A missing feature ATR is explicit, even when another ATR5M_CONTEXT value is cached.
+      log('FVVO_FEATURE_5M_RECEIVED', featureLogPayload(body, event || body.kind || 'FEATURE_5M_FVVO', price, 'feature5m', {
+        atrPct: isFiniteNum(vAtr) && vAtr > 0 ? vAtr : null,
+        atrSource: isFiniteNum(vAtr) && vAtr > 0 ? 'FEATURE_5M_FVVO' : null
+      }));
+      if (cfg.vRecoveryEnabled && cfg.logVRecoveryDropDiagnosticEnabled) {
+        log('V_RECOVERY_DROP_WINDOW_DIAGNOSTIC', vRecoveryDropWindowDiagnostic());
+      }
       const evalOut = await evaluateAll(price, 'feature_5m');
       saveState();
       return { ok: true, brain: BRAIN, accepted: true, event: 'FEATURE_5M_FVVO', price, eval: evalOut, state: publicState() };
@@ -2449,6 +2460,7 @@ function publicStatus() {
       log15sTickEnabled: cfg.log15sTickEnabled,
       log15sTickEveryN: cfg.log15sTickEveryN,
       logFeature5mEnabled: cfg.logFeature5mEnabled,
+    logVRecoveryDropDiagnosticEnabled: cfg.logVRecoveryDropDiagnosticEnabled,
       logC3PayloadAudit: cfg.logC3PayloadAudit,
     ray30ScanLogMode: cfg.ray30ScanLogMode,
     ray30NoEntryLogMode: cfg.ray30NoEntryLogMode,
@@ -3131,6 +3143,55 @@ function freshVATR() {
   const a=state.vRecovery && state.vRecovery.atr5m;
   if (!a || !isFiniteNum(a.pct) || a.pct <= 0 || !isFiniteNum(a.atMs) || Date.now()-a.atMs>cfg.vAtrMaxAgeSec*1000) return null;
   return a.pct;
+}
+// Read-only progress snapshot: does not update any entry, exit, or V-Recovery state.
+// Uses the same ordered peak -> subsequent trough calculation as vDropEvidence().
+function vRecoveryDropWindowDiagnostic() {
+  const now = Date.now();
+  const v = state.vRecovery || {};
+  const points = Array.isArray(v.priceHistory) ? v.priceHistory : [];
+  const atr = freshVATR();
+  const cached = v.atr5m || null;
+  const atrUsable = isFiniteNum(atr) && atr > 0;
+  const atrRequiredMissing = cfg.vAtrRequire && !atrUsable;
+  const windows = [
+    { minutes:30, fixedPct:cfg.vDrop30Pct },
+    { minutes:60, fixedPct:cfg.vDrop60Pct },
+    { minutes:90, fixedPct:cfg.vDrop90Pct }
+  ].map(({ minutes, fixedPct }) => {
+    const samples = points.filter(p => isFiniteNum(p.atMs) && isFiniteNum(p.price) && p.price > 0 && p.atMs >= now - minutes * 60000);
+    const requiredPct = atrRequiredMissing ? null : Math.max(fixedPct, cfg.vDropAtrMult * (atr || 0));
+    if (samples.length < 2) return {
+      windowMin:minutes, fixedPct:round(fixedPct), sampleCount:samples.length,
+      dropPct:null, requiredPct:roundOrNull(requiredPct), qualifies:false,
+      status:atrRequiredMissing ? 'MISSING_FRESH_5M_ATR' : 'INSUFFICIENT_PRICE_HISTORY'
+    };
+    let peak = samples[0].price;
+    let peakAtMs = samples[0].atMs;
+    let best = null;
+    for (let i = 1; i < samples.length; i += 1) {
+      const p = samples[i];
+      if (p.price > peak) { peak = p.price; peakAtMs = p.atMs; }
+      const pctDrop = 100 * (peak - p.price) / peak;
+      if (!best || pctDrop > best.dropPct) best = { high:peak, low:p.price, highAtMs:peakAtMs, lowAtMs:p.atMs, dropPct:pctDrop };
+    }
+    const qualifies = requiredPct !== null && best.dropPct >= requiredPct;
+    return {
+      windowMin:minutes, fixedPct:round(fixedPct), sampleCount:samples.length,
+      historySpanMin:round((now - samples[0].atMs)/60000),
+      high:round(best.high), low:round(best.low),
+      dropPct:round(best.dropPct), requiredPct:roundOrNull(requiredPct),
+      qualifies, status:atrRequiredMissing ? 'MISSING_FRESH_5M_ATR' : (qualifies ? 'DROP_QUALIFIED' : 'DROP_BELOW_THRESHOLD')
+    };
+  });
+  return {
+    atrPct:atrUsable ? atr : null,
+    atrSource:atrUsable && cached ? cached.source : null,
+    atrAgeSec:cached && isFiniteNum(cached.atMs) ? round((now-cached.atMs)/1000) : null,
+    atrFresh:atrUsable, atrRequired:cfg.vAtrRequire,
+    candidateActive:Boolean(v.candidate && !v.candidate.used),
+    priceHistoryLength:points.length, windows
+  };
 }
 // Correct ordered peak-to-subsequent-low drawdown, not a high relative to a later low.
 function vDropEvidence(points, minutes, fixedDrop, atrPct) {
