@@ -1,17 +1,14 @@
 {
-  "name": "brainfvvo-eth-longhold-v1f-demo-reentry-quality",
-  "version": "1.5.1",
+  "name": "brainfvvo-eth-longhold-v1g-demo-fast-v-recovery",
+  "version": "1.6.0",
   "private": true,
-  "description": "ETH-only DEMO long-hold brain with quality-gated quick-recovery re-entry",
+  "description": "ETH-only DEMO long-hold brain with fast shock-drop V-recovery entry",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v1a.js replay_fixture.jsonl baseline_v1d/server.js && node replay_bridge_v1a.js && node replay_ignition_v1a.js && node replay_reconciliation_v1a.js && node replay_oct12_v1d_guards.js && node replay_oct19_v1e_improvements.js && node replay_oct22_v1f_reentry.js",
-    "replay": "node replay_v1a.js replay_fixture.jsonl",
-    "replay:historic": "node replay_historic_v1c.js",
-    "replay:oct12": "node replay_oct12_v1d_guards.js",
-    "replay:oct19": "node replay_oct19_v1e_improvements.js",
-    "replay:oct22": "node replay_oct22_v1f_reentry.js"
+    "check": "node --check server.js && node replay_v_recovery_v1g.js",
+    "replay:v-recovery": "node replay_v_recovery_v1g.js",
+    "replay:historic-v-recovery": "node replay_historic_v_recovery_v1g.js"
   },
   "engines": {
     "node": ">=20"
