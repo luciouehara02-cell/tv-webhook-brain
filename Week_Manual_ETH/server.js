@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_ETH_LongHold_v1g_DEMO_FAST_V_RECOVERY
+// BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1g_DEMO_FAST_V_RECOVERY"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:ETHUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -501,6 +501,12 @@ const CFG = {
   DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS", 2),
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", false),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
+  // v1h: counterfactual only, never sends orders and never changes an exit decision.
+  ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED: envBool("ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED", true),
+  ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT: envNum("ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT", 0.60),
+  ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT: envNum("ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT", 0.27),
+  ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT: envNum("ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT", 0.80),
+  ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT: envNum("ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT", 0.45),
   // Long-hold v1a: a permanent, upward-only profit ratchet. Each MFE tier selects
   // a smaller giveback window; above the final tier the last window continues.
   LONG_HOLD_RATCHET_ENABLED: envBool("LONG_HOLD_RATCHET_ENABLED", true),
@@ -562,6 +568,11 @@ const CFG = {
   ETH_IGNITION_MAX_TICK_RSI: envNum("ETH_IGNITION_MAX_TICK_RSI", 74),
   ETH_IGNITION_MIN_TICK_ADX: envNum("ETH_IGNITION_MIN_TICK_ADX", 18),
   ETH_IGNITION_MIN_ADX_RETENTION_RATIO: Math.max(0, Math.min(1, envNum("ETH_IGNITION_MIN_ADX_RETENTION_RATIO", 0.75))),
+  // v1h: only originally weak-ADX ignition setups require a higher ADX before entry.
+  // "live" affects only ignition entries; "shadow" audits without blocking; "disabled" restores v1g.
+  ETH_V1H_WEAK_ADX_GATE_MODE: envStr("ETH_V1H_WEAK_ADX_GATE_MODE", "live").toLowerCase(),
+  ETH_V1H_WEAK_SETUP_ADX_BELOW: envNum("ETH_V1H_WEAK_SETUP_ADX_BELOW", 20),
+  ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX: envNum("ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX", 28),
   ETH_IGNITION_MIN_TICK_FVVO: envNum("ETH_IGNITION_MIN_TICK_FVVO", 0.50),
   ETH_IGNITION_MIN_TICK_SLOPE: envNum("ETH_IGNITION_MIN_TICK_SLOPE", 0.80),
   ETH_IGNITION_CONFIRM_OBSERVATIONS: Math.max(1, Math.floor(envNum("ETH_IGNITION_CONFIRM_OBSERVATIONS", 2))),
@@ -1265,6 +1276,8 @@ function configProblems() {
   if (CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT < CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT <= 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT < 0 || CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT >= CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT || CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_LONG_HOLD_PRE_ARM_BRIDGE_CONFIG");
   if (CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_REQUIRE_DEMO && !demoMode()) problems.push("ETH_IGNITION_AUTO_ENTRY_REQUIRES_DEMO_MODE");
   if (CFG.ETH_IGNITION_MIN_5M_RSI >= CFG.ETH_IGNITION_MAX_5M_RSI || CFG.ETH_IGNITION_MIN_TICK_RSI >= CFG.ETH_IGNITION_MAX_TICK_RSI || CFG.ETH_IGNITION_SETUP_MAX_AGE_SEC <= 0 || CFG.ETH_IGNITION_MAX_CHASE_PCT <= CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT || CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS < 1 || CFG.ETH_IGNITION_STOP_PCT <= 0 || CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE < 1 || CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE > 4 || CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT < 0) problems.push("INVALID_ETH_IGNITION_AUTO_ENTRY_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.ETH_V1H_WEAK_ADX_GATE_MODE) || CFG.ETH_V1H_WEAK_SETUP_ADX_BELOW <= 0 || CFG.ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX <= 0) problems.push("INVALID_ETH_V1H_WEAK_ADX_GATE");
+  if (!(CFG.ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT > CFG.ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT && CFG.ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT > CFG.ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT && CFG.ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT >= CFG.ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT && CFG.ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT < CFG.ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT && CFG.ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT >= 0)) problems.push("INVALID_ETH_V1H_MICRO_SHADOW_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.ETH_IGNITION_HIGH_RSI_MODE) || CFG.ETH_IGNITION_HIGH_RSI_RELEASE_RSI >= CFG.ETH_IGNITION_HIGH_RSI_THRESHOLD || CFG.ETH_IGNITION_MIN_ADX_RETENTION_RATIO < 0 || CFG.ETH_IGNITION_MIN_ADX_RETENTION_RATIO > 1) problems.push("INVALID_ETH_IGNITION_V1D_GUARD_CONFIG");
   if (CFG.ETH_IGNITION_MAINTENANCE_MIN_RSI >= CFG.ETH_IGNITION_MAINTENANCE_MAX_RSI || CFG.ETH_IGNITION_MAINTENANCE_MAX_WEAK_BARS < 1 || CFG.ETH_IGNITION_MAINTENANCE_EMA18_TOLERANCE_PCT < 0) problems.push("INVALID_ETH_IGNITION_V1E_MAINTENANCE_CONFIG");
   if (!["off", "reason_change", "all"].includes(CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_MODE) || CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC < 300) problems.push("INVALID_ETH_IGNITION_COMPACT_LOG_CONFIG");
@@ -1809,7 +1822,7 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "ETH_LongHold_v1g_DEMO_FAST_V_RECOVERY",
+    buildVersion: "ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO",
     executionReconciliation: { automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, source: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL" : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
     brain: CFG.BRAIN_NAME,
@@ -1854,6 +1867,13 @@ function statusPayload() {
     },
     preArmBridgeContract: { enabled: CFG.LONG_HOLD_PRE_ARM_BRIDGE_ENABLED, mode: preArmBridgeMode(), armMfePct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_ARM_MFE_PCT, peakCapPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_PEAK_CAP_PCT, givebackPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_GIVEBACK_PCT, minLockPnlPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_MIN_LOCK_PNL_PCT, confirmObservations: CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_OBSERVATIONS, confirmSec: CFG.LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC, hardBreakBufferPct: CFG.LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT, state: state.position?.dynamicProfit?.preArmBridge || null },
     ethIgnitionAutoEntry: { enabled: CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED, autoOrderEnabled: CFG.ETH_IGNITION_AUTO_ORDER_ENABLED, demoRequired: CFG.ETH_IGNITION_REQUIRE_DEMO, setup: state.ethIgnition?.setup || null, last: state.ethIgnition?.last || null },
+    ethV1hImprovements: {
+      weakAdxGate: { mode: CFG.ETH_V1H_WEAK_ADX_GATE_MODE, setupAdxBelow: CFG.ETH_V1H_WEAK_SETUP_ADX_BELOW, minEntryAdx: CFG.ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX },
+      microFloor: { mode: CFG.ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED ? "shadow_only" : "disabled", tiers: [
+        { armMfePct: CFG.ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT, grossLockPct: CFG.ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT },
+        { armMfePct: CFG.ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT, grossLockPct: CFG.ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT },
+      ], positionShadow: state.position?.ethV1hMicroFloorShadow || null },
+    },
     vRecovery: { enabled: CFG.V_RECOVERY_ENABLED, mode: CFG.V_RECOVERY_MODE, campaign: state.vRecovery?.campaign || null, last: state.vRecovery?.last || null, cooldownUntilMs: state.vRecovery?.cooldownUntilMs || 0 },
     profitFloorShadowMonitoring: profitFloorShadowStatusPayload(),
     lossSideThesisFailContract: {
@@ -3573,6 +3593,40 @@ function modeStructuralExitFailureConfirmed(position, feature, price, pnlPct) {
   return { confirmed: s.observations >= CFG.MODE_STRUCTURAL_EXIT_CONFIRM_OBSERVATIONS && elapsedSec >= CFG.MODE_STRUCTURAL_EXIT_CONFIRM_MIN_SPAN_SEC, reason: "MODE_STRUCTURAL_FLOOR_CONFIRM", mode, threshold: round(threshold, 8), observations: s.observations, elapsedSec, pnlPct };
 }
 
+// v1h: hypothetical floor observer. Never mutates a live floor, sends an exit, or changes control flow.
+function observeEthV1hMicroFloorShadow(position, feature, pnlPct) {
+  if (!CFG.ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED) return null;
+  if (!["AUTO_ETH_FVVO_IGNITION", "AUTO_ETH_V_RECOVERY"].includes(position?.entryOrigin)) return null;
+  const shadow = position.ethV1hMicroFloorShadow && typeof position.ethV1hMicroFloorShadow === "object"
+    ? position.ethV1hMicroFloorShadow
+    : (position.ethV1hMicroFloorShadow = { tier: 0, grossLockPct: null, triggered: false, trigger: null });
+  if (shadow.triggered) return shadow;
+  const peak = Math.max(finite(position.peakPnlPct, 0), pnlPct);
+  const nextTier = peak >= CFG.ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT ? 2
+    : peak >= CFG.ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT ? 1 : 0;
+  if (nextTier > shadow.tier) {
+    shadow.tier = nextTier;
+    shadow.grossLockPct = nextTier === 2 ? CFG.ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT : CFG.ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT;
+    shadow.armAt = nowIso();
+    log("INFO", nextTier === 1 ? "FVVO_V1H_MICRO_FLOOR_SHADOW_ARMED" : "FVVO_V1H_MICRO_FLOOR_SHADOW_RAISED", {
+      entryOrigin: position.entryOrigin, tier: nextTier, peakGrossPct: round(peak, 6),
+      proposedLockGrossPct: shadow.grossLockPct,
+      estimatedNetLockPct: round(shadow.grossLockPct - CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT, 6),
+      action: "SHADOW_ONLY_NO_ORDER",
+    });
+  }
+  if (shadow.tier && pnlPct <= shadow.grossLockPct) {
+    shadow.triggered = true;
+    shadow.trigger = { at: nowIso(), price: finite(feature.price, finite(feature.close, null)),
+      observedGrossPct: round(pnlPct, 6), proposedLockGrossPct: shadow.grossLockPct,
+      estimatedNetObservedPct: round(pnlPct - CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT, 6),
+      peakGrossPct: round(peak, 6), tier: shadow.tier };
+    log("INFO", "FVVO_V1H_MICRO_FLOOR_SHADOW_WOULD_EXIT", { entryOrigin: position.entryOrigin, ...shadow.trigger,
+      action: "NO_EXIT_CHANGE_SHADOW_ONLY", note: "Observed tick mark, not simulated limit fill" });
+  }
+  return shadow;
+}
+
 async function manageExit(feature) {
   const p = state.position;
   if (!p || state.manual.handoffActive || String(p.lifecycle || "").startsWith("EXIT_")) return;
@@ -3584,6 +3638,7 @@ async function manageExit(feature) {
   p.peakPnlPct = Math.max(finite(p.peakPnlPct, 0), pnl);
   p.maxFavorableExcursionPct = Math.max(finite(p.maxFavorableExcursionPct, 0), pnl);
   p.maxAdverseExcursionPct = Math.min(finite(p.maxAdverseExcursionPct, 0), pnl);
+  observeEthV1hMicroFloorShadow(p, feature, pnl);
 
   // Emergency price-velocity protection has first priority after a valid mark.
   const flashCrash = flashCrashDecision(p, feature, price);
@@ -7131,7 +7186,20 @@ function ethIgnitionTickEvidence(feature, setup) {
     slopeOk: slope !== null && slope >= CFG.ETH_IGNITION_MIN_TICK_SLOPE,
     rayOk: !ray.startsWith("RAY_BEAR"),
   };
-  return { ok: Object.values(checks).every(Boolean), price, ema8, ema18, rsi, adx, armAdx, minRetainedAdx: minRetainedAdx === null ? null : round(minRetainedAdx, 6), fvvo, slope, ray, maxPrice: round(maxPrice, 8), checks };
+  const baseOk = Object.values(checks).every(Boolean);
+  const weakSetup = armAdx !== null && armAdx < CFG.ETH_V1H_WEAK_SETUP_ADX_BELOW;
+  const weakGatePassed = !weakSetup || (adx !== null && adx >= CFG.ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX);
+  const weakAdxGate = {
+    mode: CFG.ETH_V1H_WEAK_ADX_GATE_MODE,
+    weakSetup, setupAdx: armAdx, entryAdx: adx,
+    weakSetupBelow: CFG.ETH_V1H_WEAK_SETUP_ADX_BELOW,
+    requiredEntryAdx: CFG.ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX,
+    wouldBlock: baseOk && !weakGatePassed,
+    passed: weakGatePassed,
+  };
+  // No effect on V-recovery, manual or reentry paths. Only ignition calls this check.
+  checks.weakAdxV1hOk = CFG.ETH_V1H_WEAK_ADX_GATE_MODE !== "live" || weakGatePassed;
+  return { ok: baseOk && checks.weakAdxV1hOk, baseOk, weakAdxGate, price, ema8, ema18, rsi, adx, armAdx, minRetainedAdx: minRetainedAdx === null ? null : round(minRetainedAdx, 6), fvvo, slope, ray, maxPrice: round(maxPrice, 8), checks };
 }
 
 function cancelEthIgnitionSetup(reason, evidence) {
@@ -7269,6 +7337,12 @@ async function evaluateEthIgnitionAutoEntry(feature) {
   }
   const evidence = ethIgnitionTickEvidence(feature, setup);
   if (!evidence.ok) {
+    if (evidence.baseOk && evidence.weakAdxGate?.wouldBlock && CFG.ETH_V1H_WEAK_ADX_GATE_MODE === "live") {
+      if (!setup.weakAdxLastLogAtMs || nowMs() - setup.weakAdxLastLogAtMs >= 300000) {
+        setup.weakAdxLastLogAtMs = nowMs();
+        log("INFO", "FVVO_V1H_IGNITION_WEAK_ADX_BLOCKED", { setupId: setup.id, ...evidence.weakAdxGate, price: evidence.price, action: "WAIT_STRONGER_15S_ADX_NO_ORDER" });
+      }
+    }
     setup.observations = 0; setup.firstConfirmAtMs = 0;
     return;
   }
@@ -7296,7 +7370,12 @@ async function evaluateEthIgnitionAutoEntry(feature) {
     if (!CFG.ETH_IGNITION_HIGH_RSI_PRESERVE_CONFIRMATION) { setup.observations = 0; setup.firstConfirmAtMs = nowMs(); }
   }
   log("INFO", "FVVO_ETH_IGNITION_CONFIRMING", { setupId: setup.id, observations: setup.observations, requiredObservations: CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS, elapsedSec, requiredSpanSec: CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC, evidence });
-  if (setup.observations >= CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS && elapsedSec >= CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC) await executeEthIgnitionEntry(feature, setup, evidence);
+  if (setup.observations >= CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS && elapsedSec >= CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC) {
+    if (CFG.ETH_V1H_WEAK_ADX_GATE_MODE === "shadow" && evidence.weakAdxGate?.wouldBlock) {
+      log("INFO", "FVVO_V1H_IGNITION_WEAK_ADX_SHADOW_WOULD_BLOCK", { setupId: setup.id, ...evidence.weakAdxGate, action: "UNCHANGED_V1G_ENTRY" });
+    }
+    await executeEthIgnitionEntry(feature, setup, evidence);
+  }
 }
 
 function vRecoveryEventTimeMs(feature) {
@@ -7589,6 +7668,12 @@ async function start() {
   log("INFO", "FVVO_BREAKOUT_NEAR_RETEST_RECOVERY_STARTUP", { mode: breakoutNearRetestRecoveryMode(), tolerancePct: CFG.BREAKOUT_NEAR_RETEST_TOLERANCE_PCT, minPullbackFromHighPct: CFG.BREAKOUT_NEAR_RETEST_MIN_PULLBACK_FROM_HIGH_PCT, reclaimPct: CFG.BREAKOUT_NEAR_RETEST_RECLAIM_PCT, minEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MIN_ENTRY_ABOVE_CONFIRM_PCT, minRecoveryOfPullbackPct: CFG.BREAKOUT_NEAR_RETEST_MIN_RECOVERY_OF_PULLBACK_PCT, maxEntryAboveConfirmPct: CFG.BREAKOUT_NEAR_RETEST_MAX_ENTRY_ABOVE_CONFIRM_PCT, minAdx: CFG.BREAKOUT_NEAR_RETEST_MIN_ADX, minFvvo: CFG.BREAKOUT_NEAR_RETEST_MIN_FVVO, minStrongSlope: CFG.BREAKOUT_NEAR_RETEST_MIN_STRONG_SLOPE, maxRsi: CFG.BREAKOUT_NEAR_RETEST_MAX_RSI, maxExtensionFromEma8Pct: CFG.BREAKOUT_NEAR_RETEST_MAX_EXTENSION_FROM_EMA8_PCT, confirmation: "cross_up_or_two_improving_observations", configurationProblems: problems });
   log("INFO", "FVVO_ENTRY_GATE_CONFIRMATION_STARTUP", { confirmationRequired: CFG.ENTRY_GATE_CONFIRM_REQUIRED, confirmationTtlSec: CFG.ENTRY_GATE_CONFIRM_TTL_SEC, historyMaxBars: CFG.ENTRY_GATE_HISTORY_MAX_BARS, timeframes: ["15m", "1H", "4H"], informationOnly: !CFG.ENTRY_GATE_CONFIRM_REQUIRED, noConfirmationMeansNoArm: CFG.ENTRY_GATE_CONFIRM_REQUIRED });
   log("INFO", "FVVO_LOGGING_STARTUP", { featureTickEnabled: CFG.LOG_FEATURE_TICK_ENABLED, log15sTickEnabled: CFG.LOG_15S_TICK_ENABLED, log15sTickEveryN: CFG.LOG_15S_TICK_EVERY_N, feature5mEnabled: CFG.LOG_FEATURE_5M_ENABLED, replayCompactEnabled: CFG.LOG_REPLAY_COMPACT_ENABLED, c3PayloadAuditEnabled: CFG.C3_PAYLOAD_AUDIT_ENABLED });
+  log("INFO", "FVVO_ETH_V1H_IMPROVEMENTS_STARTUP", {
+    weakAdxGate: { mode: CFG.ETH_V1H_WEAK_ADX_GATE_MODE, setupAdxBelow: CFG.ETH_V1H_WEAK_SETUP_ADX_BELOW, entryAdxMinimum: CFG.ETH_V1H_WEAK_SETUP_MIN_ENTRY_ADX },
+    microFloorShadow: { enabled: CFG.ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED,
+      tiers: [[CFG.ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT, CFG.ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT], [CFG.ETH_V1H_MICRO_FLOOR_2_ARM_MFE_PCT, CFG.ETH_V1H_MICRO_FLOOR_2_LOCK_GROSS_PCT]],
+      emitsOrders: false },
+  });
   log("INFO", "FVVO_ETH_LONG_HOLD_V1B_DEMO_STARTUP", { automaticIgnitionEntry: CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED && CFG.ETH_IGNITION_AUTO_ORDER_ENABLED, demoAcceptedEntryAssumeFilled: CFG.DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED, demoAcceptedExitAutoRelease: CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, autoExitReleaseDelaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, rawTickLogging: CFG.LOG_FEATURE_TICK_ENABLED, fiveMinuteLogging: CFG.LOG_FEATURE_5M_ENABLED, ignitionThresholds: { min5mRsi: CFG.ETH_IGNITION_MIN_5M_RSI, max5mRsi: CFG.ETH_IGNITION_MAX_5M_RSI, min5mAdx: CFG.ETH_IGNITION_MIN_5M_ADX, min5mFvvo: CFG.ETH_IGNITION_MIN_5M_FVVO, min5mSlope: CFG.ETH_IGNITION_MIN_5M_SLOPE, qualityGateEnabled: CFG.ETH_IGNITION_QUALITY_GATE_ENABLED, qualityRequiredScore: CFG.ETH_IGNITION_QUALITY_REQUIRED_SCORE, qualityMinEmaSpreadPct: CFG.ETH_IGNITION_QUALITY_MIN_EMA_SPREAD_PCT, qualityMinRsi: CFG.ETH_IGNITION_QUALITY_MIN_RSI, qualityMinFvvo: CFG.ETH_IGNITION_QUALITY_MIN_FVVO, breakoutBufferPct: CFG.ETH_IGNITION_BREAKOUT_BUFFER_PCT, maxChasePct: CFG.ETH_IGNITION_MAX_CHASE_PCT, minTickRsi: CFG.ETH_IGNITION_MIN_TICK_RSI, maxTickRsi: CFG.ETH_IGNITION_MAX_TICK_RSI, minTickAdx: CFG.ETH_IGNITION_MIN_TICK_ADX, minTickFvvo: CFG.ETH_IGNITION_MIN_TICK_FVVO, minTickSlope: CFG.ETH_IGNITION_MIN_TICK_SLOPE, confirmObservations: CFG.ETH_IGNITION_CONFIRM_OBSERVATIONS, confirmMinSpanSec: CFG.ETH_IGNITION_CONFIRM_MIN_SPAN_SEC }, highRsiPullbackShadow: CFG.ETH_IGNITION_HIGH_RSI_SHADOW_ENABLED, manualEntryModes: { immediate: CFG.MANUAL_ALLOW_ENTER, breakout: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE === "live", preferred: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.TRAILING_DIP_RECLAIM_ZONE_MODE === "live", deep: CFG.PRICE_ENTRY_ENABLED && CFG.MANUAL_ALLOW_ARM_PRICE_ENTRY && CFG.CONFIRMED_PULLBACK_RECLAIM_ZONE_MODE === "live" }, automaticReentry: reentryAutoEnabled(), flashCrashEnabled: CFG.LONG_HOLD_FLASH_CRASH_ENABLED, flashCrashWindowSec: CFG.LONG_HOLD_FLASH_CRASH_WINDOW_SEC, flashCrashDropPct: CFG.LONG_HOLD_FLASH_CRASH_DROP_PCT, initialSlEnabled: CFG.LONG_HOLD_INITIAL_SL_ENABLED, initialSlPct: CFG.LONG_HOLD_INITIAL_SL_PCT, milestoneFloors: CFG.LONG_HOLD_MILESTONE_FLOORS, runnerArmMfePct: CFG.RUNNER_TIGHT_TRAIL_ARM_MFE_PCT, runnerGivebackPct: CFG.RUNNER_TIGHT_TRAIL_GIVEBACK_PCT, configurationProblems: problems });
   app.listen(CFG.PORT, () => log("INFO", "FVVO_LISTENING", { port: CFG.PORT }));
 }
@@ -7601,7 +7686,7 @@ Object.assign(module.exports, { reentryV1fQualityGate });
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });
 Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource, c3EntryOrderIncluded, c3V2SizingProblems });
 Object.assign(module.exports, { preArmBridgeMode, updatePreArmBridge, preArmBridgeBreakConfirmed });
-Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEvidence, evaluateEthIgnitionAutoEntry });
+Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEvidence, evaluateEthIgnitionAutoEntry, observeEthV1hMicroFloorShadow });
 Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShock, vRecoveryEvidence, evaluateVRecoveryEntry, executeVRecoveryEntry });
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
@@ -7638,7 +7723,7 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1g_DEMO_FAST_V_RECOVERY"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7693,7 +7778,7 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1g_DEMO_FAST_V_RECOVERY")
+      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,

@@ -1,14 +1,15 @@
 {
-  "name": "brainfvvo-eth-longhold-v1g-demo-fast-v-recovery",
-  "version": "1.6.0",
+  "name": "brainfvvo-eth-longhold-v1h-weak-adx-micro-floor-demo",
+  "version": "1.7.0",
   "private": true,
-  "description": "ETH-only DEMO long-hold brain with fast shock-drop V-recovery entry",
+  "description": "ETH-only DEMO brain v1h: ignition weak-ADX confirmation gate and shadow micro profit floor",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v_recovery_v1g.js",
+    "check": "node --check server.js && node replay_v_recovery_v1g.js && node replay_eth_v1h_upgrade.js",
     "replay:v-recovery": "node replay_v_recovery_v1g.js",
-    "replay:historic-v-recovery": "node replay_historic_v_recovery_v1g.js"
+    "replay:historic-v-recovery": "node replay_historic_v_recovery_v1g.js",
+    "replay:v1h": "node replay_eth_v1h_upgrade.js"
   },
   "engines": {
     "node": ">=20"
