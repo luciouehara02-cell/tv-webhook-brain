@@ -1,6 +1,6 @@
 {
-  "name": "sol-ray-v3s-paper",
-  "version": "3.22.0",
+  "name": "sol-ray-v3t-paper",
+  "version": "3.20.0",
   "private": true,
   "description": "SOL paper Ray30 LongHold with independent 3m V recovery",
   "main": "server.js",
