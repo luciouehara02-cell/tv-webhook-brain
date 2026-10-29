@@ -1,7 +1,7 @@
 "use strict";
 
 // ============================================================
-// BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO
+// LongHold_v1i_PAPER
 // Supervisor + BrainFVVO Swing v1h engine in ONE server.js with C3 dynamic-instrument hotfix.
 //
 // Main thread:
@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "LongHold_v1i_PAPER"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:ETHUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -502,6 +502,10 @@ const CFG = {
   DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_5M_THESIS_EXIT_ENABLED", false),
   DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT: envNum("DYNAMIC_PROFIT_FLOOR_LOG_STEP_PCT", 0.05),
   // v1h: counterfactual only, never sends orders and never changes an exit decision.
+  ETH_V1I_V_FLOOR_ENABLED: envBool("ETH_V1I_V_FLOOR_ENABLED", true),
+  ETH_V1I_V_FLOOR_ARM_MFE_PCT: envNum("ETH_V1I_V_FLOOR_ARM_MFE_PCT", 0.45),
+  ETH_V1I_V_FLOOR_LOCK_GROSS_PCT: envNum("ETH_V1I_V_FLOOR_LOCK_GROSS_PCT", 0.25),
+  ETH_V1I_V_FLOOR_CONFIRM_TICKS: envNum("ETH_V1I_V_FLOOR_CONFIRM_TICKS", 2),
   ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED: envBool("ETH_V1H_MICRO_FLOOR_SHADOW_ENABLED", true),
   ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT: envNum("ETH_V1H_MICRO_FLOOR_1_ARM_MFE_PCT", 0.60),
   ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT: envNum("ETH_V1H_MICRO_FLOOR_1_LOCK_GROSS_PCT", 0.27),
@@ -3655,6 +3659,29 @@ async function manageExit(feature) {
     await persistState(`long_hold_initial_sl_${feature.kind}`);
     await requestFullExit("FVVO_LONG_HOLD_INITIAL_SL", price, feature.kind);
     return;
+  }
+
+  // v1i: DEMO-only, V-shock-specific small-profit protection.
+  // Use a confirmed fast-tick breach; never override a native stop, flash crash, or manual exit.
+  if (CFG.ETH_V1I_V_FLOOR_ENABLED && demoMode() && p.entryOrigin === "AUTO_ETH_V_RECOVERY" && feature.kind === CFG.FVVO_FEATURE_TICK_EVENT) {
+    const floor = p.ethV1iFloor || (p.ethV1iFloor = { armed: false, belowCount: 0, lastBar: null });
+    if (p.peakPnlPct >= CFG.ETH_V1I_V_FLOOR_ARM_MFE_PCT && !floor.armed) {
+      floor.armed = true;
+      log("INFO", "FVVO_V1I_V_RECOVERY_FLOOR_ARMED", {peakPnlPct:round(p.peakPnlPct,6), lockGrossPct: CFG.ETH_V1I_V_FLOOR_LOCK_GROSS_PCT});
+    }
+    if (floor.armed) {
+      const bar = finite(feature.barTimeMs, finite(feature.time, null));
+      if (bar === null || floor.lastBar !== bar) {
+        floor.lastBar = bar;
+        floor.belowCount = pnl <= CFG.ETH_V1I_V_FLOOR_LOCK_GROSS_PCT ? floor.belowCount + 1 : 0;
+      }
+      if (floor.belowCount >= CFG.ETH_V1I_V_FLOOR_CONFIRM_TICKS) {
+        log("WARN", "FVVO_V1I_V_RECOVERY_FLOOR_EXIT", { price, pnlPct: round(pnl,6), peakPnlPct:round(p.peakPnlPct,6), belowCount:floor.belowCount });
+        await persistState(`v1i_v_recovery_floor_${feature.kind}`);
+        await requestFullExit("FVVO_V1I_V_RECOVERY_EARLY_PROFIT_FLOOR", price, feature.kind);
+        return;
+      }
+    }
   }
 
   const bridgeUpdate = updatePreArmBridge(p, price);
@@ -7723,7 +7750,7 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO"),
+    brain: envStr("MULTI_BRAIN_NAME", "LongHold_v1i_PAPER"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7778,7 +7805,7 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_ETH_LongHold_v1h_WEAK_ADX_MICRO_FLOOR_DEMO")
+      envStr("BRAIN_NAME", "LongHold_v1i_PAPER")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,

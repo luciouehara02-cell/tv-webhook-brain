@@ -1,6 +1,6 @@
 {
-  "name": "brainfvvo-eth-longhold-v1h-weak-adx-micro-floor-demo",
-  "version": "1.7.0",
+  "name": "longhold-v1i-paper",
+  "version": "1.8.0",
   "private": true,
   "description": "ETH-only DEMO brain v1h: ignition weak-ADX confirmation gate and shadow micro profit floor",
   "main": "server.js",
