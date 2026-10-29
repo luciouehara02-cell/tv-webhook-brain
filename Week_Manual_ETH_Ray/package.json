@@ -1,6 +1,6 @@
 {
-  "name": "eth-ray-v3v-paper",
-  "version": "3.22.0",
+  "name": "eth-ray-v3w-paper",
+  "version": "3.23.0",
   "description": "ETH v3t from v3s: adaptive 30/60/90min washout, isolated 3m RayAlgo bullish trend change, 15s fast recovery probation paper entry",
   "main": "server.js",
   "type": "commonjs",

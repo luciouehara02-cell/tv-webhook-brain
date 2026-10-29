@@ -3222,13 +3222,14 @@ function observeVRecoveryTick(price, body) {
   } else v.priceHistory.push({price, atMs:now, sourceKey:timeKey});
   v.priceHistory=v.priceHistory.filter(x=>x.atMs>=now-91*60000).slice(-550);
   if(v.candidate && now-v.candidate.lowAtMs>cfg.vRecoveryMaxAgeSec*1000) {
-    log('V_RECOVERY_CANDIDATE_EXPIRED',{low:v.candidate.low,lowAtMs:v.candidate.lowAtMs});
+    log('V_RECOVERY_CANDIDATE_EXPIRED',{low:v.candidate.low,lowAtMs:v.candidate.lowAtMs, windowMin:v.candidate.minutes, high:v.candidate.high, dropPct:round(v.candidate.dropPct), requiredPct:round(v.candidate.requiredPct), maxBouncePct:round(v.candidate.maxBouncePct || 0), lastVeto:v.lastVeto || null, receivedFresh3mBull:Boolean(v.rayBull3m && v.rayBull3m.atMs>=v.candidate.lowAtMs), confirmationSamples:v.observations.length});
     v.candidate=null;v.rayBull3m=null;v.observations=[];
   }
   if(v.candidate && price<v.candidate.low) {
     v.candidate.low=price;v.candidate.lowAtMs=now;v.candidate.dropPct=100*(v.candidate.high-price)/v.candidate.high;v.observations=[];v.rayBull3m=null;
     log('V_RECOVERY_NEW_WASHOUT_LOW',{low:price});
   }
+  if (v.candidate && v.candidate.low > 0) v.candidate.maxBouncePct=Math.max(v.candidate.maxBouncePct || 0,pct(price,v.candidate.low));
   const atr=freshVATR();
   // The advertised adaptive formula requires an actual confirmed 5m ATR measurement.
   if (cfg.vAtrRequire && !atr) return;
