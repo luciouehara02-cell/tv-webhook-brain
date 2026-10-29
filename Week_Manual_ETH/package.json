@@ -1,8 +1,8 @@
 {
-  "name": "longhold-v1i-paper",
-  "version": "1.8.0",
+  "name": "longhold-v1j-paper",
+  "version": "1.9.0",
   "private": true,
-  "description": "ETH-only DEMO brain v1h: ignition weak-ADX confirmation gate and shadow micro profit floor",
+  "description": "LongHold v1j PAPER: distinct-tick ignition profit protection, inherited V-recovery and exits",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
