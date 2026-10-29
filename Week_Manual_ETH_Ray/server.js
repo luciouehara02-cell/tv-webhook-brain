@@ -80,11 +80,11 @@ const cfg = {
   protectiveFloor2LockPct: numEnv('RAY30_PROTECTIVE_FLOOR_2_LOCK_PCT', 0.50),
 
   // v3o micro floors: protect small wins before the +1% permanent floor.
-  microFloorsEnabled: boolEnv('RAY30_MICRO_FLOORS_ENABLED', false),
+  microFloorsEnabled: boolEnv('RAY30_MICRO_FLOORS_ENABLED', true),
   microFloor1MfePct: numEnv('RAY30_MICRO_FLOOR_1_MFE_PCT', 0.55),
-  microFloor1LockPct: numEnv('RAY30_MICRO_FLOOR_1_LOCK_PCT', 0.10),
+  microFloor1LockPct: numEnv('RAY30_MICRO_FLOOR_1_LOCK_PCT', 0.25),
   microFloor2MfePct: numEnv('RAY30_MICRO_FLOOR_2_MFE_PCT', 0.80),
-  microFloor2LockPct: numEnv('RAY30_MICRO_FLOOR_2_LOCK_PCT', 0.25),
+  microFloor2LockPct: numEnv('RAY30_MICRO_FLOOR_2_LOCK_PCT', 0.45),
 
   runnerEnabled: boolEnv('RAY30_RUNNER_ENABLED', true),
   runnerActivateMfePct: numEnv('RAY30_RUNNER_ACTIVATE_MFE_PCT', 5.00),
