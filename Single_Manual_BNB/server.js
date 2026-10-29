@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1j_ENTRY_RECOVERY_AB_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1k_HYBRID_STOP_WAIT_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:BNBUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -5391,12 +5391,19 @@ async function armPriceEntryConfirmed(body) {
   state.manual = { ...state.manual, lastAction: "arm_price_entry", lastActionAt: nowIso() };
   if (!(await persistState("price_trigger_armed"))) return { status: 503, body: { ok: false, error: "STATE_PERSISTENCE_FAILED_WHILE_ARMING_PRICE_TRIGGER" } };
   const executionMode = priceEntryExecutionMode(pending);
+  if (pending.triggerMode === "hybrid_pullback_reclaim_zone") {
+    const budget = hybridStopEntryBudget(pending);
+    log(budget.insufficientHeadroom ? "WARN" : "INFO", "FVVO_HYBRID_PULLBACK_ENTRY_BUDGET", {
+      triggerId: pending.id, ...budget,
+      warning: budget.insufficientHeadroom ? "STOP_LIMIT_RESTRICTS_CONFIRMATION_HEADROOM" : null,
+      action: "FIXED_STOP_AND_RISK_LIMIT_PRESERVED" });
+  }
   log("INFO", "FVVO_PRICE_TRIGGER_ARMED", { triggerId: pending.id, pendingSlot, activePendingCount: activePriceEntryItems().length, entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerMode: pending.triggerMode, triggerPrice: pending.triggerPrice, activationPrice: pending.activationPrice || null, activationRangeLow: pending.activationRangeLow || null, activationRangeHigh: pending.activationRangeHigh || null, breakoutConfirmPrice: pending.breakoutConfirmPrice || null, retestRangeLow: pending.retestRangeLow || null, retestRangeHigh: pending.retestRangeHigh || null, armedReferencePrice: pending.armedReferencePrice, triggerDistancePct: pending.triggerDistancePct, stopPrice: pending.stopPrice, profitTargetPrice: pending.profitTargetPrice || null, expiresAt: pending.expiresAt, executionMode, initialCrossAction: isTrailing || isBreakoutRetestReclaimZone(pending) ? "START_TRACKING" : "SEND_MARKET_ORDER", confirmedAction: executionMode === "live" ? "SEND_MARKET_ORDER" : "LOG_SHADOW_CANDIDATE", marketOrderWillBeSentOnCross: (!isTrailing && pending.triggerMode !== "breakout_retest_reclaim_zone"), trailingDipReclaimMode: isTrailingDipReclaim(pending) ? trailingDipReclaimMode() : null, trailingDipReclaimZoneMode: isTrailingDipReclaimZone(pending) ? trailingDipReclaimZoneMode() : null, breakoutRetestReclaimZoneMode: pending.triggerMode === "breakout_retest_reclaim_zone" ? breakoutRetestReclaimZoneMode() : null });
   if (pending.entryCampaign) {
     log("INFO", "FVVO_CAMPAIGN_ENTRY_SETUP_ARMED", { entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerId: pending.id, pendingSlot, activeCampaignSetups: activePriceEntryItems().filter((item) => item.entryCampaign === pending.entryCampaign).length, triggerMode: pending.triggerMode, expiresAt: pending.expiresAt });
     if (pending.triggerMode === "trailing_dip_reclaim") log("INFO", "FVVO_CAMPAIGN_TRAILING_DIP_RECLAIM_ARMED", { entryCampaign: pending.entryCampaign, entryRole: pending.entryRole, campaignOrdinal: pending.campaignOrdinal, triggerId: pending.id, activationPrice: pending.activationPrice, stopPrice: pending.stopPrice, expiresAt: pending.expiresAt, oneWinnerPolicy: true });
   }
-  return { status: 200, body: { ok: true, priceEntryArmed: true, orderTypeOnTrigger: (isTrailing || pending.triggerMode === "breakout_retest_reclaim_zone") ? "market_on_reclaim" : "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pendingList.find((item) => item.id === pending.id) || priceEntryStatusPayload().pending } };
+  return { status: 200, body: { ok: true, priceEntryArmed: true, hybridEntryBudget: pending.triggerMode === "hybrid_pullback_reclaim_zone" ? hybridStopEntryBudget(pending) : null, orderTypeOnTrigger: (isTrailing || pending.triggerMode === "breakout_retest_reclaim_zone") ? "market_on_reclaim" : "market", entrySizeSource: CFG.C3_ENTRY_SIZE_SOURCE, entryOrderIncludedInWebhook: false, trigger: priceEntryStatusPayload().pendingList.find((item) => item.id === pending.id) || priceEntryStatusPayload().pending } };
 }
 
 async function cancelPriceEntry(body) {
@@ -5432,13 +5439,14 @@ async function cancelPriceEntry(body) {
 
 
 const recoveryFilter = require('./entryRecoveryFilter').createRecoveryFilter(process.env.ENTRY_RECOVERY_FILTER_MODE || 'A');
-log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "BNB_v1j_RECOVERY_AB", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
+log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "BNB_v1k_HYBRID_STOP_WAIT", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
 
 async function enterFromPriceTrigger(pending, feature, modeReason) {
   const pe = ensurePriceEntryState();
   const current = nowMs();
   const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
   if (!checked.ok) {
+    if (await waitForHybridStopDistance(pending, feature, checked.error)) return;
     const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { triggeredPrice: round(feature.price, 8), triggeredAt: nowIso(), triggeredAtMs: current }, pending);
     await persistState("price_trigger_gap_level_rejected");
     log("WARN", "FVVO_PRICE_TRIGGER_CANCELLED", { triggerId: cancelled.id, entryCampaign: cancelled.entryCampaign || null, entryRole: cancelled.entryRole || "standalone", triggerMode: cancelled.triggerMode, triggerPrice: cancelled.triggerPrice, executionPrice: feature.price, reason: checked.error });
@@ -5446,6 +5454,10 @@ async function enterFromPriceTrigger(pending, feature, modeReason) {
     return;
   }
 
+  if (pending.trailing?.stopDistanceWaiting) {
+    pending.trailing.stopDistanceWaiting = false;
+    log("INFO", "FVVO_HYBRID_PULLBACK_STOP_DISTANCE_VALID_AGAIN", { triggerId: pending.id, executionPrice: feature.price, ...hybridStopEntryBudget(pending) });
+  }
   const recovery = recoveryFilter.check(pending, feature, current, modeReason);
   if (recovery.reason !== 'BYPASS') log("INFO", "FVVO_ENTRY_RECOVERY_FILTER", { triggerId: pending.id, entryRole: pending.entryRole, price: feature.price, ...recovery });
   if (!recovery.ok) return;
@@ -5890,10 +5902,41 @@ function hybridPullbackFallback5mContext(pending, confirmPrice) {
   return { qualifies: close !== null && close + 1e-9 >= confirmPrice && fresh && afterTouch && rayOk && closeAboveEma8 && emaOrderOk && fvvoOk && slopeOk && chaseOk, close, barTimeMs, fresh, afterTouch, rayOk, closeAboveEma8, emaOrderOk, fvvoOk, slopeOk, chaseOk, maxEntryPrice: round(maxEntryPrice, 8), rayRegime: ctx.rayRegime || null, ema8, ema18, fvvo, slope };
 }
 
+// Stop-distance limits constrain the entry price; they never move the user's stop.
+function hybridStopEntryBudget(pending) {
+  const limit = CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT;
+  const confirmPrice = Number(pending.breakoutConfirmPrice);
+  const maxEntryByStop = limit > 0 && limit < 100 ? pending.stopPrice / (1 - limit / 100) : null;
+  const chaseCeiling = confirmPrice * (1 + CFG.HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT / 100);
+  return { stopPrice: pending.stopPrice, maxStopDistancePct: limit, confirmPrice,
+    maxEntryByStop, chaseCeiling, effectiveMaxEntryPrice: maxEntryByStop === null ? chaseCeiling : Math.min(chaseCeiling, maxEntryByStop),
+    headroomAboveConfirmPct: maxEntryByStop === null ? null : percentPnl(confirmPrice, maxEntryByStop),
+    insufficientHeadroom: maxEntryByStop !== null && maxEntryByStop < chaseCeiling - 1e-9 };
+}
+
+async function waitForHybridStopDistance(pending, feature, error) {
+  if (pending.triggerMode !== "hybrid_pullback_reclaim_zone" || error !== "EXECUTION_LEVELS_INVALID_STOP_DISTANCE_EXCEEDS_MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT") return false;
+  const t = pending.trailing || (pending.trailing = {});
+  // Do not carry votes or recovery observations across a blocked candidate.
+  t.votes = []; t.voteStartedAtMs = 0; t.consecutivePasses = 0; t.lastVoteAtMs = 0;
+  t.fallback5mObservations = 0; t.last5mBarTimeMs = 0;
+  recoveryFilter.reset(pending.id);
+  const firstWait = !t.stopDistanceWaiting;
+  t.stopDistanceWaiting = true;
+  if (firstWait) log("WARN", "FVVO_HYBRID_PULLBACK_WAIT_STOP_DISTANCE", {
+    triggerId: pending.id, reason: error, executionPrice: feature.price,
+    stopDistancePct: percentageBelow(feature.price, pending.stopPrice),
+    ...hybridStopEntryBudget(pending), expiresAt: pending.expiresAt,
+    action: "KEEP_PENDING_REQUIRE_FRESH_CONFIRMATION" });
+  await persistState("hybrid_pullback_wait_stop_distance");
+  return true;
+}
+
 async function completeHybridPullbackCandidate(pending, feature, path, details) {
   const t = pending.trailing || {};
   const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
   if (!checked.ok) {
+    if (await waitForHybridStopDistance(pending, feature, checked.error)) return;
     const cancelled = resolvePriceEntryPending("CANCELLED", checked.error, { trailing: t }, pending);
     await persistState("hybrid_pullback_execution_invalid");
     log("WARN", "FVVO_HYBRID_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: checked.error, path, executionPrice: feature.price });
@@ -5968,6 +6011,10 @@ async function evaluateHybridPullbackReclaimZone(pending, previousPrice, feature
     await persistState("hybrid_pullback_anti_chase_cancelled");
     log("WARN", "FVVO_HYBRID_PULLBACK_CANCELLED", { triggerId: cancelled?.id || pending.id, reason: cancelled?.resolutionReason, observedLowPrice: low, executionPrice: feature.price, reboundPct: round(totalReboundPct, 6), maxReboundPct: CFG.HYBRID_PULLBACK_MAX_REBOUND_FROM_LOW_PCT, recoveryAgeSec: round(recoveryAgeSec, 3), maxRecoveryAgeSec: CFG.HYBRID_PULLBACK_MAX_RECOVERY_AGE_SEC });
     return;
+  }
+  if (t.stopDistanceWaiting) {
+    const waitingCheck = validateStoredPriceTriggerAtExecution(pending, feature.price);
+    if (!waitingCheck.ok && await waitForHybridStopDistance(pending, feature, waitingCheck.error)) return;
   }
   if (fallback.barTimeMs > finite(t.last5mBarTimeMs, 0)) {
     t.last5mBarTimeMs = fallback.barTimeMs;
@@ -6841,7 +6888,7 @@ Object.assign(module.exports, { priceEntryExecutionMode, priceEntryWaitDiagnosti
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_BNB_v1j_ENTRY_RECOVERY_AB_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_BNB_v1k_HYBRID_STOP_WAIT_LIVE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6895,7 +6942,7 @@ Object.assign(module.exports, { priceEntryExecutionMode, priceEntryWaitDiagnosti
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1j_ENTRY_RECOVERY_AB_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1k_HYBRID_STOP_WAIT_LIVE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
