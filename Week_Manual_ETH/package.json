@@ -1,6 +1,6 @@
 {
-  "name": "longhold-v1j-live",
-  "version": "1.10.0",
+  "name": "longhold-v1l-live",
+  "version": "1.12.0",
   "private": true,
   "description": "LongHold v1j LIVE candidate, explicit entry arming and manual exit evidence required",
   "main": "server.js",
