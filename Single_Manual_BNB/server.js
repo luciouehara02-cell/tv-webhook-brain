@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1k_HYBRID_STOP_WAIT_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1l_BOUNDED_PROFIT_FLOOR_LIVE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:BNBUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -483,6 +483,7 @@ const CFG = {
   DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT: envNum("DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT", 0.55),
   DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT: envNum("DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT", 0.25),
   DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT: envNum("DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT", 0.05),
+  PROFIT_FLOOR_MICRO_LIVE_ENABLED: envBool("PROFIT_FLOOR_MICRO_LIVE_ENABLED", true),
   DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC: envNum("DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC", 0),
   DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS: envNum("DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS", 2),
   DYNAMIC_PROFIT_THESIS_EXIT_ENABLED: envBool("DYNAMIC_PROFIT_THESIS_EXIT_ENABLED", false),
@@ -1777,6 +1778,7 @@ function statusPayload() {
       trailGivebackStartPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_START_PCT,
       trailGivebackMinPct: CFG.DYNAMIC_PROFIT_TRAIL_GIVEBACK_MIN_PCT,
       trailTightenPer1Pct: CFG.DYNAMIC_PROFIT_TRAIL_TIGHTEN_PER_1PCT,
+      microLive: { enabled: CFG.PROFIT_FLOOR_MICRO_LIVE_ENABLED, maxSec:75, hardBufferPct:0.10, windowTicks:5, requiredBelowTicks:4, recoveryTicks:2 },
       floorConfirmSec: CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC,
       floorConfirmObservations: CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS,
       thesisExitEnabled: CFG.DYNAMIC_PROFIT_THESIS_EXIT_ENABLED,
@@ -2405,6 +2407,47 @@ function updateDynamicProfit(position, price, pnlPct) {
   d.protectedPrice = round(position.entryPriceReference * (1 + d.protectedPnlPct / 100), 8);
   const floorRaised = d.protectedPnlPct > priorProtected + 1e-9;
   return { armedNow, floorRaised, dynamic: d };
+}
+
+// Bounded shallow-breach confirmation. State lives with the persisted position.
+// The hard limit is checked on every feature; only distinct fresh tick bars vote.
+function boundedProfitFloor(position, feature, price, pnl) {
+  const d = dynamicProfitState(position);
+  if (!CFG.DYNAMIC_PROFIT_EXIT_ENABLED || !d.armed) return {confirmed:false};
+  const floor = d.protectedPnlPct;
+  const hard = Math.max(floor - 0.10, CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT + 0.10);
+  const below = pnl <= floor + 1e-9;
+  if (below && pnl <= hard + 1e-9) return {confirmed:true, reason:"MICRO_HARD_LIMIT"};
+  let m = d.microLive;
+  const current = nowMs();
+  if (!m && !below) return {confirmed:false};
+  if (!m) {
+    m = d.microLive = {startedAtMs:current, ticks:[], recovery:0, lastBar:0, lastTickAt:0, lastPrice:null};
+    log("WARN", "FVVO_PROFIT_FLOOR_MICRO_LIVE_STARTED", {price, protectedPnlPct:floor, hardPnlPct:hard, maxSec:75});
+  }
+  // Never reset the deadline on intermittent recoveries or raised floors.
+  if (current - m.startedAtMs >= 75000) {
+    if (below) return {confirmed:true,reason:"MICRO_TIMEOUT"};
+    d.microLive = null;
+    log("INFO", "FVVO_PROFIT_FLOOR_MICRO_LIVE_RECOVERED", {price,reason:"ABOVE_FLOOR_AT_DEADLINE"});
+    return {confirmed:false};
+  }
+  const bar = Number(feature.barTimeMs);
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !Number.isFinite(bar) || bar <= m.lastBar || current - bar > 45000 || bar > current + 5000) return {confirmed:false};
+  if (m.lastTickAt && current - m.lastTickAt > 45000) {m.ticks=[];m.recovery=0;}
+  const rising = m.lastPrice !== null && price > m.lastPrice;
+  m.lastPrice=price;m.lastBar=bar;m.lastTickAt=current;
+  m.ticks.push({price});m.ticks=m.ticks.slice(-5);
+  m.recovery = !below && rising && Number.isFinite(feature.slope) && feature.slope > 0 ? m.recovery + 1 : 0;
+  if (m.recovery >= 2) {
+    d.microLive=null;
+    log("INFO", "FVVO_PROFIT_FLOOR_MICRO_LIVE_RECOVERED", {price,reason:"TWO_RISING_TICKS_ABOVE_FLOOR"});
+    return {confirmed:false};
+  }
+  const weak = Number.isFinite(feature.ema8) && price < feature.ema8 && Number.isFinite(feature.fvvo) && feature.fvvo <= 0 && Number.isFinite(feature.slope) && feature.slope <= 0;
+  const belowCount=m.ticks.filter(t=>t.price <= d.protectedPrice).length;
+  if (below && m.ticks.length===5 && belowCount>=4 && weak) return {confirmed:true,reason:"MICRO_PERSISTENT_WEAKNESS"};
+  return {confirmed:false};
 }
 
 function dynamicFloorBreakConfirmed(position, markPrice, pnlPct) {
@@ -3491,7 +3534,8 @@ async function manageExit(feature) {
   }
 
   // Profit floor is a hard protection after the +0.45% (default) arm threshold.
-  const floor = dynamicFloorBreakConfirmed(p, price, pnl);
+  const floor = CFG.PROFIT_FLOOR_MICRO_LIVE_ENABLED ? boundedProfitFloor(p, feature, price, pnl) : dynamicFloorBreakConfirmed(p, price, pnl);
+  if (CFG.PROFIT_FLOOR_MICRO_LIVE_ENABLED) await persistState("profit_floor_micro_live");
   if (!floor.confirmed && floor.reason === "DYNAMIC_PROFIT_FLOOR_CONFIRM" && Number(floor.observations || 0) > 0) {
     if (Number(floor.observations || 0) === 1) armProfitFloorMicroShadow(p, feature, price, pnl, floor);
     log("WARN", "FVVO_DYNAMIC_PROFIT_FLOOR_BREACH_CONFIRMING", { price, latestPnlPct: round(pnl, 6), peakPnlPct: round(p.peakPnlPct, 6), protectedPnlPct: floor.protectedPnlPct, protectedPrice: floor.protectedPrice, observations: floor.observations, requiredObservations: CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_OBSERVATIONS, elapsedSec: floor.elapsedSec, requiredSec: CFG.DYNAMIC_PROFIT_FLOOR_CONFIRM_SEC, pnlAudit: pnlAudit(p, price) });
@@ -5439,7 +5483,7 @@ async function cancelPriceEntry(body) {
 
 
 const recoveryFilter = require('./entryRecoveryFilter').createRecoveryFilter(process.env.ENTRY_RECOVERY_FILTER_MODE || 'A');
-log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "BNB_v1k_HYBRID_STOP_WAIT", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
+log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "BNB_v1l_BOUNDED_PROFIT_FLOOR", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
 
 async function enterFromPriceTrigger(pending, feature, modeReason) {
   const pe = ensurePriceEntryState();
@@ -6809,6 +6853,7 @@ app.post(CFG.MANUAL_WEBHOOK_PATH, async (req, res) => {
 async function start() {
   await ensurePersistence();
   await loadState();
+  log("INFO", "FVVO_PROFIT_FLOOR_MICRO_LIVE_STARTUP", {build:"BNB_v1l_BOUNDED_PROFIT_FLOOR",enabled:CFG.PROFIT_FLOOR_MICRO_LIVE_ENABLED,maxSec:75,hardBufferPct:0.10,windowTicks:5,requiredBelowTicks:4,recoveryTicks:2});
   const problems = configProblems();
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
@@ -6888,7 +6933,7 @@ Object.assign(module.exports, { priceEntryExecutionMode, priceEntryWaitDiagnosti
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_BNB_v1k_HYBRID_STOP_WAIT_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_BNB_v1l_BOUNDED_PROFIT_FLOOR_LIVE"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6942,7 +6987,7 @@ Object.assign(module.exports, { priceEntryExecutionMode, priceEntryWaitDiagnosti
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1k_HYBRID_STOP_WAIT_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_Swing_BNB_v1l_BOUNDED_PROFIT_FLOOR_LIVE")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
