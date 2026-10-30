@@ -1,8 +1,8 @@
 {
-  "name": "longhold-v1j-paper",
-  "version": "1.9.0",
+  "name": "longhold-v1j-live",
+  "version": "1.10.0",
   "private": true,
-  "description": "LongHold v1j PAPER: distinct-tick ignition profit protection, inherited V-recovery and exits",
+  "description": "LongHold v1j LIVE candidate, explicit entry arming and manual exit evidence required",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
