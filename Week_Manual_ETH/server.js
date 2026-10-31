@@ -150,11 +150,13 @@ const CFG = {
   // Retired direct-clear compatibility flag. v1l requires the delayed auto-release contract instead.
   C3_ASSUME_EXIT_ACCEPTANCE: envBool("C3_ASSUME_EXIT_ACCEPTANCE", false),
   // In LIVE, accepted exits require explicit evidence; no timer may assume the exchange is flat.
-  AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", false),
+  AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", true),
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
   // v1a: DEMO-only lifecycle completion after an accepted market signal. LIVE
   // remains evidence/manual-confirmation only regardless of this setting.
   DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED: envBool("DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED", true),
+  LIVE_EXIT_AUTO_RELEASE_ENABLED: envBool("LIVE_EXIT_AUTO_RELEASE_ENABLED", true),
+  LIVE_EXIT_RELEASE_REQUIRE_ACCEPTED: envBool("LIVE_EXIT_RELEASE_REQUIRE_ACCEPTED", true),
   DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED: envBool("DEMO_ACCEPTED_ENTRY_ASSUME_FILLED_ENABLED", true),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
@@ -1679,12 +1681,17 @@ function autoExitReconciliationActive() {
   return CFG.AUTO_EXIT_RECONCILIATION_ENABLED && executionModeValid();
 }
 
+function acceptedExitAutoReleaseEnabled() {
+  return (demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED) ||
+    (liveMode() && CFG.LIVE_EXIT_AUTO_RELEASE_ENABLED);
+}
+
 function autoExitReleaseStatusPayload() {
   const a = state.autoExitRelease || {};
   return {
     enabled: autoExitReconciliationActive(),
-    automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED,
-    mode: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL_AUTO_RELEASE" : "EVIDENCE_REMINDER_ONLY",
+    automaticFlatAssumption: acceptedExitAutoReleaseEnabled(),
+    mode: acceptedExitAutoReleaseEnabled() ? (liveMode() ? "LIVE_ACCEPTED_SIGNAL_ASSUMED_FLAT" : "DEMO_ACCEPTED_SIGNAL_AUTO_RELEASE") : "EVIDENCE_REMINDER_ONLY",
     delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC,
     active: Boolean(a.active),
     status: a.status || "IDLE",
@@ -1714,7 +1721,7 @@ function armAutoExitRelease(position, requestId, reason) {
   const releaseAtMs = current + CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC * 1000;
   state.autoExitRelease = {
     active: true,
-    status: "PENDING_EXECUTION_EVIDENCE_REMINDER",
+    status: acceptedExitAutoReleaseEnabled() ? "PENDING_ACCEPTED_EXIT_ASSUMED_FLAT" : "PENDING_EXECUTION_EVIDENCE_REMINDER",
     positionOpenedAtMs: finite(position?.openedAtMs, 0),
     releaseAtMs,
     armedAt: nowIso(),
@@ -1723,7 +1730,7 @@ function armAutoExitRelease(position, requestId, reason) {
     reason: reason || "",
     releasedAt: "",
   };
-  log("INFO", demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "FVVO_EXIT_AUTO_RELEASE_ARMED" : "FVVO_EXIT_RECONCILIATION_REMINDER_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, executionMode: CFG.EXECUTION_MODE, demoOnly: demoMode(), automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, reentryAutoEnabled: reentryAutoEnabled(), preReleasePullbackMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED });
+  log("INFO", acceptedExitAutoReleaseEnabled() ? "FVVO_EXIT_AUTO_RELEASE_ARMED" : "FVVO_EXIT_RECONCILIATION_REMINDER_ARMED", { requestId: requestId || null, reason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, releaseAt: state.autoExitRelease.releaseAt, executionMode: CFG.EXECUTION_MODE, demoOnly: demoMode(), automaticFlatAssumption: acceptedExitAutoReleaseEnabled(), reentryAutoEnabled: reentryAutoEnabled(), preReleasePullbackMemoryEnabled: CFG.REENTRY_PRE_RELEASE_MEMORY_ENABLED });
   return state.autoExitRelease;
 }
 
@@ -1797,17 +1804,25 @@ async function finalizeAutoExitRelease(source = "timer") {
     log("WARN", "FVVO_EXIT_AUTO_RELEASE_CANCELLED", { source, reason: "NO_MATCHING_EXIT_POSITION", requestId: pending.requestId || null });
     return false;
   }
-  if (demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED) {
+  if (acceptedExitAutoReleaseEnabled()) {
+    if (liveMode() && CFG.LIVE_EXIT_RELEASE_REQUIRE_ACCEPTED &&
+        (!prior.exitForwardRequestId || !pending.requestId || prior.exitForwardRequestId !== pending.requestId)) {
+      state.autoExitRelease = { ...pending, active: false, status: "BLOCKED_EXIT_REQUEST_MISMATCH" };
+      await persistState("live_exit_release_request_mismatch");
+      log("ERROR", "FVVO_LIVE_EXIT_RELEASE_BLOCKED", { source, reason: "EXIT_REQUEST_ID_MISMATCH" });
+      return false;
+    }
     const priorExitReason = prior.exitReason || null;
     const priorRequestId = prior.exitForwardRequestId || pending.requestId || null;
-    const campaign = armReentryCampaignAfterConfirmedExit(prior);
+    // Do not claim an exchange-confirmed close or arm a confirmed-exit reentry campaign.
+    const campaign = liveMode() ? null : armReentryCampaignAfterConfirmedExit(prior);
     clearAutoExitReleaseTimer();
     state.position = null;
     state.externalDealLock = { active: false, source: "", setAt: "", reason: "" };
-    state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: "demo_auto_reconcile_exit", lastActionAt: nowIso() };
-    state.autoExitRelease = { ...pending, active: false, status: "DEMO_ASSUMED_FLAT_AFTER_ACCEPTED_EXIT", releasedAt: nowIso() };
-    await persistState("demo_exit_auto_reconciled");
-    log("INFO", "FVVO_DEMO_EXIT_AUTO_RECONCILED", { source, requestId: priorRequestId, priorExitReason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, automaticFlatAssumption: true, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null });
+    state.manual = { ...state.manual, recoveryRequired: false, recoveryReason: "", lastAction: liveMode() ? "live_assumed_flat_after_accepted_exit" : "demo_auto_reconcile_exit", lastActionAt: nowIso() };
+    state.autoExitRelease = { ...pending, active: false, status: liveMode() ? "LIVE_ASSUMED_FLAT_UNVERIFIED" : "DEMO_ASSUMED_FLAT_AFTER_ACCEPTED_EXIT", releasedAt: nowIso() };
+    await persistState(liveMode() ? "live_exit_assumed_flat_unverified" : "demo_exit_auto_reconciled");
+    log("WARN", liveMode() ? "FVVO_LIVE_EXIT_ASSUMED_FLAT_UNVERIFIED" : "FVVO_DEMO_EXIT_AUTO_RECONCILED", { source, requestId: priorRequestId, priorExitReason, delaySec: CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC, automaticFlatAssumption: true, exchangeCloseVerified: false, reentryCampaignArmed: Boolean(campaign?.active), reentryCampaignReason: campaign?.reason || null });
     return true;
   }
   state.manual.recoveryRequired = true;
@@ -1846,9 +1861,9 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "LongHold_v1k_LIVE_1_11_0",
+    buildVersion: "LongHold_v1m_LIVE_1_13_0",
     liveOrdersArmed: liveMode() && CFG.LIVE_ORDERS_ARMED,
-    executionReconciliation: { automaticFlatAssumption: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED, source: demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED ? "DEMO_ACCEPTED_SIGNAL" : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
+    executionReconciliation: { automaticFlatAssumption: acceptedExitAutoReleaseEnabled(), source: acceptedExitAutoReleaseEnabled() ? (liveMode() ? "LIVE_ASSUMED_FLAT_UNVERIFIED" : "DEMO_ACCEPTED_SIGNAL") : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
     brain: CFG.BRAIN_NAME,
     symbol: CFG.SYMBOL,
@@ -2226,7 +2241,7 @@ async function requestFullExit(reason, price, origin) {
   if (String(reason || "").includes("DYNAMIC_PROFIT_FLOOR_HIT")) recordProfitFloorBaselineExit(p, price, reason);
   await persistState("full_exit_accepted");
   if (CFG.AUTO_EXIT_RECONCILIATION_ENABLED) scheduleAutoExitRelease();
-  const demoAutoReleasePending = autoExitReconciliationActive() && demoMode() && CFG.DEMO_ACCEPTED_EXIT_AUTO_RELEASE_ENABLED;
+  const demoAutoReleasePending = autoExitReconciliationActive() && acceptedExitAutoReleaseEnabled();
   log("INFO", "FVVO_FULL_EXIT_SIGNAL_ACCEPTED_UNVERIFIED", { origin, reason, price, requestId: result.requestId, exchangeCloseVerified: false, autoReleasePending: demoAutoReleasePending, reconciliationReminderPending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED && !demoAutoReleasePending, reconciliationDelaySec: CFG.AUTO_EXIT_RECONCILIATION_ENABLED ? CFG.AUTO_EXIT_RECONCILIATION_DELAY_SEC : null, recoveryRequired: true, exitPercent: 100, pnlAudit: exitPnlAudit });
   return { ...result, exitUnverified: true, autoReleasePending: demoAutoReleasePending, reconciliationReminderPending: CFG.AUTO_EXIT_RECONCILIATION_ENABLED && !demoAutoReleasePending };
 }
