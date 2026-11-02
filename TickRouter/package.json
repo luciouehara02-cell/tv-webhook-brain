@@ -1,15 +1,13 @@
 {
-  "name": "tickrouter-v4-5",
-  "version": "4.5.0",
+  "name": "tickrouter-week-3brains-6spare",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": "22.x"
+    "start": "node server.js",
+    "test": "node --test router.test.mjs"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "4.21.2"
   }
 }
