@@ -118,10 +118,11 @@ const CFG = {
 
   SHADOW_ONLY: envBool("SHADOW_ONLY", false),
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
-  // Dedicated LIVE package. LIVE_ORDERS_ARMED gates entries, never managed exits.
+  // Dedicated PAXG PAPER pilot. LIVE orders are forbidden at startup.
   EXECUTION_MODE: envStr("EXECUTION_MODE", "demo").toLowerCase(),
   LIVE_ORDERS_ARMED: envBool("LIVE_ORDERS_ARMED", false),
-  C3_DRY_RUN: envBool("C3_DRY_RUN", false),
+  C3_DRY_RUN: envBool("C3_DRY_RUN", true),
+  PAXG_DEMO_BOT_VERIFIED: envBool("PAXG_DEMO_BOT_VERIFIED", false),
   FVVO_EMERGENCY_DISABLE_ALL_FORWARDS: envBool("FVVO_EMERGENCY_DISABLE_ALL_FORWARDS", false),
   FVVO_EMERGENCY_DISABLE_NEW_ENTRIES: envBool("FVVO_EMERGENCY_DISABLE_NEW_ENTRIES", false),
 
@@ -1267,7 +1268,10 @@ function configProblems() {
   problems.push(...c3V2SizingProblems());
   if (CFG.C3_ORDER_TYPE !== "market") problems.push("C3_V2_ORDER_TYPE_MUST_BE_MARKET");
   if (!CFG.ENABLE_HTTP_FORWARD) problems.push("ENABLE_HTTP_FORWARD_MUST_BE_TRUE");
-  if (CFG.EXECUTION_MODE !== "live") problems.push("LIVE_PACKAGE_REQUIRES_EXECUTION_MODE_LIVE");
+  if (CFG.EXECUTION_MODE !== "demo") problems.push("PAXG_PILOT_DEMO_ONLY");
+  // An explicit acknowledgement is required before a PAPER pilot can send to an external bot.
+  // This does not verify the 3Commas account; the operator must verify it is DEMO.
+  if (!CFG.C3_DRY_RUN && !CFG.PAXG_DEMO_BOT_VERIFIED) problems.push("PAXG_DEMO_BOT_VERIFICATION_REQUIRED");
   if (!(Number.isFinite(CFG.LIVE_MAX_ORDER_USDT) && CFG.LIVE_MAX_ORDER_USDT > 0)) problems.push("LIVE_MAX_ORDER_USDT_MUST_BE_POSITIVE");
   if (!(Number.isFinite(CFG.LIVE_MAX_ORDER_PERCENT) && CFG.LIVE_MAX_ORDER_PERCENT > 0 && CFG.LIVE_MAX_ORDER_PERCENT <= 100)) problems.push("LIVE_MAX_ORDER_PERCENT_MUST_BE_BETWEEN_0_AND_100");
   if (CFG.C3_AMOUNT_PER_TRADE_TYPE === "quote" && CFG.C3_AMOUNT_PER_TRADE > CFG.LIVE_MAX_ORDER_USDT) problems.push("LIVE_ORDER_AMOUNT_EXCEEDS_MAX_USDT");
