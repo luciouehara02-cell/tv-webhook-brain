@@ -544,6 +544,18 @@ const CFG = {
   LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_CONFIRM_SEC", 8)),
   LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT: Math.max(0, envNum("LONG_HOLD_PRE_ARM_BRIDGE_HARD_BREAK_BUFFER_PCT", 0.10)),
   // ETH v1c DEMO entry: v1b thresholds plus stable setup refresh and compact block logging.
+  // PAXG v1c: DEMO telemetry and ignition safety. New thesis rule is SHADOW by default.
+  PAXG_V1C_IGNITION_FAIL_MODE: envStr("PAXG_V1C_IGNITION_FAIL_MODE", "shadow").toLowerCase(),
+  PAXG_V1C_IGNITION_FAIL_WINDOW_SEC: Math.max(60, envNum("PAXG_V1C_IGNITION_FAIL_WINDOW_SEC", 7200)),
+  PAXG_V1C_IGNITION_FAIL_PNL_PCT: envNum("PAXG_V1C_IGNITION_FAIL_PNL_PCT", -0.12),
+  PAXG_V1C_IGNITION_FAIL_MAX_PEAK_PCT: envNum("PAXG_V1C_IGNITION_FAIL_MAX_PEAK_PCT", 0.30),
+  PAXG_V1C_IGNITION_FAIL_MAX_RSI: envNum("PAXG_V1C_IGNITION_FAIL_MAX_RSI", 45),
+  PAXG_V1C_IGNITION_FAIL_MAX_FVVO: envNum("PAXG_V1C_IGNITION_FAIL_MAX_FVVO", 0),
+  PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS: Math.max(2, Math.floor(envNum("PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS", 2))),
+  PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC: Math.max(15, envNum("PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC", 120)),
+  PAXG_V1C_TICK_WATCHDOG_ENABLED: envBool("PAXG_V1C_TICK_WATCHDOG_ENABLED", true),
+  PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC: Math.max(30, envNum("PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC", 120)),
+  PAXG_V1C_TICK_WATCHDOG_RECOVERY_TICKS: Math.max(2, Math.floor(envNum("PAXG_V1C_TICK_WATCHDOG_RECOVERY_TICKS", 2))),
   ETH_IGNITION_AUTO_ENTRY_ENABLED: envBool("ETH_IGNITION_AUTO_ENTRY_ENABLED", true),
   ETH_IGNITION_AUTO_ORDER_ENABLED: envBool("ETH_IGNITION_AUTO_ORDER_ENABLED", true),
   ETH_IGNITION_REQUIRE_DEMO: envBool("ETH_IGNITION_REQUIRE_DEMO", false),
@@ -3675,6 +3687,79 @@ function observeEthV1hMicroFloorShadow(position, feature, pnlPct) {
   return shadow;
 }
 
+// This watchdog gates ONLY automatic ignition and V-recovery; existing exits and manual
+// commands remain under their original ownership. It cannot fix a failed feed by itself.
+const paxgV1cFeed = { lastReceivedMs: 0, lastBarTimeMs: 0, recoveryTicks: 0, wasBlocked: true, lastBlockReason: "" };
+function paxgV1cTickFresh() {
+  if (!CFG.PAXG_V1C_TICK_WATCHDOG_ENABLED) return true;
+  const age = (nowMs() - paxgV1cFeed.lastReceivedMs) / 1000;
+  return paxgV1cFeed.lastReceivedMs > 0 && age >= 0 && age <= CFG.PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC
+    && paxgV1cFeed.recoveryTicks >= CFG.PAXG_V1C_TICK_WATCHDOG_RECOVERY_TICKS;
+}
+function paxgV1cObserveTick(feature) {
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return;
+  const t = nowMs();
+  if (paxgV1cFeed.lastReceivedMs && t - paxgV1cFeed.lastReceivedMs > CFG.PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC * 1000) {
+    paxgV1cFeed.recoveryTicks = 0;
+    paxgV1cFeed.wasBlocked = true;
+  }
+  // featureTimeGuard has already rejected duplicate/out-of-order bars before this call.
+  paxgV1cFeed.lastReceivedMs = t;
+  paxgV1cFeed.lastBarTimeMs = feature.barTimeMs || 0;
+  paxgV1cFeed.recoveryTicks = Math.min(CFG.PAXG_V1C_TICK_WATCHDOG_RECOVERY_TICKS, paxgV1cFeed.recoveryTicks + 1);
+  if (paxgV1cFeed.wasBlocked && paxgV1cTickFresh()) {
+    paxgV1cFeed.wasBlocked = false;
+    paxgV1cFeed.lastBlockReason = "";
+    log("INFO", "PAXG_V1C_15S_WATCHDOG_RECOVERED", { ticks: paxgV1cFeed.recoveryTicks, maxAgeSec: CFG.PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC });
+  }
+}
+function paxgV1cLogFeedBlock(engine) {
+  if (!CFG.PAXG_V1C_TICK_WATCHDOG_ENABLED) return;
+  const reason = paxgV1cFeed.lastReceivedMs ? "15S_STALE_OR_RECOVERY_WARMUP" : "15S_MISSING";
+  const signature = engine + ":" + reason;
+  if (paxgV1cFeed.lastBlockReason !== signature) {
+    paxgV1cFeed.lastBlockReason = signature;
+    log("WARN", "PAXG_V1C_15S_WATCHDOG_AUTO_ENTRY_BLOCK", { engine, reason, recoveryTicks: paxgV1cFeed.recoveryTicks,
+      ageSec: paxgV1cFeed.lastReceivedMs ? (nowMs() - paxgV1cFeed.lastReceivedMs) / 1000 : null,
+      action: "AUTO_IGNITION_OR_V_RECOVERY_BLOCKED_EXISTING_EXITS_UNCHANGED" });
+  }
+}
+function paxgV1cIgnitionEvidence(p, feature, pnl) {
+  const age = (nowMs() - finite(p.openedAtMs, nowMs())) / 1000;
+  const price = finite(feature.price, null);
+  const ema8 = finite(feature.ema8, null), ema18 = finite(feature.ema18, null);
+  const rsi = finite(feature.rsi, null), fvvo = finite(feature.fvvo, null), slope = finite(feature.slope, null);
+  const checks = {
+    correctOrigin: p.entryOrigin === "AUTO_ETH_FVVO_IGNITION",
+    correctFeature: feature.kind === CFG.FVVO_FEATURE_TICK_EVENT,
+    inWindow: age >= 0 && age <= CFG.PAXG_V1C_IGNITION_FAIL_WINDOW_SEC,
+    adversePnl: pnl <= CFG.PAXG_V1C_IGNITION_FAIL_PNL_PCT,
+    weakPeak: finite(p.peakPnlPct, 0) < CFG.PAXG_V1C_IGNITION_FAIL_MAX_PEAK_PCT,
+    belowFastStructure: price !== null && ema8 !== null && ema18 !== null && price < ema8 && ema8 < ema18,
+    weakRsi: rsi !== null && rsi <= CFG.PAXG_V1C_IGNITION_FAIL_MAX_RSI,
+    weakFvvo: fvvo !== null && fvvo <= CFG.PAXG_V1C_IGNITION_FAIL_MAX_FVVO,
+  };
+  return {ok: Object.values(checks).every(Boolean), checks, pnl: round(pnl, 6), peakPnlPct: round(finite(p.peakPnlPct, 0), 6), price, ageSec: round(age, 2)};
+}
+async function paxgV1cIgnitionThesisAudit(p, feature, pnl) {
+  if (CFG.PAXG_V1C_IGNITION_FAIL_MODE === "disabled" || p.entryOrigin !== "AUTO_ETH_FVVO_IGNITION" || feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return;
+  const evidence = paxgV1cIgnitionEvidence(p, feature, pnl);
+  const stateFail = p.paxgV1cIgnitionFail || (p.paxgV1cIgnitionFail = {count:0, lastBarTimeMs:0, lastVoteAtMs:0, logged:false});
+  if (!evidence.ok) { stateFail.count = 0; stateFail.lastVoteAtMs = 0; return; }
+  const bar = finite(feature.barTimeMs, 0);
+  if (!bar || (stateFail.lastBarTimeMs && bar <= stateFail.lastBarTimeMs)) return;
+  const now = nowMs();
+  if (stateFail.lastVoteAtMs && (now - stateFail.lastVoteAtMs) / 1000 > CFG.PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC) stateFail.count = 0;
+  stateFail.count++;
+  stateFail.lastBarTimeMs = bar;
+  stateFail.lastVoteAtMs = now;
+  if (stateFail.count >= CFG.PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS && !stateFail.logged) {
+    stateFail.logged = true;
+    log("WARN", "PAXG_V1C_IGNITION_THESIS_FAIL_SHADOW_CANDIDATE", { ...evidence, count: stateFail.count,
+      mode: CFG.PAXG_V1C_IGNITION_FAIL_MODE, action:"SHADOW_ONLY_NO_EXIT", estimatedNetPct: round(pnl - CFG.PNL_ESTIMATED_ROUND_TRIP_COST_PCT, 6) });
+  }
+}
+
 async function manageExit(feature) {
   const p = state.position;
   if (!p || state.manual.handoffActive || String(p.lifecycle || "").startsWith("EXIT_")) return;
@@ -3687,6 +3772,7 @@ async function manageExit(feature) {
   p.maxFavorableExcursionPct = Math.max(finite(p.maxFavorableExcursionPct, 0), pnl);
   p.maxAdverseExcursionPct = Math.min(finite(p.maxAdverseExcursionPct, 0), pnl);
   observeEthV1hMicroFloorShadow(p, feature, pnl);
+  await paxgV1cIgnitionThesisAudit(p, feature, pnl);
 
   // Emergency price-velocity protection has first priority after a valid mark.
   const flashCrash = flashCrashDecision(p, feature, price);
@@ -7356,6 +7442,7 @@ async function executeEthIgnitionEntry(feature, setup, evidence) {
 
 async function evaluateEthIgnitionAutoEntry(feature) {
   if (!CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED || !CFG.ETH_IGNITION_AUTO_ORDER_ENABLED) return;
+  if (!paxgV1cTickFresh()) { paxgV1cLogFeedBlock("ignition"); return; }
   if (CFG.ETH_IGNITION_REQUIRE_DEMO && !demoMode()) return;
   const entryBlock = stateBlocksNewEntry();
   if (entryBlock) {
@@ -7601,6 +7688,7 @@ async function executeVRecoveryEntry(feature, campaign, evidence) {
 
 async function evaluateVRecoveryEntry(feature) {
   if (!CFG.V_RECOVERY_ENABLED || CFG.V_RECOVERY_MODE === "disabled") return;
+  if (!paxgV1cTickFresh()) { paxgV1cLogFeedBlock("v_recovery"); return; }
   if (CFG.V_RECOVERY_REQUIRE_DEMO && !demoMode()) return;
   if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return;
   const entryBlock = stateBlocksNewEntry();
@@ -7671,6 +7759,7 @@ async function processFeatureEvent(feature) {
     return { ok: true, ignored: true, reason: timeGuard.reason, event: feature.kind };
   }
   if (!updateFeature(feature)) return { ok: false, error: "VALID_PRICE_REQUIRED" };
+  paxgV1cObserveTick(feature);
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
   const is5mFeature = feature.kind === CFG.FVVO_FEATURE_5M_EVENT;
   if (!is5mFeature) feature15sLogSequence += 1;
@@ -7723,6 +7812,14 @@ app.post(CFG.MANUAL_WEBHOOK_PATH, async (req, res) => {
 async function start() {
   await ensurePersistence();
   await loadState();
+  if (!["disabled", "shadow"].includes(CFG.PAXG_V1C_IGNITION_FAIL_MODE)) {
+    log("ERROR", "PAXG_V1C_UNSUPPORTED_EXECUTION_MODE", { mode: CFG.PAXG_V1C_IGNITION_FAIL_MODE, message: "v1c thesis audit is intentionally SHADOW only" });
+    throw new Error("PAXG_V1C_FAIL_MODE_MUST_BE_SHADOW_OR_DISABLED");
+  }
+  log("INFO", "PAXG_V1C_GUARDS_STARTUP", { ignitionFailMode: CFG.PAXG_V1C_IGNITION_FAIL_MODE,
+    ignitionFailPnlPct: CFG.PAXG_V1C_IGNITION_FAIL_PNL_PCT, ignitionFailConfirmTicks: CFG.PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS,
+    tickWatchdogEnabled: CFG.PAXG_V1C_TICK_WATCHDOG_ENABLED, tickWatchdogMaxAgeSec: CFG.PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC,
+    note: "ignition failure is SHADOW audit, auto entry watchdog gates ignition and V-recovery only" });
   const problems = configProblems();
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
   try {
