@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_ETH_v3u_ATR_DROP_DIAGNOSTICS_PAPER
+ * BrainFVVO_ETH_v3x_ORDER_SAFETY_PAPER
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3u_ATR_DROP_DIAGNOSTICS_PAPER';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3x_ORDER_SAFETY_PAPER';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -319,6 +319,15 @@ ensureStateShape();
 if (cfg.autoEntryHoldOnStartup) pauseAutomaticEntries('STARTUP_SAFETY_HOLD', { preserveExistingReason: true });
 // Runtime-only in-flight order guard; never permits concurrent duplicate 3Commas enter requests.
 let entrySubmissionPending = false;
+let exitSubmissionPending = false;
+// Persisted reservations: after a crash or uncertain network timeout, never blindly resubmit.
+if (state.orderSafety && /_PENDING$/.test(state.orderSafety.status || '')) {
+  state.orderSafety.status = state.orderSafety.status.replace('_PENDING', '_UNKNOWN');
+  state.orderSafety.recoveredAt = nowIso();
+  saveState();
+  log('C3_ORDER_RECONCILIATION_REQUIRED_ON_STARTUP', state.orderSafety);
+}
+
 
 log('STARTUP', {
   brain: BRAIN,
@@ -481,6 +490,7 @@ async function handleManual(body, req) {
   if (action === 'force_clear_verified_flat') {
     const previous = state.position;
     state.position = emptyPosition();
+    state.orderSafety = { status: 'CLEAR' };
     state.priceTrigger = null;
     state.campaigns = {};
     saveState();
@@ -493,6 +503,7 @@ async function handleManual(body, req) {
     if (!isFiniteNum(price)) {
       return { ok: false, error: 'NO_PRICE_AVAILABLE_FOR_ADOPT_LONG', httpStatus: 400 };
     }
+    state.orderSafety = { status: 'CLEAR' };
     state.position = {
       inPosition: true,
       entryPrice: price,
@@ -1008,6 +1019,7 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
     log('FVVO_AUTO_ENTRY_BLOCKED_BY_MANUAL_LOCK', { price, source, control: publicAutoEntryControl() });
     return { ok: false, error: 'AUTO_ENTRY_PAUSED', httpStatus: 409, autoEntryControl: publicAutoEntryControl() };
   }
+  if (state.orderSafety && state.orderSafety.status && state.orderSafety.status !== 'CLEAR') return { ok: false, error: 'ORDER_RECONCILIATION_REQUIRED', orderSafety: state.orderSafety, httpStatus: 409 };
   if (entrySubmissionPending) {
     log('FVVO_ENTER_LONG_BLOCKED_ENTRY_SUBMISSION_PENDING', { price, source });
     return { ok: false, error: 'ENTRY_SUBMISSION_PENDING', httpStatus: 409 };
@@ -1040,14 +1052,24 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
 
   let forward;
   entrySubmissionPending = true;
+  state.orderSafety = { status: 'ENTRY_PENDING', requestId: entryRequestId, since: nowIso(), source };
+  saveState();
   try {
     forward = await forwardTo3Commas('enter_long', price, { source, campaignId, entryRole, requestId: entryRequestId, setup, reason: source });
+  } catch (err) {
+    forward = { ok: false, uncertain: true, error: String(err && err.message || err), requestId: entryRequestId };
   } finally { entrySubmissionPending = false; }
   if (!forward.ok && !forward.dryRun) {
+    state.orderSafety = forward.uncertain
+      ? { ...state.orderSafety, status: 'ENTRY_UNKNOWN', error: forward.error || 'UNKNOWN' }
+      : { status: 'CLEAR' };
+    saveState();
+    if (forward.uncertain) log('C3_ENTRY_UNKNOWN_RECONCILE_BEFORE_RETRY', state.orderSafety);
     log('FVVO_ENTER_LONG_C3_FORWARD_FAILED_NO_POSITION_TRACKED', { price, source, campaignId, entryRole, forward });
     return { ok: false, error: 'C3_ENTER_LONG_FORWARD_FAILED', c3Forward: forward, httpStatus: 502, state: publicState() };
   }
 
+  state.orderSafety = { status: 'CLEAR' };
   state.position = {
     inPosition: true,
     positionLifecycle: forward.dryRun ? 'ENTRY_DRY_RUN' : 'ENTRY_ACCEPTED_UNVERIFIED_FILL',
@@ -1074,6 +1096,16 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
 }
 
 async function exitLong({ price, reason, manual }) {
+  // Synchronous lock before any await protects against simultaneous tick/5m/signal exits.
+  if (exitSubmissionPending) return { ok: false, error: 'EXIT_SUBMISSION_PENDING', httpStatus: 409 };
+  if (state.orderSafety && state.orderSafety.status && state.orderSafety.status !== 'CLEAR')
+    return { ok: false, error: 'ORDER_RECONCILIATION_REQUIRED', orderSafety: state.orderSafety, httpStatus: 409 };
+  exitSubmissionPending = true;
+  try { return await exitLongReserved({ price, reason, manual }); }
+  finally { exitSubmissionPending = false; }
+}
+
+async function exitLongReserved({ price, reason, manual }) {
   const hadOpenPosition = Boolean(state.position && state.position.inPosition);
   const prev = hadOpenPosition ? { ...state.position } : emptyPosition();
   const exitPrice = isFiniteNum(price)
@@ -1089,14 +1121,24 @@ async function exitLong({ price, reason, manual }) {
   }
 
   const exitRequestId = makeRequestId('exit_long');
-  const forward = await forwardTo3Commas('exit_long', exitPrice, { reason, manual, requestId: exitRequestId });
+  state.orderSafety = { status: 'EXIT_PENDING', requestId: exitRequestId, since: nowIso(), reason };
+  saveState();
+  let forward;
+  try { forward = await forwardTo3Commas('exit_long', exitPrice, { reason, manual, requestId: exitRequestId }); }
+  catch (err) { forward = { ok: false, uncertain: true, error: String(err && err.message || err), requestId: exitRequestId }; }
   if (!forward.ok && !forward.dryRun) {
+    state.orderSafety = forward.uncertain
+      ? { ...state.orderSafety, status: 'EXIT_UNKNOWN', error: forward.error || 'UNKNOWN' }
+      : { status: 'CLEAR' };
+    saveState();
+    if (forward.uncertain) log('C3_EXIT_UNKNOWN_RECONCILE_BEFORE_RETRY', state.orderSafety);
     log('FVVO_EXIT_LONG_C3_FORWARD_FAILED_POSITION_LEFT_ACTIVE', { price: exitPrice, reason, forward, hadOpenPosition });
     return { ok: false, error: 'C3_EXIT_LONG_FORWARD_FAILED_POSITION_LEFT_ACTIVE', c3Forward: forward, httpStatus: 502, positionStillActive: hadOpenPosition, state: publicState() };
   }
 
   handleRay30PostExitAfterAcceptedExit({ reason, exitPrice, previousPosition: prev });
 
+  state.orderSafety = { status: 'CLEAR' };
   state.position = emptyPosition();
   state.position.lastExitReason = reason;
   state.position.lastC3Exit = forward;
@@ -2270,7 +2312,7 @@ async function forwardTo3Commas(kind, price, meta = {}) {
   if (!cfg.c3SignalUrl) return { ok: false, reason: 'C3_SIGNAL_URL_MISSING', requestId };
   if (!code) return { ok: false, reason: `${actionName.toUpperCase()}_CODE_MISSING`, requestId };
 
-  const payload = buildC3Payload(kind, code, price, meta);
+  const payload = buildC3Payload(kind, code, price, { ...meta, requestId });
 
   log('C3_FORWARD_SEND', {
     action: actionName,
@@ -2335,7 +2377,7 @@ async function forwardTo3Commas(kind, price, meta = {}) {
     }
     return result;
   } catch (err) {
-    const result = { ok: false, status: 0, error: err.name || 'FETCH_ERROR', message: err.message, sentAt: nowIso(), requestId, codePrefix: codePrefix(code) };
+    const result = { ok: false, uncertain: true, status: 0, error: err.name || 'FETCH_ERROR', message: err.message, sentAt: nowIso(), requestId, codePrefix: codePrefix(code) };
     log('C3_FORWARD_FAIL', { action: actionName, reason, requestId, error: result.error, message: result.message });
     return result;
   } finally {
@@ -2365,7 +2407,7 @@ function buildC3Payload(kind, code, price, meta) {
     payload.price = price;
   }
 
-  payload.clientOrderId = `${cfg.symbol.replace(/[^A-Z0-9]/gi, '')}_${kind}_${Date.now()}`;
+  payload.clientOrderId = `${cfg.symbol.replace(/[^A-Z0-9]/gi, '')}_${kind}_${String(meta && meta.requestId || makeRequestId(kind)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 70)}`;
   payload.comment = `${BRAIN}:${kind}:${meta && meta.source ? meta.source : 'manual'}`;
 
   return payload;
@@ -2482,7 +2524,8 @@ function publicState() {
     ray30Setup: summarizeRay30Setup(state.ray30Setup, state.ray30Setup && state.ray30Setup.reason),
     fvvoConfidence: summarizeFvvoConfidence(state.latest && state.latest.fvvoConfidence),
     rayalgoSignalGuard: { pending: state.rayalgoSignalGuard && state.rayalgoSignalGuard.pending ? { signal: state.rayalgoSignalGuard.pending.signal, regime: state.rayalgoSignalGuard.pending.regime, atMs: state.rayalgoSignalGuard.pending.atMs } : null, conflict: activeRayAlgoConflict() },
-    handoff: state.handoff || { active: false }
+    handoff: state.handoff || { active: false },
+    orderSafety: state.orderSafety || { status: 'CLEAR' }
   };
 }
 
