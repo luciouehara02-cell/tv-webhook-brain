@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_ETH_v3x_ORDER_SAFETY_PAPER
+ * BrainFVVO_ETH_v3y_QUALITY_GATES_PAPER
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3x_ORDER_SAFETY_PAPER';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_ETH_v3y_QUALITY_GATES_PAPER';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -119,6 +119,9 @@ const cfg = {
   earlyTurnEma8Below18AllowancePct: numEnv('EARLY_TURN_EMA8_BELOW18_ALLOWANCE_PCT', 0.12),
   earlyTurnMinRsi15s: numEnv('EARLY_TURN_MIN_RSI_15S', 50),
   earlyTurnMaxRsi15s: numEnv('EARLY_TURN_MAX_RSI_15S', 76),
+  // Independent quality ceilings; remain effective even with legacy max-RSI/EMA env overrides.
+  earlyTurnQualityMaxRsi15s: numEnv('EARLY_TURN_QUALITY_MAX_RSI_15S', 70),
+  earlyTurnQualityMaxAbove5mEma18Pct: numEnv('EARLY_TURN_QUALITY_MAX_ABOVE_5M_EMA18_PCT', 0.25),
   earlyTurnMinTickSlope: numEnv('EARLY_TURN_MIN_TICK_SLOPE', -0.50),
   earlyTurnConfirmPositiveSlope: boolEnv('EARLY_TURN_CONFIRM_POSITIVE_SLOPE', true),
   earlyTurnRetryCooldownSec: intEnv('EARLY_TURN_RETRY_COOLDOWN_SEC', 1800),
@@ -1440,6 +1443,16 @@ async function evaluateEarlyTurnAutoEntry(price, source) {
   if (!tickReady || valid.length < cfg.earlyTurnConfirmTicks || spanSec < cfg.earlyTurnConfirmMinSec ||
       (cfg.earlyTurnConfirmPositiveSlope && !valid.some(x => x.positiveSlope))) {
     return earlyTurnVeto('WAIT_15S_CONFIRMATION', { validTicks: valid.length, window: observations.length, needed: cfg.earlyTurnConfirmTicks, minSec: cfg.earlyTurnConfirmMinSec });
+  }
+  // v3y: avoid late, overextended early-turn entries on the 15s recovery leg.
+  // Check only after normal confirmations; preserve the candidate for later non-overheated ticks.
+  const qualityEmaExtensionPct = pct(price, cur.ema18);
+  if (tick.rsi > cfg.earlyTurnQualityMaxRsi15s || qualityEmaExtensionPct > cfg.earlyTurnQualityMaxAbove5mEma18Pct) {
+    return earlyTurnVeto('EARLY_TURN_QUALITY_OVEREXTENDED', {
+      tickRsi: round(tick.rsi), maxTickRsi: cfg.earlyTurnQualityMaxRsi15s,
+      extensionFrom5mEma18Pct: round(qualityEmaExtensionPct),
+      maxExtensionPct: cfg.earlyTurnQualityMaxAbove5mEma18Pct
+    });
   }
   turn.lastVeto = null;
   const details = { price, source, rsi5m:cur.rsi, fvvo5m:cur.fvvo, riseFromLowPct:round(rise), ema8:cur.ema8, ema18:cur.ema18, tickRsi:tick.rsi, tickFvvo:tick.fvvo, observedTicks:turn.confirmCount, mode:'EARLY_TURN_PROBATION', context30m: context, confirmationWindow: cfg.earlyTurnConfirmWindow };
