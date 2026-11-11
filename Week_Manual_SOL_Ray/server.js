@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3u_ORDER_SAFETY_PAPER
+ * BrainFVVO_SOL_v3v_QUALITY_GATES_PAPER
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -27,7 +27,7 @@ const { randomUUID } = require('crypto');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3u_ORDER_SAFETY_PAPER';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3v_QUALITY_GATES_PAPER';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -180,6 +180,8 @@ const cfg = {
   ray30MaxRsi15s: numEnv('RAY30_MAX_RSI_15S', 74),
   ray30NoChaseRsi15s: numEnv('RAY30_NO_CHASE_RSI_15S', 78),
   ray30PullbackReclaimMaxRsi15s: numEnv('RAY30_PULLBACK_RECLAIM_MAX_RSI_15S', 64),
+  // Independent 5m overextension guard for Ray pullback entries.
+  ray30PullbackQualityMaxRsi5m: numEnv('RAY30_PULLBACK_QUALITY_MAX_RSI_5M', 63),
   ray30MinFvvo15s: numEnv('RAY30_MIN_FVVO_15S', 0),
   ray30MaxRayAgeSec: intEnv('RAY30_MAX_AGE_SEC', 2700),
 
@@ -1500,6 +1502,15 @@ async function evaluateRay30AutoEntry(price, source) {
     if (!cfg.ray30AutoEntryEnabled || !cfg.ray30AutoEntrySendOrder) {
       log('RAY30_PULLBACK_RECLAIM_ENTRY_SHADOW', payload);
       return { type: 'ray30_pullback_reclaim_shadow', decision: 'SHADOW_ENTRY_READY', scan };
+    }
+    // v3v: do not enter a reclaimed pullback when 5m momentum remains near overheated.
+    // Keep the pullback armed and continue evaluating future recovery ticks.
+    if (scan.fiveOk.rsi > cfg.ray30PullbackQualityMaxRsi5m) {
+      log('RAY30_PULLBACK_QUALITY_VETO', {
+        price, fiveRsi: scan.fiveOk.rsi, maxFiveRsi: cfg.ray30PullbackQualityMaxRsi5m,
+        reason: '5M_RSI_OVEREXTENDED'
+      });
+      return { type: 'ray30_pullback_quality_wait', decision: 'QUALITY_VETO', reason: '5M_RSI_OVEREXTENDED', scan };
     }
     log('RAY30_PULLBACK_RECLAIM_ENTRY_READY', payload);
     state.ray30Pullback.armed = false;
