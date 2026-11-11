@@ -553,6 +553,15 @@ const CFG = {
   PAXG_V1C_IGNITION_FAIL_MAX_FVVO: envNum("PAXG_V1C_IGNITION_FAIL_MAX_FVVO", 0),
   PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS: Math.max(2, Math.floor(envNum("PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS", 2))),
   PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC: Math.max(15, envNum("PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC", 120)),
+  PAXG_V1D_LONG_SHOCK_MODE: envStr("PAXG_V1D_LONG_SHOCK_MODE", "shadow").toLowerCase(),
+  PAXG_V1D_DROP_3H_PCT: envNum("PAXG_V1D_DROP_3H_PCT", 1.5),
+  PAXG_V1D_DROP_12H_PCT: envNum("PAXG_V1D_DROP_12H_PCT", 1.7),
+  PAXG_V1D_V_QUALITY_MODE: envStr("PAXG_V1D_V_QUALITY_MODE", "shadow").toLowerCase(),
+  PAXG_V1D_V_MIN_SHOCK_DROP_PCT: envNum("PAXG_V1D_V_MIN_SHOCK_DROP_PCT", 1.50),
+  PAXG_V1D_V_MIN_BOUNCE_PCT: envNum("PAXG_V1D_V_MIN_BOUNCE_PCT", 0.35),
+  PAXG_V1D_V_MAX_RSI_15S: envNum("PAXG_V1D_V_MAX_RSI_15S", 60),
+  PAXG_V1D_V_REQUIRE_FRESH_5M: envBool("PAXG_V1D_V_REQUIRE_FRESH_5M", true),
+  PAXG_V1D_V_MAX_5M_AGE_SEC: Math.max(30, envNum("PAXG_V1D_V_MAX_5M_AGE_SEC", 420)),
   PAXG_V1C_TICK_WATCHDOG_ENABLED: envBool("PAXG_V1C_TICK_WATCHDOG_ENABLED", true),
   PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC: Math.max(30, envNum("PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC", 120)),
   PAXG_V1C_TICK_WATCHDOG_RECOVERY_TICKS: Math.max(2, Math.floor(envNum("PAXG_V1C_TICK_WATCHDOG_RECOVERY_TICKS", 2))),
@@ -1324,6 +1333,9 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.ETH_IGNITION_HIGH_RSI_MODE) || CFG.ETH_IGNITION_HIGH_RSI_RELEASE_RSI >= CFG.ETH_IGNITION_HIGH_RSI_THRESHOLD || CFG.ETH_IGNITION_MIN_ADX_RETENTION_RATIO < 0 || CFG.ETH_IGNITION_MIN_ADX_RETENTION_RATIO > 1) problems.push("INVALID_ETH_IGNITION_V1D_GUARD_CONFIG");
   if (CFG.ETH_IGNITION_MAINTENANCE_MIN_RSI >= CFG.ETH_IGNITION_MAINTENANCE_MAX_RSI || CFG.ETH_IGNITION_MAINTENANCE_MAX_WEAK_BARS < 1 || CFG.ETH_IGNITION_MAINTENANCE_EMA18_TOLERANCE_PCT < 0) problems.push("INVALID_ETH_IGNITION_V1E_MAINTENANCE_CONFIG");
   if (!["off", "reason_change", "all"].includes(CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_MODE) || CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC < 300) problems.push("INVALID_ETH_IGNITION_COMPACT_LOG_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.PAXG_V1D_LONG_SHOCK_MODE) || CFG.PAXG_V1D_DROP_3H_PCT <= 0 || CFG.PAXG_V1D_DROP_12H_PCT <= 0) problems.push("INVALID_PAXG_V1D_LONG_SHOCK_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.PAXG_V1D_V_QUALITY_MODE)) problems.push("INVALID_PAXG_V1D_V_QUALITY_MODE");
+  if (!(CFG.PAXG_V1D_V_MIN_SHOCK_DROP_PCT > 0 && CFG.PAXG_V1D_V_MIN_SHOCK_DROP_PCT <= 15 && CFG.PAXG_V1D_V_MIN_BOUNCE_PCT >= 0 && CFG.PAXG_V1D_V_MIN_BOUNCE_PCT <= 5 && CFG.PAXG_V1D_V_MAX_RSI_15S >= 20 && CFG.PAXG_V1D_V_MAX_RSI_15S <= 90 && CFG.PAXG_V1D_V_MAX_5M_AGE_SEC >= 30)) problems.push("INVALID_PAXG_V1D_V_QUALITY_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.V_RECOVERY_MODE)) problems.push("INVALID_V_RECOVERY_MODE");
   if (CFG.V_RECOVERY_ENABLED && CFG.V_RECOVERY_REQUIRE_DEMO && !demoMode()) problems.push("V_RECOVERY_REQUIRES_DEMO_MODE");
   if (CFG.V_RECOVERY_DROP_15M_PCT <= 0 || CFG.V_RECOVERY_DROP_30M_PCT < CFG.V_RECOVERY_DROP_15M_PCT || CFG.V_RECOVERY_DROP_60M_PCT < CFG.V_RECOVERY_DROP_30M_PCT) problems.push("INVALID_V_RECOVERY_DROP_THRESHOLDS");
@@ -7582,6 +7594,10 @@ function vRecoveryRollingShock(price, eventTimeMs) {
     { name: "30m", sec: 1800, threshold: CFG.V_RECOVERY_DROP_30M_PCT },
     { name: "60m", sec: 3600, threshold: CFG.V_RECOVERY_DROP_60M_PCT },
   ];
+  if (CFG.PAXG_V1D_LONG_SHOCK_MODE === "live") {
+    windows.push({name:"3h", sec:10800, threshold:CFG.PAXG_V1D_DROP_3H_PCT});
+    windows.push({name:"12h", sec:43200, threshold:CFG.PAXG_V1D_DROP_12H_PCT});
+  }
   const candidates = [];
   for (const window of windows) {
     const observations = state.vRecovery.prices.filter((item) => item.t >= eventTimeMs - window.sec * 1000 && item.t <= eventTimeMs);
@@ -7635,6 +7651,28 @@ function vRecoveryEvidence(feature, campaign, eventTimeMs) {
     ray: String(feature.rayRegime || "RAY_NEUTRAL").toUpperCase(),
     stableSec: round((eventTimeMs - campaign.lowAtMs) / 1000, 3),
   };
+}
+
+function paxgV1dVQuality(feature, campaign, evidence, fiveMinuteFeature, nowTimeMs) {
+  const drop = finite(campaign?.dropPct, null);
+  const bounce = finite(evidence?.bouncePct, null);
+  const rsi = finite(feature?.rsi, null);
+  const fiveTime = finite(fiveMinuteFeature?.barTimeMs, null);
+  const barTime = finite(feature?.barTimeMs, null);
+  const t = Number.isFinite(nowTimeMs) ? nowTimeMs : Date.now();
+  // Require the actual 5m candle timestamp to be no later than the latest 15s bar.
+  // A received-but-old 5m feature is not accepted for fresh-context decisions.
+  const fresh5m = fiveTime !== null && fiveTime > 0 && fiveTime <= t && t - fiveTime <= CFG.PAXG_V1D_V_MAX_5M_AGE_SEC * 1000
+    && (barTime === null || fiveTime <= barTime + 5 * 60 * 1000);
+  const checks = {
+    shockDepth: drop !== null && drop >= CFG.PAXG_V1D_V_MIN_SHOCK_DROP_PCT,
+    reboundStrength: bounce !== null && bounce >= Math.max(CFG.PAXG_V1D_V_MIN_BOUNCE_PCT, vRecoveryBounceRequirement(drop || 0)),
+    antiChaseRsi: rsi !== null && rsi <= CFG.PAXG_V1D_V_MAX_RSI_15S,
+    fresh5m: !CFG.PAXG_V1D_V_REQUIRE_FRESH_5M || fresh5m,
+  };
+  return { ok: Object.values(checks).every(Boolean), checks, shockDropPct: drop, bouncePct: bounce,
+    requiredBouncePct: Math.max(CFG.PAXG_V1D_V_MIN_BOUNCE_PCT, vRecoveryBounceRequirement(drop || 0)),
+    rsi, fiveMinuteBarTimeMs: fiveTime, age5mSec: fiveTime !== null ? Math.round((t-fiveTime)/1000) : null };
 }
 
 async function executeVRecoveryEntry(feature, campaign, evidence) {
@@ -7695,7 +7733,23 @@ async function evaluateVRecoveryEntry(feature) {
   if (entryBlock) return;
   const eventTimeMs = vRecoveryEventTimeMs(feature);
   state.vRecovery.prices.push({ t: eventTimeMs, price: feature.price, rsi: finite(feature.rsi, null) });
-  state.vRecovery.prices = state.vRecovery.prices.filter((item) => item.t >= eventTimeMs - 3900 * 1000).slice(-320);
+  state.vRecovery.prices = state.vRecovery.prices.filter((item) => item.t >= eventTimeMs - 43800 * 1000).slice(-3400);
+  if (CFG.PAXG_V1D_LONG_SHOCK_MODE === "shadow") {
+    const windows = [
+      {name:"3h",sec:10800,threshold:CFG.PAXG_V1D_DROP_3H_PCT},
+      {name:"12h",sec:43200,threshold:CFG.PAXG_V1D_DROP_12H_PCT},
+    ];
+    const probes = windows.map((w) => {
+      const observations=state.vRecovery.prices.filter((x)=>x.t>=eventTimeMs-w.sec*1000);
+      const high=observations.length>=2?observations.reduce((a,b)=>a.price>b.price?a:b).price:null;
+      const drop=high?round(vRecoveryDropPct(high,feature.price),6):null;
+      return {window:w.name,high,dropPct:drop,qualified:drop!==null&&drop>=w.threshold};
+    });
+    if (probes.some((p)=>p.qualified) && eventTimeMs - finite(state.vRecovery.lastV1dLongShadowLogAtMs,0) >= 600000) {
+      state.vRecovery.lastV1dLongShadowLogAtMs=eventTimeMs;
+      log("INFO","PAXG_V1D_LONG_SHOCK_SHADOW_OBSERVED",{price:feature.price,probes,action:"AUDIT_ONLY_NO_ENTRY"});
+    }
+  }
   if (nowMs() < finite(state.vRecovery.cooldownUntilMs, 0)) return;
 
   let campaign = state.vRecovery.campaign;
@@ -7747,7 +7801,18 @@ async function evaluateVRecoveryEntry(feature) {
     }
     return;
   }
-  log("INFO", "FVVO_V_RECOVERY_BOUNCE_CONFIRMED", { campaignId: campaign.id, evidence });
+  const v1dGate = paxgV1dVQuality(feature, campaign, evidence, state.lastFeature5m || null, nowMs());
+  if (CFG.PAXG_V1D_V_QUALITY_MODE !== "disabled" && !v1dGate.ok) {
+    // Rate-limit diagnostics; keep the same campaign alive for later stronger recovery.
+    if (eventTimeMs - finite(campaign.lastV1dGateLogAtMs, 0) >= 60 * 1000) {
+      campaign.lastV1dGateLogAtMs = eventTimeMs;
+      log("WARN", "PAXG_V1D_V_QUALITY_REJECTED", { campaignId: campaign.id,
+        mode: CFG.PAXG_V1D_V_QUALITY_MODE, gate: v1dGate,
+        action: CFG.PAXG_V1D_V_QUALITY_MODE === "live" ? "ENTRY_BLOCKED" : "SHADOW_ONLY_ENTRY_UNCHANGED" });
+    }
+    if (CFG.PAXG_V1D_V_QUALITY_MODE === "live") return;
+  }
+  log("INFO", "FVVO_V_RECOVERY_BOUNCE_CONFIRMED", { campaignId: campaign.id, evidence, v1dQuality: v1dGate });
   await executeVRecoveryEntry(feature, campaign, evidence);
 }
 
@@ -7816,6 +7881,13 @@ async function start() {
     log("ERROR", "PAXG_V1C_UNSUPPORTED_EXECUTION_MODE", { mode: CFG.PAXG_V1C_IGNITION_FAIL_MODE, message: "v1c thesis audit is intentionally SHADOW only" });
     throw new Error("PAXG_V1C_FAIL_MODE_MUST_BE_SHADOW_OR_DISABLED");
   }
+  log("INFO", "PAXG_V1D_LONG_SHOCK_STARTUP", {mode: CFG.PAXG_V1D_LONG_SHOCK_MODE,
+    drop3hPct:CFG.PAXG_V1D_DROP_3H_PCT,drop12hPct:CFG.PAXG_V1D_DROP_12H_PCT,
+    note:"shadow observes multi-hour drops without arming orders; live adds 3h and 12h shock sources"});
+  log("INFO", "PAXG_V1D_V_QUALITY_STARTUP", { mode: CFG.PAXG_V1D_V_QUALITY_MODE,
+    minShockDropPct: CFG.PAXG_V1D_V_MIN_SHOCK_DROP_PCT, minBouncePct: CFG.PAXG_V1D_V_MIN_BOUNCE_PCT,
+    maxRsi15s: CFG.PAXG_V1D_V_MAX_RSI_15S, requireFresh5m: CFG.PAXG_V1D_V_REQUIRE_FRESH_5M,
+    max5mAgeSec: CFG.PAXG_V1D_V_MAX_5M_AGE_SEC, appliesTo: "V_RECOVERY_ONLY", ignitionUnchanged: true });
   log("INFO", "PAXG_V1C_GUARDS_STARTUP", { ignitionFailMode: CFG.PAXG_V1C_IGNITION_FAIL_MODE,
     ignitionFailPnlPct: CFG.PAXG_V1C_IGNITION_FAIL_PNL_PCT, ignitionFailConfirmTicks: CFG.PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS,
     tickWatchdogEnabled: CFG.PAXG_V1C_TICK_WATCHDOG_ENABLED, tickWatchdogMaxAgeSec: CFG.PAXG_V1C_TICK_WATCHDOG_MAX_AGE_SEC,
@@ -7879,7 +7951,7 @@ Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluate
 Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource, c3EntryOrderIncluded, c3V2SizingProblems });
 Object.assign(module.exports, { preArmBridgeMode, updatePreArmBridge, preArmBridgeBreakConfirmed });
 Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEvidence, evaluateEthIgnitionAutoEntry, observeEthV1hMicroFloorShadow });
-Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShock, vRecoveryEvidence, evaluateVRecoveryEntry, executeVRecoveryEntry });
+Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShock, vRecoveryEvidence, evaluateVRecoveryEntry, executeVRecoveryEntry, paxgV1dVQuality });
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
@@ -8370,3 +8442,4 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
     startSupervisor,
   };
 }
+

@@ -1,8 +1,8 @@
 {
-  "name": "paxg-longhold-v1c-demo-ignition-audit-watchdog",
-  "version": "0.3.0",
+  "name": "paxg-longhold-v1d-demo-v-recovery-quality",
+  "version": "0.4.0",
   "private": true,
-  "description": "Dedicated DEMO-only PAXG LongHold: sampled ignition-deterioration shadow diagnostic + 15s ignition/V-recovery freshness gate",
+  "description": "PAXG DEMO v1d: 1.5% shock-aware V-Recovery quality audit, preserves v1c ignition protections",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +11,8 @@
     "replay:historic-v-recovery": "node replay_historic_v_recovery_v1g.js",
     "replay:v1h": "node replay_eth_v1h_upgrade.js",
     "replay:paxg-historical": "node replay_paxg_v1c_historical.js ../Week_LongHold_Nov09_PAXG.log",
-    "test:demo-config": "node test_demo_config.js"
+    "test:demo-config": "node test_demo_config.js",
+    "test:v1d": "node test_v1d_quality.js"
   },
   "engines": {
     "node": ">=20"
