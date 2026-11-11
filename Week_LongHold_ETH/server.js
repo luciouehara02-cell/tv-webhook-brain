@@ -102,7 +102,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "LongHold_v1n_LIVE_V_FAIL_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "LongHold_v1p_LIVE_V_QUALITY_SHADOW"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:ETHUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -598,6 +598,12 @@ const CFG = {
   // ETH v1g DEMO: independent fast V-shock recovery entry. A rapid drawdown only
   // arms the campaign; execution requires a measured low-based bounce. This path
   // deliberately does not require established 5m bullish continuation or Ray Bull.
+  // v1p: independent, V-Recovery-only large-shock/anti-chase filter. SHADOW does not alter orders.
+  ETH_V1P_V_QUALITY_MODE: envStr("ETH_V1P_V_QUALITY_MODE", "shadow").toLowerCase(),
+  ETH_V1P_MIN_SHOCK_DROP_PCT: envNum("ETH_V1P_MIN_SHOCK_DROP_PCT", 2.5),
+  ETH_V1P_MAX_ENTRY_RSI_15S: envNum("ETH_V1P_MAX_ENTRY_RSI_15S", 60),
+  ETH_V1P_REQUIRE_FRESH_5M: envBool("ETH_V1P_REQUIRE_FRESH_5M", true),
+  ETH_V1P_MAX_5M_AGE_SEC: envNum("ETH_V1P_MAX_5M_AGE_SEC", 420),
   V_RECOVERY_ENABLED: envBool("V_RECOVERY_ENABLED", true),
   V_RECOVERY_MODE: envStr("V_RECOVERY_MODE", "live").toLowerCase(),
   V_RECOVERY_REQUIRE_DEMO: envBool("V_RECOVERY_REQUIRE_DEMO", false),
@@ -1321,6 +1327,10 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.ETH_IGNITION_HIGH_RSI_MODE) || CFG.ETH_IGNITION_HIGH_RSI_RELEASE_RSI >= CFG.ETH_IGNITION_HIGH_RSI_THRESHOLD || CFG.ETH_IGNITION_MIN_ADX_RETENTION_RATIO < 0 || CFG.ETH_IGNITION_MIN_ADX_RETENTION_RATIO > 1) problems.push("INVALID_ETH_IGNITION_V1D_GUARD_CONFIG");
   if (CFG.ETH_IGNITION_MAINTENANCE_MIN_RSI >= CFG.ETH_IGNITION_MAINTENANCE_MAX_RSI || CFG.ETH_IGNITION_MAINTENANCE_MAX_WEAK_BARS < 1 || CFG.ETH_IGNITION_MAINTENANCE_EMA18_TOLERANCE_PCT < 0) problems.push("INVALID_ETH_IGNITION_V1E_MAINTENANCE_CONFIG");
   if (!["off", "reason_change", "all"].includes(CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_MODE) || CFG.ETH_IGNITION_QUALITY_BLOCK_LOG_REMINDER_SEC < 300) problems.push("INVALID_ETH_IGNITION_COMPACT_LOG_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.ETH_V1P_V_QUALITY_MODE) ||
+      !(CFG.ETH_V1P_MIN_SHOCK_DROP_PCT > 0 && CFG.ETH_V1P_MIN_SHOCK_DROP_PCT <= 20) ||
+      !(CFG.ETH_V1P_MAX_ENTRY_RSI_15S >= 30 && CFG.ETH_V1P_MAX_ENTRY_RSI_15S <= 100) ||
+      !(CFG.ETH_V1P_MAX_5M_AGE_SEC >= 60 && CFG.ETH_V1P_MAX_5M_AGE_SEC <= 900)) problems.push("INVALID_ETH_V1P_V_QUALITY_CONFIG");
   if (!["disabled", "shadow", "live"].includes(CFG.V_RECOVERY_MODE)) problems.push("INVALID_V_RECOVERY_MODE");
   if (CFG.V_RECOVERY_ENABLED && CFG.V_RECOVERY_REQUIRE_DEMO && !demoMode()) problems.push("V_RECOVERY_REQUIRES_DEMO_MODE");
   if (CFG.V_RECOVERY_DROP_15M_PCT <= 0 || CFG.V_RECOVERY_DROP_30M_PCT < CFG.V_RECOVERY_DROP_15M_PCT || CFG.V_RECOVERY_DROP_60M_PCT < CFG.V_RECOVERY_DROP_30M_PCT) problems.push("INVALID_V_RECOVERY_DROP_THRESHOLDS");
@@ -7620,6 +7630,24 @@ function vRecoveryEvidence(feature, campaign, eventTimeMs) {
   };
 }
 
+// Pure quality check shared by LIVE/shadow and replay tests. Missing data fails closed.
+function ethV1pVQualityEvidence(feature, campaign, fiveMinuteFeature = state.lastFeature5m, evaluationTimeMs = nowMs()) {
+  const dropPct = finite(campaign?.dropPct, null);
+  const rsi = finite(feature?.rsi, null);
+  const receivedAtMs = finite(fiveMinuteFeature?.receivedAtMs, null);
+  // Replay callers can pass an explicitly timestamped 5m feature; live uses receivedAtMs.
+  const fiveAgeSec = receivedAtMs === null ? null : Math.max(0, (evaluationTimeMs - receivedAtMs) / 1000);
+  const checks = {
+    largeShock: dropPct !== null && dropPct >= CFG.ETH_V1P_MIN_SHOCK_DROP_PCT,
+    antiChaseRsi: rsi !== null && rsi <= CFG.ETH_V1P_MAX_ENTRY_RSI_15S,
+    freshFiveMinute: !CFG.ETH_V1P_REQUIRE_FRESH_5M || (fiveAgeSec !== null && fiveAgeSec <= CFG.ETH_V1P_MAX_5M_AGE_SEC),
+  };
+  return {ok:Object.values(checks).every(Boolean), checks, dropPct, rsi,
+    fiveAgeSec: fiveAgeSec === null ? null : round(fiveAgeSec,2),
+    mode:CFG.ETH_V1P_V_QUALITY_MODE,
+    thresholds:{minDropPct:CFG.ETH_V1P_MIN_SHOCK_DROP_PCT,maxRsi:CFG.ETH_V1P_MAX_ENTRY_RSI_15S,requireFresh5m:CFG.ETH_V1P_REQUIRE_FRESH_5M,max5mAgeSec:CFG.ETH_V1P_MAX_5M_AGE_SEC}};
+}
+
 async function executeVRecoveryEntry(feature, campaign, evidence) {
   const entry = feature.price;
   const structuralStop = campaign.lowPrice * (1 - CFG.V_RECOVERY_STOP_BELOW_LOW_PCT / 100);
@@ -7729,6 +7757,22 @@ async function evaluateVRecoveryEntry(feature) {
     }
     return;
   }
+  // v1p quality gate runs ONLY after existing bounce confirmation; never blocks existing position exits.
+  if (CFG.ETH_V1P_V_QUALITY_MODE !== "disabled") {
+    const quality = ethV1pVQualityEvidence(feature, campaign);
+    if (!quality.ok) {
+      const signature = Object.entries(quality.checks).filter(([,ok])=>!ok).map(([key])=>key).join(",");
+      if (signature !== campaign.lastQualitySignature || eventTimeMs - finite(campaign.lastQualityLogAtMs,0) >= 60000) {
+        campaign.lastQualitySignature = signature;
+        campaign.lastQualityLogAtMs = eventTimeMs;
+        log("WARN", "FVVO_V1P_V_QUALITY_REJECT", {campaignId:campaign.id, signature,
+          action:CFG.ETH_V1P_V_QUALITY_MODE === "live" ? "ENTRY_BLOCKED" : "SHADOW_ONLY_EXISTING_ENTRY_UNCHANGED", quality, bounceEvidence:evidence});
+      }
+      if (CFG.ETH_V1P_V_QUALITY_MODE === "live") return;
+    } else if (CFG.ETH_V1P_V_QUALITY_MODE === "shadow") {
+      log("INFO", "FVVO_V1P_V_QUALITY_SHADOW_PASS", {campaignId:campaign.id,quality});
+    }
+  }
   log("INFO", "FVVO_V_RECOVERY_BOUNCE_CONFIRMED", { campaignId: campaign.id, evidence });
   await executeVRecoveryEntry(feature, campaign, evidence);
 }
@@ -7810,6 +7854,7 @@ async function start() {
   await loadState();
   const problems = configProblems();
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
+  log("INFO", "FVVO_V1P_V_QUALITY_STARTUP", {mode:CFG.ETH_V1P_V_QUALITY_MODE,minShockDropPct:CFG.ETH_V1P_MIN_SHOCK_DROP_PCT,maxEntryRsi15s:CFG.ETH_V1P_MAX_ENTRY_RSI_15S,requireFresh5m:CFG.ETH_V1P_REQUIRE_FRESH_5M,max5mAgeSec:CFG.ETH_V1P_MAX_5M_AGE_SEC});
   log("INFO", "FVVO_V1N_PROTECTION_STARTUP", {vFailMode:CFG.ETH_V1N_V_FAIL_MODE, vFailWindowSec:CFG.ETH_V1N_V_FAIL_WINDOW_SEC,
     vFailPnlPct:CFG.ETH_V1N_V_FAIL_PNL_PCT, vFailConfirmTicks:CFG.ETH_V1N_V_FAIL_CONFIRM_TICKS,
     tickWatchdogEnabled:CFG.ETH_V1N_TICK_WATCHDOG_ENABLED, tickMaxAgeSec:CFG.ETH_V1N_TICK_WATCHDOG_MAX_AGE_SEC,
@@ -7872,6 +7917,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
 Object.assign(module.exports, { preArmBridgeMode, updatePreArmBridge, preArmBridgeBreakConfirmed });
 Object.assign(module.exports, { ethIgnitionFiveMinuteEvidence, ethIgnitionTickEvidence, evaluateEthIgnitionAutoEntry, observeEthV1hMicroFloorShadow });
 Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShock, vRecoveryEvidence, evaluateVRecoveryEntry, executeVRecoveryEntry });
+Object.assign(module.exports, {ethV1pVQualityEvidence});
 
 // ===== END SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 } else {
@@ -7907,7 +7953,7 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "LongHold_v1n_LIVE_V_FAIL_SHADOW"),
+    brain: envStr("MULTI_BRAIN_NAME", "LongHold_v1p_LIVE_V_QUALITY_SHADOW"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -7962,7 +8008,7 @@ Object.assign(module.exports, { vRecoveryBounceRequirement, vRecoveryRollingShoc
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "LongHold_v1n_LIVE_V_FAIL_SHADOW")
+      envStr("BRAIN_NAME", "LongHold_v1p_LIVE_V_QUALITY_SHADOW")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
