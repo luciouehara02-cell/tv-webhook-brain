@@ -1,18 +1,13 @@
 {
-  "name": "paxg-longhold-v1d-demo-v-recovery-quality",
-  "version": "0.4.0",
+  "name": "paxg-longhold-v1e-demo-daily-lock-backfill",
+  "version": "0.5.0",
   "private": true,
-  "description": "PAXG DEMO v1d: 1.5% shock-aware V-Recovery quality audit, preserves v1c ignition protections",
+  "description": "PAXG DEMO daily 2-red BEAR_LOCK, intraday 1h SMA release, Binance history fail-closed",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js",
-    "replay:v-recovery": "node replay_v_recovery_v1g.js",
-    "replay:historic-v-recovery": "node replay_historic_v_recovery_v1g.js",
-    "replay:v1h": "node replay_eth_v1h_upgrade.js",
-    "replay:paxg-historical": "node replay_paxg_v1c_historical.js ../Week_LongHold_Nov09_PAXG.log",
-    "test:demo-config": "node test_demo_config.js",
-    "test:v1d": "node test_v1d_quality.js"
+    "check": "node --check server.js && node --check dailyGate.js && node --check historyBackfill.js && node --check entryGate.js",
+    "test:gate": "node test_v1e_gate.js"
   },
   "engines": {
     "node": ">=20"

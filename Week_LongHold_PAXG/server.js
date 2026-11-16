@@ -24,6 +24,8 @@ const FVVO_ENGINE_WORKER = !isMainThread && Boolean(workerData?.fvvoEngineWorker
 if (FVVO_ENGINE_WORKER) {
 // ===== BEGIN SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 const entryGate = require("./entryGate");
+const dailyGate = require("./dailyGate");
+const historyBackfill = require("./historyBackfill");
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
 // ETHUSDT dedicated DEMO Signal Bot with automatic FVVO ignition entry and brain-managed exits.
@@ -553,6 +555,17 @@ const CFG = {
   PAXG_V1C_IGNITION_FAIL_MAX_FVVO: envNum("PAXG_V1C_IGNITION_FAIL_MAX_FVVO", 0),
   PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS: Math.max(2, Math.floor(envNum("PAXG_V1C_IGNITION_FAIL_CONFIRM_TICKS", 2))),
   PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC: Math.max(15, envNum("PAXG_V1C_IGNITION_FAIL_MAX_GAP_SEC", 120)),
+  // PAXG v1e: completed UTC daily-candle lock and intraday 1H bullish release; DEMO entry orders only.
+  PAXG_V1E_DAILY_GATE_MODE: envStr("PAXG_V1E_DAILY_GATE_MODE", "live").toLowerCase(),
+  PAXG_V1E_DAILY_GREEN_MIN_PCT: envNum("PAXG_V1E_DAILY_GREEN_MIN_PCT", 0),
+  PAXG_V1E_RELEASE_1H_CONFIRM_HOURS: Math.max(1, envNum("PAXG_V1E_RELEASE_1H_CONFIRM_HOURS", 1)),
+  PAXG_V1E_RELEASE_MIN_5M_RSI: envNum("PAXG_V1E_RELEASE_MIN_5M_RSI", 50),
+  PAXG_V1E_RELEASE_REQUIRE_5M_BULL: envBool("PAXG_V1E_RELEASE_REQUIRE_5M_BULL", true),
+  PAXG_V1E_RELEASE_COOLDOWN_SEC: envNum("PAXG_V1E_RELEASE_COOLDOWN_SEC", 1800),
+  PAXG_V1E_MAX_5M_AGE_SEC: envNum("PAXG_V1E_MAX_5M_AGE_SEC", 420),
+  PAXG_V1E_BACKFILL_ENABLED: envBool("PAXG_V1E_BACKFILL_ENABLED", true),
+  PAXG_V1E_BACKFILL_TIMEOUT_MS: envNum("PAXG_V1E_BACKFILL_TIMEOUT_MS", 7000),
+  PAXG_V1E_BACKFILL_RETRY_SEC: envNum("PAXG_V1E_BACKFILL_RETRY_SEC", 300),
   PAXG_V1D_LONG_SHOCK_MODE: envStr("PAXG_V1D_LONG_SHOCK_MODE", "shadow").toLowerCase(),
   PAXG_V1D_DROP_3H_PCT: envNum("PAXG_V1D_DROP_3H_PCT", 1.5),
   PAXG_V1D_DROP_12H_PCT: envNum("PAXG_V1D_DROP_12H_PCT", 1.7),
@@ -956,6 +969,48 @@ let persistenceSequence = 0;
 let testNowMs = null;
 let reconciliationBusy = false;
 let state = defaultState();
+const paxgDailyGate = dailyGate.create({
+  mode: CFG.PAXG_V1E_DAILY_GATE_MODE, greenMinPct: CFG.PAXG_V1E_DAILY_GREEN_MIN_PCT,
+  releaseConfirmHours: CFG.PAXG_V1E_RELEASE_1H_CONFIRM_HOURS,
+  require5mBull: CFG.PAXG_V1E_RELEASE_REQUIRE_5M_BULL,
+  releaseMin5mRsi: CFG.PAXG_V1E_RELEASE_MIN_5M_RSI,
+  cooldownSec: CFG.PAXG_V1E_RELEASE_COOLDOWN_SEC,
+  max5mAgeSec: CFG.PAXG_V1E_MAX_5M_AGE_SEC,
+  failClosedMissingHistory: true,
+});
+let paxgLastHistoryAttemptMs = -Infinity;
+let paxgBackfillPromise = null;
+const paxgLastBlockedLogAt = new Map();
+async function paxgRefreshGateHistory(source, force = false) {
+  if (!CFG.PAXG_V1E_BACKFILL_ENABLED) return false;
+  const now = nowMs();
+  if (paxgBackfillPromise) return paxgBackfillPromise;
+  if (!force && now - paxgLastHistoryAttemptMs < Math.max(30, CFG.PAXG_V1E_BACKFILL_RETRY_SEC) * 1000) return false;
+  paxgLastHistoryAttemptMs = now;
+  paxgBackfillPromise = (async () => {
+    try {
+      const h = await historyBackfill.backfill(now, { symbol: 'PAXGUSDT', timeoutMs: CFG.PAXG_V1E_BACKFILL_TIMEOUT_MS });
+      const before = paxgDailyGate.context();
+      const after = paxgDailyGate.hydrate(h, now);
+      log('INFO', 'PAXG_V1E_HISTORY_VALIDATED', { source, dailyCompleted: h.daily.length, hourlyCompleted: h.hourly.length, gate: after, previousPhase: before.phase });
+      return true;
+    } catch (error) {
+      paxgDailyGate.invalidateHistory('HISTORY_BACKFILL_FAILED');
+      log('ERROR', 'PAXG_V1E_HISTORY_BACKFILL_FAILED', { source, error: error.message, action: 'AUTO_ENTRIES_BLOCKED_EXITS_UNCHANGED' });
+      return false;
+    } finally { paxgBackfillPromise = null; }
+  })();
+  return paxgBackfillPromise;
+}
+function paxgAutoEntryPermission(engine) {
+  const d = paxgDailyGate.decision(nowMs());
+  if (!d.allowed && nowMs() - (paxgLastBlockedLogAt.get(engine) || 0) >= 60000) {
+    paxgLastBlockedLogAt.set(engine, nowMs());
+    log('WARN', 'PAXG_V1E_DAILY_GATE_AUTO_ENTRY_BLOCK', { engine, phase:d.phase, reason:d.reason, ageSec:d.ageSec, action:'AUTO_ENTRIES_BLOCKED_EXITS_UNCHANGED' });
+  }
+  return d.allowed;
+}
+
 let feature15sLogSequence = 0;
 let autoExitReleaseTimer = null;
 
@@ -1667,6 +1722,9 @@ async function forward3Commas(action, price, reason, options = {}) {
   const last = finite(state.forward.lastByKey?.[dedupeKey], 0);
   if (!options.bypassDedupe && current - last < CFG.C3_FORWARD_DEDUP_MS) return { ok: false, deduped: true, error: "C3_FORWARD_DEDUP_ACTIVE", requestId };
   if (!isForwardAllowed()) return { ok: false, error: "FORWARDING_NOT_ALLOWED", requestId };
+  // Additional automatic-order fail-closed check. Explicit operator-armed/manual orders are unchanged.
+  if (action === 'enter_long' && !String(reason).startsWith('MANUAL_') && !String(reason).startsWith('PRICE_TRIGGER_') && !paxgAutoEntryPermission('forward_'+String(reason)))
+    return {ok:false,error:'PAXG_DAILY_BEAR_LOCK',requestId};
   // Fail closed on every order-producing path. Exit remains available when entries are disarmed.
   if (action === "enter_long" && liveMode() && !CFG.LIVE_ORDERS_ARMED) return { ok: false, error: "LIVE_ORDERS_NOT_ARMED", requestId };
 
@@ -1893,7 +1951,8 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "LongHold_v1m_LIVE_1_13_0",
+    buildVersion: "PAXG_LongHold_v1e_DEMO_DAILY2RED_1H_RELEASE",
+    paxgDailyGate: {...paxgDailyGate.context(), decision:paxgDailyGate.decision(nowMs())},
     liveOrdersArmed: liveMode() && CFG.LIVE_ORDERS_ARMED,
     executionReconciliation: { automaticFlatAssumption: acceptedExitAutoReleaseEnabled(), source: acceptedExitAutoReleaseEnabled() ? (liveMode() ? "LIVE_ASSUMED_FLAT_UNVERIFIED" : "DEMO_ACCEPTED_SIGNAL") : "OPERATOR_ATTESTED", entryRequestId: state.position?.entryForwardRequestId || null, exitRequestId: state.position?.exitForwardRequestId || null, lastReceipt: state.audit?.lastExecutionReceipt || null },
     ok: true,
@@ -4520,6 +4579,7 @@ async function forwardPostExitRecoveredBaseCandidate(campaign, recovered, candid
     return { entered: false, rejected: true };
   }
 
+  if (!paxgAutoEntryPermission('post_exit_recovered_base')) return { entered:false, rejected:true, reason:'PAXG_DAILY_BEAR_LOCK' };
   candidate.projectedStopPrice = projectedStop.stopPrice;
   candidate.projectedStopDistancePct = projectedStop.stopDistancePct;
   candidate.automaticOrderSent = true;
@@ -4822,6 +4882,7 @@ function logReentry15sShadowCandidate(kind, campaign, feature, context, values, 
 }
 
 async function evaluateReentryShadow(feature) {
+  if (!paxgAutoEntryPermission('reentry')) return;
   const r = ensureReentryState();
   if (!CFG.REENTRY_ENABLED || !["shadow", "auto"].includes(CFG.REENTRY_PHASE) || state.position || state.externalDealLock?.active || state.manual?.handoffActive || state.manual?.recoveryRequired) return;
   if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT || !Number.isFinite(feature.price) || feature.price <= 0) return;
@@ -5016,6 +5077,7 @@ async function evaluateReentryShadow(feature) {
     return;
   }
 
+  if (!paxgAutoEntryPermission('auto_reentry')) return;
   state.position = buildPosition(price, { stopPrice: projectedStop.stopPrice, stopPct: projectedStop.stopDistancePct, profitTargetPrice: 0, profitTargetPct: 0 }, { entryOrigin: "AUTO_REENTRY", profile: REENTRY_PROFILE, reentryNumber: candidate.sequence });
   state.position.reentryCampaignId = c.id;
   state.position.reentryCandidateId = candidate.id;
@@ -7453,6 +7515,7 @@ async function executeEthIgnitionEntry(feature, setup, evidence) {
 }
 
 async function evaluateEthIgnitionAutoEntry(feature) {
+  if (!paxgAutoEntryPermission('ignition')) return;
   if (!CFG.ETH_IGNITION_AUTO_ENTRY_ENABLED || !CFG.ETH_IGNITION_AUTO_ORDER_ENABLED) return;
   if (!paxgV1cTickFresh()) { paxgV1cLogFeedBlock("ignition"); return; }
   if (CFG.ETH_IGNITION_REQUIRE_DEMO && !demoMode()) return;
@@ -7688,6 +7751,7 @@ async function executeVRecoveryEntry(feature, campaign, evidence) {
     : structuralStop;
   stopDistancePct = percentageBelow(entry, stopPrice);
   const levels = { stopPrice: round(stopPrice, 8), stopPct: round(stopDistancePct, 6), profitTargetPrice: 0, profitTargetPct: 0 };
+  if (!paxgAutoEntryPermission('v_recovery')) return {ok:false,waiting:true,error:'PAXG_DAILY_BEAR_LOCK'};
   if (CFG.V_RECOVERY_MODE === "shadow") {
     state.vRecovery.last = { status: "SHADOW_QUALIFIED", at: nowIso(), campaignId: campaign.id, entryPrice: entry, evidence: clone(evidence) };
     state.vRecovery.campaign = null;
@@ -7725,6 +7789,8 @@ async function executeVRecoveryEntry(feature, campaign, evidence) {
 }
 
 async function evaluateVRecoveryEntry(feature) {
+  // Continue shock/low/bounce telemetry while the daily gate is locked.
+  // Only the final automatic order is gated; otherwise a 12h window cannot survive a long lock.
   if (!CFG.V_RECOVERY_ENABLED || CFG.V_RECOVERY_MODE === "disabled") return;
   if (!paxgV1cTickFresh()) { paxgV1cLogFeedBlock("v_recovery"); return; }
   if (CFG.V_RECOVERY_REQUIRE_DEMO && !demoMode()) return;
@@ -7835,6 +7901,16 @@ async function processFeatureEvent(feature) {
     const operationalFields = { publisherKind: feature.publisherKind, chartTimeframe: feature.chartTimeframe, positionLifecycle: state.position?.lifecycle || null, phase: state.position?.phase || null, reentryPhase: state.reentry?.campaign?.phase || null, priceTriggerState: activePriceEntryItems().length ? `${activePriceEntryItems().length}_ARMED` : null, handoffActive: Boolean(state.manual?.handoffActive), runnerHoldActive: Boolean(state.position?.dynamicProfit?.runner?.holdActive), runnerTightTrailArmed: Boolean(state.position?.dynamicProfit?.runner?.tightTrailArmed), brainExitManagementActive: Boolean(state.position && !state.manual?.handoffActive && !String(state.position.lifecycle || "").startsWith("EXIT_")), reconciliationRequired: Boolean(state.manual?.recoveryRequired) };
     log("INFO", eventName, CFG.LOG_REPLAY_COMPACT_ENABLED ? replayFields : { ...replayFields, ...operationalFields });
   }
+  if (is5mFeature) {
+    if (paxgDailyGate.needsBackfill(nowMs())) {
+      await paxgRefreshGateHistory('five_minute_feature');
+    }
+    if (paxgDailyGate.context().historyValidated) {
+      const before = paxgDailyGate.context();
+      const result = paxgDailyGate.update(feature);
+      if (result.accepted && result.changed) log('INFO','PAXG_V1E_DAILY_GATE_TRANSITION', {from:before.phase,to:result.phase,reason:result.reason,todayPct:result.todayPct,hour:result.hour});
+    }
+  }
   await capturePreReleaseReentryPullback(feature);
   await finalizeAutoExitRelease("feature");
   await evaluateRunnerRescuePostExitAudit(feature);
@@ -7877,6 +7953,9 @@ app.post(CFG.MANUAL_WEBHOOK_PATH, async (req, res) => {
 async function start() {
   await ensurePersistence();
   await loadState();
+  if (!['disabled','shadow','live'].includes(CFG.PAXG_V1E_DAILY_GATE_MODE) || !demoMode()) throw Error('PAXG_V1E_DEMO_DAILY_GATE_CONFIGURATION_INVALID');
+  await paxgRefreshGateHistory('startup', true);
+  log('INFO','PAXG_V1E_DAILY_GATE_STARTUP', {mode:CFG.PAXG_V1E_DAILY_GATE_MODE,context:paxgDailyGate.context(),failClosed:true,backfillEnabled:CFG.PAXG_V1E_BACKFILL_ENABLED});
   if (!["disabled", "shadow"].includes(CFG.PAXG_V1C_IGNITION_FAIL_MODE)) {
     log("ERROR", "PAXG_V1C_UNSUPPORTED_EXECUTION_MODE", { mode: CFG.PAXG_V1C_IGNITION_FAIL_MODE, message: "v1c thesis audit is intentionally SHADOW only" });
     throw new Error("PAXG_V1C_FAIL_MODE_MUST_BE_SHADOW_OR_DISABLED");
