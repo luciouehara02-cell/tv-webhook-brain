@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * BrainFVVO_SOL_v3v_QUALITY_GATES_PAPER
+ * BrainFVVO_SOL_v3y_BEAR_MOMENTUM_4H_PAPER
  * ------------------------------------------------
  * Clean deploy-root Node service for Railway.
  * Files expected in Railway Root Directory: server.js, package.json, package-lock.json
@@ -24,10 +24,13 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const dailyGate = require('./dailyGate');
+const momentumGate = require('./momentumGate');
+const historyBackfill = require('./historyBackfill');
 
 const env = process.env;
 
-const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3v_QUALITY_GATES_PAPER';
+const BRAIN = env.BRAIN_NAME || 'BrainFVVO_SOL_v3y_BEAR_MOMENTUM_4H_PAPER';
 
 const cfg = {
   port: intEnv('PORT', 8080),
@@ -51,6 +54,29 @@ const cfg = {
   c3OrderType: env.C3_ORDER_TYPE || 'market',
   // Preserve the v3q state path so an existing tracked position and exit protection survive an upgrade.
   stateFile: env.STATE_FILE || '/data/brainfvvo-sol-ray30-longhold-v3q-state.json',
+  // LongHold v1t-aligned: two completed red UTC days -> BEAR_LOCK; bullish 1h+5m -> BULL_RELEASE.
+  dailyBearLockMode: (env.DAILY_BEAR_LOCK_MODE || 'live').toLowerCase(),
+  dailyBearLockBackfillEnabled: boolEnv('DAILY_BEAR_LOCK_BACKFILL_ENABLED', true),
+  dailyBearLockBackfillTimeoutMs: Math.max(1000, intEnv('DAILY_BEAR_LOCK_BACKFILL_TIMEOUT_MS', 7000)),
+  dailyBearLockBackfillRetrySec: Math.max(30, intEnv('DAILY_BEAR_LOCK_BACKFILL_RETRY_SEC', 300)),
+  dailyBearLockReleaseHourBars: Math.max(1, intEnv('DAILY_BEAR_LOCK_RELEASE_1H_CONFIRM_HOURS', 1)),
+  dailyBearLockRequire5mBull: boolEnv('DAILY_BEAR_LOCK_RELEASE_REQUIRE_5M_BULL', true),
+  dailyBearLockReleaseMinRsi5m: numEnv('DAILY_BEAR_LOCK_RELEASE_MIN_5M_RSI', 52),
+  dailyBearLockReleaseGreenMinPct: numEnv('DAILY_BEAR_LOCK_DAILY_GREEN_MIN_PCT', 0),
+  dailyBearLockReleaseNoNewLowBars: Math.max(0, intEnv('DAILY_BEAR_LOCK_RELEASE_NO_NEW_LOW_BARS', 0)),
+  dailyBearLockRelockBearBars: Math.max(1, intEnv('DAILY_BEAR_LOCK_RELOCK_BEAR_5M_BARS', 3)),
+  dailyBearLockCooldownSec: Math.max(0, intEnv('DAILY_BEAR_LOCK_RELEASE_COOLDOWN_SEC', 1800)),
+  dailyBearLockMax5mAgeSec: Math.max(60, intEnv('DAILY_BEAR_LOCK_MAX_5M_AGE_SEC', 420)),
+  dailyBearVRecoveryException: boolEnv('DAILY_BEAR_LOCK_V_EXCEPTION_ENABLED', true),
+  dailyBearVMinDrop60Pct: numEnv('DAILY_BEAR_LOCK_V_MIN_DROP_60M_PCT', 2.5),
+  dailyBearVMinBouncePct: numEnv('DAILY_BEAR_LOCK_V_MIN_BOUNCE_PCT', 0.65),
+  dailyBearVMinRsi5m: numEnv('DAILY_BEAR_LOCK_V_MIN_RSI_5M', 48),
+
+  bearMomentum4hEnabled: boolEnv('BEAR_MOMENTUM_4H_ENABLED', true),
+  bearMomentum4hDropPct: Math.max(0.1, numEnv('BEAR_MOMENTUM_4H_WARN_DROP_PCT', 1.0)),
+  bearMomentum4hShadowOnly: boolEnv('BEAR_MOMENTUM_4H_SHADOW_ONLY', false),
+  bearMomentum4hMaxAgeSec: Math.max(60, intEnv('BEAR_MOMENTUM_4H_MAX_AGE_SEC', 420)),
+
   autoEntryHoldOnStartup: boolEnv('AUTO_ENTRY_HOLD_ON_STARTUP', true),
   autoEntryPauseAfterManualExit: boolEnv('AUTO_ENTRY_PAUSE_AFTER_MANUAL_EXIT', true),
   ray30LongGateMode: env.RAY30_LONG_GATE_MODE || 'RAYALGO_STRICT',
@@ -314,6 +340,115 @@ const logCounters = { featureTick15s: 0, lastRay30ScanKey: null, lastRay30NoEntr
 
 let state = loadState();
 ensureStateShape();
+const bearMomentum4h = momentumGate.create({enabled:cfg.bearMomentum4hEnabled,thresholdPct:cfg.bearMomentum4hDropPct,shadowOnly:cfg.bearMomentum4hShadowOnly,maxAgeSec:cfg.bearMomentum4hMaxAgeSec});
+if(state.bearMomentum4h) bearMomentum4h.restore(state.bearMomentum4h);
+let lastMomentumDecisionKey = '';
+function updateBearMomentum4h(price,body){
+  const t=Number(body.barTimeMs??body.bar_time_ms??NaN);
+  const result=bearMomentum4h.update(t,price);
+  state.bearMomentum4h=bearMomentum4h.snapshot();
+  if(!result.ok&&result.reason!=='DUPLICATE_OR_OLDER')log('BEAR_MOMENTUM_4H_BAR_REJECTED',result);
+  const d=bearMomentum4h.decision(Date.now());
+  const k=d.reason;
+  if(k!==lastMomentumDecisionKey){lastMomentumDecisionKey=k;log('BEAR_MOMENTUM_4H_STATE',{...d,enabled:cfg.bearMomentum4hEnabled});}
+}
+// Entry-only daily regime lock. A validated Binance backfill is required on every
+// restart and at each UTC day rollover. Snapshot persists release/lock transitions.
+const dailyBearGate = dailyGate.create({
+  mode: cfg.dailyBearLockMode,
+  greenMinPct: cfg.dailyBearLockReleaseGreenMinPct,
+  releaseConfirmHours: cfg.dailyBearLockReleaseHourBars,
+  require5mBull: cfg.dailyBearLockRequire5mBull,
+  releaseMin5mRsi: cfg.dailyBearLockReleaseMinRsi5m,
+  requireNoNewLowBars: cfg.dailyBearLockReleaseNoNewLowBars,
+  relockBear5mBars: cfg.dailyBearLockRelockBearBars,
+  cooldownSec: cfg.dailyBearLockCooldownSec,
+  max5mAgeSec: cfg.dailyBearLockMax5mAgeSec,
+  failClosedMissingHistory: true
+});
+if (state.dailyBearGate) dailyBearGate.restore(state.dailyBearGate);
+// A persisted status must never substitute for a fresh, independently validated backfill.
+dailyBearGate.invalidateHistory('STARTUP_HISTORY_VALIDATION_REQUIRED');
+let dailyBearBackfillPromise = null;
+let dailyBearLastAttemptAt = 0;
+let dailyBearLastError = null;
+let dailyBearLastVeto = { key:'', at:0 };
+async function ensureDailyBearHistory(force=false) {
+  if (cfg.dailyBearLockMode === 'disabled') return true;
+  if (!cfg.dailyBearLockBackfillEnabled) return false;
+  const at = Date.now();
+  if (!force && !dailyBearGate.needsBackfill(at)) return true;
+  if (dailyBearBackfillPromise) return dailyBearBackfillPromise;
+  if (!force && at - dailyBearLastAttemptAt < cfg.dailyBearLockBackfillRetrySec*1000) return false;
+  dailyBearLastAttemptAt = at;
+  dailyBearGate.invalidateHistory('HISTORICAL_SYNC_PENDING');
+  dailyBearBackfillPromise = (async()=>{
+    try {
+      const sym = normalizeSymbol(cfg.symbol);
+      const history = await historyBackfill.backfill(at, {symbol:sym, timeoutMs:cfg.dailyBearLockBackfillTimeoutMs});
+      const context = dailyBearGate.hydrate(history,at);
+      dailyBearLastError = null;
+      state.dailyBearGate = dailyBearGate.snapshot(); saveState();
+      log('DAILY_BEAR_LOCK_HISTORY_VALIDATED', {symbol:sym,source:history.provider,context});
+      return true;
+    } catch(err) {
+      dailyBearLastError = String(err?.message||err);
+      dailyBearGate.invalidateHistory('HISTORY_BACKFILL_FAILED');
+      state.dailyBearGate = dailyBearGate.snapshot();saveState();
+      log('DAILY_BEAR_LOCK_HISTORY_FAILED', {reason:dailyBearLastError,action:'AUTO_ENTRIES_BLOCKED_EXITS_UNCHANGED'});
+      return false;
+    } finally {dailyBearBackfillPromise = null;}
+  })();
+  return dailyBearBackfillPromise;
+}
+
+function balancedVException(source, price) {
+  if (source !== 'v_recovery_probation_auto' || !cfg.dailyBearVRecoveryException) return {ok:false,reason:'NOT_V_RECOVERY'};
+  const gate = dailyBearGate.decision(Date.now());
+  if (cfg.dailyBearLockMode !== 'live' || !['BEAR_LOCK','RECOVERY_WATCH'].includes(gate.phase)) return {ok:false,reason:'NOT_LOCKED'};
+  if (!gate.historyValidated || gate.ageSec === null || gate.ageSec > cfg.dailyBearLockMax5mAgeSec) return {ok:false,reason:'HISTORY_OR_5M_STALE'};
+  const gc = dailyBearGate.context();
+  if (gc.exceptionUsedForLockAt && gc.exceptionUsedForLockAt === gc.lastLockAt) return {ok:false,reason:'EXCEPTION_ALREADY_USED_IN_LOCK'};
+  const v=state.vRecovery||{}, candidate=v.candidate, bull=v.rayBull3m;
+  const five=state.latest&&state.latest.feature5m;
+  if (!candidate || candidate.used || ![30,60].includes(candidate.minutes) || candidate.dropPct < cfg.dailyBearVMinDrop60Pct) return {ok:false,reason:'DROP_WINDOW_OR_MAGNITUDE'};
+  const bounce = pct(price,candidate.low);
+  if (!Number.isFinite(bounce) || bounce < cfg.dailyBearVMinBouncePct || bounce > cfg.vRecoveryMaxBouncePct) return {ok:false,reason:'BOUNCE_NOT_QUALIFIED'};
+  if (!bull || bull.atMs < candidate.lowAtMs || Date.now()-bull.atMs > cfg.vRayMaxAgeSec*1000) return {ok:false,reason:'FRESH_3M_RAY_REQUIRED'};
+  if (!five || Date.now()-five.atMs > cfg.feature5mMaxAgeSec*1000 || Number(five.raw&&five.raw.rsi) < cfg.dailyBearVMinRsi5m) return {ok:false,reason:'5M_RSI_OR_FRESHNESS'};
+  const observations=(v.observations||[]).filter(x=>x.ok);
+  if (observations.length < cfg.vConfirmRequired) return {ok:false,reason:'INSUFFICIENT_15S_CONFIRMATION'};
+  return {ok:true,reason:'BALANCED_V_EXCEPTION',dropPct:candidate.dropPct,bouncePct:bounce,rsi5m:Number(five.raw.rsi),lockAt:gc.lastLockAt};
+}
+async function dailyBearPermit(source,price) {
+  if(cfg.dailyBearLockMode === 'disabled') return true;
+  await ensureDailyBearHistory();
+  const d = dailyBearGate.decision(Date.now());
+  const exception = d.allowed ? {ok:false,reason:'REGULAR_GATE_ALLOWED'} : balancedVException(source,price);
+  const allowed = d.allowed || exception.ok;
+  const key = `${source}:${d.phase}:${d.reason}:${exception.reason}:${allowed}`;
+  if(key!==dailyBearLastVeto.key || Date.now()-dailyBearLastVeto.at>300000) {
+    dailyBearLastVeto={key,at:Date.now()};
+    log('DAILY_BEAR_LOCK_ENTRY_DECISION',{source,price,decision:d,exception,action:allowed?'ALLOWED':'AUTO_ENTRY_BLOCKED_EXITS_UNCHANGED'});
+  }
+  return allowed;
+}
+function updateDailyBear5m(price,body) {
+  if(cfg.dailyBearLockMode==='disabled')return;
+  const rawTime=Number(body.barTimeMs??body.bar_time_ms??body.time??NaN);
+  // Reject missing timestamps; do not silently use ingestion time as candle time.
+  if(!Number.isFinite(rawTime)||rawTime<1e12) {log('DAILY_BEAR_LOCK_5M_REJECTED',{reason:'MISSING_VALID_BAR_TIME'});return;}
+  const prior=dailyBearGate.context().phase;
+  const f={barTimeMs:rawTime,price,rsi:Number(body.rsi),fvvo:Number(body.fvvo),slope:Number(body.slope),ema8:Number(body.ema8),ema18:Number(body.ema18),rayRegime:body.rayRegime};
+  const out=dailyBearGate.update(f);
+  if(out.accepted) {
+    state.dailyBearGate=dailyBearGate.snapshot();
+    if(out.changed)log('DAILY_BEAR_LOCK_TRANSITION',{from:prior,to:out.phase,reason:out.reason,todayPct:out.todayPct,hour:out.hour});
+  } else if(out.reason!=='DUPLICATE_OR_OLDER')log('DAILY_BEAR_LOCK_5M_REJECTED',out);
+}
+// Kick off validation at startup; active automatic entries also await it.
+if(cfg.dailyBearLockMode!=='disabled')void ensureDailyBearHistory(true);
+
 // Restart defaults to HOLD; a deliberate authenticated resume is needed before automatic entries.
 // The pause is persisted, including after a successful manual exit.
 if (cfg.autoEntryHoldOnStartup) pauseAutomaticEntries('STARTUP_SAFETY_HOLD', { preserveExistingReason: true });
@@ -345,6 +480,8 @@ log('STARTUP', {
   amountMode: cfg.c3AmountPerTrade ? `${cfg.c3AmountPerTradeType || 'unset'}:${cfg.c3AmountPerTrade}` : 'not_set',
   stateFile: cfg.stateFile,
   autoEntryControl: publicAutoEntryControl(),
+  dailyBearLockConfig: {mode:cfg.dailyBearLockMode,failClosed:true,backfillEnabled:cfg.dailyBearLockBackfillEnabled,release1hConfirmHours:cfg.dailyBearLockReleaseHourBars,require5mBull:cfg.dailyBearLockRequire5mBull},
+  bearMomentum4hConfig: {enabled:cfg.bearMomentum4hEnabled,shadowOnly:cfg.bearMomentum4hShadowOnly,dropThresholdPct:cfg.bearMomentum4hDropPct,barCountRequired:49,maxAgeSec:cfg.bearMomentum4hMaxAgeSec},
   manualActions: SUPPORTED_MANUAL_ACTIONS,
   entryConfig: {
     ray30AutoEntryEnabled: cfg.ray30AutoEntryEnabled,
@@ -690,6 +827,10 @@ async function handleWebhook(body, req) {
     if (isFiniteNum(price)) {
       state.latest.feature5m = { price, at: nowIso(), atMs: Date.now(), sourceTime: nowMs, raw: compactRaw(body) };
       rememberFeature5mBar(price, body);
+      updateDailyBear5m(price, body);
+      updateBearMomentum4h(price, body);
+      // Start UTC-day backfill early; entry guard also checks it.
+      if (dailyBearGate.needsBackfill(Date.now())) void ensureDailyBearHistory();
       const vAtr = extractRealAtrPct(body, price);
       if (isFiniteNum(vAtr) && vAtr > 0) state.vRecovery.atr5m = { pct:vAtr, atMs:Date.now(), source:'FEATURE_5M_FVVO' };
       rememberRecentPrice(price);
@@ -1010,6 +1151,14 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
     log('FVVO_AUTO_ENTRY_BLOCKED_BY_MANUAL_LOCK', { price, source, control: publicAutoEntryControl() });
     return { ok: false, error: 'AUTO_ENTRY_PAUSED', httpStatus: 409, autoEntryControl: publicAutoEntryControl() };
   }
+  if (!manual) {
+    const bear4h=bearMomentum4h.decision(Date.now());
+    if(!bear4h.allowed){
+      log('BEAR_MOMENTUM_4H_ENTRY_VETO',{source,price,...bear4h});
+      return {ok:false,error:'BEAR_MOMENTUM_4H_BLOCK',httpStatus:409,momentum:bear4h};
+    }
+  }
+  if (!manual && !(await dailyBearPermit(source,price))) return {ok:false,error:'DAILY_BEAR_LOCK',httpStatus:409,gate:dailyBearGate.decision(Date.now())};
   if (state.orderSafety && state.orderSafety.status && state.orderSafety.status !== 'CLEAR') return { ok: false, error: 'ORDER_RECONCILIATION_REQUIRED', orderSafety: state.orderSafety, httpStatus: 409 };
   if (entrySubmissionPending) {
     log('FVVO_ENTER_LONG_BLOCKED_ENTRY_SUBMISSION_PENDING', { price, source });
@@ -1061,6 +1210,11 @@ async function enterLong({ price, source, campaignId, entryRole, setup, manual, 
   }
 
   state.orderSafety = { status: 'CLEAR' };
+  if (!manual && source==='v_recovery_probation_auto' && ['BEAR_LOCK','RECOVERY_WATCH'].includes(dailyBearGate.context().phase)) {
+    dailyBearGate.markExceptionEntered(Date.now());
+    state.dailyBearGate=dailyBearGate.snapshot();
+    log('DAILY_BEAR_LOCK_V_EXCEPTION_ACCEPTED',{source,price,lockAt:dailyBearGate.context().lastLockAt});
+  }
   state.position = {
     inPosition: true,
     positionLifecycle: forward.dryRun ? 'ENTRY_DRY_RUN' : 'ENTRY_ACCEPTED_UNVERIFIED_FILL',
@@ -2436,7 +2590,7 @@ function validateSetup(setup) {
 }
 
 function publicStatus() {
-  return {
+  return { bearMomentum4h:bearMomentum4h.decision(Date.now()), dailyBearLock:dailyBearGate.decision(Date.now()), dailyBearHistoryError:dailyBearLastError,
     ok: true,
     brain: BRAIN,
     symbol: cfg.symbol,
@@ -2513,6 +2667,7 @@ function publicStatus() {
 
 function publicState() {
   return {
+    bearMomentum4h:bearMomentum4h.decision(Date.now()),
     latest: state.latest,
     autoEntryControl: publicAutoEntryControl(),
     vRecovery: summarizeVRecovery(),

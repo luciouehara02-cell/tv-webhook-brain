@@ -1,11 +1,12 @@
 {
-  "name": "sol-ray-v3v-paper",
-  "version": "3.22.0",
+  "name": "sol-ray-v3y-bear-momentum-4h-paper",
+  "version": "3.28.0",
   "private": true,
   "description": "SOL paper Ray30 LongHold with independent 3m V recovery",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js && node --check dailyGate.js && node --check momentumGate.js && node --check historyBackfill.js"
   },
   "dependencies": {}
 }
