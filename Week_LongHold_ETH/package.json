@@ -1,13 +1,12 @@
 {
-  "name": "longhold-v1s-live-daily-two-red-1h-release",
-  "version": "1.18.0",
+  "name": "longhold-v1t-live-history-backfill-fail-closed",
+  "version": "1.19.0",
   "private": true,
-  "description": "ETH LongHold v1s: completed two-red-daily lock, intraday-green plus completed 1H SMA recovery, shadow-first entry-only audit",
+  "description": "ETH LongHold v1t: Binance public candle history backfill and fail-closed two-red daily gate, entry only",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check entryGate.js && node --check regimeGate.js && node --check dailyGate.js && node test_v1s_daily.js",
-    "replay:v1s": "node replay_v1s_history.js"
+    "check": "node --check server.js && node --check entryGate.js && node --check regimeGate.js && node --check dailyGate.js && node --check historyBackfill.js"
   },
   "engines": {
     "node": ">=20"

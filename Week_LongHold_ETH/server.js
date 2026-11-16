@@ -26,6 +26,7 @@ if (FVVO_ENGINE_WORKER) {
 const entryGate = require("./entryGate");
 const regimeGate = require("./regimeGate");
 const dailyGate = require("./dailyGate");
+const historyBackfill = require("./historyBackfill");
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
 // ETHUSDT dedicated DEMO Signal Bot with automatic FVVO ignition entry and brain-managed exits.
@@ -609,6 +610,9 @@ const CFG = {
   // v1q: stateful 5m bearish lock + confirmed 1h recovery; 4h context is advisory.
   // v1s daily two-red lock; shadow by default even when LIVE base strategy is armed.
   ETH_V1S_DAILY_GATE_MODE: envStr("ETH_V1S_DAILY_GATE_MODE", "shadow").toLowerCase(),
+  ETH_V1T_BACKFILL_ENABLED: envBool("ETH_V1T_BACKFILL_ENABLED",true),
+  ETH_V1T_BACKFILL_TIMEOUT_MS: Math.max(1000,Math.floor(envNum("ETH_V1T_BACKFILL_TIMEOUT_MS",7000))),
+  ETH_V1T_BACKFILL_RETRY_SEC: Math.max(30,Math.floor(envNum("ETH_V1T_BACKFILL_RETRY_SEC",300))),
   ETH_V1S_DAILY_GREEN_MIN_PCT: envNum("ETH_V1S_DAILY_GREEN_MIN_PCT", 0),
   ETH_V1S_RELEASE_1H_CONFIRM_HOURS: Math.max(1,Math.floor(envNum("ETH_V1S_RELEASE_1H_CONFIRM_HOURS",1))),
   ETH_V1S_RELEASE_REQUIRE_5M_BULL: envBool("ETH_V1S_RELEASE_REQUIRE_5M_BULL",true),
@@ -985,6 +989,29 @@ const v1sGate=dailyGate.create({
  max5mAgeSec:CFG.ETH_V1S_MAX_5M_AGE_SEC
 });
 let v1sLastEntryDecision={key:'',at:0};
+let v1tLastAttempt=0,v1tBackfillPromise=null,v1tLastError=null;
+async function v1tEnsureHistory(force=false){
+ if(CFG.ETH_V1S_DAILY_GATE_MODE==='disabled'||!CFG.ETH_V1T_BACKFILL_ENABLED)return false;
+ const at=nowMs();
+ if(!force&&!v1sGate.needsBackfill(at))return true;
+ if(v1tBackfillPromise)return v1tBackfillPromise;
+ if(!force&&at-v1tLastAttempt<CFG.ETH_V1T_BACKFILL_RETRY_SEC*1000)return false;
+ v1tLastAttempt=at;
+ // Fail CLOSED during startup, exchange outages, and the UTC daily rollover.
+ v1sGate.invalidateHistory('HISTORICAL_SYNC_PENDING');
+ v1tBackfillPromise=(async()=>{
+   try{
+     const candles=await historyBackfill.backfill(at,{timeoutMs:CFG.ETH_V1T_BACKFILL_TIMEOUT_MS});
+     const ctx=v1sGate.hydrate(candles,at);v1tLastError=null;
+     state.regimeV1s=v1sGate.snapshot();await persistState('v1t_history_validated');
+     log('INFO','FVVO_V1T_HISTORY_VALIDATED',{source:candles.provider,asOf:at,dailyCompleted:candles.daily.length,hourlyCompleted:candles.hourly.length,context:ctx});
+     return true;
+   }catch(err){v1tLastError=String(err.message||err);v1sGate.invalidateHistory('HISTORICAL_SYNC_FAILED');
+     log('ERROR','FVVO_V1T_HISTORY_BACKFILL_FAILED',{reason:v1tLastError,action:'AUTO_ENTRIES_BLOCKED_EXITS_UNCHANGED'});return false;
+   }finally{v1tBackfillPromise=null;}
+ })();return v1tBackfillPromise;
+}
+
 const v1qGate = regimeGate.create({
   mode:CFG.ETH_V1Q_REGIME_MODE,lockBars:CFG.ETH_V1Q_BEAR_CONFIRM_5M_BARS,
   releaseBars:CFG.ETH_V1Q_BULL_CONFIRM_5M_BARS,minRsi:CFG.ETH_V1Q_BULL_MIN_RSI_5M,
@@ -7876,6 +7903,8 @@ async function processFeatureEvent(feature) {
   if (!updateFeature(feature)) return { ok: false, error: "VALID_PRICE_REQUIRED" };
   ethV1nAcceptedFeatureTick(feature);
   if(feature.kind===CFG.FVVO_FEATURE_5M_EVENT){
+    // Refresh native daily/hourly candles before accepting the first bar of a new UTC day.
+    if(v1sGate.needsBackfill(nowMs()))await v1tEnsureHistory();
     const previousDaily=v1sGate.context().phase;
     const dailyUpdate=v1sGate.update(feature);
     if(dailyUpdate.accepted){
@@ -7957,8 +7986,13 @@ async function start() {
   await loadState();
   v1qGate.restore(state.regimeV1q);
   v1sGate.restore(state.regimeV1s);
+  if(CFG.ETH_V1S_DAILY_GATE_MODE==='live'&&!CFG.ETH_V1T_BACKFILL_ENABLED){
+    v1sGate.invalidateHistory('BACKFILL_DISABLED_FAIL_CLOSED');
+    log('ERROR','FVVO_V1T_HISTORY_DISABLED',{action:'AUTO_ENTRIES_BLOCKED_EXITS_UNCHANGED'});
+  }else await v1tEnsureHistory(true);
   const problems = configProblems();
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
+  log("INFO","FVVO_V1T_BACKFILL_STARTUP",{enabled:CFG.ETH_V1T_BACKFILL_ENABLED,lastError:v1tLastError,gate:v1sGate.context(),failClosed:true});
   log("INFO","FVVO_V1S_DAILY_GATE_STARTUP",{mode:CFG.ETH_V1S_DAILY_GATE_MODE,greenMinPct:CFG.ETH_V1S_DAILY_GREEN_MIN_PCT,confirm1hBars:CFG.ETH_V1S_RELEASE_1H_CONFIRM_HOURS,require5mBull:CFG.ETH_V1S_RELEASE_REQUIRE_5M_BULL,cooldownSec:CFG.ETH_V1S_RELEASE_COOLDOWN_SEC,context:v1sGate.context(),note:"ENTRY ONLY; two completed red UTC days -> lock; intraday green + completed 1H SMA8>SMA18 + optional 5m confirmation -> release; exits unaffected"});
   log("INFO", "FVVO_V1R_REGIME_STARTUP", {mode:CFG.ETH_V1Q_REGIME_MODE,fastVMode:CFG.ETH_V1R_FAST_V_MODE,releaseType:CFG.ETH_V1R_1H_MA_TYPE,exceptionMode:CFG.ETH_V1Q_EXCEPTION_MODE,lockBars:CFG.ETH_V1Q_BEAR_CONFIRM_5M_BARS,releaseBars:CFG.ETH_V1Q_BULL_CONFIRM_5M_BARS,lockCooldownSec:CFG.ETH_V1Q_LOCK_COOLDOWN_SEC,exceptionDropPct:CFG.ETH_V1Q_EXCEPTION_DROP_PCT,context:v1qGate.context(),note:"ENTRY_ONLY; 1H SMA or EMA release; V-only fast exception optional; 4H advisory; exits never blocked"});
   log("INFO", "FVVO_V1P_V_QUALITY_STARTUP", {mode:CFG.ETH_V1P_V_QUALITY_MODE,minShockDropPct:CFG.ETH_V1P_MIN_SHOCK_DROP_PCT,maxEntryRsi15s:CFG.ETH_V1P_MAX_ENTRY_RSI_15S,requireFresh5m:CFG.ETH_V1P_REQUIRE_FRESH_5M,max5mAgeSec:CFG.ETH_V1P_MAX_5M_AGE_SEC});
