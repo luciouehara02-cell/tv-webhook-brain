@@ -24,6 +24,8 @@ const FVVO_ENGINE_WORKER = !isMainThread && Boolean(workerData?.fvvoEngineWorker
 if (FVVO_ENGINE_WORKER) {
 // ===== BEGIN SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 const entryGate = require("./entryGate");
+const regimeGate = require("./regimeGate");
+const dailyGate = require("./dailyGate");
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
 // ETHUSDT dedicated DEMO Signal Bot with automatic FVVO ignition entry and brain-managed exits.
@@ -102,7 +104,7 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "LongHold_v1p_LIVE_V_QUALITY_SHADOW"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "LongHold_v1q_LIVE_BEAR_LOCK_BULL_RELEASE"),
   PORT: envNum("PORT", 8080),
   SYMBOL: envStr("SYMBOL", "BINANCE:ETHUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
@@ -604,6 +606,32 @@ const CFG = {
   ETH_V1P_MAX_ENTRY_RSI_15S: envNum("ETH_V1P_MAX_ENTRY_RSI_15S", 60),
   ETH_V1P_REQUIRE_FRESH_5M: envBool("ETH_V1P_REQUIRE_FRESH_5M", true),
   ETH_V1P_MAX_5M_AGE_SEC: envNum("ETH_V1P_MAX_5M_AGE_SEC", 420),
+  // v1q: stateful 5m bearish lock + confirmed 1h recovery; 4h context is advisory.
+  // v1s daily two-red lock; shadow by default even when LIVE base strategy is armed.
+  ETH_V1S_DAILY_GATE_MODE: envStr("ETH_V1S_DAILY_GATE_MODE", "shadow").toLowerCase(),
+  ETH_V1S_DAILY_GREEN_MIN_PCT: envNum("ETH_V1S_DAILY_GREEN_MIN_PCT", 0),
+  ETH_V1S_RELEASE_1H_CONFIRM_HOURS: Math.max(1,Math.floor(envNum("ETH_V1S_RELEASE_1H_CONFIRM_HOURS",1))),
+  ETH_V1S_RELEASE_REQUIRE_5M_BULL: envBool("ETH_V1S_RELEASE_REQUIRE_5M_BULL",true),
+  ETH_V1S_RELEASE_MIN_5M_RSI: envNum("ETH_V1S_RELEASE_MIN_5M_RSI",50),
+  ETH_V1S_RELEASE_NO_NEW_LOW_BARS: Math.max(0,Math.floor(envNum("ETH_V1S_RELEASE_NO_NEW_LOW_BARS",0))),
+  ETH_V1S_RELOCK_BEAR_5M_BARS: Math.max(0,Math.floor(envNum("ETH_V1S_RELOCK_BEAR_5M_BARS",0))),
+  ETH_V1S_RELEASE_COOLDOWN_SEC: Math.max(0,envNum("ETH_V1S_RELEASE_COOLDOWN_SEC",1800)),
+  ETH_V1S_MAX_5M_AGE_SEC: Math.max(60,envNum("ETH_V1S_MAX_5M_AGE_SEC",420)),
+  ETH_V1Q_REGIME_MODE: envStr("ETH_V1R_REGIME_MODE", envStr("ETH_V1Q_REGIME_MODE", "shadow")).toLowerCase(),
+  ETH_V1R_FAST_V_MODE:envStr("ETH_V1R_FAST_V_MODE","shadow").toLowerCase(),
+  ETH_V1R_1H_MA_TYPE:envStr("ETH_V1R_1H_MA_TYPE","sma").toLowerCase(),
+  ETH_V1Q_BEAR_CONFIRM_5M_BARS: Math.floor(envNum("ETH_V1Q_BEAR_CONFIRM_5M_BARS", 2)),
+  ETH_V1Q_BULL_CONFIRM_5M_BARS: Math.floor(envNum("ETH_V1Q_BULL_CONFIRM_5M_BARS", 3)),
+  ETH_V1Q_BULL_MIN_RSI_5M: envNum("ETH_V1Q_BULL_MIN_RSI_5M", 52),
+  ETH_V1Q_BULL_MIN_FVVO_5M: envNum("ETH_V1Q_BULL_MIN_FVVO_5M", 0),
+  ETH_V1Q_BULL_MIN_SLOPE_5M: envNum("ETH_V1Q_BULL_MIN_SLOPE_5M", 0),
+  ETH_V1Q_LOCK_COOLDOWN_SEC: envNum("ETH_V1Q_LOCK_COOLDOWN_SEC", 1800),
+  ETH_V1Q_MAX_5M_AGE_SEC: envNum("ETH_V1Q_MAX_5M_AGE_SEC", 420),
+  ETH_V1Q_EXCEPTION_MODE: envStr("ETH_V1R_EXCEPTION_MODE",envStr("ETH_V1Q_EXCEPTION_MODE", "shadow")).toLowerCase(),
+  ETH_V1Q_EXCEPTION_DROP_PCT: envNum("ETH_V1Q_EXCEPTION_DROP_PCT", 4),
+  ETH_V1Q_EXCEPTION_MAX_RSI: envNum("ETH_V1R_EXCEPTION_MAX_RSI",envNum("ETH_V1Q_EXCEPTION_MAX_RSI", 55)),
+  ETH_V1Q_EXCEPTION_MIN_BOUNCE_PCT: envNum("ETH_V1R_EXCEPTION_MIN_BOUNCE_PCT",envNum("ETH_V1Q_EXCEPTION_MIN_BOUNCE_PCT", 0.40)),
+  ETH_V1Q_EXCEPTION_COOLDOWN_SEC: envNum("ETH_V1Q_EXCEPTION_COOLDOWN_SEC", 14400),
   V_RECOVERY_ENABLED: envBool("V_RECOVERY_ENABLED", true),
   V_RECOVERY_MODE: envStr("V_RECOVERY_MODE", "live").toLowerCase(),
   V_RECOVERY_REQUIRE_DEMO: envBool("V_RECOVERY_REQUIRE_DEMO", false),
@@ -949,6 +977,46 @@ let persistenceSequence = 0;
 let testNowMs = null;
 let reconciliationBusy = false;
 let state = defaultState();
+const v1sGate=dailyGate.create({
+ mode:CFG.ETH_V1S_DAILY_GATE_MODE,greenMinPct:CFG.ETH_V1S_DAILY_GREEN_MIN_PCT,
+ releaseConfirmHours:CFG.ETH_V1S_RELEASE_1H_CONFIRM_HOURS,require5mBull:CFG.ETH_V1S_RELEASE_REQUIRE_5M_BULL,
+ releaseMin5mRsi:CFG.ETH_V1S_RELEASE_MIN_5M_RSI,requireNoNewLowBars:CFG.ETH_V1S_RELEASE_NO_NEW_LOW_BARS,
+ relockBear5mBars:CFG.ETH_V1S_RELOCK_BEAR_5M_BARS,cooldownSec:CFG.ETH_V1S_RELEASE_COOLDOWN_SEC,
+ max5mAgeSec:CFG.ETH_V1S_MAX_5M_AGE_SEC
+});
+let v1sLastEntryDecision={key:'',at:0};
+const v1qGate = regimeGate.create({
+  mode:CFG.ETH_V1Q_REGIME_MODE,lockBars:CFG.ETH_V1Q_BEAR_CONFIRM_5M_BARS,
+  releaseBars:CFG.ETH_V1Q_BULL_CONFIRM_5M_BARS,minRsi:CFG.ETH_V1Q_BULL_MIN_RSI_5M,
+  minFvvo:CFG.ETH_V1Q_BULL_MIN_FVVO_5M,minSlope:CFG.ETH_V1Q_BULL_MIN_SLOPE_5M,
+  cooldownSec:CFG.ETH_V1Q_LOCK_COOLDOWN_SEC,maxAgeSec:CFG.ETH_V1Q_MAX_5M_AGE_SEC,
+  exceptionMode:CFG.ETH_V1Q_EXCEPTION_MODE,exceptionDropPct:CFG.ETH_V1Q_EXCEPTION_DROP_PCT,
+  exceptionMaxRsi:CFG.ETH_V1Q_EXCEPTION_MAX_RSI,exceptionMinBouncePct:CFG.ETH_V1Q_EXCEPTION_MIN_BOUNCE_PCT,
+  exceptionCooldownSec:CFG.ETH_V1Q_EXCEPTION_COOLDOWN_SEC,
+  releaseType:CFG.ETH_V1R_1H_MA_TYPE,fastVMode:CFG.ETH_V1R_FAST_V_MODE,
+});
+let v1qLastBlocked = {key:"",at:0};
+function v1qEntryPermit(engine,feature=null,campaign=null,evidence=null) {
+ const shock=campaign?{dropPct:campaign.dropPct,bouncePct:evidence?.bouncePct,rsi:feature?.rsi}:null;
+ const decision=v1qGate.decision(nowMs(),engine,shock);
+ if(CFG.ETH_V1Q_REGIME_MODE!=="disabled" && (!decision.wouldAllow || decision.exceptionCandidate || decision.fastVCandidate)) {
+   const key=`${engine}:${decision.reason}:${decision.phase}:${decision.exceptionCandidate}:${decision.fastVCandidate}`;
+   if(key!==v1qLastBlocked.key || nowMs()-v1qLastBlocked.at>300000){
+     v1qLastBlocked={key,at:nowMs()};
+     log(decision.allowed?"INFO":"WARN","FVVO_V1Q_REGIME_ENTRY_DECISION",{engine,decision,action:decision.allowed?"AUDIT_OR_EXCEPTION":"AUTO_ENTRY_BLOCKED_EXITS_UNCHANGED"});
+   }
+ }
+ const daily=v1sGate.decision(nowMs());
+ if(CFG.ETH_V1S_DAILY_GATE_MODE!=="disabled"){
+   const key=`${engine}:${daily.phase}:${daily.reason}:${daily.wouldAllow}`;
+   if(key!==v1sLastEntryDecision.key||nowMs()-v1sLastEntryDecision.at>300000){
+     v1sLastEntryDecision={key,at:nowMs()};
+     log(daily.allowed?"INFO":"WARN","FVVO_V1S_DAILY_GATE_ENTRY_DECISION",{engine,decision:daily,action:daily.allowed?"AUDIT_OR_ALLOWED":"AUTO_ENTRY_BLOCKED_EXITS_UNCHANGED"});
+   }
+ }
+ return decision.allowed&&daily.allowed;
+}
+
 let feature15sLogSequence = 0;
 let autoExitReleaseTimer = null;
 let v1nLastAcceptedTickAt = 0;
@@ -959,7 +1027,7 @@ let v1nLastWatchdogLogAt = 0;
 function nowMs() { return Number.isFinite(testNowMs) ? testNowMs : Date.now(); }
 function nowIso() { return new Date(nowMs()).toISOString(); }
 function setTestNowMs(value) { testNowMs = Number.isFinite(Number(value)) ? Number(value) : null; }
-function resetStateForTest() { clearAutoExitReleaseTimer(); state = defaultState(); feature15sLogSequence = 0; v1nLastAcceptedTickAt = 0; v1nAcceptedTickStreak = 0; v1nLastWatchdogReason = ""; v1nLastWatchdogLogAt = 0; }
+function resetStateForTest() { clearAutoExitReleaseTimer(); state = defaultState(); v1qGate.restore(null); feature15sLogSequence = 0; v1nLastAcceptedTickAt = 0; v1nAcceptedTickStreak = 0; v1nLastWatchdogReason = ""; v1nLastWatchdogLogAt = 0; }
 function snapshotStateForTest() { return clone(state); }
 function injectTrackedPositionForTest({ entryPrice, stopPrice, profitTargetPrice = 0, entryOrigin = "MANUAL", reentryNumber = 0 } = {}) {
   const entry = finite(entryPrice, null);
@@ -1046,6 +1114,8 @@ function defaultState() {
     reentry: { campaign: null, recentTickPrices: [] },
     ethIgnition: { setup: null, last: null, lastCancelledAtMs: 0, lastCancelReason: "", freshCrossRequired: false, qualityBlockAudit: { total: 0, lastSignature: "", lastLoggedAtMs: 0, lastAt: "" } },
     vRecovery: { campaign: null, prices: [], last: null, cooldownUntilMs: 0 },
+    regimeV1q: null,
+    regimeV1s: null,
     // Persisted auto-exit release state so a Railway restart cannot silently skip or duplicate a release.
     autoExitRelease: { active: false, status: "IDLE", positionOpenedAtMs: 0, releaseAtMs: 0, armedAt: "", releaseAt: "", requestId: "", reason: "", releasedAt: "", reentryPullbackMemory: null },
     priceEntry: { pending: null, pending2: null, pending3: null, last: null, dormantDeepFallback: null },
@@ -1067,6 +1137,8 @@ function normalizeState(raw) {
   next.ethIgnition = { ...fallback.ethIgnition, ...(raw.ethIgnition || {}) };
   next.ethIgnition.qualityBlockAudit = { ...fallback.ethIgnition.qualityBlockAudit, ...(next.ethIgnition.qualityBlockAudit || {}) };
   next.vRecovery = { ...fallback.vRecovery, ...(raw.vRecovery || {}) };
+  next.regimeV1q = raw.regimeV1q && typeof raw.regimeV1q === "object" ? raw.regimeV1q : null;
+  next.regimeV1s = raw.regimeV1s && typeof raw.regimeV1s === "object" ? raw.regimeV1s : null;
   next.vRecovery.prices = Array.isArray(next.vRecovery.prices) ? next.vRecovery.prices.filter((x) => x && Number.isFinite(Number(x.t)) && Number.isFinite(Number(x.price))).slice(-320) : [];
   if (next.vRecovery.campaign && typeof next.vRecovery.campaign !== "object") next.vRecovery.campaign = null;
   next.vRecovery.cooldownUntilMs = finite(next.vRecovery.cooldownUntilMs, 0);
@@ -1331,6 +1403,17 @@ function configProblems() {
       !(CFG.ETH_V1P_MIN_SHOCK_DROP_PCT > 0 && CFG.ETH_V1P_MIN_SHOCK_DROP_PCT <= 20) ||
       !(CFG.ETH_V1P_MAX_ENTRY_RSI_15S >= 30 && CFG.ETH_V1P_MAX_ENTRY_RSI_15S <= 100) ||
       !(CFG.ETH_V1P_MAX_5M_AGE_SEC >= 60 && CFG.ETH_V1P_MAX_5M_AGE_SEC <= 900)) problems.push("INVALID_ETH_V1P_V_QUALITY_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.ETH_V1Q_REGIME_MODE) ||
+      !["disabled","shadow","live"].includes(CFG.ETH_V1S_DAILY_GATE_MODE) ||
+      !["disabled","shadow","live"].includes(CFG.ETH_V1R_FAST_V_MODE) ||
+      !["sma","ema"].includes(CFG.ETH_V1R_1H_MA_TYPE) ||
+      !["disabled", "shadow", "live"].includes(CFG.ETH_V1Q_EXCEPTION_MODE) ||
+      CFG.ETH_V1Q_BEAR_CONFIRM_5M_BARS<1 || CFG.ETH_V1Q_BEAR_CONFIRM_5M_BARS>6 ||
+      CFG.ETH_V1Q_BULL_CONFIRM_5M_BARS<2 || CFG.ETH_V1Q_BULL_CONFIRM_5M_BARS>12 ||
+      CFG.ETH_V1Q_BULL_MIN_RSI_5M<30 || CFG.ETH_V1Q_BULL_MIN_RSI_5M>80 ||
+      CFG.ETH_V1Q_MAX_5M_AGE_SEC<300 || CFG.ETH_V1Q_MAX_5M_AGE_SEC>900 ||
+      CFG.ETH_V1Q_EXCEPTION_DROP_PCT<2 || CFG.ETH_V1Q_EXCEPTION_DROP_PCT>20 ||
+      CFG.ETH_V1Q_EXCEPTION_MIN_BOUNCE_PCT<=0 || CFG.ETH_V1Q_EXCEPTION_MAX_RSI<30) problems.push("INVALID_ETH_V1Q_REGIME_CONFIG");
   if (!["disabled", "shadow", "live"].includes(CFG.V_RECOVERY_MODE)) problems.push("INVALID_V_RECOVERY_MODE");
   if (CFG.V_RECOVERY_ENABLED && CFG.V_RECOVERY_REQUIRE_DEMO && !demoMode()) problems.push("V_RECOVERY_REQUIRES_DEMO_MODE");
   if (CFG.V_RECOVERY_DROP_15M_PCT <= 0 || CFG.V_RECOVERY_DROP_30M_PCT < CFG.V_RECOVERY_DROP_15M_PCT || CFG.V_RECOVERY_DROP_60M_PCT < CFG.V_RECOVERY_DROP_30M_PCT) problems.push("INVALID_V_RECOVERY_DROP_THRESHOLDS");
@@ -1889,7 +1972,8 @@ function stateBlocksNewEntry() {
 
 function statusPayload() {
   return {
-    buildVersion: "LongHold_v1n_LIVE_1_14_0",
+    buildVersion: "LongHold_v1q_LIVE_1_16_0",
+    regimeV1q:{mode:CFG.ETH_V1Q_REGIME_MODE,exceptionMode:CFG.ETH_V1Q_EXCEPTION_MODE,...v1qGate.context()},
     v1nFeatureWatchdog: ethV1nTickWatchdog(),
     v1nEarlyVRecoveryExit: {mode:CFG.ETH_V1N_V_FAIL_MODE,windowSec:CFG.ETH_V1N_V_FAIL_WINDOW_SEC,confirmTicks:CFG.ETH_V1N_V_FAIL_CONFIRM_TICKS,pnlThresholdPct:CFG.ETH_V1N_V_FAIL_PNL_PCT},
     liveOrdersArmed: liveMode() && CFG.LIVE_ORDERS_ARMED,
@@ -4502,6 +4586,7 @@ async function forwardPostExitRecoveredBaseCandidate(campaign, recovered, candid
     return { entered: false, rejected: true };
   }
 
+  if(!v1qEntryPermit("RECOVERED_BASE_REENTRY")) return {entered:false,blocked:true};
   candidate.projectedStopPrice = projectedStop.stopPrice;
   candidate.projectedStopDistancePct = projectedStop.stopDistancePct;
   candidate.automaticOrderSent = true;
@@ -4998,6 +5083,7 @@ async function evaluateReentryShadow(feature) {
     return;
   }
 
+  if(!v1qEntryPermit("AUTO_REENTRY",feature)) {c.active=true;c.phase="AWAIT_REGIME";await persistState("v1q_reentry_blocked");return;}
   state.position = buildPosition(price, { stopPrice: projectedStop.stopPrice, stopPct: projectedStop.stopDistancePct, profitTargetPrice: 0, profitTargetPct: 0 }, { entryOrigin: "AUTO_REENTRY", profile: REENTRY_PROFILE, reentryNumber: candidate.sequence });
   state.position.reentryCampaignId = c.id;
   state.position.reentryCandidateId = candidate.id;
@@ -7406,6 +7492,7 @@ async function executeEthIgnitionEntry(feature, setup, evidence) {
   const entry = feature.price;
   const stopPrice = round(entry * (1 - CFG.ETH_IGNITION_STOP_PCT / 100), 8);
   const levels = { stopPrice, stopPct: CFG.ETH_IGNITION_STOP_PCT, profitTargetPrice: 0, profitTargetPct: 0 };
+  if(!v1qEntryPermit("IGNITION",feature)) return {ok:false,blocked:true,reason:"V1Q_BEAR_REGIME"};
   state.position = buildPosition(entry, levels, { entryOrigin: "AUTO_ETH_FVVO_IGNITION", profile: "ETH_FVVO_5M_IGNITION_FAST_CONFIRM" });
   state.position.autoEntryEvidence = { setup: clone(setup), confirmation: clone(evidence) };
   state.externalDealLock = { active: true, source: "eth_ignition_auto_entry", setAt: nowIso(), reason: "ENTRY_REQUEST_PENDING" };
@@ -7669,6 +7756,8 @@ async function executeVRecoveryEntry(feature, campaign, evidence) {
     log("INFO", "FVVO_V_RECOVERY_SHADOW_ENTRY", { campaignId: campaign.id, entryPriceReference: entry, stopPrice: levels.stopPrice, stopDistancePct: levels.stopPct, evidence });
     return { ok: true, shadow: true };
   }
+  if(!v1qEntryPermit("V_RECOVERY",feature,campaign,evidence)) return {ok:false,blocked:true,reason:"V1Q_BEAR_REGIME"};
+  if(CFG.ETH_V1Q_EXCEPTION_MODE==="live" && v1qGate.decision(nowMs(),"V_RECOVERY",{dropPct:campaign.dropPct,bouncePct:evidence?.bouncePct,rsi:feature?.rsi}).reason==="EXTREME_SHOCK_EXCEPTION") {v1qGate.markException(nowMs());state.regimeV1q=v1qGate.snapshot();}
   state.position = buildPosition(entry, levels, { entryOrigin: "AUTO_ETH_V_RECOVERY", profile: "ETH_FAST_V_SHOCK_RECOVERY" });
   state.position.autoEntryEvidence = { campaign: clone(campaign), confirmation: clone(evidence) };
   state.externalDealLock = { active: true, source: "eth_v_recovery_auto_entry", setAt: nowIso(), reason: "ENTRY_REQUEST_PENDING" };
@@ -7786,6 +7875,20 @@ async function processFeatureEvent(feature) {
   }
   if (!updateFeature(feature)) return { ok: false, error: "VALID_PRICE_REQUIRED" };
   ethV1nAcceptedFeatureTick(feature);
+  if(feature.kind===CFG.FVVO_FEATURE_5M_EVENT){
+    const previousDaily=v1sGate.context().phase;
+    const dailyUpdate=v1sGate.update(feature);
+    if(dailyUpdate.accepted){
+      state.regimeV1s=v1sGate.snapshot();
+      if(dailyUpdate.changed){log("INFO","FVVO_V1S_DAILY_GATE_TRANSITION",{from:previousDaily,to:dailyUpdate.phase,reason:dailyUpdate.reason,day:dailyUpdate.day,todayPct:dailyUpdate.todayPct,hour:dailyUpdate.hour});await persistState("v1s_daily_transition");}
+    }
+    const prior=v1qGate.context().phase;
+    const update=v1qGate.update(feature);
+    if(update.accepted){
+      state.regimeV1q=v1qGate.snapshot();
+      if(update.changed) {log("INFO","FVVO_V1Q_REGIME_TRANSITION",{from:prior,to:update.phase,reason:update.reason,hour:update.hour,four:update.four});await persistState("v1q_regime_transition");}
+    }
+  }
   const eventName = feature.kind === CFG.FVVO_FEATURE_5M_EVENT ? "FVVO_FEATURE_5M_RECEIVED" : feature.kind === CFG.FVVO_FAST_TICK_EVENT ? "FVVO_FAST_TICK_RECEIVED" : "FVVO_FEATURE_TICK_RECEIVED";
   const is5mFeature = feature.kind === CFG.FVVO_FEATURE_5M_EVENT;
   if (!is5mFeature) feature15sLogSequence += 1;
@@ -7852,8 +7955,12 @@ app.post(CFG.MANUAL_WEBHOOK_PATH, async (req, res) => {
 async function start() {
   await ensurePersistence();
   await loadState();
+  v1qGate.restore(state.regimeV1q);
+  v1sGate.restore(state.regimeV1s);
   const problems = configProblems();
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
+  log("INFO","FVVO_V1S_DAILY_GATE_STARTUP",{mode:CFG.ETH_V1S_DAILY_GATE_MODE,greenMinPct:CFG.ETH_V1S_DAILY_GREEN_MIN_PCT,confirm1hBars:CFG.ETH_V1S_RELEASE_1H_CONFIRM_HOURS,require5mBull:CFG.ETH_V1S_RELEASE_REQUIRE_5M_BULL,cooldownSec:CFG.ETH_V1S_RELEASE_COOLDOWN_SEC,context:v1sGate.context(),note:"ENTRY ONLY; two completed red UTC days -> lock; intraday green + completed 1H SMA8>SMA18 + optional 5m confirmation -> release; exits unaffected"});
+  log("INFO", "FVVO_V1R_REGIME_STARTUP", {mode:CFG.ETH_V1Q_REGIME_MODE,fastVMode:CFG.ETH_V1R_FAST_V_MODE,releaseType:CFG.ETH_V1R_1H_MA_TYPE,exceptionMode:CFG.ETH_V1Q_EXCEPTION_MODE,lockBars:CFG.ETH_V1Q_BEAR_CONFIRM_5M_BARS,releaseBars:CFG.ETH_V1Q_BULL_CONFIRM_5M_BARS,lockCooldownSec:CFG.ETH_V1Q_LOCK_COOLDOWN_SEC,exceptionDropPct:CFG.ETH_V1Q_EXCEPTION_DROP_PCT,context:v1qGate.context(),note:"ENTRY_ONLY; 1H SMA or EMA release; V-only fast exception optional; 4H advisory; exits never blocked"});
   log("INFO", "FVVO_V1P_V_QUALITY_STARTUP", {mode:CFG.ETH_V1P_V_QUALITY_MODE,minShockDropPct:CFG.ETH_V1P_MIN_SHOCK_DROP_PCT,maxEntryRsi15s:CFG.ETH_V1P_MAX_ENTRY_RSI_15S,requireFresh5m:CFG.ETH_V1P_REQUIRE_FRESH_5M,max5mAgeSec:CFG.ETH_V1P_MAX_5M_AGE_SEC});
   log("INFO", "FVVO_V1N_PROTECTION_STARTUP", {vFailMode:CFG.ETH_V1N_V_FAIL_MODE, vFailWindowSec:CFG.ETH_V1N_V_FAIL_WINDOW_SEC,
     vFailPnlPct:CFG.ETH_V1N_V_FAIL_PNL_PCT, vFailConfirmTicks:CFG.ETH_V1N_V_FAIL_CONFIRM_TICKS,
@@ -7909,7 +8016,7 @@ async function start() {
 
 if (require.main === module) start().catch((error) => { log("ERROR", "FVVO_STARTUP_FATAL", { error: error.message }); process.exit(1); });
 
-module.exports = { ethV1nVFailEvidence, ethV1nTickWatchdog, ethV1nAcceptedFeatureTick, requestFullExit, executionReceipt, executionPreview, statusPayload, app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, modeStructuralExitFailureConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutNearRetestRecovery, breakoutNearRetestRecoveryEvidence, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, validateCampaignArm, cancelOtherPriceEntries, activePriceEntryItems };
+module.exports = { v1qGate, v1qEntryPermit, ethV1nVFailEvidence, ethV1nTickWatchdog, ethV1nAcceptedFeatureTick, requestFullExit, executionReceipt, executionPreview, statusPayload, app, CFG, c3MarketFromConfiguredSymbol, pnlAudit, confirmEntryFill, ensurePersistence, loadState, configProblems, buildC3Signal, normalizeFeature, processFeatureEvent, capturePreReleaseReentryPullback, evaluateYellowTpShadow, setTestNowMs, resetStateForTest, snapshotStateForTest, injectTrackedPositionForTest, validateOneStopCommand, normalizeState, defaultState, entryModeProtection, dynamicProfitFloorPnlPct, dynamicFloorBreakConfirmed, modeStructuralExitFailureConfirmed, tickThesisFailureConfirmed, tickThesisEvidence, fiveMinuteThesisFailure, dynamicPullbackGraceMode, dynamicPullbackGraceContext, dynamicPullbackGraceEligible, evaluateDynamicPullbackGrace, runnerContinuationRescueMode, runnerContinuationRescueContext, runnerContinuationRescueFastTickProxyContext, runnerContinuationRescueEligible, evaluateRunnerContinuationRescue, evaluateRunnerRescuePostExitAudit, manualEntryOverheatSignalSnapshot, manualEntryConfirmationPublicPayload, reentryContinuationGraceMode, reentryContinuationGraceContext, reentryContinuationGraceEligible, evaluateReentryContinuationGrace, updateRunnerExit, runnerTightTrailBreakConfirmed, runnerLiveEnabled, legacyEntrySizingVariablesPresent, evaluateReentryShadow, armReentryCampaignAfterConfirmedExit, projectReentryStop, reentry15sFastLaunchEligible, reentry15sEarlyTurnEligible, postExitRecoveredBaseMode, buildPostExitRecoveredBaseState, evaluatePostExitRecoveredBase, postExitRecoveredBaseCandidate, reentryAutoEnabled, autoExitReconciliationActive, executionModeValid, demoMode, liveMode, autoExitReleaseStatusPayload, finalizeAutoExitRelease, validatePriceTriggerCommand, validateStoredPriceTriggerAtExecution, priceTriggerCrossed, priceEntryStatusPayload, handleManual, armPriceEntry, evaluatePriceTriggerEntry, evaluateTrailingDipReclaim, evaluateTrailingDipReclaimZone, evaluateConfirmedPullbackReclaimZone, evaluateHybridPullbackReclaimZone, hybridPullbackVoteRules, hybridPullbackFastEvidence, hybridPullbackFallback5mContext, confirmedPullbackAligned15mContext, confirmedPullbackFastEvidence, reactivateDormantDeepFallback, evaluateBreakoutRetestReclaimZone, evaluateBreakoutNearRetestRecovery, breakoutNearRetestRecoveryEvidence, evaluateBreakoutBullContinuation, breakoutBullContinuationRecovery, adaptiveBreakoutHoldEligible, armBreakoutPostExpiryShadow, evaluateBreakoutPostExpiryShadow, trailingDipReclaimMode, trailingDipReclaimZoneMode, breakoutRetestReclaimZoneMode, breakoutShallowHoldReclaimMode, breakoutShallowHoldRecoveryOk, evaluateBreakoutShallowHoldReclaim, entry5mBearGuardMode, entry5mBearGuardApplies, entry5mStrongBearContext, entry5mFastReleaseEvidence, trailingTickRecoveryOk, trailingZoneTickRecoveryOk, breakoutRetestZoneTickRecoveryOk, lossSideThesisFailMode, lossSideThesisEvidence, lossSideThesisFailureConfirmed, swingStructureExitMode, swingDeteriorationEvidence, swingStructureExitDecision, swingExitState, armFastEmergency, evaluateFastEmergency, emergencyMicroEvaluation, featureBearSignals, featureTimeGuard, resetFastEmergency, normalizeSwingExitState, ensureProfitFloorShadowState, profitFloorShadowStatusPayload, armProfitFloorMicroShadow, profitFloorMicroEvaluation, evaluateProfitFloorMicroShadow, recordProfitFloorBaselineExit, postExitReclaimEvidence, evaluateProfitFloorPostExitReclaimShadow, evaluateProfitFloorShadowObservers, validateCampaignArm, cancelOtherPriceEntries, activePriceEntryItems };
 Object.assign(module.exports, { reentryV1fQualityGate });
 
 Object.assign(module.exports, { buildPosition, buildIntelligentTpState, evaluateIntelligentTpShadow });

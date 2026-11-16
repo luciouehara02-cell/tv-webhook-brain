@@ -1,17 +1,13 @@
 {
-  "name": "longhold-v1p-live-v-quality",
-  "version": "1.15.0",
+  "name": "longhold-v1s-live-daily-two-red-1h-release",
+  "version": "1.18.0",
   "private": true,
-  "description": "ETH LongHold v1p: v1n LIVE preserved; V recovery shock-size + RSI anti-chase entry audit/live gate",
+  "description": "ETH LongHold v1s: completed two-red-daily lock, intraday-green plus completed 1H SMA recovery, shadow-first entry-only audit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node replay_v_recovery_v1g.js && node replay_live_safety_v1n.js && node replay_v1n_rules.js && node replay_v1p_quality.js && node replay_v1p_integration.js",
-    "replay:v-recovery": "node replay_v_recovery_v1g.js",
-    "replay:historic-v-recovery": "node replay_historic_v_recovery_v1g.js",
-    "replay:v1h": "node replay_eth_v1h_upgrade.js",
-    "replay:v1n": "node replay_v1n_rules.js && node replay_v1n_historical.js Week_LongHold_Nov09ETH.log",
-    "replay:v1p": "node replay_v1p_quality.js"
+    "check": "node --check server.js && node --check entryGate.js && node --check regimeGate.js && node --check dailyGate.js && node test_v1s_daily.js",
+    "replay:v1s": "node replay_v1s_history.js"
   },
   "engines": {
     "node": ">=20"
