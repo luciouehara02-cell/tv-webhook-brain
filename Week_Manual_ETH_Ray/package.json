@@ -1,11 +1,12 @@
 {
-  "name": "eth-ray-v3y-paper",
-  "version": "3.25.0",
+  "name": "eth-ray-v4b-bear-momentum-4h-paper",
+  "version": "4.2.0",
   "description": "ETH v3t from v3s: adaptive 30/60/90min washout, isolated 3m RayAlgo bullish trend change, 15s fast recovery probation paper entry",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js && node --check dailyGate.js && node --check momentumGate.js && node --check historyBackfill.js"
   },
   "engines": {
     "node": ">=18"
