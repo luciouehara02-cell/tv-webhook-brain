@@ -102,9 +102,9 @@ function parseJsonEnv(name, fallback) {
 }
 
 const CFG = {
-  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v2c_ENTRY_RECOVERY_AB_LIVE"),
+  BRAIN_NAME: envStr("BRAIN_NAME", "BrainFVVO_SOL_LongHold_v1a_DEMO"),
   PORT: envNum("PORT", 8080),
-  SYMBOL: envStr("SYMBOL", "BINANCE:XRPUSDT"),
+  SYMBOL: envStr("SYMBOL", "BINANCE:SOLUSDT"),
   ENTRY_TF: envStr("ENTRY_TF", "5"),
 
   WEBHOOK_PATH: envStr("WEBHOOK_PATH", "/webhook"),
@@ -120,7 +120,7 @@ const CFG = {
   ENABLE_HTTP_FORWARD: envBool("ENABLE_HTTP_FORWARD", true),
   // v1o: deploy exactly the same code to DEMO or LIVE. The sole environment selector is this variable.
   // Valid values: demo | live. The legacy DEMO_FORWARD_ALLOWED/LIVE_FORWARD_ALLOWED flags are ignored by v1o.
-  EXECUTION_MODE: envStr("EXECUTION_MODE", "live").toLowerCase(),
+  EXECUTION_MODE: envStr("EXECUTION_MODE", "demo").toLowerCase(),
   C3_DRY_RUN: envBool("C3_DRY_RUN", false),
   FVVO_EMERGENCY_DISABLE_ALL_FORWARDS: envBool("FVVO_EMERGENCY_DISABLE_ALL_FORWARDS", false),
   FVVO_EMERGENCY_DISABLE_NEW_ENTRIES: envBool("FVVO_EMERGENCY_DISABLE_NEW_ENTRIES", false),
@@ -129,8 +129,8 @@ const CFG = {
   C3_SIGNAL_URL: envStr("C3_SIGNAL_URL", "https://3c.wtalerts.com/bot/custom"),
   C3_ENTER_LONG_CODE: envStr("C3_ENTER_LONG_CODE", ""),
   C3_EXIT_LONG_CODE: envStr("C3_EXIT_LONG_CODE", ""),
-  C3_AMOUNT_PER_TRADE: envNum("C3_AMOUNT_PER_TRADE", 0.10),
-  C3_AMOUNT_PER_TRADE_TYPE: envStr("C3_AMOUNT_PER_TRADE_TYPE", "percents").toLowerCase(),
+  C3_AMOUNT_PER_TRADE: envNum("C3_AMOUNT_PER_TRADE", 30),
+  C3_AMOUNT_PER_TRADE_TYPE: envStr("C3_AMOUNT_PER_TRADE_TYPE", "quote").toLowerCase(),
   C3_ORDER_TYPE: envStr("C3_ORDER_TYPE", "market").toLowerCase(),
   // v1h: entry size and type are intentionally owned by the Signal Bot settings.
   // No entry `order` object is emitted by the brain. Legacy C3_ENTRY_ORDER_* values are ignored.
@@ -149,11 +149,11 @@ const CFG = {
   C3_ASSUME_EXIT_ACCEPTANCE: envBool("C3_ASSUME_EXIT_ACCEPTANCE", false),
   // After a 100% exit_long is accepted by 3Commas, retain the lock for this grace
   // period and then release the brain state as ASSUMED flat. This is intentionally identical for demo/live mode.
-  AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", false),
+  AUTO_EXIT_RECONCILIATION_ENABLED: envBool("AUTO_EXIT_RECONCILIATION_ENABLED", true),
   AUTO_EXIT_RECONCILIATION_DELAY_SEC: envNum("AUTO_EXIT_RECONCILIATION_DELAY_SEC", 90),
 
   STATE_DIR: envStr("STATE_DIR", "/data"),
-  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-swing-v1h-live-paper-state.json"),
+  STATE_FILE_NAME: envStr("STATE_FILE_NAME", "brainfvvo-sol-longhold-v1a-demo-state.json"),
   STATE_PERSISTENCE_REQUIRED: envBool("STATE_PERSISTENCE_REQUIRED", true),
 
   // Copy/paste-safe Unicode event category markers replace ANSI terminal colour.
@@ -609,7 +609,7 @@ const CFG = {
   // the fresh 5m trend remains above its EMA18 (the chart pink line). Hard stop, dynamic floor
   // and runner trail always remain higher-priority. `shadow` only audits; `live` can hold briefly.
   DYNAMIC_PULLBACK_GRACE_MODE: envStr("DYNAMIC_PULLBACK_GRACE_MODE", "disabled").toLowerCase(),
-  DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT: envNum("DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT", 1.10),
+  DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT: envNum("DYNAMIC_PULLBACK_GRACE_MIN_MFE_PCT", 1.50),
   DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT: envNum("DYNAMIC_PULLBACK_GRACE_MIN_PNL_PCT", 0.25),
   DYNAMIC_PULLBACK_GRACE_MAX_SEC: envNum("DYNAMIC_PULLBACK_GRACE_MAX_SEC", 90),
   DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC: envNum("DYNAMIC_PULLBACK_GRACE_CONTEXT_MAX_AGE_SEC", 420),
@@ -635,7 +635,7 @@ const CFG = {
   // v1t: qualified tight-runner exits can be audited, or only when explicitly promoted
   // held briefly while fresh 5m EMA18/pink structure remains healthy. Default is audit-only.
   RUNNER_CONTINUATION_RESCUE_MODE: envStr("RUNNER_CONTINUATION_RESCUE_MODE", "shadow").toLowerCase(),
-  RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT: envNum("RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT", 1.75),
+  RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT: envNum("RUNNER_CONTINUATION_RESCUE_MIN_MFE_PCT", 4.00),
   RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT: envNum("RUNNER_CONTINUATION_RESCUE_MIN_PNL_PCT", 0.75),
   RUNNER_CONTINUATION_RESCUE_MAX_SEC: envNum("RUNNER_CONTINUATION_RESCUE_MAX_SEC", 180),
   RUNNER_CONTINUATION_RESCUE_CONTEXT_MAX_AGE_SEC: envNum("RUNNER_CONTINUATION_RESCUE_CONTEXT_MAX_AGE_SEC", 420),
@@ -657,9 +657,9 @@ const CFG = {
   // v1l/v1m re-entry: strict pullback reclaim micro-breakout.
   // `shadow` observes only; `auto` sends a bot-fixed market re-entry after the auto-release guard.
   // Legacy `demo_auto` is treated as `auto` so an existing v1m DEMO variable set remains compatible.
-  REENTRY_ENABLED: envBool("REENTRY_ENABLED", false),
-  REENTRY_PHASE: (() => { const phase = envStr("REENTRY_PHASE", "shadow").toLowerCase(); return phase === "demo_auto" ? "auto" : phase; })(),
-  REENTRY_AUTO_FORWARD_ENABLED: envBool("REENTRY_AUTO_FORWARD_ENABLED", false),
+  REENTRY_ENABLED: envBool("REENTRY_ENABLED", true),
+  REENTRY_PHASE: (() => { const phase = envStr("REENTRY_PHASE", "auto").toLowerCase(); return phase === "demo_auto" ? "auto" : phase; })(),
+  REENTRY_AUTO_FORWARD_ENABLED: envBool("REENTRY_AUTO_FORWARD_ENABLED", true),
   REENTRY_MAX_COUNT: Math.floor(envNum("REENTRY_MAX_COUNT", 1)),
   REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM: envBool("REENTRY_REQUIRE_PRIOR_DYNAMIC_ARM", true),
   REENTRY_REQUIRE_NON_STOP_EXIT: envBool("REENTRY_REQUIRE_NON_STOP_EXIT", true),
@@ -5455,7 +5455,7 @@ async function cancelPriceEntry(body) {
 
 
 const recoveryFilter = require('./entryRecoveryFilter').createRecoveryFilter(process.env.ENTRY_RECOVERY_FILTER_MODE || 'B');
-log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "XRP_LONGHOLD_v1a_7DAY_TIERED_PROFIT", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
+log("INFO", "FVVO_ENTRY_RECOVERY_FILTER_STARTUP", { build: "SOL_LONGHOLD_v1a_7DAY_TIERED_PROFIT", mode: recoveryFilter.mode, observations: 2, minSpanSec: 12, maxGapSec: 45 });
 
 async function enterFromPriceTrigger(pending, feature, modeReason) {
   const pe = ensurePriceEntryState();
@@ -6858,7 +6858,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
   }
 
   const SUPERVISOR = {
-    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_Swing_XRP_v2c_ENTRY_RECOVERY_AB_LIVE"),
+    brain: envStr("MULTI_BRAIN_NAME", "BrainFVVO_SOL_LongHold_v1a_DEMO"),
     port: Math.max(1, Math.floor(envNum("PORT", 8080))),
     host: envStr("MULTI_BIND_HOST", "0.0.0.0"),
     webhookPath: envStr("WEBHOOK_PATH", "/webhook"),
@@ -6868,7 +6868,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
     workerReadyTimeoutMs: Math.max(2000, Math.floor(envNum("MULTI_WORKER_READY_TIMEOUT_MS", 20000))),
     requestTimeoutMs: Math.max(1000, Math.floor(envNum("MULTI_PROXY_TIMEOUT_MS", 15000))),
     requireSymbol: envBool("MULTI_REQUIRE_SYMBOL", true),
-    assets: envStr("MULTI_ASSETS", "XRP")
+    assets: envStr("MULTI_ASSETS", "SOL")
       .split(",")
       .map((x) => x.trim().toUpperCase())
       .filter(Boolean),
@@ -6913,14 +6913,14 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
     childEnv.SYMBOL = symbol;
     childEnv.BRAIN_NAME = envStr(
       `${alias}_BRAIN_NAME`,
-      envStr("BRAIN_NAME", "BrainFVVO_Swing_XRP_v2c_ENTRY_RECOVERY_AB_LIVE")
+      envStr("BRAIN_NAME", "BrainFVVO_SOL_LongHold_v1a_DEMO")
     );
     childEnv.STATE_FILE_NAME = envStr(
       `${alias}_STATE_FILE_NAME`,
-      envStr("STATE_FILE_NAME", "brainfvvo-swing-xrp-v1k-live-state.json")
+      envStr("STATE_FILE_NAME", "brainfvvo-sol-longhold-v1a-demo-state.json")
     );
     // Paper-execution-compatible defaults. Per-symbol prefixed variables can override.
-    if (!process.env[`${alias}_EXECUTION_MODE`]) childEnv.EXECUTION_MODE = envStr("EXECUTION_MODE", "live");
+    if (!process.env[`${alias}_EXECUTION_MODE`]) childEnv.EXECUTION_MODE = envStr("EXECUTION_MODE", "demo");
     if (!process.env[`${alias}_SHADOW_ONLY`]) childEnv.SHADOW_ONLY = envStr("SHADOW_ONLY", "false");
     if (!process.env[`${alias}_ENABLE_HTTP_FORWARD`]) childEnv.ENABLE_HTTP_FORWARD = envStr("ENABLE_HTTP_FORWARD", "true");
     if (!process.env[`${alias}_C3_DRY_RUN`]) childEnv.C3_DRY_RUN = envStr("C3_DRY_RUN", "false");
@@ -6928,7 +6928,7 @@ Object.assign(module.exports, { validC3V2Code, redactC3V2Code, c3EntrySizeSource
 
     childEnv.C3_ENTER_LONG_CODE = envStr(`${alias}_C3_ENTER_LONG_CODE`, envStr("C3_ENTER_LONG_CODE", ""));
     childEnv.C3_EXIT_LONG_CODE = envStr(`${alias}_C3_EXIT_LONG_CODE`, envStr("C3_EXIT_LONG_CODE", ""));
-    childEnv.C3_AMOUNT_PER_TRADE = String(envNum(`${alias}_C3_AMOUNT_PER_TRADE`, envNum("C3_AMOUNT_PER_TRADE", 0.10)));
+    childEnv.C3_AMOUNT_PER_TRADE = String(envNum(`${alias}_C3_AMOUNT_PER_TRADE`, envNum("C3_AMOUNT_PER_TRADE", 30)));
 
     // Optional per-symbol inbound/manual secrets; common values remain valid fallback.
     if (process.env[`${alias}_WEBHOOK_SECRET`]) {

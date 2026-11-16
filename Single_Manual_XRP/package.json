@@ -1,8 +1,8 @@
 {
-  "name": "brainfvvo-swing-xrp-v2c-entry-recovery-ab",
+  "name": "brainfvvo-sol-longhold-v1a-demo",
   "version": "1.0.0",
   "private": true,
-  "description": "XRP selectable A/B tick entry recovery filter",
+  "description": "SOL seven-day LongHold DEMO source; XRP v1a strategy port",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
