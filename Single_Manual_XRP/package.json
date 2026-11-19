@@ -1,12 +1,12 @@
 {
-  "name": "brainfvvo-sol-longhold-v1b-demo",
-  "version": "1.1.0",
+  "name": "brainfvvo-sol-longhold-v1c-demo",
+  "version": "1.2.0",
   "private": true,
-  "description": "SOL LongHold DEMO: manual-origin entry, shadow re-entry, normal 5m structure warning",
+  "description": "SOL LongHold DEMO: easy manual setups, shadow re-entry",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check entryGate.js && node --check entryRecoveryFilter.js"
+    "check": "node --check server.js && node --check entryGate.js && node --check entryRecoveryFilter.js && node --check easyEntry.js"
   },
   "engines": {
     "node": ">=20"
