@@ -3,7 +3,7 @@
 const pct=(a,b)=>(b/a-1)*100;
 const modes=new Set(['breakout_retest_reclaim_zone','trailing_dip_reclaim_zone','confirmed_pullback_reclaim_zone','hybrid_pullback_reclaim_zone']);
 function applies(p){return modes.has(p.triggerMode);}
-function step(p,f,now,previous){
+function step(p,f,now,previous,ctx,hybridMode="baseline"){
  const price=f.price, high=p.activationRangeHigh, low=p.activationRangeLow, confirm=p.breakoutConfirmPrice, stop=p.stopPrice;
  const breakout=p.triggerMode==='breakout_retest_reclaim_zone', deep=p.entryRole==='deep_alternative'||p.triggerMode==='confirmed_pullback_reclaim_zone';
  const s=p.easyEntry||(p.easyEntry={active:false, count:0});
@@ -28,15 +28,24 @@ function step(p,f,now,previous){
  if(breakout&&s.retest&&(s.peak-price)/s.peak*100>1.0){s.count=0;s.first=null;return result("WAIT_BREAKOUT_PULLBACK_LIMIT");}
  const chaseBase=breakout?(s.retest?high:confirm):high;
  const chase=breakout?0.30:0.25;
- const bounce=deep?0.10:0.05;
+ // v1d: only manually armed Preferred zone modes change. Hybrid improvement is opt-in.
+ const preferred=p.entryRole==='preferred'&&!deep&&!breakout;
+ const trailingPreferred=preferred&&p.triggerMode==='trailing_dip_reclaim_zone';
+ const hybridConservative=preferred&&p.triggerMode==='hybrid_pullback_reclaim_zone'&&hybridMode==='conservative';
+ const optimized=trailingPreferred||hybridConservative;
+ const bounce=optimized?0.30:deep?0.10:0.05;
+ const fresh5m=Boolean(ctx&&Number.isFinite(ctx.receivedAtMs)&&now>=ctx.receivedAtMs&&now-ctx.receivedAtMs<=420000);
+ const bear5m=fresh5m&&String(ctx.rayRegime).includes('BEAR');
+ const release=Number.isFinite(f.ema8)&&price>=f.ema8&&Number.isFinite(f.slope)&&f.slope>0&&!String(f.rayRegime).includes('BEAR');
+ const guardOk=!optimized||!bear5m||(trailingPreferred&&release);
  const prior=s.lastPrice;s.lastPrice=price;
  // A recovery requires non-falling price and either improving oscillator or a price reclaim of EMA8.
  const momentum=f.redPulse!==true&&((Number.isFinite(f.slope)&&f.slope>0)||(Number.isFinite(f.ema8)&&price>=f.ema8));
  const recovered=breakout&&!s.retest?price>=confirm:(pct(s.low,price)>=bounce-1e-9);
  const inRange=price<=chaseBase*(1+chase/100)+1e-9 && (breakout?(!s.retest?price>=confirm:price>=low):price>=low);
- const adequate=momentum&&recovered&&inRange&&price>=prior; // actual stop distance checked by existing engine
- if(!adequate){s.count=0;s.first=null;return result(!inRange?'WAIT_PRICE_WINDOW':!recovered?'WAIT_BOUNCE':'WAIT_RECOVERY',{low:s.low});}
+ const adequate=momentum&&recovered&&inRange&&price>=prior&&guardOk; // actual stop distance checked by existing engine
+ if(!adequate){s.count=0;s.first=null;return result(!inRange?'WAIT_PRICE_WINDOW':!recovered?'WAIT_BOUNCE':!guardOk?'WAIT_PREFERRED_5M_BEAR_GUARD':'WAIT_RECOVERY',{low:s.low,bounceRequiredPct:bounce,bear5m,fresh5m,guardOk});}
  if(!s.count)s.first=stamp;s.count++;
- return result(s.count>=2&&stamp-s.first>=12000?'CONFIRMED':'WAIT_SECOND_TICK',{ready:s.count>=2&&stamp-s.first>=12000,count:s.count,low:s.low});
+ return result(s.count>=2&&stamp-s.first>=12000?'CONFIRMED':'WAIT_SECOND_TICK',{ready:s.count>=2&&stamp-s.first>=12000,count:s.count,low:s.low,bounceRequiredPct:bounce,bear5m,fresh5m,guardOk});
 }
 module.exports={applies,step};
