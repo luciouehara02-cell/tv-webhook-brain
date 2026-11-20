@@ -1,8 +1,8 @@
 {
-  "name": "brainfvvo-swing-bnb-v1l-bounded-profit-floor",
-  "version": "1.0.0",
+  "name": "brainfvvo-swing-bnb-v1m-r2-preferred-easy-hardstop-1pct",
+  "version": "1.2.0",
   "private": true,
-  "description": "BNB selectable A/B tick entry recovery filter",
+  "description": "BNB daily swing v1m easier manual entries and independent 1.0 pct Brain stop",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
