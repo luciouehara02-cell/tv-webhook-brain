@@ -1,12 +1,14 @@
 {
-  "name": "brainfvvo-swing-bnb-v1m-r2-preferred-easy-hardstop-1pct",
-  "version": "1.2.0",
+  "name": "brainfvvo-swing-bnb-v1o-daily-fast-momentum",
+  "version": "1.4.0",
   "private": true,
-  "description": "BNB daily swing v1m easier manual entries and independent 1.0 pct Brain stop",
+  "description": "BNB daily swing: retain v1n breakout paths and daily exits; add shadow-first Fast Momentum entry path",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check entryGate.js && node --check entryRecoveryFilter.js"
+    "check": "node --check server.js && node --check breakoutV1n.js && node --check breakoutFastMomentum.js && node --check entryGate.js && node --check entryRecoveryFilter.js",
+    "test:breakout": "node tests/breakout_v1n.test.js",
+    "test:fast": "node tests/fast_momentum.test.js"
   },
   "engines": {
     "node": ">=20"

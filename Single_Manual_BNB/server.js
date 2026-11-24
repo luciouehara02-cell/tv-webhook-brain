@@ -24,6 +24,8 @@ const FVVO_ENGINE_WORKER = !isMainThread && Boolean(workerData?.fvvoEngineWorker
 if (FVVO_ENGINE_WORKER) {
 // ===== BEGIN SWING V1H ENGINE + C3 DYNAMIC-INSTRUMENT HOTFIX =====
 const entryGate = require("./entryGate");
+const breakoutV1n = require("./breakoutV1n");
+const breakoutFastMomentum = require("./breakoutFastMomentum");
 // ============================================================
 // BrainFVVO_Swing_v1h_5M_BEAR_VETO_FAST_RELEASE_CAMPAIGN
 // SOLUSDT dedicated Signal Bot manual-entry / brain-exit service — DEMO/LIVE selected only by EXECUTION_MODE
@@ -415,6 +417,18 @@ const CFG = {
   // v1i wider continuation observer. It does not relax wait_no_chase or the
   // existing shallow-hold path. Generic defaults apply to SOL/ETH/BNB/XRP and
   // may be overridden per worker with SOL_/ETH_/BNB_/XRP_ prefixes.
+  // v1n: Independent BNB DAILY breakout paths, both SHADOW by default for LIVE safety.
+  BNB_BREAKOUT_FAST_MOMENTUM_MODE: envStr("BNB_BREAKOUT_FAST_MOMENTUM_MODE", "shadow").toLowerCase(),
+  BNB_BREAKOUT_FAST_MODERATE_CHASE_PCT: envNum("BNB_BREAKOUT_FAST_MODERATE_CHASE_PCT", 0.35),
+  BNB_BREAKOUT_FAST_STRONG_CHASE_PCT: envNum("BNB_BREAKOUT_FAST_STRONG_CHASE_PCT", 0.65),
+  BNB_BREAKOUT_FAST_MAX_RSI_STRONG: envNum("BNB_BREAKOUT_FAST_MAX_RSI_STRONG", 97),
+  BNB_BREAKOUT_FAST_STOP_CAP_PCT: envNum("BNB_BREAKOUT_FAST_STOP_CAP_PCT", 2.8),
+  BNB_BREAKOUT_ADAPTIVE_MODE: envStr("BNB_BREAKOUT_ADAPTIVE_MODE", "shadow").toLowerCase(),
+  BNB_BREAKOUT_IMPULSE_MODE: envStr("BNB_BREAKOUT_IMPULSE_MODE", "shadow").toLowerCase(),
+  BNB_BREAKOUT_ADAPTIVE_MAX_CHASE_PCT: envNum("BNB_BREAKOUT_ADAPTIVE_MAX_CHASE_PCT", 0.35),
+  BNB_BREAKOUT_IMPULSE_MAX_CHASE_PCT: envNum("BNB_BREAKOUT_IMPULSE_MAX_CHASE_PCT", 0.85),
+  BNB_BREAKOUT_IMPULSE_MAX_RSI: envNum("BNB_BREAKOUT_IMPULSE_MAX_RSI", 88),
+  BNB_BREAKOUT_V1N_STOP_CAP_PCT: envNum("BNB_BREAKOUT_V1N_STOP_CAP_PCT", 2.8),
   BREAKOUT_BULL_CONTINUATION_MODE: envStr("BREAKOUT_BULL_CONTINUATION_MODE", "shadow").toLowerCase(),
   BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC: envNum("BREAKOUT_BULL_CONTINUATION_MAX_TRACK_SEC", 1200),
   BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT: envNum("BREAKOUT_BULL_CONTINUATION_MIN_PEAK_EXTENSION_PCT", 0.20),
@@ -1203,6 +1217,8 @@ function configProblems() {
   if (!["disabled", "shadow", "live"].includes(CFG.HYBRID_PULLBACK_FAST_PATH_MODE)) problems.push("INVALID_HYBRID_PULLBACK_FAST_PATH_MODE");
   if (CFG.HYBRID_PULLBACK_MIN_PENETRATION_PCT <= 0 || CFG.HYBRID_PULLBACK_MIN_REBOUND_PCT <= 0 || CFG.HYBRID_PULLBACK_MAX_ENTRY_ABOVE_CONFIRM_PCT <= 0 || CFG.HYBRID_PULLBACK_MIN_LOW_ABOVE_STOP_PCT < 0 || CFG.HYBRID_PULLBACK_MAX_TRACK_SEC <= 0 || CFG.HYBRID_PULLBACK_MIN_SPACING_SEC <= 0 || CFG.HYBRID_PULLBACK_VOTE_MAX_SEC <= 0 || CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED > CFG.HYBRID_PULLBACK_PREFERRED_VOTE_COUNT || CFG.HYBRID_PULLBACK_PREFERRED_FINAL_CONSECUTIVE > CFG.HYBRID_PULLBACK_PREFERRED_VOTES_REQUIRED || CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED > CFG.HYBRID_PULLBACK_DEEP_VOTE_COUNT || CFG.HYBRID_PULLBACK_DEEP_FINAL_CONSECUTIVE > CFG.HYBRID_PULLBACK_DEEP_VOTES_REQUIRED || CFG.HYBRID_PULLBACK_PREFERRED_MIN_SPAN_SEC <= 0 || CFG.HYBRID_PULLBACK_DEEP_MIN_SPAN_SEC <= 0) problems.push("INVALID_HYBRID_PULLBACK_THRESHOLDS");
   if (!["cancel", "wait_no_chase"].includes(CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY)) problems.push("INVALID_BREAKOUT_RETEST_RECLAIM_ZONE_CHASE_POLICY");
+  if (!["disabled", "shadow", "live"].includes(CFG.BNB_BREAKOUT_FAST_MOMENTUM_MODE) || !(CFG.BNB_BREAKOUT_FAST_MODERATE_CHASE_PCT>0) || !(CFG.BNB_BREAKOUT_FAST_STRONG_CHASE_PCT>=CFG.BNB_BREAKOUT_FAST_MODERATE_CHASE_PCT) || !(CFG.BNB_BREAKOUT_FAST_MAX_RSI_STRONG>=75 && CFG.BNB_BREAKOUT_FAST_MAX_RSI_STRONG<=98) || !(CFG.BNB_BREAKOUT_FAST_STOP_CAP_PCT>0)) problems.push("INVALID_BNB_FAST_MOMENTUM_CONFIG");
+  if (!["disabled", "shadow", "live"].includes(CFG.BNB_BREAKOUT_ADAPTIVE_MODE) || !["disabled", "shadow", "live"].includes(CFG.BNB_BREAKOUT_IMPULSE_MODE) || !(CFG.BNB_BREAKOUT_ADAPTIVE_MAX_CHASE_PCT>0) || !(CFG.BNB_BREAKOUT_IMPULSE_MAX_CHASE_PCT>0) || !(CFG.BNB_BREAKOUT_IMPULSE_MAX_RSI>=50 && CFG.BNB_BREAKOUT_IMPULSE_MAX_RSI<=95) || !(CFG.BNB_BREAKOUT_V1N_STOP_CAP_PCT>0)) problems.push("INVALID_BNB_V1N_BREAKOUT_CONFIG");
   if (!["disabled", "shadow", "live"].includes(CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE)) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE");
   if (CFG.BREAKOUT_SHALLOW_HOLD_MAX_TRACK_SEC <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ABOVE_CONFIRM_PCT < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_PULLBACK_FROM_HIGH_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_OBSERVATIONS < 1 || CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT <= 0 || CFG.BREAKOUT_SHALLOW_HOLD_MAX_ENTRY_ABOVE_CONFIRM_PCT < CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_PCT || CFG.BREAKOUT_SHALLOW_HOLD_MIN_ADX < 0 || CFG.BREAKOUT_SHALLOW_HOLD_MIN_SLOPE < -10) problems.push("INVALID_BREAKOUT_SHALLOW_HOLD_RECLAIM_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.BREAKOUT_BULL_CONTINUATION_MODE)) problems.push("INVALID_BREAKOUT_BULL_CONTINUATION_MODE");
@@ -5239,6 +5255,62 @@ function breakoutShallowHoldRecoveryOk(feature) {
   return true;
 }
 
+async function evaluateBnbFastMomentum(pending, feature, breakoutConfirmPrice) {
+  const t = pending.trailing || (pending.trailing = {});
+  const cfg = breakoutFastMomentum.config();
+  cfg.mode = CFG.BNB_BREAKOUT_FAST_MOMENTUM_MODE;
+  if (cfg.mode === "disabled") return false;
+  cfg.moderateChasePct = CFG.BNB_BREAKOUT_FAST_MODERATE_CHASE_PCT;
+  cfg.strongChasePct = CFG.BNB_BREAKOUT_FAST_STRONG_CHASE_PCT;
+  cfg.maxRsiStrong = CFG.BNB_BREAKOUT_FAST_MAX_RSI_STRONG;
+  cfg.maxStopRiskPct = CFG.BNB_BREAKOUT_FAST_STOP_CAP_PCT;
+  const result = breakoutFastMomentum.step(t.bnbFastMomentum, feature, {confirm:breakoutConfirmPrice, stop:pending.stopPrice, expiry:pending.expiresAtMs}, cfg, state.lastFeature5m);
+  t.bnbFastMomentum = result.state;
+  if (!result.candidate) return false;
+  const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+  if (!checked.ok || checked.levels.stopPct > cfg.maxStopRiskPct + 1e-9) {
+    log("INFO", "FVVO_BNB_FAST_MOMENTUM_EXECUTION_VETO", {triggerId:pending.id,error:checked.error || "STOP_RISK_CAP"});
+    return false;
+  }
+  log("INFO", "FVVO_BNB_FAST_MOMENTUM_"+(cfg.mode === "shadow" ? "SHADOW" : "LIVE")+"_CANDIDATE", {triggerId:pending.id,entryCampaign:pending.entryCampaign,mode:cfg.mode,...result.candidate,automaticOrderSent:false});
+  if (cfg.mode === "live") {
+    await enterFromPriceTrigger(pending, feature, "BNB_FAST_MOMENTUM_CONFIRMED");
+    return true;
+  }
+  return false;
+}
+
+async function evaluateBnbV1nBreakout(pending, feature, rangeHigh, breakoutConfirmPrice) {
+  const t = pending.trailing || (pending.trailing = {});
+  const configs = breakoutV1n.defaults();
+  configs.adaptive.mode = CFG.BNB_BREAKOUT_ADAPTIVE_MODE;
+  configs.adaptive.maxChasePct = CFG.BNB_BREAKOUT_ADAPTIVE_MAX_CHASE_PCT;
+  configs.adaptive.stopCapPct = CFG.BNB_BREAKOUT_V1N_STOP_CAP_PCT;
+  configs.impulse.mode = CFG.BNB_BREAKOUT_IMPULSE_MODE;
+  configs.impulse.maxChasePct = CFG.BNB_BREAKOUT_IMPULSE_MAX_CHASE_PCT;
+  configs.impulse.maxRsi = CFG.BNB_BREAKOUT_IMPULSE_MAX_RSI;
+  configs.impulse.stopCapPct = CFG.BNB_BREAKOUT_V1N_STOP_CAP_PCT;
+  const setup = { confirm: breakoutConfirmPrice, stop: pending.stopPrice, rangeHigh, breakoutAtMs: t.breakoutAtMs };
+  for (const kind of ["adaptive", "impulse"]) {
+    if (configs[kind].mode === "disabled") continue;
+    const key = kind === "adaptive" ? "bnbAdaptiveV1n" : "bnbImpulseV1n";
+    const result = breakoutV1n.step(t[key], kind, feature, setup, configs[kind], state.lastFeature5m);
+    t[key] = result.state;
+    if (!result.candidate) continue;
+    const checked = validateStoredPriceTriggerAtExecution(pending, feature.price);
+    if (!checked.ok || checked.levels.stopPct > CFG.BNB_BREAKOUT_V1N_STOP_CAP_PCT + 1e-9) {
+      log("INFO", "FVVO_BNB_V1N_BREAKOUT_EXECUTION_VETO", { triggerId:pending.id, kind, error:checked.error || "STOP_RISK_CAP" });
+      continue;
+    }
+    log("INFO", configs[kind].mode === "shadow" ? "FVVO_BNB_V1N_BREAKOUT_SHADOW_CANDIDATE" : "FVVO_BNB_V1N_BREAKOUT_LIVE_CANDIDATE", { triggerId: pending.id, entryCampaign: pending.entryCampaign, kind, ...result.candidate, mode:configs[kind].mode, orderRequestIntended: configs[kind].mode === "live" });
+    if (configs[kind].mode === "live") {
+      await enterFromPriceTrigger(pending, feature, "BNB_V1N_BREAKOUT_" + kind.toUpperCase() + "_CONFIRMED");
+      return true;
+    }
+  }
+  return false;
+}
+
 async function evaluateBreakoutShallowHoldReclaim(pending, feature, rangeHigh, breakoutConfirmPrice) {
   if (breakoutShallowHoldReclaimMode() === "disabled") return false;
   const t = pending.trailing || (pending.trailing = {});
@@ -6368,6 +6440,7 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
     if (feature.price < confirmThreshold - epsilon && !adaptiveHoldAccepted) {
       if (t.phase === "CONFIRMING_BREAKOUT") {
         Object.assign(t, { phase: "ARMED", breakoutConfirmObservations: 0, firstBreakoutConfirmAt: null, firstBreakoutConfirmAtMs: 0, lastBreakoutConfirmPrice: null, lastBreakoutConfirmAt: null, lastBreakoutConfirmAtMs: 0 });
+        t.bnbFastMomentum = null;
         await persistState("breakout_retest_reclaim_zone_confirm_reset");
         log("INFO", "FVVO_BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_RESET", { triggerId: pending.id, breakoutConfirmPrice, confirmThreshold: round(confirmThreshold, 8), adaptiveHoldFloor: round(confirmThreshold * (1 - CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT / 100), 8), executionPrice: feature.price });
       }
@@ -6388,6 +6461,11 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
     if (adaptiveHoldAccepted) {
       log("INFO", "FVVO_BREAKOUT_RETEST_ADAPTIVE_HOLD_ACCEPTED", { triggerId: pending.id, breakoutConfirmPrice, confirmThreshold: round(confirmThreshold, 8), adaptiveHoldFloor: round(confirmThreshold * (1 - CFG.BREAKOUT_RETEST_ADAPTIVE_HOLD_TOLERANCE_PCT / 100), 8), executionPrice: feature.price, observations: t.breakoutConfirmObservations, requiredObservations: CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS, rayRegime: feature.rayRegime, ema8: feature.ema8 });
     }
+
+    // Fast momentum observes the ORIGINAL breakout confirmations before entering
+    // WAITING_RETEST. This is the only route that can capture a no-pullback burst.
+    // Shadow candidates never place orders and do not consume the manual setup.
+    if (await evaluateBnbFastMomentum(pending, feature, breakoutConfirmPrice)) return;
 
     if (t.breakoutConfirmObservations < CFG.BREAKOUT_RETEST_RECLAIM_ZONE_CONFIRM_OBSERVATIONS) {
       await persistState("breakout_retest_reclaim_zone_confirming_breakout");
@@ -6420,6 +6498,8 @@ async function evaluateBreakoutRetestReclaimZone(pending, previousPrice, feature
 
     if (t.phase === "WAITING_RETEST") {
       if (feature.price > rangeHigh + 1e-9) {
+        const bnbV1nEntered = await evaluateBnbV1nBreakout(pending, feature, rangeHigh, breakoutConfirmPrice);
+        if (bnbV1nEntered) return;
         const bullContinuationEntered = await evaluateBreakoutBullContinuation(pending, feature, rangeHigh, breakoutConfirmPrice);
         if (bullContinuationEntered) return;
         const shallowEntered = await evaluateBreakoutShallowHoldReclaim(pending, feature, rangeHigh, breakoutConfirmPrice);
@@ -6958,6 +7038,8 @@ async function start() {
   await ensurePersistence();
   await loadState();
   log("INFO", "FVVO_PROFIT_FLOOR_MICRO_LIVE_STARTUP", {build:"BNB_v1m_DAILY_ENTRY_OPTIMIZED_HARD_STOP",enabled:CFG.PROFIT_FLOOR_MICRO_LIVE_ENABLED,maxSec:75,hardBufferPct:0.10,windowTicks:5,requiredBelowTicks:4,recoveryTicks:2});
+  log("INFO", "FVVO_BNB_FAST_MOMENTUM_STARTUP", {mode:CFG.BNB_BREAKOUT_FAST_MOMENTUM_MODE,moderateChasePct:CFG.BNB_BREAKOUT_FAST_MODERATE_CHASE_PCT,strongChasePct:CFG.BNB_BREAKOUT_FAST_STRONG_CHASE_PCT,maxRsiStrong:CFG.BNB_BREAKOUT_FAST_MAX_RSI_STRONG,stopCapPct:CFG.BNB_BREAKOUT_FAST_STOP_CAP_PCT});
+  log("INFO", "FVVO_BNB_V1N_BREAKOUT_STARTUP", {build:"BNB_v1n_DAILY_BREAKOUT_REPLAY_CANDIDATES",adaptiveMode:CFG.BNB_BREAKOUT_ADAPTIVE_MODE,impulseMode:CFG.BNB_BREAKOUT_IMPULSE_MODE,adaptiveChasePct:CFG.BNB_BREAKOUT_ADAPTIVE_MAX_CHASE_PCT,impulseChasePct:CFG.BNB_BREAKOUT_IMPULSE_MAX_CHASE_PCT,impulseMaxRsi:CFG.BNB_BREAKOUT_IMPULSE_MAX_RSI,stopCapPct:CFG.BNB_BREAKOUT_V1N_STOP_CAP_PCT,normalRetestMode:CFG.BREAKOUT_RETEST_RECLAIM_ZONE_MODE,shallowHoldMode:CFG.BREAKOUT_SHALLOW_HOLD_RECLAIM_MODE});
   const problems = configProblems();
   if (!problems.length && state.autoExitRelease?.active) scheduleAutoExitRelease();
   const legacyEntryVars = legacyEntrySizingVariablesPresent();
