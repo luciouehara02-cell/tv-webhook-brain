@@ -1115,7 +1115,9 @@ function configProblems() {
   // because it can complete without a callback to this service.
   if (CFG.C3_NATIVE_STOP_ENABLED) problems.push("C3_NATIVE_STOP_MUST_BE_FALSE_V1M_BRAIN_OWNS_ALL_EXITS");
   if (!Number.isFinite(CFG.BRAIN_HARD_STOP_LOSS_PCT) || CFG.BRAIN_HARD_STOP_LOSS_PCT <= 0 || CFG.BRAIN_HARD_STOP_LOSS_PCT > 100) problems.push("INVALID_BRAIN_HARD_STOP_LOSS_PCT");
-  if (!CFG.BRAIN_HARD_STOP_ENABLED) problems.push("BRAIN_HARD_STOP_MUST_BE_ENABLED");
+  // v1f: optional independent Brain loss cap. The separately validated manual absolute
+  // stop and existing loss-side / structure / profit exit paths remain unchanged.
+  // Disabling this cap removes its unconditional first-tick protection.
   if (CFG.MANUAL_ONE_STOP_PRICE_STEP <= 0) problems.push("INVALID_ONE_STOP_PRICE_STEP");
   if (CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT <= 0) problems.push("INVALID_MIN_STOP_DISTANCE_PCT");
   if (CFG.MANUAL_ONE_STOP_MAX_STOP_DISTANCE_PCT < CFG.MANUAL_ONE_STOP_MIN_STOP_DISTANCE_PCT) problems.push("MAX_STOP_DISTANCE_MUST_BE_AT_LEAST_MIN_STOP_DISTANCE");

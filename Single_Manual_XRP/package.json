@@ -1,8 +1,8 @@
 {
-  "name": "brainfvvo-sol-longhold-v1e-demo",
-  "version": "1.3.1",
+  "name": "brainfvvo-sol-longhold-v1f-configurable-hardstop-demo",
+  "version": "1.3.2",
   "private": true,
-  "description": "SOL LongHold DEMO v1e: optimized Preferred; independent unconditional brain 1% hard stop; no native 3Commas stop",
+  "description": "SOL LongHold DEMO v1f: configurable Brain hard stop; manual stop and LongHold exits preserved",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
