@@ -599,6 +599,11 @@ const CFG = {
   // v1y: strict loss-side thesis-failure overlay. This does not change the manual stop
   // contract; it audits or exits early only when an unprotected trade has clearly broken down.
   LOSS_SIDE_THESIS_FAIL_MODE: envStr("LOSS_SIDE_THESIS_FAIL_MODE", "live").toLowerCase(),
+  // v1g: independent 2-out-of-3 loss-side thesis confirmation. Default shadow; does not alter baseline exits.
+  SOL_LOSS_THESIS_FLEX_MODE: envStr("SOL_LOSS_THESIS_FLEX_MODE", "shadow").toLowerCase(),
+  SOL_LOSS_THESIS_FLEX_REQUIRED_VOTES: Math.floor(envNum("SOL_LOSS_THESIS_FLEX_REQUIRED_VOTES", 2)),
+  SOL_LOSS_THESIS_FLEX_WINDOW_TICKS: Math.floor(envNum("SOL_LOSS_THESIS_FLEX_WINDOW_TICKS", 3)),
+  SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC: envNum("SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC", 60),
   LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT: envNum("LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT", -0.35),
   LOSS_SIDE_THESIS_FAIL_MAX_RSI: envNum("LOSS_SIDE_THESIS_FAIL_MAX_RSI", 32),
   LOSS_SIDE_THESIS_FAIL_MIN_ADX: envNum("LOSS_SIDE_THESIS_FAIL_MIN_ADX", 20),
@@ -1016,6 +1021,9 @@ function normalizeState(raw) {
     }
   }
   p.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: null, shadowLogged: false, ...(p.lossSideThesis || {}) };
+  // Keep shadow evidence across state saves/restarts, but do not retain unbounded history.
+  p.lossSideThesis.flexWindow = (Array.isArray(p.lossSideThesis.flexWindow) ? p.lossSideThesis.flexWindow : []).filter(x => Number.isFinite(x?.at) && typeof x.pass === "boolean").slice(-CFG.SOL_LOSS_THESIS_FLEX_WINDOW_TICKS);
+  p.lossSideThesis.flexShadowLogged = Boolean(p.lossSideThesis.flexShadowLogged);
   p.swingExit = normalizeSwingExitState(p.swingExit);
   p.exitRequestedAt = p.exitRequestedAt || null;
   p.exitReason = p.exitReason || null;
@@ -1149,6 +1157,7 @@ function configProblems() {
   if (CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_WINDOW_SEC <= 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_CONFIRM_OBSERVATIONS < 1 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT < 0 || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MAX_RECOVERY_PCT < CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_MIN_RECOVERY_PCT || CFG.PROFIT_FLOOR_POST_EXIT_RECLAIM_PERFORMANCE_SEC <= 0) problems.push("INVALID_PROFIT_FLOOR_POST_EXIT_RECLAIM_SHADOW_CONFIG");
   if (CFG.DYNAMIC_PROFIT_THESIS_MIN_PNL_PCT < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_SEC < 0 || CFG.DYNAMIC_PROFIT_THESIS_TICK_CONFIRM_OBSERVATIONS < 1) problems.push("INVALID_DYNAMIC_PROFIT_THESIS_CONFIRM");
   if (!["disabled", "shadow", "live"].includes(CFG.LOSS_SIDE_THESIS_FAIL_MODE)) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_MODE");
+  if (!["disabled", "shadow", "live"].includes(CFG.SOL_LOSS_THESIS_FLEX_MODE) || CFG.SOL_LOSS_THESIS_FLEX_REQUIRED_VOTES < 2 || CFG.SOL_LOSS_THESIS_FLEX_WINDOW_TICKS < CFG.SOL_LOSS_THESIS_FLEX_REQUIRED_VOTES || CFG.SOL_LOSS_THESIS_FLEX_WINDOW_TICKS > 20 || !Number.isFinite(CFG.SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC) || CFG.SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC < 15 || CFG.SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC > 600) problems.push("INVALID_SOL_LOSS_THESIS_FLEX_CONFIG");
   if (CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT >= 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC < 0 || CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS < 1 || CFG.LOSS_SIDE_THESIS_FAIL_MAX_RSI <= 0 || CFG.LOSS_SIDE_THESIS_FAIL_MIN_ADX < 0) problems.push("INVALID_LOSS_SIDE_THESIS_FAIL_THRESHOLDS");
   if (!["disabled", "shadow", "live"].includes(CFG.SWING_STRUCTURE_EXIT_MODE)) problems.push("INVALID_SWING_STRUCTURE_EXIT_MODE");
   if (CFG.SWING_STRUCTURE_MIN_MFE_PCT < 0 || CFG.SWING_STRUCTURE_MIN_CURRENT_PNL_PCT < 0 || CFG.SWING_STRUCTURE_EMA18_BREAK_TOLERANCE_PCT < 0 || CFG.SWING_STRUCTURE_CONFIRM_5M_OBSERVATIONS < 1 || CFG.SWING_STRUCTURE_MIN_DETERIORATION_SIGNALS < 1 || CFG.SWING_STRUCTURE_EMERGENCY_BREAK_PCT < CFG.SWING_STRUCTURE_EMA18_BREAK_TOLERANCE_PCT || CFG.SWING_STRUCTURE_EMERGENCY_CONFIRM_5M_OBSERVATIONS < 1) problems.push("INVALID_SWING_STRUCTURE_THRESHOLDS");
@@ -2395,7 +2404,7 @@ function lossSideThesisState(position) {
 function resetLossSideThesis(position, reason) {
   const s = lossSideThesisState(position);
   if (s.observations || s.breachAtMs || s.lastReason) {
-    position.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: reason || null, shadowLogged: false };
+    position.lossSideThesis = { breachAtMs: 0, observations: 0, lastBreachPrice: null, lastFeatureKind: null, lastReason: reason || null, shadowLogged: false, flexWindow: Array.isArray(s.flexWindow) ? s.flexWindow : [], flexShadowLogged: Boolean(s.flexShadowLogged) };
   }
 }
 
@@ -2448,6 +2457,30 @@ function lossSideThesisFailureConfirmed(position, feature, price, pnlPct) {
   const elapsed = (current - state.breachAtMs) / 1000;
   const observations = Number(state.observations || 0);
   return { confirmed: observations >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_OBSERVATIONS && elapsed >= CFG.LOSS_SIDE_THESIS_FAIL_CONFIRM_SEC, reason: "LOSS_SIDE_THESIS_FAILURE_CONFIRM", observations, elapsedSec: elapsed, evidence };
+}
+
+// v1g: independent, bounded vote window. This does not modify the strict baseline confirmation.
+function lossSideFlexCandidate(position, feature, price, pnlPct) {
+  const mode = CFG.SOL_LOSS_THESIS_FLEX_MODE;
+  if (mode === "disabled") return { confirmed:false, reason:"FLEX_DISABLED" };
+  const st = lossSideThesisState(position);
+  // A 5-minute feed must never be counted as a 15-second vote, or erase valid tick history.
+  if (feature.kind !== CFG.FVVO_FEATURE_TICK_EVENT) return { confirmed:false, reason:"NOT_FEATURE_TICK" };
+  const ev = lossSideThesisEvidence(position, feature, price, pnlPct);
+  // Reset when no longer at risk, after the profit floor arms, or if EMAs have recovered.
+  if (!ev.eligible || ev.belowEma !== true || ev.pnlPct > CFG.LOSS_SIDE_THESIS_FAIL_MIN_LOSS_PCT + 1e-9) {
+    st.flexWindow = [];
+    st.flexShadowLogged = false;
+    return { confirmed:false, reason:ev.reason, evidence:ev };
+  }
+  const now = nowMs();
+  const maxMs = CFG.SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC * 1000;
+  const window = (Array.isArray(st.flexWindow) ? st.flexWindow : []).filter(v => Number.isFinite(v.at) && v.at <= now && now - v.at <= maxMs);
+  window.push({ at:now, pass:Boolean(ev.conditions) });
+  while (window.length > CFG.SOL_LOSS_THESIS_FLEX_WINDOW_TICKS) window.shift();
+  st.flexWindow = window;
+  const votes = window.filter(v => v.pass).length;
+  return { confirmed:votes >= CFG.SOL_LOSS_THESIS_FLEX_REQUIRED_VOTES, reason:"LOSS_SIDE_THESIS_FLEX_VOTE_CONFIRM", observations:votes, windowLength:window.length, evidence:ev };
 }
 
 function dynamicPullbackGraceMode() {
@@ -3420,6 +3453,16 @@ async function manageExit(feature) {
   }
 
   // v1y: strict loss-side thesis failure is subordinate to the manual stop but can audit/exit before the full stop if an unprotected trade clearly breaks down.
+  const flex = lossSideFlexCandidate(p, feature, price, pnl);
+  if (flex.confirmed && CFG.SOL_LOSS_THESIS_FLEX_MODE === "live") {
+    await persistState(`loss_side_flex_live_${feature.kind}`);
+    await requestFullExit(`FVVO_LOSS_SIDE_THESIS_FLEX_${flex.reason}`, price, feature.kind);
+    return;
+  }
+  if (flex.confirmed && CFG.SOL_LOSS_THESIS_FLEX_MODE === "shadow" && !lossSideThesisState(p).flexShadowLogged) {
+    lossSideThesisState(p).flexShadowLogged = true;
+    log("WARN", "FVVO_SOL_LOSS_THESIS_FLEX_SHADOW_CANDIDATE", { entryPrice:p.entryPriceReference, entryOrigin:p.entryOrigin, price, latestPnlPct:round(pnl,6), observations:flex.observations, windowLength:flex.windowLength, requiredVotes:CFG.SOL_LOSS_THESIS_FLEX_REQUIRED_VOTES, maxSpanSec:CFG.SOL_LOSS_THESIS_FLEX_MAX_SPAN_SEC, evidence:flex.evidence, action:"NO_EXIT_CHANGE_SHADOW_ONLY" });
+  }
   const lossSide = lossSideThesisFailureConfirmed(p, feature, price, pnl);
   if (lossSide.confirmed) {
     const mode = lossSideThesisFailMode();

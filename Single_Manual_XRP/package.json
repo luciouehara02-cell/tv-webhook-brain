@@ -1,8 +1,8 @@
 {
-  "name": "brainfvvo-sol-longhold-v1f-configurable-hardstop-demo",
-  "version": "1.3.2",
+  "name": "brainfvvo-sol-longhold-v1g-flexible-loss-exit-demo",
+  "version": "1.3.3",
   "private": true,
-  "description": "SOL LongHold DEMO v1f: configurable Brain hard stop; manual stop and LongHold exits preserved",
+  "description": "SOL LongHold DEMO v1g: configurable fixed stop and independent flexible loss-thesis shadow/live evaluation; entries and profit exits preserved",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
